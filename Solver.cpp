@@ -34,11 +34,11 @@ std::string to_string(const Equation& eqn, const PrintMode mode) {
     return "[" + oss.str() + "]";
 }
 
-std::string to_string(const Clause& c, const PrintMode mode) {
+std::string to_string(const Clause& clause, const PrintMode mode) {
     std::ostringstream oss;
-    for (const auto& eqn : c) {
+    for (const auto& equation : clause) {
         if (oss.tellp() > 0) oss << " v ";
-        oss << to_string(eqn, mode);
+        oss << to_string(equation, mode);
     }
     return oss.str();
 }
@@ -128,7 +128,7 @@ Solver from_DIMACS(const std::string& filename) {
                 equation.set(literal);
             }
 
-            clause.push_back(equation);
+            clause.push_row(equation);
         }
         solver.add_clause(clause);
     }

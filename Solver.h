@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include "bit/vector.h"
+#include "bit/matrix.h"
 
 /// @brief Method to print equations.
 ///
@@ -20,8 +21,10 @@ enum class PrintMode { standard, equals_0, equals_1 };
 /// 3 variables, it is [1, 0, 0, 0].
 using Equation = bit::vector<>;
 
-/// @brief Disjunction of linear equations.
-using Clause = std::vector<Equation>;
+/// @brief Disjunction of linear equations, represented as a matrix
+/// in row-major form.
+using Clause = bit::matrix<>;
+
 
 /// @brief Main solver class.
 class Solver {
