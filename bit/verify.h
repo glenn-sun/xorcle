@@ -42,8 +42,7 @@ exit(std::string_view func, std::string_view path, std::size_t line, std::string
 {
     std::cerr << std::format("\nBIT VERIFY FAILED:\nFunction '{}' ({}, line {})", func, basename(path), line);
     if (!payload.empty()) std::cerr << ":\n" << payload;
-    std::cerr << '\n' << std::endl;
-    ::exit(1);
+    throw std::runtime_error("BIT VERIFY FAILED");
 }
 
 } // namespace bit

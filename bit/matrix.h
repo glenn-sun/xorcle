@@ -1038,133 +1038,15 @@ public:
         return true;
     }
 
-    /// @brief Use this matrix to reduce a vector in-place.
-    /// 
-    /// Requires: This matrix must be in row-echelon form.
-    ///
-    /// Interpret each row of the matrix as a rule that replaces the leading term with the tail.
-    /// After this, the vector is 0 in all pivot columns.
-    /// @param r The vector to reduce.
-    /// @param pivot_col The pivot columns of the matrix, obtained from a previous call to `to_echelon_form`.
-    constexpr vector_type& reduce(vector_type& r, const vector_type& pivot_col) const
-    {
-        std::size_t pivot_row = 0;
-        pivot_col.if_set_call([&](std::size_t i) { 
-            if (r.element(i)) {
-                r ^= row(pivot_row);
-            }
-            ++pivot_row;
-        });
-        return r;
-    }
 
-    /// @brief Use this matrix to reduce a vector and return a copy.
-    /// 
-    /// Requires: This matrix must be in row-echelon form.
-    ///
-    /// Interpret each row of the matrix as a rule that replaces the leading term with the tail.
-    /// After this, the vector is 0 in all pivot columns.
-    /// @param r The vector to reduce.
-    /// @param pivot_col The pivot columns of the matrix, obtained from a previous call to `to_echelon_form`.
-    constexpr vector_type reduce_copy(const vector_type& r, const vector_type& pivot_col) const 
-    {
-        vector_type r_copy = r;
-        reduce(r_copy, pivot_col);
-        return r_copy;
-    }
-
-    /// @brief Determine if the span of the rows of this matrix contains the given vector.
-    ///
-    /// Requires: This matrix must be in row-echelon form.
-    /// @param v The vector to check
-    /// @param pivot_col The pivot columns of the matrix, obtained from a previous call to `to_echelon_form`.
-    constexpr bool span_contains(const vector_type& v, const vector_type& pivot_col) const 
-    {
-        return reduce_copy(v, pivot_col).none(); 
-    }
-
-    /// @brief Push a row into the matrix and maintain row-echelon form.
-    /// Uses copy semantics. Runs in O(n^2) time.
-    /// 
-    /// Requires: The matrix is already in row-echelon form.
-    /// @param pivot_col Obtain this from a previous call to `to_echelon_form`. 
-    /// On return, this will have a set bit for the pivot columns of the new matrix.
-    /// @param r The new row to push
-    matrix& push_to_echelon_form(const vector_type& r, vector_type& pivot_col) 
-    {
-        vector_type new_row = reduce_copy(r, pivot_col);
-
-        if (new_row.none()) {
-            add_row();
-            return *this;
-        }
-
-        // Find the row to swap into
-        std::size_t new_pivot_col = new_row.first_set();
-        std::size_t new_pivot_row = 0;
-        pivot_col.if_set_call([&](std::size_t i) { 
-            if (new_pivot_col > i) {
-                ++new_pivot_row;
-            }
-        });
-
-        // Insert the new row
-        m_row.insert(m_row.begin() + new_pivot_row, new_row);
-        pivot_col.set(new_pivot_col);
-        
-        return *this;
-    }
-
-    /// @brief Push a row into the matrix and maintain reduced-row-echelon form.
-    /// Uses copy semantics. Runs in O(n^2) time.
-    /// 
-    /// Requires: The matrix is already in reduced-row-echelon form.
-    /// @param pivot_col Obtain this from a previous call to `to_(reduced_)echelon_form`. 
-    /// On return, this will have a set bit for the pivot columns of the new matrix.
-    /// @param r The new row to push
-    matrix& push_to_reduced_echelon_form(const vector_type& r, vector_type& pivot_col) {
-        vector_type new_row = reduce_copy(r, pivot_col);
-
-        if (new_row.none()) {
-            add_row();
-            return *this;
-        }
-
-        // Find the row to swap into
-        std::size_t new_pivot_col = new_row.first_set();
-        std::size_t new_pivot_row = 0;
-        pivot_col.if_set_call([&](std::size_t i) { 
-            if (new_pivot_col > i) {
-                ++new_pivot_row;
-            }
-        });
-
-        // Insert the new row
-        m_row.insert(m_row.begin() + new_pivot_row, new_row);
-        pivot_col.set(new_pivot_col);
-
-        // Clear above the new pivot
-        for (std::size_t i = 0; i < new_pivot_row; ++i) {
-            if (element(i, new_pivot_col)) {
-                row(i) ^= row(new_pivot_row);
-            }
-        }
-
-        return *this;
-    }
 
     /// @brief Converts this matrix in-place to row-echelon form.
-    /// @param pivot_col If present, on return this will have a set bit for every column with a pivot in this matrix.
-    matrix& to_echelon_form(vector_type* pivot_col = 0)
+    matrix& to_echelon_form()
     {
         bit_verify(!empty(), "Empty matrices are not supported by this method!");
 
-        // Were we asked to track which columns contain pivots?
-        if (pivot_col) {
-            pivot_col->resize(cols());
-            pivot_col->reset();
-        }
-
+        pivot_cols = std::make_optional<vector_type>(vector_type::zeros(cols()));
+        
         // Working on row number ...
         std::size_t nr = rows();
         std::size_t r = 0;
@@ -1180,7 +1062,7 @@ public:
             if (p == nr) continue;
 
             // Getting to here means that column j does have a pivot
-            if (pivot_col) pivot_col->element(j) = true;
+            pivot_cols->element(j) = true;
 
             // If necessary, swap the pivot row into place
             if (p != r) swap_rows(p, r);
@@ -1197,11 +1079,10 @@ public:
     }
 
     /// @brief Converts this matrix in place to reduced-row-echelon-form
-    /// @param pivot_col If present, on return this will have a set bit for every column with a pivot in this matrix.
-    matrix& to_reduced_echelon_form(vector_type* pivot_col = nullptr)
+    matrix& to_reduced_echelon_form()
     {
         // Start by going to echelon form
-        to_echelon_form(pivot_col);
+        to_echelon_form();
 
         // Then iterate from the bottom row up, keeping at most one non-zero entry per row.
         for (std::size_t i = rows(); i--;) {
@@ -1217,6 +1098,12 @@ public:
         }
         return *this;
     }
+
+    const std::optional<vector_type>& get_pivot_cols() const { return pivot_cols; }
+    void reset_pivot_cols() { pivot_cols = std::nullopt; }
+
+    
+
 
     /// @brief A little debug utility to dump a whole bunch of descriptive data about a bit-matrix to a stream.
     /// @note  Don't depend on this format remaining constant!
@@ -1242,7 +1129,12 @@ public:
 private:
     /// @brief The matrix data
     std::vector<vector_type> m_row;
+
+    /// @brief Pivot columns that are set when the matrix is put in row-echelon form. Used to accelerate
+    /// various computations. Must be manually reset with reset_pivot_cols() when leaving row-echelon form.
+    std::optional<vector_type> pivot_cols = std::nullopt;
 };
+
 
 // --------------------------------------------------------------------------------------------------------------------
 // NON-MEMBER FUNCTIONS ...
