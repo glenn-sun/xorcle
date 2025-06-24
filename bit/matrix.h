@@ -354,6 +354,15 @@ public:
         return *this;
     }
 
+    /// @brief Insert a row at the given index. Uses copy semantics.
+    constexpr matrix& insert_row(std::size_t index, const vector_type& r) {
+        if (index > m_row.size()) {
+            throw std::invalid_argument("index > rows()");
+        }
+        m_row.insert(m_row.begin() + index, r);
+        return *this;
+    }
+
     // Support for read-only row-based for-each loops
     constexpr auto begin() const { return m_row.begin(); }
     constexpr auto end() const { return m_row.end(); }
@@ -371,6 +380,13 @@ public:
         if (cols() > 0) {
             for (auto& bv : m_row) bv.pop();
         }
+        return *this;
+    }
+
+    /// @brief Removes the row at the given index.
+    constexpr matrix& erase_row(std::size_t i) {
+        bit_verify(i < rows(), "i = {}, rows() = {}", i, rows());
+        m_row.erase(m_row.begin() + i);
         return *this;
     }
 
@@ -1038,15 +1054,18 @@ public:
         return true;
     }
 
-
-
     /// @brief Converts this matrix in-place to row-echelon form.
-    matrix& to_echelon_form()
+    /// @param pivot_col If present, on return this will have a set bit for every column with a pivot in this matrix.
+    matrix& to_echelon_form(vector_type* pivot_col = 0)
     {
         bit_verify(!empty(), "Empty matrices are not supported by this method!");
 
-        pivot_cols = std::make_optional<vector_type>(vector_type::zeros(cols()));
-        
+        // Were we asked to track which columns contain pivots?
+        if (pivot_col) {
+            pivot_col->resize(cols());
+            pivot_col->reset();
+        }
+
         // Working on row number ...
         std::size_t nr = rows();
         std::size_t r = 0;
@@ -1062,7 +1081,7 @@ public:
             if (p == nr) continue;
 
             // Getting to here means that column j does have a pivot
-            pivot_cols->element(j) = true;
+            if (pivot_col) pivot_col->element(j) = true;
 
             // If necessary, swap the pivot row into place
             if (p != r) swap_rows(p, r);
@@ -1079,10 +1098,11 @@ public:
     }
 
     /// @brief Converts this matrix in place to reduced-row-echelon-form
-    matrix& to_reduced_echelon_form()
+    /// @param pivot_col If present, on return this will have a set bit for every column with a pivot in this matrix.
+    matrix& to_reduced_echelon_form(vector_type* pivot_col = nullptr)
     {
         // Start by going to echelon form
-        to_echelon_form();
+        to_echelon_form(pivot_col);
 
         // Then iterate from the bottom row up, keeping at most one non-zero entry per row.
         for (std::size_t i = rows(); i--;) {
@@ -1098,12 +1118,6 @@ public:
         }
         return *this;
     }
-
-    const std::optional<vector_type>& get_pivot_cols() const { return pivot_cols; }
-    void reset_pivot_cols() { pivot_cols = std::nullopt; }
-
-    
-
 
     /// @brief A little debug utility to dump a whole bunch of descriptive data about a bit-matrix to a stream.
     /// @note  Don't depend on this format remaining constant!
@@ -1129,12 +1143,7 @@ public:
 private:
     /// @brief The matrix data
     std::vector<vector_type> m_row;
-
-    /// @brief Pivot columns that are set when the matrix is put in row-echelon form. Used to accelerate
-    /// various computations. Must be manually reset with reset_pivot_cols() when leaving row-echelon form.
-    std::optional<vector_type> pivot_cols = std::nullopt;
 };
-
 
 // --------------------------------------------------------------------------------------------------------------------
 // NON-MEMBER FUNCTIONS ...

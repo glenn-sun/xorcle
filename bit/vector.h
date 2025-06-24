@@ -954,7 +954,7 @@ public:
     }
 
     /// @brief Read-only access to the element at index @c size()-1
-    constexpr reference back() const
+    constexpr bool back() const
     {
         auto n = size();
         bit_verify(n > 0, "Empty bit-vector!");
@@ -1003,9 +1003,6 @@ public:
     /// @brief Check whether any of the elements in the bit-vector are set.
     constexpr bool any() const
     {
-        // Handle empty vectors with an exception if we're in a `BIT_VERIFY` scenario
-        bit_verify(!empty(), "Calling this method for an empty vector is likely an error!");
-
         // The "logical connective" for any() is OR with the identity FALSE, hence the return value for the empty set.
         for (auto b : m_blocks)
             if (b != 0) return true;
@@ -1016,8 +1013,6 @@ public:
     /// @brief Check whether none of of the elements in the bit-vector are set.
     constexpr bool none() const
     {
-        // Handle empty vectors with an exception if we're in a `BIT_VERIFY` scenario
-        bit_verify(!empty(), "Calling this method for an empty vector is likely an error!");
         return !any();
     }
 

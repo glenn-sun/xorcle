@@ -1,45 +1,69 @@
 #include <fstream>
 #include <sstream>
+#include <cassert>
+#include <cstdlib>
+#include <ctime>
 #include "Solver.h"
 
-TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail) {
-    TrailBasisSpace tbs;
-    for (const Equation& eqn : rs) {
-        Equation eqn_copy = eqn;
-        Equation tbs_row = Equation::zeros(trail.span().rows());
-        while (!eqn_copy.none()) {
-            std::size_t first_set = eqn_copy.first_set();
-            
-        }
-    }
+bit::vector<> RowSpace::get_unique_solution() const {
+    bit::matrix<> M_copy = M;
+    M_copy.to_reduced_echelon_form();
+    return M_copy.col(M_copy.cols() - 1);
 }
 
-bool Clause::is_asserting(const Trail& trail) const {
-    std::size_t prev = trail.size() - 2;
+TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail) {
+    TrailBasisSpace tbs(trail);
+    for (const Equation& eqn : rs) {
+        // Coefficients in representation order
+        Coefficients coeffs;
+        trail.span().reduce_copy(eqn, &coeffs);
 
-    // Find one equation that is non-zero
-    Equation asserting_eqn;
-    bool found = false;
-    for (std::size_t i = 0; i < rows(); ++i) {
-        asserting_eqn = trail[prev].span.reduce_copy(row(i));
-        if (!asserting_eqn.none()) {
-            found = true;
-            break;
+        // Convert to trail basis order
+        std::size_t m = coeffs.size();
+        Coefficients tbs_row = Coefficients::zeros(m);
+        coeffs.if_set_call([&](std::size_t i) {
+            tbs_row.set(m - trail.reverse_order_map()[i] - 1);
+        });
+        tbs.add_row(tbs_row);
+    }
+    return tbs;
+}
+
+RowSpace TrailBasisSpace::to_RowSpace() const {
+    RowSpace rs;
+    for (const Coefficients& tbs_row : *this) {
+        Equation eqn = Equation::zeros(trail.span().cols());
+        tbs_row.if_set_call([&](std::size_t i) {
+            eqn += trail.span().row(trail.order_map()[cols()-i-1]);
+        });
+        rs.add_row(eqn);
+    }
+    return rs;
+}
+
+std::size_t TrailBasisSpace::jumpable_levels() const {
+    if (rows() == 1) {
+        return trail.size() - 1;
+    }
+
+    std::size_t jump = 1;
+    bit::vector<> new_part;
+    while (jump < trail.size()) {
+        std::size_t last_decision = trail[trail.size() - 1 - jump].span.rows();
+        std::size_t n_current_level = trail.span().rows() - last_decision;
+        new_part = row(1).sub(n_current_level);
+        if (new_part.any()) {
+            return jump - 1;
         }
-    }
-    if (!found) return false;
-
-    // Check if all other equations are zero
-    for (std::size_t i = 0; i < rows(); ++i) {
-        Equation eqn = trail[prev].span.reduce_with_copy(row(i), asserting_eqn);
-        if (!eqn.none()) return false;
-    }
-    return true;
+        ++jump;
+    } 
+    
+    return jump - 1;
 }
 
 void TrailSnapshot::learn(const Equation& eqn, std::optional<std::reference_wrapper<Clause>> reason) {
     std::size_t inserted_index;
-    span.push_to_echelon_form(eqn, &inserted_index);
+    span.add_row(eqn, &inserted_index);
     reasons.push_back(reason);
 
     // Update order map
@@ -49,6 +73,9 @@ void TrailSnapshot::learn(const Equation& eqn, std::optional<std::reference_wrap
         }
     }
     order_map.push_back(inserted_index);
+
+    // Update reverse order map
+    reverse_order_map.insert(reverse_order_map.begin() + inserted_index, order_map.size() - 1);
 }
 
 void Solver::add_clause(Clause& clause) {
@@ -112,13 +139,13 @@ std::optional<std::pair<Equation, std::reference_wrapper<Clause>>>Solver::unit_p
         // Postcondition: clause.row(clause.watched0) is non-zero w.r.t. current trail
 
         // Do the same things with clause.row(clause.watched1), but reduce using clause.row(clause.watched0).
-        Equation reduced1 = trail.span().reduce_with_copy(clause.row(clause.watched1), clause.row(clause.watched0));
+        Equation reduced1 = trail.span().reduce_with_extra_copy(clause.row(clause.watched1), clause.row(clause.watched0));
         if (reduced1.none()) {
             // Find a new equation to watch
             bool found = false;
             for (std::size_t i = 0; i < clause.rows(); ++i) {
                 if (i == clause.watched0 || i == clause.watched1) continue;
-                Equation reduced = trail.span().reduce_with_copy(clause.row(i), clause.row(clause.watched0));
+                Equation reduced = trail.span().reduce_with_extra_copy(clause.row(i), clause.row(clause.watched0));
                 if (!reduced.none()) {
                     clause.watched1 = i;
                     found = true;
@@ -137,6 +164,42 @@ std::optional<std::pair<Equation, std::reference_wrapper<Clause>>>Solver::unit_p
     return std::nullopt;
 }
 
+std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail) const {
+    // Fact: last_reason should never be std::nullopt here
+    std::optional<std::reference_wrapper<Clause>> last_reason = trail.reasons()[trail.span().rows() - 1];
+    TrailBasisSpace as_tbs = TrailBasisSpace::from_RowSpace(last_reason->get(), trail);
+
+    std::size_t non_zero_col = 0;
+    while (as_tbs.jumpable_levels() == 0) {
+        // Find smallest non-zero column
+        while (as_tbs.col(non_zero_col).none()) {
+            ++non_zero_col;
+        }
+
+        Coefficients as_tbs_first = as_tbs.pop_first_row();
+        
+        // Note: reason does not belong to trail, since the negation of one of its equations
+        // is in the trail. Thus, the conversion loses the +1 on that equation.
+        std::size_t index = as_tbs.cols() - 1 - non_zero_col;
+        RowSpace reason_rs = *trail.reasons()[index];
+        TrailBasisSpace reason = TrailBasisSpace::from_RowSpace(reason_rs, trail);
+        Coefficients reason_first = reason.pop_first_row();
+
+        // Add reason to as_tbs
+        as_tbs.add_row(as_tbs_first + reason_first + Coefficients::unit(as_tbs_first.size(), 0));
+
+        for (Coefficients row : reason) {
+            as_tbs.add_row(row);
+        }
+
+        for (std::size_t col = 0; col <= non_zero_col; ++col) {
+            assert(as_tbs.col(col).none());
+        }
+        
+    }
+
+    return std::make_pair(as_tbs.to_RowSpace(), as_tbs.jumpable_levels());
+}
 
 std::optional<bit::vector<>> Solver::solve() {
     while (true) {
@@ -147,59 +210,73 @@ std::optional<bit::vector<>> Solver::solve() {
             if (propagate_result) {
                 auto [eqn, reason] = *propagate_result;
                 trail.learn(eqn, reason);
-                conflict = trail.span().span_contains(eqn_false);
+                bit::vector<> tmp = trail.span().reduce_copy(eqn_false);
+                conflict = tmp.none();
             } else {
                 break;
             }
         }
 
         // Check for conflict
-        if (trail.span().span_contains(eqn_false)) {
+        if (conflict) {
+            // Check for unsatisfiability
             if (level() == 0) {
-                return std::nullopt; // conflict
+                return std::nullopt;
             }
-            
-            // Fact: last_reason should never be std::nullopt here
-            std::optional<std::reference_wrapper<Clause>> last_reason = trail.reasons()[trail.span().rows() - 1];
-            Clause conflict = last_reason->get();
 
+            // Learn an asserting clause
+            auto [asserting_clause, jumpable_levels] = find_asserting_clause(trail);
 
-            while (!conflict.is_asserting(trail)) {
-                
-            }
+            // #if DECISION_PROCEDURE == VSIDS_UNIT
+            //     for (Equation eqn : asserting_clause) {
+
+            //     }
+            // #endif
+            add_clause(asserting_clause);
+
+            // Jump back in the trail
+            trail.resize(trail.size() - jumpable_levels);
         } else {
             // Check for satisfiability
             if (trail.span().rows() == num_vars) {
-                RowSpace rowspace = trail.span();
-                rowspace.to_reduced_echelon_form();
-                return rowspace.col(rowspace.cols() - 1);
+                RowSpace span_without_false = trail.span();
+                span_without_false.pop_last_row();
+                return span_without_false.get_unique_solution();
             }
 
             // Make a decision
-            
-            // For now, decide the first unset variable.
-            // TODO: Change this.
-            for (std::size_t i = 0; i < num_vars; ++i) {
-                Equation x = Equation::unit(num_vars + 1, i);
-                Equation x_not = Equation::unit(num_vars + 1, i).flip(num_vars);
-                if (!trail.span().span_contains(x) && !trail.span().span_contains(x_not)) {
-                    trail.learn(x, std::nullopt);
-                    break;
+            #if DECISION_PROCEDURE == FIXED_UNIT || DECISION_PROCEDURE == RANDOM_UNIT || DECISION_PROCEDURE == RANDOM_EQ
+                for (std::size_t i = 0; i < num_vars; ++i) {
+                    Equation eqn = decision_basis[i];
+                    Equation eqn_reduced = trail.span().reduce_copy(eqn);
+                    Equation eqn_not_reduced = eqn_reduced;
+                    eqn_not_reduced.flip(num_vars);
+                    if (eqn_reduced.any() && eqn_not_reduced.any()) {
+                        trail.learn(eqn, std::nullopt);
+                        break;
+                    }
                 }
-            }
+            #else 
+                assert(false);
+            #endif
         }
     }
 }
 
-std::string to_string(const Equation& eqn, const PrintMode mode) {
+
+
+
+
+std::string Equation::to_string(PrintMode mode) const {
     std::ostringstream oss;
-    for (std::size_t i = 0; i < eqn.size() - 1; ++i) {
-        if (eqn[i]) {
+    if_set_call([&](std::size_t i) {
+        if (i != size() - 1) {
             if (oss.tellp() > 0) oss << " + ";
             oss << "x" << i;
         }
-    }
-    auto constant = eqn.back();
+    });
+
+    auto constant = back();
     if (mode.clause_mode == ClausePrintMode::as_clause) {
         constant = !constant;
     }
@@ -227,11 +304,11 @@ std::string to_string(const Equation& eqn, const PrintMode mode) {
     return "[" + oss.str() + "]";
 }
 
-std::string to_string(const RowSpace& clause, const PrintMode mode) {
+std::string Clause::to_string(PrintMode mode) const {
     std::ostringstream oss;
-    for (const auto& equation : clause) {
+    for (const Equation& equation : *this) {
         if (oss.tellp() > 0) oss << (mode.clause_mode == ClausePrintMode::as_clause ? " v " : " ^ ");
-        oss << to_string(equation, mode);
+        oss << equation.to_string(mode);
     }
     return oss.str();
 }
@@ -239,18 +316,22 @@ std::string to_string(const RowSpace& clause, const PrintMode mode) {
 void Solver::print_clauses(const PrintMode mode) const {
     std::cout << "Solver with " << num_vars << " variables, " << clauses.size() << " clauses:" << std::endl;
     for (const auto& clause : clauses) {
-        std::cout << to_string(clause, mode) << std::endl;
+        std::cout << clause.to_string(mode) << std::endl;
     }
 }
 
-void Solver::print_trail(const PrintMode mode) const {
+void Solver::print_trail(const EquationPrintMode eqn_mode) const {
+    PrintMode mode{eqn_mode, ClausePrintMode::as_rowspace};
+
     std::cout << "Trail of length " << trail.span().rows() << ":" << std::endl;
-    std::cout << "Final row space " << std::endl << to_string(trail.span(), mode) << std::endl;
+    Clause trail_as_clause = trail.span();
+    std::cout << "Final row space " << std::endl << trail_as_clause.to_string(mode) << std::endl;
 
     for (std::size_t i = 0; i < trail.span().rows(); ++i) {
-        std::cout << "Learning " << to_string(trail.span().row(trail.order_map()[i]), mode) << std::endl;
+        Equation eqn = trail.span().row(trail.order_map()[i]);
+        std::cout << "Learning " << eqn.to_string(mode) << std::endl;
         if (trail.reasons()[i]) {
-            std::cout << "Reason: " << std::endl << to_string(*trail.reasons()[i], mode) << std::endl;
+            std::cout << "Reason: " << std::endl << (*trail.reasons()[i]).get().to_string(mode) << std::endl;
         } else {
             std::cout << "Reason: decision" << std::endl;
         }
@@ -337,7 +418,7 @@ Solver Solver::from_DIMACS(const std::string& filename) {
                 equation.set(literal - 1);
             }
 
-            clause.push_to_echelon_form(equation);
+            clause.add_row(equation);
         }
         solver.add_clause(clause);
     }

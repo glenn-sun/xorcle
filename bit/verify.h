@@ -16,7 +16,8 @@
 /// @brief The @c bit_verify macro expands to a no-op @b unless the @c BIT_VERIFY flag is set.
 #ifdef BIT_VERIFY
     #define bit_verify(cond, ...) \
-        if (!(cond)) bit_exit("Statement '{}' is NOT true: {}\n", #cond, std::format(__VA_ARGS__))
+        if (!(cond)) throw std::runtime_error(std::format("Statement '{}' is NOT true: {}\n", #cond, std::format(__VA_ARGS__)));
+        // if (!(cond)) bit_exit("Statement '{}' is NOT true: {}\n", #cond, std::format(__VA_ARGS__))
 #else
     #define bit_verify(cond, ...) void(0)
 #endif
@@ -42,7 +43,8 @@ exit(std::string_view func, std::string_view path, std::size_t line, std::string
 {
     std::cerr << std::format("\nBIT VERIFY FAILED:\nFunction '{}' ({}, line {})", func, basename(path), line);
     if (!payload.empty()) std::cerr << ":\n" << payload;
-    throw std::runtime_error("BIT VERIFY FAILED");
+    std::cerr << '\n' << std::endl;
+    ::exit(1);
 }
 
 } // namespace bit

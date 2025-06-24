@@ -1,3 +1,5 @@
 *.dSYM/
 *.
 .vscode/
+profile.json
+profiler.sh
