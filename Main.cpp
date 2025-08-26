@@ -2,6 +2,18 @@
 #include <getopt.h>
 #include "Solver.h"
 #include <chrono>
+#include <filesystem>
+#include <future>
+#include <thread>
+#include <sstream>
+#include <format>
+#include <queue>
+#include <condition_variable>
+
+namespace fs = std::filesystem;
+
+using namespace std::chrono_literals;
+
 
 // void test() {
 //     // Create a random 5x10 bit matrix
@@ -118,43 +130,76 @@
 //     std::cout << std::endl;
 // }
 
-std::tuple<std::size_t, double, double> run_10_seconds(Solver& solver) {
-    std::size_t n_times = 0;
-    double total_clauses = 0;
-    double total_time = 0.;
+void solve(std::string& filename, std::atomic<bool>& stop_flag) {
+    Solver solver = Solver::from_DIMACS(filename);
+    int num_vars = solver.get_num_vars();
+    int start_num_clauses = solver.get_num_clauses();
 
-    while (total_time < 10000000000) {
-        auto solver_copy = solver;
-        solver.reinitialize_decision_procedure();
-        auto start = std::chrono::high_resolution_clock::now();
-        auto solution = solver_copy.solve();
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double, std::nano> duration = end - start;
-        auto time = duration.count();
+    auto start = std::chrono::high_resolution_clock::now();
+    auto result = solver.solve(stop_flag);
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::nano> duration = end - start;
+    auto time = duration.count();
 
-        n_times += 1;
-        total_clauses += solver_copy.get_num_clauses();
-        total_time += time;
+    std::stringstream ss;
+    ss << "File: " << filename << std::endl;
+    ss << "Number of variables: " << num_vars << std::endl;
+    ss << "Number of clauses: " << start_num_clauses << std::endl;
+    ss << "Final number of clauses: " << solver.get_num_clauses() << std::endl;
+    ss << "Time: " << std::format("{:.{}g}", time / 1000000000, 3) << " s" << std::endl;
+    if (ResultCase::is_timeout(result)) {
+        ss << "Timeout" << std::endl;
+    } else if (ResultCase::is_unsat(result)) {
+        ss << "Unsatisfiable" << std::endl;
+    } else if (ResultCase::is_sat(result)) {
+        ss << "Satisfiable: " << ResultCase::unwrap_sat(result) << std::endl;
     }
-    
-    return std::make_tuple(n_times, total_time / n_times, total_clauses / n_times);
+    ss << std::endl;
+
+    std::cout << ss.str();
 }
+
+// std::tuple<std::size_t, double, double> run_10_seconds(Solver& solver) {
+//     std::size_t n_times = 0;
+//     double total_clauses = 0;
+//     double total_time = 0.;
+
+//     while (total_time < 10000000000) {
+//         auto solver_copy = solver;
+//         solver.reinitialize_decision_procedure();
+//         auto start = std::chrono::high_resolution_clock::now();
+//         auto solution = solver_copy.solve();
+//         auto end = std::chrono::high_resolution_clock::now();
+//         std::chrono::duration<double, std::nano> duration = end - start;
+//         auto time = duration.count();
+
+//         n_times += 1;
+//         total_clauses += solver_copy.get_num_clauses();
+//         total_time += time;
+//     }
+    
+//     return std::make_tuple(n_times, total_time / n_times, total_clauses / n_times);
+// }
 
 int main(int argc, char *argv[]) {
     std::string filename;
+    std::string directory;
     bool help{false};
     bool verbose{false};
+    uint threads{4};
 
     static constexpr struct option long_options[] = {
         {"file", required_argument, 0, 'f'},
+        {"directory", required_argument, 0, 'd'},
         {"help", no_argument, 0, 'h'},
         {"verbose", no_argument, 0, 'v'},
+        {"threads", required_argument, 0, 't'},
         {0, 0, 0, 0}
     };
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "f:hv", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "f:d:hvt:", long_options, &option_index);
         if (option == -1) {
             break;
         }
@@ -162,29 +207,43 @@ int main(int argc, char *argv[]) {
             case 'f':
                 filename = optarg;
                 break;
+            case 'd':
+                directory = optarg;
+                break;
             case 'h':
                 help = true;
                 break;
             case 'v':
                 verbose = true;
                 break;
+            case 't':
+                try {
+                    threads = std::stoul(optarg);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error converting '" << optarg << "' to uint: " 
+                            << e.what() << std::endl;
+                    return 1;
+                }
+                break;
             default:
-                std::cerr << "Usage: " << argv[0] << " [options] <filename>" << std::endl;
+                std::cerr << "Usage: " << argv[0] << " [-f <file> | -d <directory>] [options]" << std::endl;
                 return 1;
         }
     }
 
     if (help) {
-        std::cout << "Usage: " << argv[0] << " [options] <filename>" << std::endl;
+        std::cout << "Usage: " << argv[0] << " [-f <file> | -d <directory>] [options]" << std::endl;
         std::cout << "Options:" << std::endl;
-        std::cout << "  -f, --file <filename>  Specify the filename" << std::endl;
-        std::cout << "  -h, --help             Show this help message" << std::endl;
-        std::cout << "  -v, --verbose          Verbose mode" << std::endl;
+        std::cout << "  -f, --file <filename>        Specify the CNF file" << std::endl;
+        std::cout << "  -d, --directory <directory>  Process all .cnf files in the directory" << std::endl;
+        std::cout << "  -h, --help                   Show this help message" << std::endl;
+        std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
+        std::cout << "  -t, --threads                Number of threads (default: 4)" << std::endl;
         return 0;
     }
 
-    if (filename.empty()) {
-        std::cerr << "Filename is required. Usage: " << argv[0] << " -f <filename> [options]" << std::endl;
+    if ((filename.empty() && directory.empty()) || (!filename.empty() && !directory.empty())) {
+        std::cerr << "Exactly one of filename or directory is required. Usage: " << argv[0] << " [-f <file> | -d <directory>] [options]" << std::endl;
         return 1;
     }
 
@@ -192,22 +251,91 @@ int main(int argc, char *argv[]) {
         std::cout << "Verbose mode enabled" << std::endl;
     }
 
-    Solver solver = Solver::from_DIMACS(filename);
-    std::cout << "Solver with " << solver.get_num_vars() << " variables, " << solver.get_num_clauses() << " clauses:" << std::endl;
+    std::queue<std::string> tasks;
 
-    auto [n_times, time, avg_clauses] = run_10_seconds(solver);
-    std::cout << "Solved " << n_times << " times, "
-                << time / 1000000 << " ms per call, "
-                << avg_clauses << " clauses per call" << std::endl;
+    if (!filename.empty()) {
+        if (!fs::exists(filename)) {
+            std::cerr << "Error: file does not exist: " << filename << std::endl;
+            return 1;
+        }
+        if (!fs::is_regular_file(filename)) {
+            std::cerr << "Error: " << filename << " is not a regular file" << std::endl;
+            return 1;
+        }
+        tasks.push(filename);
+    } else {
+        if (!fs::exists(directory)) {
+            std::cerr << "Error: directory does not exist: " << directory << std::endl;
+            return 1;
+        }
+        if (!fs::is_directory(directory)) {
+            std::cerr << "Error: " << directory << " is not a directory" << std::endl;
+            return 1;
+        }
 
-    // int N = 10000;
+        for (auto const& entry : fs::recursive_directory_iterator(directory)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".cnf") {
+                tasks.push(fs::relative(entry.path(), fs::current_path()).string());
+            }
+        }
+    }
 
-    // test_contains(N);
-    // test_ref_iter(N);
-    // test_ref(N);
-    // test_pivot(N);
-
-    // test();
+    // Create mutex for task queue synchronization
+    std::mutex tasks_mutex;
+    
+    // Create worker threads
+    std::vector<std::thread> workers;
+    for (int i = 0; i < threads; ++i) {
+        workers.emplace_back([&] {
+            while (true) {
+                // Get a task from the queue
+                std::string filename;
+                {
+                    std::lock_guard<std::mutex> lock(tasks_mutex);
+                    if (tasks.empty()) break;
+                    filename = tasks.front();
+                    tasks.pop();
+                }
+                
+                // Set up timeout mechanism
+                std::atomic<bool> stop_flag(false);
+                std::mutex mtx;
+                std::condition_variable cv;
+                bool task_completed = false;
+                
+                // Run the task
+                std::thread task_thread([&] {
+                    solve(filename, stop_flag);
+                    {
+                        std::lock_guard<std::mutex> lock(mtx);
+                        task_completed = true;
+                    }
+                    cv.notify_one();
+                });
+                
+                // Wait for the task to complete or timeout
+                {
+                    std::unique_lock<std::mutex> lock(mtx);
+                    if (!cv.wait_for(lock, 10s, [&] { return task_completed; })) {
+                        // Task timed out
+                        stop_flag = true;
+                    }
+                }
+                
+                // Wait for the task thread to finish
+                if (task_thread.joinable()) {
+                    task_thread.join();
+                }
+            }
+        });
+    }
+    
+    // Wait for all workers to finish
+    for (auto& worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
 
     return 0;
 }

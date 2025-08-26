@@ -8,6 +8,8 @@
 #include <algorithm>
 #include "REFMatrix.h"
 #include "Heap.h"
+#include <atomic>
+#include <variant>
 
 #define FIXED_UNIT 0
 #define RANDOM_UNIT 1
@@ -195,6 +197,35 @@ public:
     std::size_t jumpable_levels() const;
 };
 
+namespace ResultCase {
+    struct Timeout {};
+    struct Unsat {};
+    struct Sat {
+        bit::vector<> values;
+        explicit Sat(bit::vector<> v) : values(std::move(v)) {}
+    };
+
+    inline bool is_timeout(const std::variant<Timeout, Unsat, Sat>& result) {
+        return std::holds_alternative<Timeout>(result);
+    }
+    
+    inline bool is_unsat(const std::variant<Timeout, Unsat, Sat>& result) {
+        return std::holds_alternative<Unsat>(result);
+    }
+    
+    inline bool is_sat(const std::variant<Timeout, Unsat, Sat>& result) {
+        return std::holds_alternative<Sat>(result);
+    }
+
+    inline const bit::vector<>& unwrap_sat(const std::variant<Timeout, Unsat, Sat>& result) {
+        if (const Sat* sat = std::get_if<Sat>(&result)) {
+            return sat->values;
+        }
+        throw std::runtime_error("Expected Sat result");
+    }
+}
+using Result = std::variant<ResultCase::Timeout, ResultCase::Unsat, ResultCase::Sat>;
+
 /// @brief Main solver class.
 class Solver {
 private:
@@ -282,7 +313,7 @@ public:
 
     /// @brief Determine if the set of clauses is satisfiable. If it is,
     /// return a satisfying assignment. Otherwise, return std::nullopt.
-    std::optional<bit::vector<>> solve();
+    Result solve(std::atomic<bool>& stop_flag);
 
     void print_clauses(const PrintMode mode = PrintMode{}) const;
     void print_trail(const EquationPrintMode eqn_mode = EquationPrintMode::standard) const;

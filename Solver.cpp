@@ -201,8 +201,8 @@ std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail)
     return std::make_pair(as_tbs.to_RowSpace(), as_tbs.jumpable_levels());
 }
 
-std::optional<bit::vector<>> Solver::solve() {
-    while (true) {
+Result Solver::solve(std::atomic<bool>& stop_flag) {
+    while (stop_flag.load() == false) {
         // Run unit propagation
         bool conflict = false;
         while (!conflict) {
@@ -221,7 +221,7 @@ std::optional<bit::vector<>> Solver::solve() {
         if (conflict) {
             // Check for unsatisfiability
             if (level() == 0) {
-                return std::nullopt;
+                return ResultCase::Unsat {};
             }
 
             // Learn an asserting clause
@@ -241,7 +241,7 @@ std::optional<bit::vector<>> Solver::solve() {
             if (trail.span().rows() == num_vars) {
                 RowSpace span_without_false = trail.span();
                 span_without_false.pop_last_row();
-                return span_without_false.get_unique_solution();
+                return ResultCase::Sat {span_without_false.get_unique_solution()};
             }
 
             // Make a decision
@@ -261,6 +261,7 @@ std::optional<bit::vector<>> Solver::solve() {
             #endif
         }
     }
+    return ResultCase::Timeout {};
 }
 
 
