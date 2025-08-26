@@ -231,7 +231,13 @@ class Solver {
 private:
     const std::size_t num_vars;
     std::deque<Clause> clauses;
+    std::size_t clause_idx = 0;
     Trail trail;
+
+    /// @brief Determine if the given clause can learn an equation.
+    /// Returns std::nullopt if not possible
+    /// @param clause The clause to test
+    std::optional<Equation> unit_prop_one_clause(Clause& clause);
 
     #if DECISION_PROCEDURE == FIXED_UNIT || DECISION_PROCEDURE == RANDOM_UNIT || DECISION_PROCEDURE == RANDOM_EQ
         std::vector<Equation> decision_basis;

@@ -85,79 +85,90 @@ void Solver::add_clause(Clause& clause) {
     clauses.push_back(clause);
 }
 
-
-std::optional<std::pair<Equation, std::reference_wrapper<Clause>>>Solver::unit_propagate_once() {
-    for (auto& clause : clauses) {
-        // If clause is satisfied, don't do anything
-        Equation witness = trail.span().reduce_copy(clause.row(clause.true_witness));
-        witness.flip(num_vars);
-        if (witness.none()) {
-            continue;
-        } else {
-            // Check if clause is satisfied
-            bool found = false;
-            for (std::size_t i = 0; i < clause.rows(); ++i) {
-                witness = trail.span().reduce_copy(clause.row(i));
-                witness.flip(num_vars);
-                if (witness.none()) {
-                    clause.true_witness = i;
-                    found = true;
-                    break;
-                }
-            }
-            if (found) {
-                continue;
+std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {        
+    // If clause is satisfied, don't do anything
+    Equation witness = trail.span().reduce_copy(clause.row(clause.true_witness));
+    witness.flip(num_vars);
+    if (witness.none()) {
+        return std::nullopt;
+    } else {
+        // Check if clause is satisfied
+        bool found = false;
+        for (std::size_t i = 0; i < clause.rows(); ++i) {
+            witness = trail.span().reduce_copy(clause.row(i));
+            witness.flip(num_vars);
+            if (witness.none()) {
+                clause.true_witness = i;
+                found = true;
+                break;
             }
         }
+        if (found) {
+            return std::nullopt;
+        }
+    }
 
-        // If clause is unit, conflict/propagate are the same
-        if (clause.rows() == 1) {
-            Equation eqn = clause.row(0);
+    // If clause is unit, conflict/propagate are the same
+    if (clause.rows() == 1) {
+        Equation eqn = clause.row(0);
+        eqn.flip(num_vars);
+        return eqn;
+    }
+
+    // Otherwise, check watched equations
+    Equation reduced0 = trail.span().reduce_copy(clause.row(clause.watched0));
+    if (reduced0.none()) {
+        // Find a new equation to watch
+        bool found = false;
+        for (std::size_t i = 0; i < clause.rows(); ++i) {
+            if (i == clause.watched0) continue;
+            Equation reduced = trail.span().reduce_copy(clause.row(i));
+            if (!reduced.none()) {
+                clause.watched0 = i;
+                found = true;
+                break;
+            }
+        }
+        // If none found, return conflict
+        if (!found) {
+            return eqn_false;
+        }
+    }
+    // Postcondition: clause.row(clause.watched0) is non-zero w.r.t. current trail
+
+    // Do the same things with clause.row(clause.watched1), but reduce using clause.row(clause.watched0).
+    Equation reduced1 = trail.span().reduce_with_extra_copy(clause.row(clause.watched1), clause.row(clause.watched0));
+    if (reduced1.none()) {
+        // Find a new equation to watch
+        bool found = false;
+        for (std::size_t i = 0; i < clause.rows(); ++i) {
+            if (i == clause.watched0 || i == clause.watched1) continue;
+            Equation reduced = trail.span().reduce_with_extra_copy(clause.row(i), clause.row(clause.watched0));
+            if (!reduced.none()) {
+                clause.watched1 = i;
+                found = true;
+                break;
+            }
+        }
+        // If none found, learn clause.row(clause.watched0) + 1
+        if (!found) {
+            Equation eqn = clause.row(clause.watched0);
             eqn.flip(num_vars);
-            return std::make_pair(eqn, std::ref(clause));
+            return eqn;
         }
+    }
+    return std::nullopt;
+}
 
-        // Otherwise, check watched equations
-        Equation reduced0 = trail.span().reduce_copy(clause.row(clause.watched0));
-        if (reduced0.none()) {
-            // Find a new equation to watch
-            bool found = false;
-            for (std::size_t i = 0; i < clause.rows(); ++i) {
-                if (i == clause.watched0) continue;
-                Equation reduced = trail.span().reduce_copy(clause.row(i));
-                if (!reduced.none()) {
-                    clause.watched0 = i;
-                    found = true;
-                    break;
-                }
-            }
-            // If none found, return conflict
-            if (!found) {
-                return std::make_pair(eqn_false, std::ref(clause));
-            }
-        }
-        // Postcondition: clause.row(clause.watched0) is non-zero w.r.t. current trail
-
-        // Do the same things with clause.row(clause.watched1), but reduce using clause.row(clause.watched0).
-        Equation reduced1 = trail.span().reduce_with_extra_copy(clause.row(clause.watched1), clause.row(clause.watched0));
-        if (reduced1.none()) {
-            // Find a new equation to watch
-            bool found = false;
-            for (std::size_t i = 0; i < clause.rows(); ++i) {
-                if (i == clause.watched0 || i == clause.watched1) continue;
-                Equation reduced = trail.span().reduce_with_extra_copy(clause.row(i), clause.row(clause.watched0));
-                if (!reduced.none()) {
-                    clause.watched1 = i;
-                    found = true;
-                    break;
-                }
-            }
-            // If none found, learn clause.row(clause.watched0) + 1
-            if (!found) {
-                Equation eqn = clause.row(clause.watched0);
-                eqn.flip(num_vars);
-                return std::make_pair(eqn, std::ref(clause));
-            }
+std::optional<std::pair<Equation, std::reference_wrapper<Clause>>> Solver::unit_propagate_once() {
+    std::size_t start = clause_idx;
+    std::size_t end = start + clauses.size();
+    for (std::size_t i = start; i < end; i++) {
+        Clause& clause = clauses[i % clauses.size()];
+        auto result = unit_prop_one_clause(clause);
+        if (result.has_value()) {
+            clause_idx = (i + 1) % clauses.size();
+            return std::make_pair(result.value(), std::ref(clause));
         }
     }
     // No deductions possible
