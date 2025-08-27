@@ -356,9 +356,9 @@ public:
 
     /// @brief Insert a row at the given index. Uses copy semantics.
     constexpr matrix& insert_row(std::size_t index, const vector_type& r) {
-        if (index > m_row.size()) {
-            throw std::invalid_argument("index > rows()");
-        }
+        // if (index > m_row.size()) {
+        //     throw std::invalid_argument("index > rows()");
+        // } TODO: Change to bit_verify
         m_row.insert(m_row.begin() + index, r);
         return *this;
     }

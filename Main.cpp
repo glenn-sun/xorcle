@@ -12,9 +12,6 @@
 
 namespace fs = std::filesystem;
 
-using namespace std::chrono_literals;
-
-
 // void test() {
 //     // Create a random 5x10 bit matrix
 //     bit::matrix<uint64_t> matrix = bit::matrix<uint64_t>::random(5, 10);
@@ -130,8 +127,8 @@ using namespace std::chrono_literals;
 //     std::cout << std::endl;
 // }
 
-void solve(std::string& filename, std::atomic<bool>& stop_flag) {
-    Solver solver = Solver::from_DIMACS(filename);
+void solve(std::string& filename, DecisionProcedure dec_proc, std::atomic<bool>& stop_flag) {
+    Solver solver = Solver::from_DIMACS(filename, dec_proc);
     int num_vars = solver.get_num_vars();
     int start_num_clauses = solver.get_num_clauses();
 
@@ -187,6 +184,8 @@ int main(int argc, char *argv[]) {
     bool help{false};
     bool verbose{false};
     uint threads{4};
+    DecisionProcedure dec_proc;
+    uint seconds{10};
 
     static constexpr struct option long_options[] = {
         {"file", required_argument, 0, 'f'},
@@ -194,12 +193,14 @@ int main(int argc, char *argv[]) {
         {"help", no_argument, 0, 'h'},
         {"verbose", no_argument, 0, 'v'},
         {"threads", required_argument, 0, 't'},
+        {"decproc", required_argument, 0, 'p'},
+        {"seconds", required_argument, 0, 's'},
         {0, 0, 0, 0}
     };
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "f:d:hvt:", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "f:d:hvt:p:s:", long_options, &option_index);
         if (option == -1) {
             break;
         }
@@ -220,8 +221,29 @@ int main(int argc, char *argv[]) {
                 try {
                     threads = std::stoul(optarg);
                 } catch (const std::exception& e) {
-                    std::cerr << "Error converting '" << optarg << "' to uint: " 
-                            << e.what() << std::endl;
+                    std::cerr << "Error: Cannot convert '" << optarg << "' to uint" << std::endl;
+                    return 1;
+                }
+                break;
+            case 'p': {
+                std::string optarg_str{optarg};
+                if (optarg_str == "fixed_unit") {
+                    dec_proc = DecisionProcedure::fixed_unit;
+                } else if (optarg_str == "random_unit") {
+                    dec_proc = DecisionProcedure::random_unit;
+                } else if (optarg_str == "random_eq") {
+                    dec_proc = DecisionProcedure::random_eq;
+                } else {
+                    std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
+                    return 1;
+                }
+                break;
+            }
+            case 's':
+                try {
+                    seconds = std::stoul(optarg);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: Cannot convert '" << optarg << "' to uint" << std::endl;
                     return 1;
                 }
                 break;
@@ -238,7 +260,11 @@ int main(int argc, char *argv[]) {
         std::cout << "  -d, --directory <directory>  Process all .cnf files in the directory" << std::endl;
         std::cout << "  -h, --help                   Show this help message" << std::endl;
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
-        std::cout << "  -t, --threads                Number of threads (default: 4)" << std::endl;
+        std::cout << "  -t, --threads <n>            Number of threads (default: 4)" << std::endl;
+        std::cout << "  -p, --decproc <proc>         Decision procedure (default: fixed_unit)" << std::endl;
+        std::cout << "                               Options: fixed_unit, random_unit, random_eq" << std::endl;
+        std::cout << "  -s, --seconds <s>            Timeout in seconds (default: 10)" << std::endl;
+        
         return 0;
     }
 
@@ -305,7 +331,7 @@ int main(int argc, char *argv[]) {
                 
                 // Run the task
                 std::thread task_thread([&] {
-                    solve(filename, stop_flag);
+                    solve(filename, dec_proc, stop_flag);
                     {
                         std::lock_guard<std::mutex> lock(mtx);
                         task_completed = true;
@@ -316,7 +342,7 @@ int main(int argc, char *argv[]) {
                 // Wait for the task to complete or timeout
                 {
                     std::unique_lock<std::mutex> lock(mtx);
-                    if (!cv.wait_for(lock, 10s, [&] { return task_completed; })) {
+                    if (!cv.wait_for(lock, std::chrono::seconds(seconds), [&] { return task_completed; })) {
                         // Task timed out
                         stop_flag = true;
                     }

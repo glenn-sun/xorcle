@@ -74,13 +74,29 @@ void REFMatrix::reduce(bit::vector<>& v, bit::vector<>* coeffs) const {
         });
         return;
     } else {
-        std::size_t row = 0;
-        pivot_cols.if_set_call([&](std::size_t i) { 
-            if (v.element(i)) {
-                v ^= M.row(row);
+        // std::size_t row = 0;
+        // pivot_cols.if_set_call([&](std::size_t i) { 
+        //     if (v.element(i)) {
+        //         v ^= M.row(row);
+        //     }
+        //     ++row;
+        // });
+        // std::size_t cols = M.cols();
+        // for (std::size_t i = 0; i < cols; ++i) {
+        //     if (pivot_cols.element(i)) {
+        //         if (v.element(i)) {
+        //             v ^= M.row(row);
+        //         }
+        //         ++row;
+        //     }
+        // }
+
+        std::size_t cols = M.cols();
+        for (std::size_t i = 0; i < cols; ++i) {
+            if (v.element(i) && pivot_cols.element(i)) {
+                v ^= M.row(col_to_row[i]);
             }
-            ++row;
-        });
+        }
         return;
     }
 }

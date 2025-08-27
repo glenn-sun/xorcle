@@ -11,12 +11,7 @@
 #include <atomic>
 #include <variant>
 
-#define FIXED_UNIT 0
-#define RANDOM_UNIT 1
-#define RANDOM_EQ 2
-// #define VSIDS_UNIT 3
-
-#define DECISION_PROCEDURE FIXED_UNIT
+enum class DecisionProcedure { fixed_unit, random_unit, random_eq, vsids_unit };
 
 /// @brief Method to print equations.
 ///
@@ -239,18 +234,23 @@ private:
     /// @param clause The clause to test
     std::optional<Equation> unit_prop_one_clause(Clause& clause);
 
-    #if DECISION_PROCEDURE == FIXED_UNIT || DECISION_PROCEDURE == RANDOM_UNIT || DECISION_PROCEDURE == RANDOM_EQ
-        std::vector<Equation> decision_basis;
+    DecisionProcedure dec_proc = DecisionProcedure::fixed_unit;
 
-    // #elif DECISION_PROCEDURE == VSIDS_UNIT
-    //     std::vector<double> activity;
-    //     Heap<std::size_t> order_heap;
-    //     std::vector<bool> in_heap;
-    //     double inc_amt = 1;
-    //     double decay = 0.95;
-    #endif
+    // Only used for DecisionProcedure::{fixed_unit, random_unit, random_eq}
+    std::vector<Equation> decision_basis;
+
+    struct VsidsParams {
+        // std::vector<double> activity;
+        // Heap<std::size_t> order_heap;
+        // std::vector<bool> in_heap;
+        // double inc_amt = 1;
+        // double decay = 0.95;
+    };
+    // Only used for DecisionProcedure::{vsids_unit}
+    VsidsParams vsids_params;
+
 public:
-    Solver(const std::size_t num_vars) : num_vars(num_vars)
+    Solver(const std::size_t num_vars, const DecisionProcedure dec_proc) : num_vars(num_vars), dec_proc(dec_proc)
     // #if DECISION_PROCEDURE == VSIDS_UNIT
     //     , activity(num_vars, 0.0), order_heap(activity), in_heap(num_vars, true)
     // #endif
@@ -259,39 +259,41 @@ public:
     };
 
     inline void reinitialize_decision_procedure() {
-        
-        #if DECISION_PROCEDURE == FIXED_UNIT 
-            decision_basis.clear();
-            for (std::size_t i = 0; i < num_vars; i++) {
-                decision_basis.push_back(Equation::unit(num_vars + 1, i));
+        switch (dec_proc) {
+            case DecisionProcedure::fixed_unit: {
+                decision_basis.clear();
+                for (std::size_t i = 0; i < num_vars; i++) {
+                    decision_basis.push_back(Equation::unit(num_vars + 1, i));
+                }
+                break;
             }
-        #elif DECISION_PROCEDURE == RANDOM_UNIT
-            decision_basis.clear();
-            for (std::size_t i = 0; i < num_vars; i++) {
-                decision_basis.push_back(Equation::unit(num_vars + 1, i));
+            case DecisionProcedure::random_unit: {
+                decision_basis.clear();
+                for (std::size_t i = 0; i < num_vars; i++) {
+                    decision_basis.push_back(Equation::unit(num_vars + 1, i));
+                }
+            
+                std::random_device rd;
+                std::mt19937 g(rd());
+            
+                std::shuffle(decision_basis.begin(), decision_basis.end(), g);
             }
-        
-            std::random_device rd;
-            std::mt19937 g(rd());
-        
-            std::shuffle(decision_basis.begin(), decision_basis.end(), g);
-        #elif DECISION_PROCEDURE == RANDOM_EQ
-            decision_basis.clear();
-            REFMatrix M;
-            while (decision_basis.size() < num_vars) {
-                Equation eqn = Equation::random(num_vars + 1);
-                Equation eqn_reduced = M.reduce_copy(eqn);
-                if (eqn_reduced != eqn_false && eqn_reduced != eqn_true) {
-                    decision_basis.push_back(eqn_reduced);
-                    M.add_row(eqn_reduced);
+            case DecisionProcedure::random_eq: {
+                decision_basis.clear();
+                REFMatrix M;
+                while (decision_basis.size() < num_vars) {
+                    Equation eqn = Equation::random(num_vars + 1);
+                    Equation eqn_reduced = M.reduce_copy(eqn);
+                    if (eqn_reduced != eqn_false && eqn_reduced != eqn_true) {
+                        decision_basis.push_back(eqn_reduced);
+                        M.add_row(eqn_reduced);
+                    }
                 }
             }
-            std::cout << "done" << std::endl;
-        // #elif DECISION_PROCEDURE == VSIDS_UNIT
-        //     activity = std::vector<double>(num_vars, 0.0);
-        //     Heap<std::size_t> order_heap(activity);
-        //     in_heap = std::vector<bool>(num_vars, true);
-        #endif
+            case DecisionProcedure::vsids_unit: {
+                // TODO
+            }
+        }
     }
 
     std::size_t get_num_vars() const { return num_vars; }
@@ -356,6 +358,6 @@ public:
     /// (-1 -2 ) ( -3) 0
     ///
     /// All four ways will be stored as [x1 + x2 = 0] ^ [x3 = 1].
-    static Solver from_DIMACS(const std::string& filename);
+    static Solver from_DIMACS(const std::string& filename, const DecisionProcedure dec_proc);
 };
 

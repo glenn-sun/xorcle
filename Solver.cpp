@@ -256,20 +256,25 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             }
 
             // Make a decision
-            #if DECISION_PROCEDURE == FIXED_UNIT || DECISION_PROCEDURE == RANDOM_UNIT || DECISION_PROCEDURE == RANDOM_EQ
-                for (std::size_t i = 0; i < num_vars; ++i) {
-                    Equation eqn = decision_basis[i];
-                    Equation eqn_reduced = trail.span().reduce_copy(eqn);
-                    Equation eqn_not_reduced = eqn_reduced;
-                    eqn_not_reduced.flip(num_vars);
-                    if (eqn_reduced.any() && eqn_not_reduced.any()) {
-                        trail.learn(eqn, std::nullopt);
-                        break;
+            switch (dec_proc) {
+                case DecisionProcedure::fixed_unit:
+                case DecisionProcedure::random_unit:
+                case DecisionProcedure::random_eq: {
+                    for (std::size_t i = 0; i < num_vars; ++i) {
+                        Equation eqn = decision_basis[i];
+                        Equation eqn_reduced = trail.span().reduce_copy(eqn);
+                        Equation eqn_not_reduced = eqn_reduced;
+                        eqn_not_reduced.flip(num_vars);
+                        if (eqn_reduced.any() && eqn_not_reduced.any()) {
+                            trail.learn(eqn, std::nullopt);
+                            break;
+                        }
                     }
+                    break;
                 }
-            #else 
-                assert(false);
-            #endif
+                case DecisionProcedure::vsids_unit:
+                    assert(false);
+            }
         }
     }
     return ResultCase::Timeout {};
@@ -350,7 +355,7 @@ void Solver::print_trail(const EquationPrintMode eqn_mode) const {
     }
 }
 
-Solver Solver::from_DIMACS(const std::string& filename) {
+Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedure dec_proc) {
     std::ifstream file{filename};
     std::string line;
 
@@ -371,7 +376,7 @@ Solver Solver::from_DIMACS(const std::string& filename) {
     std::string tmp;
     iss >> tmp >> tmp >> num_vars;
 
-    Solver solver{num_vars};
+    Solver solver{num_vars, dec_proc};
 
     while (std::getline(file, line)) {
         if (line.empty() || line[0] == 'c') {
