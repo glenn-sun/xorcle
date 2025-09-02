@@ -134,5 +134,10 @@ bit::vector<> REFMatrix::pop_first_row() {
     bit::vector<> first_row = M.row(0);
     M.erase_row(0);
     pivot_cols.reset(pivot_cols.first_set());
+    for (std::size_t i = 0; i < pivot_cols.size(); ++i) {
+        if (pivot_cols.element(i)) {
+            --col_to_row[i];
+        }
+    }
     return first_row;
 }

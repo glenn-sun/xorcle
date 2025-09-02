@@ -233,6 +233,8 @@ int main(int argc, char *argv[]) {
                     dec_proc = DecisionProcedure::random_unit;
                 } else if (optarg_str == "random_eq") {
                     dec_proc = DecisionProcedure::random_eq;
+                } else if (optarg_str == "vsids_unit") {
+                    dec_proc = DecisionProcedure::vsids_unit; 
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
                     return 1;

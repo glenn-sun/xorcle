@@ -7,9 +7,10 @@
 #include <random>
 #include <algorithm>
 #include "REFMatrix.h"
-#include "Heap.h"
+// #include "Heap.h"
 #include <atomic>
 #include <variant>
+#include <queue>
 
 enum class DecisionProcedure { fixed_unit, random_unit, random_eq, vsids_unit };
 
@@ -221,6 +222,15 @@ namespace ResultCase {
 }
 using Result = std::variant<ResultCase::Timeout, ResultCase::Unsat, ResultCase::Sat>;
 
+struct VsidsComparator {
+    const std::vector<double>* activity;
+    VsidsComparator(const std::vector<double>& activity) : activity(&activity) {}
+    bool operator()(std::size_t x, std::size_t y) const {
+        return (*activity)[x] < (*activity)[y];
+    }
+};
+
+
 /// @brief Main solver class.
 class Solver {
 private:
@@ -240,20 +250,34 @@ private:
     std::vector<Equation> decision_basis;
 
     struct VsidsParams {
-        // std::vector<double> activity;
-        // Heap<std::size_t> order_heap;
-        // std::vector<bool> in_heap;
-        // double inc_amt = 1;
-        // double decay = 0.95;
+        std::vector<double> activity;
+        std::priority_queue<std::size_t, std::vector<std::size_t>, VsidsComparator> order_heap;
+        double inc_amt = 1;
+        double decay = 0.95;
+
+        VsidsParams(std::size_t n) : activity(n, 0), order_heap(VsidsComparator(activity)) {};
+
+        void bump_activity(std::size_t v) {
+            activity[v] += inc_amt;
+            if (activity[v] > 1e100) {
+                for (std::size_t i = 0; i < activity.size(); i++)
+                    activity[i] *= 1e-100;
+                inc_amt *= 1e-100;
+            }
+
+            // Update heap
+            // TODO: Currently not needed because heap is completely 
+            // recomputed at end of conflict analysis
+        }
     };
     // Only used for DecisionProcedure::{vsids_unit}
     VsidsParams vsids_params;
 
 public:
-    Solver(const std::size_t num_vars, const DecisionProcedure dec_proc) : num_vars(num_vars), dec_proc(dec_proc)
-    // #if DECISION_PROCEDURE == VSIDS_UNIT
-    //     , activity(num_vars, 0.0), order_heap(activity), in_heap(num_vars, true)
-    // #endif
+    Solver(const std::size_t num_vars, const DecisionProcedure dec_proc) : 
+        num_vars(num_vars), 
+        dec_proc(dec_proc),
+        vsids_params(num_vars)
     {
         reinitialize_decision_procedure();
     };
@@ -291,7 +315,13 @@ public:
                 }
             }
             case DecisionProcedure::vsids_unit: {
-                // TODO
+                vsids_params.activity.assign(num_vars, 0);
+                vsids_params.order_heap = std::priority_queue<std::size_t, std::vector<std::size_t>, VsidsComparator>(VsidsComparator(vsids_params.activity));
+                for (std::size_t i = 0; i < num_vars; i++) {
+                    vsids_params.order_heap.push(i);
+                }
+                vsids_params.inc_amt = 1;
+                break;
             }
         }
     }
@@ -317,7 +347,7 @@ public:
     /// to the last decision. Also returns the number of levels to jump back.
     ///
     /// Requires: trail is complete (ends with contradiction)
-    std::pair<Clause, std::size_t>  find_asserting_clause(const Trail& trail) const;
+    std::pair<Clause, std::size_t>  find_asserting_clause(const Trail& trail);
 
     /// @brief Determine if the set of clauses is satisfiable. If it is,
     /// return a satisfying assignment. Otherwise, return std::nullopt.

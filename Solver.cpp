@@ -125,6 +125,7 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
             Equation reduced = trail.span().reduce_copy(clause.row(i));
             if (!reduced.none()) {
                 clause.watched0 = i;
+                reduced0 = trail.span().reduce_copy(clause.row(clause.watched0));
                 found = true;
                 break;
             }
@@ -137,13 +138,13 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
     // Postcondition: clause.row(clause.watched0) is non-zero w.r.t. current trail
 
     // Do the same things with clause.row(clause.watched1), but reduce using clause.row(clause.watched0).
-    Equation reduced1 = trail.span().reduce_with_extra_copy(clause.row(clause.watched1), clause.row(clause.watched0));
+    Equation reduced1 = trail.span().reduce_with_extra_copy(clause.row(clause.watched1), reduced0);
     if (reduced1.none()) {
         // Find a new equation to watch
         bool found = false;
         for (std::size_t i = 0; i < clause.rows(); ++i) {
             if (i == clause.watched0 || i == clause.watched1) continue;
-            Equation reduced = trail.span().reduce_with_extra_copy(clause.row(i), clause.row(clause.watched0));
+            Equation reduced = trail.span().reduce_with_extra_copy(clause.row(i), reduced0);
             if (!reduced.none()) {
                 clause.watched1 = i;
                 found = true;
@@ -175,7 +176,7 @@ std::optional<std::pair<Equation, std::reference_wrapper<Clause>>> Solver::unit_
     return std::nullopt;
 }
 
-std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail) const {
+std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail) {
     // Fact: last_reason should never be std::nullopt here
     std::optional<std::reference_wrapper<Clause>> last_reason = trail.reasons()[trail.span().rows() - 1];
     TrailBasisSpace as_tbs = TrailBasisSpace::from_RowSpace(last_reason->get(), trail);
@@ -201,6 +202,11 @@ std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail)
 
         for (Coefficients row : reason) {
             as_tbs.add_row(row);
+        }
+
+        if (dec_proc == DecisionProcedure::vsids_unit) {
+            std::size_t leading_term = trail.span().row(trail.order_map()[index]).first_set();
+            vsids_params.bump_activity(leading_term);
         }
 
         for (std::size_t col = 0; col <= non_zero_col; ++col) {
@@ -238,11 +244,24 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             // Learn an asserting clause
             auto [asserting_clause, jumpable_levels] = find_asserting_clause(trail);
 
-            // #if DECISION_PROCEDURE == VSIDS_UNIT
-            //     for (Equation eqn : asserting_clause) {
+            if (dec_proc == DecisionProcedure::vsids_unit) {
+                // Bump vars in final clause
+                for (std::size_t i = 0; i < asserting_clause.rows(); ++i) {
+                    std::size_t var = asserting_clause.row(i).first_set();
+                    vsids_params.bump_activity(var);
+                }
 
-            //     }
-            // #endif
+                // Decay activity by increasing increment
+                vsids_params.inc_amt *= (1 / vsids_params.decay);
+
+                // Reset entire order_heap
+                // TODO: Store a snapshot in the TrailSnapshot to avoid this
+                vsids_params.order_heap = std::priority_queue<std::size_t, std::vector<std::size_t>, VsidsComparator>(VsidsComparator(vsids_params.activity));
+                for (std::size_t i = 0; i < num_vars; i++) {
+                    vsids_params.order_heap.push(i);
+                }
+            }
+
             add_clause(asserting_clause);
 
             // Jump back in the trail
@@ -272,8 +291,19 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
                     }
                     break;
                 }
-                case DecisionProcedure::vsids_unit:
-                    assert(false);
+                case DecisionProcedure::vsids_unit: {
+                    Equation eqn, eqn_reduced, eqn_not_reduced;
+                    do {
+                        std::size_t next = vsids_params.order_heap.top();
+                        vsids_params.order_heap.pop();
+                        eqn = Equation::unit(num_vars + 1, next);
+                        eqn_reduced = trail.span().reduce_copy(eqn);
+                        eqn_not_reduced = eqn_reduced;
+                        eqn_not_reduced.flip(num_vars);
+                    } while (eqn_reduced.none() || eqn_not_reduced.none());
+                    trail.learn(eqn, std::nullopt);
+                    break;
+                }
             }
         }
     }
