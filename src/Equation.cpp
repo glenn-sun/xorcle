@@ -1,5 +1,5 @@
-#include "Equation.h"
 #include <string>
+#include "Equation.h"
 
 std::string Equation::to_string(PrintMode mode) const {
     std::ostringstream oss;
