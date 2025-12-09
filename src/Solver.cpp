@@ -82,6 +82,11 @@ void Solver::add_clause(Clause& clause) {
     if (clause.rows() == 0) { 
         return;
     }
+
+    watchlist.by_leading_term[clause.row(clause.watched0).first_set()].push_back(clauses.size());
+    if (clause.rows() > 1) {
+        watchlist.by_leading_term[clause.row(clause.watched1).first_set()].push_back(clauses.size());
+    }
     clauses.push_back(clause);
 }
 
@@ -125,6 +130,7 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
             Equation reduced = trail.span().reduce_copy(clause.row(i));
             if (!reduced.none()) {
                 clause.watched0 = i;
+                
                 reduced0 = trail.span().reduce_copy(clause.row(clause.watched0));
                 found = true;
                 break;

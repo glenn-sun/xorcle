@@ -184,7 +184,7 @@ int main(int argc, char *argv[]) {
     bool help{false};
     bool verbose{false};
     uint threads{4};
-    DecisionProcedure dec_proc;
+    DecisionProcedure dec_proc{DecisionProcedure::fixed_unit};
     uint seconds{10};
 
     static constexpr struct option long_options[] = {

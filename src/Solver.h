@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <set>
 #include <string>
 #include <optional>
 #include <functional>
@@ -230,6 +231,45 @@ struct VsidsComparator {
     }
 };
 
+using ClauseId = std::size_t;
+using EquationId = std::size_t;
+
+// class Watchlist {
+// private:
+//     std::vector<bit::vector<>> equations;
+//     // watches :: EquationId -> std::set<ClauseId>
+//     std::vector<std::set<ClauseId>> watches;
+//     // unreduced_forms :: EquationId (of a reduced equation) -> std::set<EquationId>
+//     std::vector<std::set<EquationId>> unreduced_forms;
+//     // reduces_to :: EquationId (of any equation) -> std::set<EquationId>
+//     std::vector<std::set<EquationId>> reduces_to;
+
+//     const Trail& trail;
+
+// public:
+//     Watchlist(const Trail& trail) : trail(trail) {}
+
+//     void add_clause(const Clause& clause, ClauseId cid) {
+//         for (Equation eqn : {clause.row(clause.watched0), clause.row(clause.watched1)}) {
+//             auto eid_it = std::find(equations.begin(), equations.end(), eqn);
+//             if (eid_it == equations.end()) {
+//                 equations.push_back(eqn);
+//                 watches.push_back({cid});
+//                 unreduced_forms.push_back(std::set<EquationId>());
+//             } else {
+//                 EquationId eid = std::distance(equations.begin(), eid_it);
+//                 watches[eid].insert(cid);
+//             }
+//         }
+//     }
+// };
+
+class Watchlist {
+public:
+    std::vector<std::vector<ClauseId>> by_leading_term;
+    Watchlist(std::size_t num_vars) : by_leading_term(num_vars) {}
+};
+
 
 /// @brief Main solver class.
 class Solver {
@@ -238,13 +278,14 @@ private:
     std::deque<Clause> clauses;
     std::size_t clause_idx = 0;
     Trail trail;
+    Watchlist watchlist;
 
     /// @brief Determine if the given clause can learn an equation.
     /// Returns std::nullopt if not possible
     /// @param clause The clause to test
     std::optional<Equation> unit_prop_one_clause(Clause& clause);
 
-    DecisionProcedure dec_proc = DecisionProcedure::fixed_unit;
+    DecisionProcedure dec_proc;
 
     // Only used for DecisionProcedure::{fixed_unit, random_unit, random_eq}
     std::vector<Equation> decision_basis;
@@ -277,7 +318,8 @@ public:
     Solver(const std::size_t num_vars, const DecisionProcedure dec_proc) : 
         num_vars(num_vars), 
         dec_proc(dec_proc),
-        vsids_params(num_vars)
+        vsids_params(num_vars),
+        watchlist(num_vars)
     {
         reinitialize_decision_procedure();
     };
