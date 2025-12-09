@@ -6,3 +6,4 @@ profiler.sh
 submitted/
 *.DS_Store
 out.txt
+bin/

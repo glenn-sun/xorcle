@@ -1,82 +1,7 @@
 #include <fstream>
-#include <sstream>
 #include <cassert>
-#include <cstdlib>
-#include <ctime>
 #include "Solver.h"
-
-bit::vector<> RowSpace::get_unique_solution() const {
-    bit::matrix<> M_copy = M;
-    M_copy.to_reduced_echelon_form();
-    return M_copy.col(M_copy.cols() - 1);
-}
-
-TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail) {
-    TrailBasisSpace tbs(trail);
-    for (const Equation& eqn : rs) {
-        // Coefficients in representation order
-        Coefficients coeffs;
-        trail.span().reduce_copy(eqn, &coeffs);
-
-        // Convert to trail basis order
-        std::size_t m = coeffs.size();
-        Coefficients tbs_row = Coefficients::zeros(m);
-        coeffs.if_set_call([&](std::size_t i) {
-            tbs_row.set(m - trail.reverse_order_map()[i] - 1);
-        });
-        tbs.add_row(tbs_row);
-    }
-    return tbs;
-}
-
-RowSpace TrailBasisSpace::to_RowSpace() const {
-    RowSpace rs;
-    for (const Coefficients& tbs_row : *this) {
-        Equation eqn = Equation::zeros(trail.span().cols());
-        tbs_row.if_set_call([&](std::size_t i) {
-            eqn += trail.span().row(trail.order_map()[cols()-i-1]);
-        });
-        rs.add_row(eqn);
-    }
-    return rs;
-}
-
-std::size_t TrailBasisSpace::jumpable_levels() const {
-    if (rows() == 1) {
-        return trail.size() - 1;
-    }
-
-    std::size_t jump = 1;
-    bit::vector<> new_part;
-    while (jump < trail.size()) {
-        std::size_t last_decision = trail[trail.size() - 1 - jump].span.rows();
-        std::size_t n_current_level = trail.span().rows() - last_decision;
-        new_part = row(1).sub(n_current_level);
-        if (new_part.any()) {
-            return jump - 1;
-        }
-        ++jump;
-    } 
-    
-    return jump - 1;
-}
-
-void TrailSnapshot::learn(const Equation& eqn, std::optional<std::reference_wrapper<Clause>> reason) {
-    std::size_t inserted_index;
-    span.add_row(eqn, &inserted_index);
-    reasons.push_back(reason);
-
-    // Update order map
-    for (std::size_t& span_index : order_map) {
-        if (span_index >= inserted_index) {
-            ++span_index;
-        }
-    }
-    order_map.push_back(inserted_index);
-
-    // Update reverse order map
-    reverse_order_map.insert(reverse_order_map.begin() + inserted_index, order_map.size() - 1);
-}
+#include "TrailBasisSpace.h"
 
 void Solver::add_clause(Clause& clause) {
     if (clause.rows() == 0) { 
@@ -320,51 +245,6 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
 
 
 
-std::string Equation::to_string(PrintMode mode) const {
-    std::ostringstream oss;
-    if_set_call([&](std::size_t i) {
-        if (i != size() - 1) {
-            if (oss.tellp() > 0) oss << " + ";
-            oss << "x" << i;
-        }
-    });
-
-    auto constant = back();
-    if (mode.clause_mode == ClausePrintMode::as_clause) {
-        constant = !constant;
-    }
-    switch (mode.equation_mode) {
-        case EquationPrintMode::standard:
-            if (oss.tellp() == 0) oss << "0";
-            oss << " = " << (constant ? "1" : "0");
-            break;
-        case EquationPrintMode::equals_0:
-            if (oss.tellp() == 0) {
-                oss << (constant ? "1" : "0") << " = 0";
-            } else {
-                oss << (constant ? " + 1" : "") << " = 0";
-            }
-            break;
-        case EquationPrintMode::equals_1:
-            if (oss.tellp() == 0) {
-                oss << (constant ? "0" : "1") << " = 1";
-            } else {
-                oss << (constant ? "" : " + 1") << " = 1";
-            }
-            break;
-    }
-    
-    return "[" + oss.str() + "]";
-}
-
-std::string Clause::to_string(PrintMode mode) const {
-    std::ostringstream oss;
-    for (const Equation& equation : *this) {
-        if (oss.tellp() > 0) oss << (mode.clause_mode == ClausePrintMode::as_clause ? " v " : " ^ ");
-        oss << equation.to_string(mode);
-    }
-    return oss.str();
-}
 
 void Solver::print_clauses(const PrintMode mode) const {
     std::cout << "Solver with " << num_vars << " variables, " << clauses.size() << " clauses:" << std::endl;
