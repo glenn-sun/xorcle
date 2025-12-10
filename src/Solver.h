@@ -1,11 +1,10 @@
 #pragma once
 
 #include <variant>
-#include <queue>
 #include <algorithm>
 #include "Trail.h"
-
-enum class DecisionProcedure { fixed_unit, random_unit, random_eq, vsids_unit };
+#include "DecisionProcedure.h"
+#include "Watchlist.h"
 
 namespace ResultCase {
     struct Timeout {};
@@ -36,54 +35,6 @@ namespace ResultCase {
 }
 using Result = std::variant<ResultCase::Timeout, ResultCase::Unsat, ResultCase::Sat>;
 
-struct VsidsComparator {
-    const std::vector<double>* activity;
-    VsidsComparator(const std::vector<double>& activity) : activity(&activity) {}
-    bool operator()(std::size_t x, std::size_t y) const {
-        return (*activity)[x] < (*activity)[y];
-    }
-};
-
-using ClauseId = std::size_t;
-using EquationId = std::size_t;
-
-// class Watchlist {
-// private:
-//     std::vector<bit::vector<>> equations;
-//     // watches :: EquationId -> std::set<ClauseId>
-//     std::vector<std::set<ClauseId>> watches;
-//     // unreduced_forms :: EquationId (of a reduced equation) -> std::set<EquationId>
-//     std::vector<std::set<EquationId>> unreduced_forms;
-//     // reduces_to :: EquationId (of any equation) -> std::set<EquationId>
-//     std::vector<std::set<EquationId>> reduces_to;
-
-//     const Trail& trail;
-
-// public:
-//     Watchlist(const Trail& trail) : trail(trail) {}
-
-//     void add_clause(const Clause& clause, ClauseId cid) {
-//         for (Equation eqn : {clause.row(clause.watched0), clause.row(clause.watched1)}) {
-//             auto eid_it = std::find(equations.begin(), equations.end(), eqn);
-//             if (eid_it == equations.end()) {
-//                 equations.push_back(eqn);
-//                 watches.push_back({cid});
-//                 unreduced_forms.push_back(std::set<EquationId>());
-//             } else {
-//                 EquationId eid = std::distance(equations.begin(), eid_it);
-//                 watches[eid].insert(cid);
-//             }
-//         }
-//     }
-// };
-
-class Watchlist {
-public:
-    std::vector<std::vector<ClauseId>> by_leading_term;
-    Watchlist(std::size_t num_vars) : by_leading_term(num_vars) {}
-};
-
-
 /// @brief Main solver class.
 class Solver {
 private:
@@ -100,86 +51,11 @@ private:
 
     DecisionProcedure dec_proc;
 
-    // Only used for DecisionProcedure::{fixed_unit, random_unit, random_eq}
-    std::vector<Equation> decision_basis;
-
-    struct VsidsParams {
-        std::vector<double> activity;
-        std::priority_queue<std::size_t, std::vector<std::size_t>, VsidsComparator> order_heap;
-        double inc_amt = 1;
-        double decay = 0.95;
-
-        VsidsParams(std::size_t n) : activity(n, 0), order_heap(VsidsComparator(activity)) {};
-
-        void bump_activity(std::size_t v) {
-            activity[v] += inc_amt;
-            if (activity[v] > 1e100) {
-                for (std::size_t i = 0; i < activity.size(); i++)
-                    activity[i] *= 1e-100;
-                inc_amt *= 1e-100;
-            }
-
-            // Update heap
-            // TODO: Currently not needed because heap is completely 
-            // recomputed at end of conflict analysis
-        }
-    };
-    // Only used for DecisionProcedure::{vsids_unit}
-    VsidsParams vsids_params;
-
 public:
-    Solver(const std::size_t num_vars, const DecisionProcedure dec_proc) : 
+    Solver(const std::size_t num_vars, DecisionProcedure dec_proc) : 
         num_vars(num_vars), 
         dec_proc(dec_proc),
-        vsids_params(num_vars),
-        watchlist(num_vars)
-    {
-        reinitialize_decision_procedure();
-    };
-
-    inline void reinitialize_decision_procedure() {
-        switch (dec_proc) {
-            case DecisionProcedure::fixed_unit: {
-                decision_basis.clear();
-                for (std::size_t i = 0; i < num_vars; i++) {
-                    decision_basis.push_back(Equation::unit(num_vars + 1, i));
-                }
-                break;
-            }
-            case DecisionProcedure::random_unit: {
-                decision_basis.clear();
-                for (std::size_t i = 0; i < num_vars; i++) {
-                    decision_basis.push_back(Equation::unit(num_vars + 1, i));
-                }
-            
-                std::random_device rd;
-                std::mt19937 g(rd());
-            
-                std::shuffle(decision_basis.begin(), decision_basis.end(), g);
-            }
-            case DecisionProcedure::random_eq: {
-                decision_basis.clear();
-                REFMatrix M;
-                while (decision_basis.size() < num_vars) {
-                    Equation eqn = Equation::random(num_vars + 1);
-                    Equation eqn_reduced = M.reduce_copy(eqn);
-                    if (eqn_reduced != eqn_false && eqn_reduced != eqn_true) {
-                        decision_basis.push_back(eqn_reduced);
-                        M.add_row(eqn_reduced);
-                    }
-                }
-            }
-            case DecisionProcedure::vsids_unit: {
-                vsids_params.activity.assign(num_vars, 0);
-                vsids_params.order_heap = std::priority_queue<std::size_t, std::vector<std::size_t>, VsidsComparator>(VsidsComparator(vsids_params.activity));
-                for (std::size_t i = 0; i < num_vars; i++) {
-                    vsids_params.order_heap.push(i);
-                }
-                vsids_params.inc_amt = 1;
-                break;
-            }
-        }
-    }
+        watchlist(num_vars) {};
 
     std::size_t get_num_vars() const { return num_vars; }
     std::size_t get_num_clauses() const { return clauses.size(); }
@@ -243,6 +119,6 @@ public:
     /// (-1 -2 ) ( -3) 0
     ///
     /// All four ways will be stored as [x1 + x2 = 0] ^ [x3 = 1].
-    static Solver from_DIMACS(const std::string& filename, const DecisionProcedure dec_proc);
+    static Solver from_DIMACS(const std::string& filename, const DecisionProcedureName dpn);
 };
 

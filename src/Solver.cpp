@@ -135,10 +135,9 @@ std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail)
             as_tbs.add_row(row);
         }
 
-        if (dec_proc == DecisionProcedure::vsids_unit) {
-            std::size_t leading_term = trail.span().row(trail.order_map()[index]).first_set();
-            vsids_params.bump_activity(leading_term);
-        }
+        std::visit([&trail, index](auto& dec_proc_concrete) {
+            dec_proc_concrete.update_with_critical_equation(trail.span().row(trail.order_map()[index]));
+        }, dec_proc);
 
         for (std::size_t col = 0; col <= non_zero_col; ++col) {
             assert(as_tbs.col(col).none());
@@ -175,23 +174,9 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             // Learn an asserting clause
             auto [asserting_clause, jumpable_levels] = find_asserting_clause(trail);
 
-            if (dec_proc == DecisionProcedure::vsids_unit) {
-                // Bump vars in final clause
-                for (std::size_t i = 0; i < asserting_clause.rows(); ++i) {
-                    std::size_t var = asserting_clause.row(i).first_set();
-                    vsids_params.bump_activity(var);
-                }
-
-                // Decay activity by increasing increment
-                vsids_params.inc_amt *= (1 / vsids_params.decay);
-
-                // Reset entire order_heap
-                // TODO: Store a snapshot in the TrailSnapshot to avoid this
-                vsids_params.order_heap = std::priority_queue<std::size_t, std::vector<std::size_t>, VsidsComparator>(VsidsComparator(vsids_params.activity));
-                for (std::size_t i = 0; i < num_vars; i++) {
-                    vsids_params.order_heap.push(i);
-                }
-            }
+            std::visit([&asserting_clause](auto& dec_proc_concrete) {
+                dec_proc_concrete.update_with_asserting_clause(asserting_clause);
+            }, dec_proc);
 
             add_clause(asserting_clause);
 
@@ -206,36 +191,10 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             }
 
             // Make a decision
-            switch (dec_proc) {
-                case DecisionProcedure::fixed_unit:
-                case DecisionProcedure::random_unit:
-                case DecisionProcedure::random_eq: {
-                    for (std::size_t i = 0; i < num_vars; ++i) {
-                        Equation eqn = decision_basis[i];
-                        Equation eqn_reduced = trail.span().reduce_copy(eqn);
-                        Equation eqn_not_reduced = eqn_reduced;
-                        eqn_not_reduced.flip(num_vars);
-                        if (eqn_reduced.any() && eqn_not_reduced.any()) {
-                            trail.learn(eqn, std::nullopt);
-                            break;
-                        }
-                    }
-                    break;
-                }
-                case DecisionProcedure::vsids_unit: {
-                    Equation eqn, eqn_reduced, eqn_not_reduced;
-                    do {
-                        std::size_t next = vsids_params.order_heap.top();
-                        vsids_params.order_heap.pop();
-                        eqn = Equation::unit(num_vars + 1, next);
-                        eqn_reduced = trail.span().reduce_copy(eqn);
-                        eqn_not_reduced = eqn_reduced;
-                        eqn_not_reduced.flip(num_vars);
-                    } while (eqn_reduced.none() || eqn_not_reduced.none());
-                    trail.learn(eqn, std::nullopt);
-                    break;
-                }
-            }
+            std::visit([this](auto& dec_proc_concrete) {
+                auto decision = dec_proc_concrete.make_decision(trail.span());
+                trail.learn(decision, std::nullopt);
+            }, dec_proc);
         }
     }
     return ResultCase::Timeout {};
@@ -271,7 +230,7 @@ void Solver::print_trail(const EquationPrintMode eqn_mode) const {
     }
 }
 
-Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedure dec_proc) {
+Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureName dpn) {
     std::ifstream file{filename};
     std::string line;
 
@@ -291,6 +250,20 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedure 
     std::size_t num_vars;
     std::string tmp;
     iss >> tmp >> tmp >> num_vars;
+
+    DecisionProcedure dec_proc = [&] {
+        switch (dpn) {
+            case DecisionProcedureName::fixed_unit:
+                return DecisionProcedure{FixedUnit(num_vars)};
+            case DecisionProcedureName::random_unit:
+                return DecisionProcedure{RandomUnit(num_vars)};
+            case DecisionProcedureName::random_eq:
+                return DecisionProcedure{RandomEq(num_vars)};
+            case DecisionProcedureName::vsids_unit:
+                return DecisionProcedure{VsidsUnit(num_vars)};
+        }
+    }();
+
 
     Solver solver{num_vars, dec_proc};
 

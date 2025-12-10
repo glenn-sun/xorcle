@@ -6,8 +6,8 @@
 
 namespace fs = std::filesystem;
 
-void solve(std::string& filename, DecisionProcedure dec_proc, std::atomic<bool>& stop_flag) {
-    Solver solver = Solver::from_DIMACS(filename, dec_proc);
+void solve(std::string& filename, DecisionProcedureName dpn, std::atomic<bool>& stop_flag) {
+    Solver solver = Solver::from_DIMACS(filename, dpn);
     int num_vars = solver.get_num_vars();
     int start_num_clauses = solver.get_num_clauses();
 
@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
     bool help{false};
     bool verbose{false};
     uint threads{4};
-    DecisionProcedure dec_proc{DecisionProcedure::fixed_unit};
+    DecisionProcedureName dpn{DecisionProcedureName::fixed_unit};
     uint seconds{10};
 
     static constexpr struct option long_options[] = {
@@ -85,13 +85,13 @@ int main(int argc, char *argv[]) {
             case 'p': {
                 std::string optarg_str{optarg};
                 if (optarg_str == "fixed_unit") {
-                    dec_proc = DecisionProcedure::fixed_unit;
+                    dpn = DecisionProcedureName::fixed_unit;
                 } else if (optarg_str == "random_unit") {
-                    dec_proc = DecisionProcedure::random_unit;
+                    dpn = DecisionProcedureName::random_unit;
                 } else if (optarg_str == "random_eq") {
-                    dec_proc = DecisionProcedure::random_eq;
+                    dpn = DecisionProcedureName::random_eq;
                 } else if (optarg_str == "vsids_unit") {
-                    dec_proc = DecisionProcedure::vsids_unit; 
+                    dpn = DecisionProcedureName::vsids_unit; 
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
                     return 1;
@@ -190,7 +190,7 @@ int main(int argc, char *argv[]) {
                 
                 // Run the task
                 std::thread task_thread([&] {
-                    solve(filename, dec_proc, stop_flag);
+                    solve(filename, dpn, stop_flag);
                     {
                         std::lock_guard<std::mutex> lock(mtx);
                         task_completed = true;
