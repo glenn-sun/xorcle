@@ -29,8 +29,10 @@ public:
     /// @param v The new row to push
     /// @param inserted_index If present, on return this will have the index in this matrix
     /// to which a new row was inserted
-    void add_row(const bit::vector<>& v, std::size_t* inserted_index = nullptr);
+    void add_row(const bit::vector<>& v);
     
+    std::optional<std::size_t> add_row_get_index(const bit::vector<>& v);
+
     /// @brief Use this matrix to reduce a vector in-place.
     ///
     /// Interpret each row of the matrix as a rule that replaces the leading term with the tail.

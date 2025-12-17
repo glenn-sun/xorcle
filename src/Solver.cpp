@@ -15,7 +15,9 @@ void Solver::add_clause(Clause& clause) {
     clauses.push_back(clause);
 }
 
-std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {        
+std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
+    // NOTE: Upon removing this check, unit propagation takes significantly longer?
+
     // If clause is satisfied, don't do anything
     Equation witness = trail.span().reduce_copy(clause.row(clause.true_witness));
     witness.flip(num_vars);
@@ -40,9 +42,13 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
 
     // If clause is unit, conflict/propagate are the same
     if (clause.rows() == 1) {
-        Equation eqn = clause.row(0);
+        Equation eqn = trail.span().reduce_copy(clause.row(0));
         eqn.flip(num_vars);
-        return eqn;
+        if (eqn.none()) {
+            return std::nullopt;
+        } else {
+            return eqn;
+        }
     }
 
     // Otherwise, check watched equations
@@ -84,9 +90,14 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
         }
         // If none found, learn clause.row(clause.watched0) + 1
         if (!found) {
-            Equation eqn = clause.row(clause.watched0);
+            Equation eqn = trail.span().reduce_copy(clause.row(clause.watched0));
             eqn.flip(num_vars);
-            return eqn;
+            // At this point, eqn may be the zero vector iff the clause is true
+            if (eqn.none()) {
+                return std::nullopt;
+            } else {
+                return eqn;
+            }
         }
     }
     return std::nullopt;

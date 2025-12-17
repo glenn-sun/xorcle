@@ -10,17 +10,14 @@ REFMatrix::REFMatrix(bit::matrix<> M) {
     });
 }
 
-void REFMatrix::add_row(const bit::vector<>& v, std::size_t* inserted_index) {
+std::optional<std::size_t> REFMatrix::add_row_get_index(const bit::vector<>& v) {
     if (M.rows() == 0) {
         pivot_cols = bit::vector<>::zeros(v.size());
         pivot_cols.set(v.first_set());
         col_to_row = std::vector<std::size_t>(v.size());
         col_to_row[v.first_set()] = 0;
         M.push_row(v);
-        if (inserted_index) {
-            *inserted_index = 0;
-        }
-        return;
+        return 0;
     }
 
     bit::vector<> reduced = v;
@@ -42,7 +39,7 @@ void REFMatrix::add_row(const bit::vector<>& v, std::size_t* inserted_index) {
 
     // If the vector is now 0, don't do anything
     if (reduced.none()) {
-        return;
+        return std::nullopt;
     }
 
     // Insert the new row
@@ -54,11 +51,11 @@ void REFMatrix::add_row(const bit::vector<>& v, std::size_t* inserted_index) {
     });
     pivot_cols.set(col);
     col_to_row[col] = row;
-    if (inserted_index) {
-        *inserted_index = row;
-    }
+    return row;
+}
 
-    return;
+void REFMatrix::add_row(const bit::vector<>& v) {
+    add_row_get_index(v);
 }
 
 void REFMatrix::reduce(bit::vector<>& v, bit::vector<>* coeffs) const {

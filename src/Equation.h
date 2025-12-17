@@ -16,3 +16,17 @@ public:
     Equation(const bit::vector<>& v) : bit::vector<>(v) {}
     std::string to_string(PrintMode mode = PrintMode()) const;
 };
+
+namespace std {
+    template<>
+    struct hash<Equation> {
+        std::size_t operator()(Equation const& eqn) const noexcept {
+            uint64_t hash = 0;
+            for (uint64_t block : eqn.blocks()) {
+                hash ^= block;
+                hash *= 11400714819323198485llu;
+            }
+            return hash;
+        }
+    };
+}

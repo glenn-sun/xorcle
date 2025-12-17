@@ -121,7 +121,7 @@ int main(int argc, char *argv[]) {
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
         std::cout << "  -t, --threads <n>            Number of threads (default: 4)" << std::endl;
         std::cout << "  -p, --decproc <proc>         Decision procedure (default: fixed_unit)" << std::endl;
-        std::cout << "                               Options: fixed_unit, random_unit, random_eq" << std::endl;
+        std::cout << "                               Options: fixed_unit, random_unit, random_eq, vsids_unit" << std::endl;
         std::cout << "  -s, --seconds <s>            Timeout in seconds (default: 10)" << std::endl;
         
         return 0;
