@@ -3,42 +3,34 @@
 #include "Solver.h"
 #include "TrailBasisSpace.h"
 
-void Solver::add_clause(Clause& clause) {
-    if (clause.rows() == 0) { 
-        return;
-    }
 
-    watchlist.by_leading_term[clause.row(clause.watched0).first_set()].push_back(clauses.size());
-    if (clause.rows() > 1) {
-        watchlist.by_leading_term[clause.row(clause.watched1).first_set()].push_back(clauses.size());
-    }
-    clauses.push_back(clause);
-}
 
-std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
+std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
+    Clause& clause = get_clause(id);
+
     // NOTE: Upon removing this check, unit propagation takes significantly longer?
 
-    // If clause is satisfied, don't do anything
-    Equation witness = trail.span().reduce_copy(clause.row(clause.true_witness));
-    witness.flip(num_vars);
-    if (witness.none()) {
-        return std::nullopt;
-    } else {
-        // Check if clause is satisfied
-        bool found = false;
-        for (std::size_t i = 0; i < clause.rows(); ++i) {
-            witness = trail.span().reduce_copy(clause.row(i));
-            witness.flip(num_vars);
-            if (witness.none()) {
-                clause.true_witness = i;
-                found = true;
-                break;
-            }
-        }
-        if (found) {
-            return std::nullopt;
-        }
-    }
+    // // If clause is satisfied, don't do anything
+    // Equation witness = trail.span().reduce_copy(clause.row(clause.true_witness));
+    // witness.flip(num_vars);
+    // if (witness.none()) {
+    //     return std::nullopt;
+    // } else {
+    //     // Check if clause is satisfied
+    //     bool found = false;
+    //     for (std::size_t i = 0; i < clause.rows(); ++i) {
+    //         witness = trail.span().reduce_copy(clause.row(i));
+    //         witness.flip(num_vars);
+    //         if (witness.none()) {
+    //             clause.true_witness = i;
+    //             found = true;
+    //             break;
+    //         }
+    //     }
+    //     if (found) {
+    //         return std::nullopt;
+    //     }
+    // }
 
     // If clause is unit, conflict/propagate are the same
     if (clause.rows() == 1) {
@@ -54,6 +46,8 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
     // Otherwise, check watched equations
     Equation reduced0 = trail.span().reduce_copy(clause.row(clause.watched0));
     if (reduced0.none()) {
+        std::size_t old_watched0 = clause.watched0;
+
         // Find a new equation to watch
         bool found = false;
         for (std::size_t i = 0; i < clause.rows(); ++i) {
@@ -61,15 +55,21 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
             Equation reduced = trail.span().reduce_copy(clause.row(i));
             if (!reduced.none()) {
                 clause.watched0 = i;
-                
                 reduced0 = trail.span().reduce_copy(clause.row(clause.watched0));
                 found = true;
                 break;
             }
         }
+
         // If none found, return conflict
         if (!found) {
             return eqn_false;
+        } else {
+            // Update watchlists
+            std::size_t new_watched0 = clause.watched0;
+            std::visit([id, old_watched0, new_watched0](auto& clause_sel_concrete) {
+                clause_sel_concrete.update_with_new_watch(id, old_watched0, new_watched0);
+            }, clause_sel);
         }
     }
     // Postcondition: clause.row(clause.watched0) is non-zero w.r.t. current trail
@@ -77,6 +77,8 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
     // Do the same things with clause.row(clause.watched1), but reduce using clause.row(clause.watched0).
     Equation reduced1 = trail.span().reduce_with_extra_copy(clause.row(clause.watched1), reduced0);
     if (reduced1.none()) {
+        std::size_t old_watched1 = clause.watched1;
+
         // Find a new equation to watch
         bool found = false;
         for (std::size_t i = 0; i < clause.rows(); ++i) {
@@ -88,6 +90,7 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
                 break;
             }
         }
+
         // If none found, learn clause.row(clause.watched0) + 1
         if (!found) {
             Equation eqn = trail.span().reduce_copy(clause.row(clause.watched0));
@@ -98,30 +101,39 @@ std::optional<Equation> Solver::unit_prop_one_clause(Clause& clause) {
             } else {
                 return eqn;
             }
+        } else {
+            // Update watchlists
+            std::size_t new_watched1 = clause.watched1;
+            std::visit([id, old_watched1, new_watched1](auto& clause_sel_concrete) {
+                clause_sel_concrete.update_with_new_watch(id, old_watched1, new_watched1);
+            }, clause_sel);
         }
     }
     return std::nullopt;
 }
 
-std::optional<std::pair<Equation, std::reference_wrapper<Clause>>> Solver::unit_propagate_once() {
-    std::size_t start = clause_idx;
-    std::size_t end = start + clauses.size();
-    for (std::size_t i = start; i < end; i++) {
-        Clause& clause = clauses[i % clauses.size()];
-        auto result = unit_prop_one_clause(clause);
-        if (result.has_value()) {
-            clause_idx = (i + 1) % clauses.size();
-            return std::make_pair(result.value(), std::ref(clause));
+std::optional<std::pair<Equation, ClauseId>> Solver::unit_propagate_once() {
+    while (true) {
+        auto maybe_clause = std::visit([](auto& clause_sel_concrete) {
+            return clause_sel_concrete.next();
+        }, clause_sel);
+        if (!maybe_clause.has_value()) {
+            return std::nullopt;
+        } else {
+            ClauseId id = maybe_clause.value();
+            auto result = unit_prop_one_clause(id);
+            if (result.has_value()) {
+                return std::pair<Equation, ClauseId>{result.value(), id};
+            }
         }
     }
-    // No deductions possible
-    return std::nullopt;
 }
 
 std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail) {
     // Fact: last_reason should never be std::nullopt here
-    std::optional<std::reference_wrapper<Clause>> last_reason = trail.reasons()[trail.span().rows() - 1];
-    TrailBasisSpace as_tbs = TrailBasisSpace::from_RowSpace(last_reason->get(), trail);
+    std::optional<ClauseId> last_reason_id = trail.reasons()[trail.span().rows() - 1];
+    Clause& last_reason = get_clause(last_reason_id.value());
+    TrailBasisSpace as_tbs = TrailBasisSpace::from_RowSpace(last_reason, trail);
 
     std::size_t non_zero_col = 0;
     while (as_tbs.jumpable_levels() == 0) {
@@ -135,7 +147,8 @@ std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail)
         // Note: reason does not belong to trail, since the negation of one of its equations
         // is in the trail. Thus, the conversion loses the +1 on that equation.
         std::size_t index = as_tbs.cols() - 1 - non_zero_col;
-        RowSpace reason_rs = *trail.reasons()[index];
+        std::optional<ClauseId> reason_rs_id = trail.reasons()[index];
+        RowSpace reason_rs = get_clause(reason_rs_id.value());
         TrailBasisSpace reason = TrailBasisSpace::from_RowSpace(reason_rs, trail);
         Coefficients reason_first = reason.pop_first_row();
 
@@ -167,6 +180,9 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             auto propagate_result = unit_propagate_once();
             if (propagate_result) {
                 auto [eqn, reason] = *propagate_result;
+                std::visit([&eqn, &trail = this->trail](auto& clause_sel_concrete) {
+                    clause_sel_concrete.update_with_new_equation(eqn, trail);
+                }, clause_sel);
                 trail.learn(eqn, reason);
                 bit::vector<> tmp = trail.span().reduce_copy(eqn_false);
                 conflict = tmp.none();
@@ -192,7 +208,7 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             add_clause(asserting_clause);
 
             // Jump back in the trail
-            trail.resize(trail.size() - jumpable_levels);
+            trail.erase(trail.end() - jumpable_levels, trail.end());
         } else {
             // Check for satisfiability
             if (trail.span().rows() == num_vars) {
@@ -204,6 +220,9 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             // Make a decision
             std::visit([this](auto& dec_proc_concrete) {
                 auto decision = dec_proc_concrete.make_decision(trail.span());
+                std::visit([&decision, &trail = this->trail](auto& clause_sel_concrete) {
+                    clause_sel_concrete.update_with_new_equation(decision, trail);
+                }, clause_sel);
                 trail.learn(decision, std::nullopt);
             }, dec_proc);
         }
@@ -211,13 +230,9 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
     return ResultCase::Timeout {};
 }
 
-
-
-
-
-
 void Solver::print_clauses(const PrintMode mode) const {
-    std::cout << "Solver with " << num_vars << " variables, " << clauses.size() << " clauses:" << std::endl;
+    std::cout << "Solver with " << num_vars << " variables, " << get_num_clauses() << " clauses:" << std::endl;
+    const std::vector<Clause>& clauses = get_clauses();
     for (const auto& clause : clauses) {
         std::cout << clause.to_string(mode) << std::endl;
     }
@@ -234,7 +249,7 @@ void Solver::print_trail(const EquationPrintMode eqn_mode) const {
         Equation eqn = trail.span().row(trail.order_map()[i]);
         std::cout << "Learning " << eqn.to_string(mode) << std::endl;
         if (trail.reasons()[i]) {
-            std::cout << "Reason: " << std::endl << (*trail.reasons()[i]).get().to_string(mode) << std::endl;
+            std::cout << "Reason: " << std::endl << get_clauses()[*trail.reasons()[i]].to_string(mode) << std::endl;
         } else {
             std::cout << "Reason: decision" << std::endl;
         }
@@ -292,7 +307,7 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
             }
         }
         
-        Clause clause;
+        Clause clause(num_vars);
         std::istringstream iss{line};
         std::string token;
 

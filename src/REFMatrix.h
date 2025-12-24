@@ -17,11 +17,16 @@ protected:
     bit::matrix<> M;
 
 public:
-    REFMatrix() {};
+    REFMatrix(std::size_t num_vars) {
+        pivot_cols = bit::vector<>::zeros(num_vars+1);
+        col_to_row = std::vector<std::size_t>(num_vars+1);
+    };
 
     /// @brief Construct a REFMatrix from a matrix.
     /// Requires: M is non-empty.
     REFMatrix(bit::matrix<> M);
+
+    const bit::vector<>& get_pivot_cols() const { return pivot_cols; }
 
     /// @brief Add a row into the matrix. Uses copy semantics. Does nothing if v
     /// already belongs to the span of the matrix.

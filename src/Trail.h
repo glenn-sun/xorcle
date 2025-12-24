@@ -3,6 +3,8 @@
 #include "RowSpace.h"
 #include "Equation.h"
 
+using ClauseId = std::size_t;
+
 /// @brief A snapshot of all entries at level <= some k in the trail.
 class TrailSnapshot {
 public:
@@ -16,13 +18,15 @@ public:
     RowSpace span;
 
     // Map from trail insertion order to reason
-    std::vector<std::optional<std::reference_wrapper<Clause>>> reasons;
+    std::vector<std::optional<ClauseId>> reasons;
+
+    TrailSnapshot(std::size_t num_vars) : span(num_vars) {}
 
     /// @brief Learn a new equation. Requires that eqn + 1 belongs to the span of reason.
     /// eqn will be reduced by the current trail span before learning.
     /// @param eqn The equation to learn
     /// @param reason The reason for learning eqn, or std::nullopt if eqn is a decision
-    void learn(const Equation& eqn, std::optional<std::reference_wrapper<Clause>> reason);
+    void learn(const Equation& eqn, std::optional<ClauseId> reason);
 };
 
 
@@ -31,8 +35,8 @@ public:
 /// level <= k, and all snapshots except the first contain a decision as the first equation.
 class Trail : public std::vector<TrailSnapshot> {
 public:
-    Trail() : std::vector<TrailSnapshot>() {
-        push_back(TrailSnapshot());
+    Trail(std::size_t num_vars) : std::vector<TrailSnapshot>() {
+        push_back(TrailSnapshot(num_vars));
     }
 
     /// @brief Learn a new equation. Requires that eqn + 1 belongs to the span of reason.
@@ -40,7 +44,7 @@ public:
     /// if eqn is a decision.
     /// @param eqn The equation to learn
     /// @param reason The reason for learning eqn, or std::nullopt if eqn is a decision
-    void learn(const Equation& eqn, std::optional<std::reference_wrapper<Clause>> reason) {
+    void learn(const Equation& eqn, std::optional<ClauseId> reason) {
         if (!reason.has_value()) {
             TrailSnapshot new_snapshot = back();
             push_back(new_snapshot);
@@ -64,7 +68,7 @@ public:
     }
 
     /// @brief The map from trail insertion order to reason
-    const std::vector<std::optional<std::reference_wrapper<Clause>>>& reasons() const {
+    const std::vector<std::optional<ClauseId>>& reasons() const {
         return back().reasons;
     }
 };

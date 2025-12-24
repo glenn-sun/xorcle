@@ -1,6 +1,6 @@
 #include "Trail.h"
 
-void TrailSnapshot::learn(const Equation& eqn, std::optional<std::reference_wrapper<Clause>> reason) {
+void TrailSnapshot::learn(const Equation& eqn, std::optional<ClauseId> reason) {
     std::optional<std::size_t> maybe_inserted_index = span.add_row_get_index(eqn);
     if (maybe_inserted_index) {
         std::size_t inserted_index = *maybe_inserted_index;

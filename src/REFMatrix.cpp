@@ -11,10 +11,9 @@ REFMatrix::REFMatrix(bit::matrix<> M) {
 }
 
 std::optional<std::size_t> REFMatrix::add_row_get_index(const bit::vector<>& v) {
+    // TODO: Do we need this? May already be covered by remaining code
     if (M.rows() == 0) {
-        pivot_cols = bit::vector<>::zeros(v.size());
         pivot_cols.set(v.first_set());
-        col_to_row = std::vector<std::size_t>(v.size());
         col_to_row[v.first_set()] = 0;
         M.push_row(v);
         return 0;
@@ -61,39 +60,19 @@ void REFMatrix::add_row(const bit::vector<>& v) {
 void REFMatrix::reduce(bit::vector<>& v, bit::vector<>* coeffs) const {
     if (coeffs) {
         *coeffs = bit::vector<>::zeros(M.rows());
-        std::size_t row = 0;
-        pivot_cols.if_set_call([&](std::size_t i) { 
-            if (v.element(i)) {
-                v ^= M.row(row);
-                coeffs->set(row);
+        v.if_set_call([&](std::size_t i) { 
+            if (pivot_cols.element(i)) {
+                v ^= M.row(col_to_row[i]);
+                coeffs->set(col_to_row[i]);
             }
-            ++row;
         });
         return;
     } else {
-        // std::size_t row = 0;
-        // pivot_cols.if_set_call([&](std::size_t i) { 
-        //     if (v.element(i)) {
-        //         v ^= M.row(row);
-        //     }
-        //     ++row;
-        // });
-        // std::size_t cols = M.cols();
-        // for (std::size_t i = 0; i < cols; ++i) {
-        //     if (pivot_cols.element(i)) {
-        //         if (v.element(i)) {
-        //             v ^= M.row(row);
-        //         }
-        //         ++row;
-        //     }
-        // }
-
-        std::size_t cols = M.cols();
-        for (std::size_t i = 0; i < cols; ++i) {
-            if (v.element(i) && pivot_cols.element(i)) {
+        v.if_set_call([&](std::size_t i) {
+            if (pivot_cols.element(i)) {
                 v ^= M.row(col_to_row[i]);
             }
-        }
+        });
         return;
     }
 }
@@ -106,18 +85,13 @@ bit::vector<> REFMatrix::reduce_copy(const bit::vector<>& v, bit::vector<>* coef
 
 void REFMatrix::reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) const {
     std::size_t extra_col = extra.first_set();
-
-    std::size_t row = 0;
-    for (std::size_t i = 0; i < M.cols(); ++i) {
-        if (i == extra_col && v.element(i)) {
+    v.if_set_call([&](std::size_t i) {
+        if (i == extra_col) {
             v ^= extra;
         } else if (pivot_cols.element(i)) {
-            if (v.element(i)) {
-                v ^= M.row(row);
-            }
-            ++row;
+            v ^= M.row(col_to_row[i]);
         }
-    }
+    });
     return;
 }
 

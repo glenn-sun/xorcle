@@ -9,9 +9,9 @@ bit::vector<> RowSpace::get_unique_solution() const {
 
 std::string Clause::to_string(PrintMode mode) const {
     std::ostringstream oss;
-    for (const Equation& equation : *this) {
+    for (const auto& equation : *this) {
         if (oss.tellp() > 0) oss << (mode.clause_mode == ClausePrintMode::as_clause ? " v " : " ^ ");
-        oss << equation.to_string(mode);
+        oss << Equation(equation).to_string(mode);
     }
     return oss.str();
 }

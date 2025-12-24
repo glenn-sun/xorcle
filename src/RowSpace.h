@@ -9,6 +9,7 @@
 /// to a variable in the original order.
 class RowSpace : public REFMatrix {
 public:
+    using REFMatrix::REFMatrix;
     /// @brief Get the unique solution to the system of equations represented by this matrix.
     ///
     /// Requires: The matrix is full-rank and does not contain the false equation.
@@ -34,6 +35,6 @@ public:
 
     std::string to_string(PrintMode mode = PrintMode()) const;
 
-    Clause() {}
+    Clause(std::size_t num_vars) : RowSpace(num_vars) {}
     Clause(const RowSpace& rs) : RowSpace(rs) {}
 };

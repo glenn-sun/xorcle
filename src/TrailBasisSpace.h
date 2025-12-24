@@ -24,7 +24,7 @@ private:
     const Trail& trail;
 
 public:
-    TrailBasisSpace(const Trail& trail) : REFMatrix(), trail(trail) {}
+    TrailBasisSpace(const Trail& trail) : REFMatrix(trail.span().rows()), trail(trail) {}
 
     /// @brief Construct a TrailBasisSpace from a RowSpace w.r.t. a Trail
     ///

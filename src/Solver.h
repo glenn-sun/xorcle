@@ -4,7 +4,7 @@
 #include <algorithm>
 #include "Trail.h"
 #include "DecisionProcedure.h"
-#include "Watchlist.h"
+#include "ClauseSelector.h"
 
 namespace ResultCase {
     struct Timeout {};
@@ -39,39 +39,61 @@ using Result = std::variant<ResultCase::Timeout, ResultCase::Unsat, ResultCase::
 class Solver {
 private:
     const std::size_t num_vars;
-    std::deque<Clause> clauses;
-    std::size_t clause_idx = 0;
     Trail trail;
-    Watchlist watchlist;
+    ClauseSelector clause_sel;
+    DecisionProcedure dec_proc;
 
     /// @brief Determine if the given clause can learn an equation.
     /// Returns std::nullopt if not possible
     /// @param clause The clause to test
-    std::optional<Equation> unit_prop_one_clause(Clause& clause);
-
-    DecisionProcedure dec_proc;
+    std::optional<Equation> unit_prop_one_clause(ClauseId id);
 
 public:
     Solver(const std::size_t num_vars, DecisionProcedure dec_proc) : 
         num_vars(num_vars), 
-        dec_proc(dec_proc),
-        watchlist(num_vars) {};
+        trail(num_vars),
+        clause_sel(LTWatchlist(num_vars)),
+        dec_proc(dec_proc) {};
 
     std::size_t get_num_vars() const { return num_vars; }
-    std::size_t get_num_clauses() const { return clauses.size(); }
+    std::size_t get_num_clauses() const { 
+        return std::visit([](auto const& clause_sel_concrete) { 
+            return clause_sel_concrete.get_num_clauses(); 
+        }, clause_sel); 
+    }
 
     /// @brief Number of decisions made so far.
     std::size_t level() const { return trail.size() - 1; }
 
     /// @brief Add a clause to the solver
-    void add_clause(Clause& c);
+    void add_clause(Clause& clause) {
+        if (clause.rows() == 0) { 
+            return;
+        }
+
+        std::visit([&clause](auto& clause_sel_concrete) {
+            clause_sel_concrete.add_clause(clause);
+        }, clause_sel);
+    }
+
+    const std::vector<Clause>& get_clauses() const {
+        return std::visit([](const auto& clause_sel_concrete) -> const std::vector<Clause>& {
+            return clause_sel_concrete.get_clauses();
+        }, clause_sel);
+    }
+
+    Clause& get_clause(ClauseId id) { 
+        return std::visit([&id](auto& clause_sel_concrete) -> Clause&{ 
+            return clause_sel_concrete.get_clause(id); 
+        }, clause_sel); 
+    }
 
     const Equation eqn_true{Equation::zeros(num_vars + 1)};
     const Equation eqn_false{Equation::unit(num_vars + 1, num_vars)};
 
     /// @brief Run unit propagation to find a single learnable equation.
     /// Returns std::nullopt if no equation is learnable.
-    std::optional<std::pair<Equation, std::reference_wrapper<Clause>>> unit_propagate_once();
+    std::optional<std::pair<Equation, ClauseId>> unit_propagate_once();
 
     /// @brief Find a clause that is asserting with respect to the trail.
     /// A clause is asserting if it creates a unit propgation from trail prior

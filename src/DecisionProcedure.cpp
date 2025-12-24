@@ -43,7 +43,7 @@ Equation RandomUnit::make_decision(const RowSpace& trail_span) {
 
 void RandomEq::reinitialize() {
     decision_basis.clear();
-    REFMatrix M;
+    REFMatrix M(num_vars);
     while (decision_basis.size() < num_vars) {
         Equation eqn = Equation::random(num_vars + 1);
         Equation eqn_reduced = M.reduce_copy(eqn);
@@ -76,7 +76,6 @@ void VsidsUnit::reinitialize() {
 
 Equation VsidsUnit::make_decision(const RowSpace& trail_span) { 
     Equation eqn, eqn_reduced, eqn_not_reduced;
-    std::size_t count = 0;
     do {
         auto maybe_eqn = vsids_params.activity_heap.extract_max();
         if (maybe_eqn.has_value()) {
@@ -88,7 +87,6 @@ Equation VsidsUnit::make_decision(const RowSpace& trail_span) {
         eqn_reduced = trail_span.reduce_copy(eqn);
         eqn_not_reduced = eqn_reduced;
         eqn_not_reduced.flip(num_vars);
-        count++;
     } while (eqn_reduced.none() || eqn_not_reduced.none());
     return eqn;
 }

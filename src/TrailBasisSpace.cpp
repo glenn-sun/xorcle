@@ -2,7 +2,7 @@
 
 TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail) {
     TrailBasisSpace tbs(trail);
-    for (const Equation& eqn : rs) {
+    for (const auto& eqn : rs) {
         // Coefficients in representation order
         Coefficients coeffs;
         trail.span().reduce_copy(eqn, &coeffs);
@@ -19,8 +19,8 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
 }
 
 RowSpace TrailBasisSpace::to_RowSpace() const {
-    RowSpace rs;
-    for (const Coefficients& tbs_row : *this) {
+    RowSpace rs(trail.span().cols());
+    for (const auto& tbs_row : *this) {
         Equation eqn = Equation::zeros(trail.span().cols());
         tbs_row.if_set_call([&](std::size_t i) {
             eqn += trail.span().row(trail.order_map()[cols()-i-1]);
