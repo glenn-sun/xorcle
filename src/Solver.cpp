@@ -34,28 +34,31 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
 
     // If clause is unit, conflict/propagate are the same
     if (clause.rows() == 1) {
-        Equation eqn = trail.span().reduce_copy(clause.row(0));
-        eqn.flip(num_vars);
-        if (eqn.none()) {
+        working_eqn.unsafe_copy(clause.row(0));
+        trail.span().reduce(working_eqn);
+        working_eqn.flip(num_vars);
+        if (working_eqn.none()) {
             return std::nullopt;
         } else {
-            return eqn;
+            return working_eqn;
         }
     }
 
     // Otherwise, check watched equations
-    Equation reduced0 = trail.span().reduce_copy(clause.row(clause.watched0));
-    if (reduced0.none()) {
+    working_eqn.unsafe_copy(clause.row(clause.watched0));
+    trail.span().reduce(working_eqn);
+    if (working_eqn.none()) {
         std::size_t old_watched0 = clause.watched0;
 
         // Find a new equation to watch
         bool found = false;
         for (std::size_t i = 0; i < clause.rows(); ++i) {
             if (i == clause.watched0) continue;
-            Equation reduced = trail.span().reduce_copy(clause.row(i));
-            if (!reduced.none()) {
+            working_eqn.unsafe_copy(clause.row(i));
+            trail.span().reduce(working_eqn);
+            if (!working_eqn.none()) {
                 clause.watched0 = i;
-                reduced0 = trail.span().reduce_copy(clause.row(clause.watched0));
+                // working_eqn is exactly trail.span().reduce_copy(clause.row(clause.watched0))
                 found = true;
                 break;
             }
@@ -67,24 +70,24 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
         } else {
             // Update watchlists
             std::size_t new_watched0 = clause.watched0;
-            std::visit([id, old_watched0, new_watched0](auto& clause_sel_concrete) {
-                clause_sel_concrete.update_with_new_watch(id, old_watched0, new_watched0);
-            }, clause_sel);
+            clause_sel->update_with_new_watch(id, old_watched0, new_watched0);
         }
     }
     // Postcondition: clause.row(clause.watched0) is non-zero w.r.t. current trail
 
     // Do the same things with clause.row(clause.watched1), but reduce using clause.row(clause.watched0).
-    Equation reduced1 = trail.span().reduce_with_extra_copy(clause.row(clause.watched1), reduced0);
-    if (reduced1.none()) {
+    working_eqn2.unsafe_copy(clause.row(clause.watched1));
+    trail.span().reduce_with_extra(working_eqn2, working_eqn);
+    if (working_eqn2.none()) {
         std::size_t old_watched1 = clause.watched1;
 
         // Find a new equation to watch
         bool found = false;
         for (std::size_t i = 0; i < clause.rows(); ++i) {
             if (i == clause.watched0 || i == clause.watched1) continue;
-            Equation reduced = trail.span().reduce_with_extra_copy(clause.row(i), reduced0);
-            if (!reduced.none()) {
+            working_eqn2.unsafe_copy(clause.row(i));
+            trail.span().reduce_with_extra(working_eqn2, working_eqn);
+            if (!working_eqn2.none()) {
                 clause.watched1 = i;
                 found = true;
                 break;
@@ -93,20 +96,18 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
 
         // If none found, learn clause.row(clause.watched0) + 1
         if (!found) {
-            Equation eqn = trail.span().reduce_copy(clause.row(clause.watched0));
-            eqn.flip(num_vars);
+            // working_eqn still holds trail.span().reduce_copy(clause.row(clause.watched0))
+            working_eqn.flip(num_vars);
             // At this point, eqn may be the zero vector iff the clause is true
-            if (eqn.none()) {
+            if (working_eqn.none()) {
                 return std::nullopt;
             } else {
-                return eqn;
+                return working_eqn;
             }
         } else {
             // Update watchlists
             std::size_t new_watched1 = clause.watched1;
-            std::visit([id, old_watched1, new_watched1](auto& clause_sel_concrete) {
-                clause_sel_concrete.update_with_new_watch(id, old_watched1, new_watched1);
-            }, clause_sel);
+            clause_sel->update_with_new_watch(id, old_watched1, new_watched1);
         }
     }
     return std::nullopt;
@@ -114,9 +115,7 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
 
 std::optional<std::pair<Equation, ClauseId>> Solver::unit_propagate_once() {
     while (true) {
-        auto maybe_clause = std::visit([](auto& clause_sel_concrete) {
-            return clause_sel_concrete.next();
-        }, clause_sel);
+        auto maybe_clause = clause_sel->next();
         if (!maybe_clause.has_value()) {
             return std::nullopt;
         } else {
@@ -159,9 +158,7 @@ std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail)
             as_tbs.add_row(row);
         }
 
-        std::visit([&trail, index](auto& dec_proc_concrete) {
-            dec_proc_concrete.update_with_critical_equation(trail.span().row(trail.order_map()[index]));
-        }, dec_proc);
+        dec_proc->update_with_critical_equation(trail.span().row(trail.order_map()[index]));
 
         for (std::size_t col = 0; col <= non_zero_col; ++col) {
             assert(as_tbs.col(col).none());
@@ -180,12 +177,11 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             auto propagate_result = unit_propagate_once();
             if (propagate_result) {
                 auto [eqn, reason] = *propagate_result;
-                std::visit([&eqn, &trail = this->trail](auto& clause_sel_concrete) {
-                    clause_sel_concrete.update_with_new_equation(eqn, trail);
-                }, clause_sel);
+                clause_sel->update_with_new_equation(eqn, trail);
                 trail.learn(eqn, reason);
-                bit::vector<> tmp = trail.span().reduce_copy(eqn_false);
-                conflict = tmp.none();
+                working_eqn = eqn_false;
+                trail.span().reduce(working_eqn);
+                conflict = working_eqn.none();
             } else {
                 break;
             }
@@ -201,9 +197,7 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             // Learn an asserting clause
             auto [asserting_clause, jumpable_levels] = find_asserting_clause(trail);
 
-            std::visit([&asserting_clause](auto& dec_proc_concrete) {
-                dec_proc_concrete.update_with_asserting_clause(asserting_clause);
-            }, dec_proc);
+            dec_proc->update_with_asserting_clause(asserting_clause);
 
             add_clause(asserting_clause);
 
@@ -218,13 +212,9 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             }
 
             // Make a decision
-            std::visit([this](auto& dec_proc_concrete) {
-                auto decision = dec_proc_concrete.make_decision(trail.span());
-                std::visit([&decision, &trail = this->trail](auto& clause_sel_concrete) {
-                    clause_sel_concrete.update_with_new_equation(decision, trail);
-                }, clause_sel);
-                trail.learn(decision, std::nullopt);
-            }, dec_proc);
+            auto decision = dec_proc->make_decision(trail.span());
+            clause_sel->update_with_new_equation(decision, trail);
+            trail.learn(decision, std::nullopt);
         }
     }
     return ResultCase::Timeout {};
@@ -277,21 +267,24 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
     std::string tmp;
     iss >> tmp >> tmp >> num_vars;
 
-    DecisionProcedure dec_proc = [&] {
-        switch (dpn) {
-            case DecisionProcedureName::fixed_unit:
-                return DecisionProcedure{FixedUnit(num_vars)};
-            case DecisionProcedureName::random_unit:
-                return DecisionProcedure{RandomUnit(num_vars)};
-            case DecisionProcedureName::random_eq:
-                return DecisionProcedure{RandomEq(num_vars)};
-            case DecisionProcedureName::vsids_unit:
-                return DecisionProcedure{VsidsUnit(num_vars)};
-        }
-    }();
+    std::unique_ptr<DecisionProcedure> dec_proc;
 
+    switch (dpn) {
+        case DecisionProcedureName::fixed_unit:
+            dec_proc = std::make_unique<FixedUnit>(num_vars);
+            break;
+        case DecisionProcedureName::random_unit:
+            dec_proc = std::make_unique<RandomUnit>(num_vars);
+            break;
+        case DecisionProcedureName::random_eq:
+            dec_proc = std::make_unique<RandomEq>(num_vars);
+            break;
+        case DecisionProcedureName::vsids_unit:
+            dec_proc = std::make_unique<VsidsUnit>(num_vars);
+            break;
+    }
 
-    Solver solver{num_vars, dec_proc};
+    Solver solver{num_vars, std::move(dec_proc)};
 
     while (std::getline(file, line)) {
         if (line.empty() || line[0] == 'c') {

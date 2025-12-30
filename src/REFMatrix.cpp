@@ -77,11 +77,11 @@ void REFMatrix::reduce(bit::vector<>& v, bit::vector<>* coeffs) const {
     }
 }
 
-bit::vector<> REFMatrix::reduce_copy(const bit::vector<>& v, bit::vector<>* coeffs) const {
-    bit::vector<> v_copy = v;
-    reduce(v_copy, coeffs);
-    return v_copy;
-}
+// bit::vector<> REFMatrix::reduce_copy(const bit::vector<>& v, bit::vector<>* coeffs) const {
+//     bit::vector<> v_copy = v;
+//     reduce(v_copy, coeffs);
+//     return v_copy;
+// }
 
 void REFMatrix::reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) const {
     std::size_t extra_col = extra.first_set();
@@ -95,11 +95,11 @@ void REFMatrix::reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) 
     return;
 }
 
-bit::vector<> REFMatrix::reduce_with_extra_copy(const bit::vector<>& v, const bit::vector<>& extra) const {
-    bit::vector<> v_copy = v;
-    reduce_with_extra(v_copy, extra);
-    return v_copy;
-}
+// bit::vector<> REFMatrix::reduce_with_extra_copy(const bit::vector<>& v, const bit::vector<>& extra) const {
+//     bit::vector<> v_copy = v;
+//     reduce_with_extra(v_copy, extra);
+//     return v_copy;
+// }
 
 bit::vector<> REFMatrix::pop_first_row() {
     bit::vector<> first_row = M.row(0);

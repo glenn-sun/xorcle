@@ -37,6 +37,28 @@ public:
     /// @brief A special index value to indicate not-found/no-such-position failure for some methods below.
     static constexpr auto npos = static_cast<std::size_t>(-1);
 
+    /// @brief Copy all the bits from another bit-vector of the same size into this one.
+    /// Will silently fail if this bit-vector is not the exact same size as @p other .
+    /// Will silently fail if @p other refers to the same memory as this bit-vector.
+    /// @param other The bit-vector to copy.
+    void unsafe_copy(const vector& other) noexcept
+    {
+        static_assert(std::is_trivially_copyable_v<Block>,
+                    "unsafe_copy requires trivially-copyable Block");
+
+        std::memcpy(m_blocks.data(),
+                    other.m_blocks.data(),
+                    m_blocks.size() * sizeof(Block));
+    }
+
+    // vector (const vector&) = delete; 
+    // vector& operator= (const vector&) = delete;
+
+    // vector (vector&&) noexcept = default;
+    // vector& operator= (vector&&) noexcept = default;
+
+    // ~vector() = default;
+
     /// @brief Create a bit-vector with @c n elements.
     /// @note  The default constructor creates a completely empty bit-vector with size 0.
     explicit constexpr vector(std::size_t n = 0) : m_size{n}, m_blocks(blocks_needed(n))

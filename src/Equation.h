@@ -13,8 +13,14 @@
 class Equation : public bit::vector<> {
 public:
     Equation() {}
+    Equation(std::size_t num_vars) : bit::vector<>(num_vars + 1) {}
     Equation(const bit::vector<>& v) : bit::vector<>(v) {}
     std::string to_string(PrintMode mode = PrintMode()) const;
+
+    // Equation(Equation&&) noexcept = default;
+    // Equation& operator=(Equation&&) noexcept = default;
+
+    // Equation(bit::vector<>&& v) noexcept : bit::vector<>(std::move(v)) {}
 };
 
 namespace std {

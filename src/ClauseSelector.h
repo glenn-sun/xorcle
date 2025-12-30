@@ -8,11 +8,13 @@
 using ClauseId = std::size_t;
 using EquationId = std::size_t;
 
-class ClauseSelectorBase {
+class ClauseSelector {
 protected:
     std::vector<Clause> clauses;
 public:
-    ClauseSelectorBase() : clauses() {}
+    ClauseSelector() : clauses() {}
+    virtual ~ClauseSelector() = default;
+    
     std::size_t get_num_clauses() const { return clauses.size(); }
     const std::vector<Clause>& get_clauses() const { return clauses; }
     Clause& get_clause(ClauseId id) { return clauses[id]; }
@@ -23,12 +25,12 @@ public:
     virtual void update_with_new_watch(ClauseId id, EquationId old_watch, EquationId new_watch) {};
 };
 
-class Cyclic : public ClauseSelectorBase {
+class Cyclic : public ClauseSelector {
 private:
     ClauseId id;
     std::size_t count;
 public:
-    Cyclic(std::size_t num_vars) : ClauseSelectorBase(), id(0), count(0) {}
+    Cyclic(std::size_t num_vars) : ClauseSelector(), id(0), count(0) {}
     std::optional<ClauseId> next() override {
         if (count == clauses.size()) {
             count = 0;
@@ -45,7 +47,7 @@ public:
     }
 };
 
-class LTWatchlist : public ClauseSelectorBase {
+class LTWatchlist : public ClauseSelector {
 private:
     // Map from leading term to list of clauses watching 
     // some equation with that leading term
@@ -75,7 +77,7 @@ private:
     }
 
 public:
-    LTWatchlist(std::size_t num_vars) : ClauseSelectorBase(), by_leading_term(num_vars+1) {}
+    LTWatchlist(std::size_t num_vars) : ClauseSelector(), by_leading_term(num_vars+1) {}
     std::optional<ClauseId> next() override {
         if (queue.empty()) {
             return std::nullopt;
@@ -96,7 +98,8 @@ public:
         // Because of linear combinations, need to check all lists corresponding
         // to reducible leading terms in position at most reduced.first_set()
 
-        Equation reduced = trail.span().reduce_copy(eqn);
+        Equation reduced = eqn;
+        trail.span().reduce(reduced);
 
         for (std::size_t i = 0; i < reduced.first_set(); ++i) {
             if (trail.span().get_pivot_cols()[i]) {
@@ -112,5 +115,3 @@ public:
         by_leading_term[clauses[id].row(new_watch).first_set()].push_back(id);
     }
 };
-
-using ClauseSelector = std::variant<Cyclic, LTWatchlist>;

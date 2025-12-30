@@ -54,7 +54,7 @@ public:
     /// @param v The vector to reduce.
     /// @param coeffs If present, v = result + coeffs * this, i.e. the bits corresponding to
     /// rows used in the reduction will be set to 1.
-    bit::vector<> reduce_copy(const bit::vector<>& v,  bit::vector<>* coeffs = nullptr) const;
+    // bit::vector<> reduce_copy(const bit::vector<>& v,  bit::vector<>* coeffs = nullptr) const;
 
     /// @brief Use this matrix augmented with an extra vector to reduce in-place.
     /// 
@@ -68,7 +68,7 @@ public:
     /// Requires: The extra vector must already be reduced by this matrix.
     /// @param v The vector to reduce.
     /// @param extra The extra vector the reduce by.
-    bit::vector<> reduce_with_extra_copy(const bit::vector<>& v, const bit::vector<>& extra) const;
+    // bit::vector<> reduce_with_extra_copy(const bit::vector<>& v, const bit::vector<>& extra) const;
 
     /// @brief Remove the first row from the matrix and return it.
     bit::vector<> pop_first_row();

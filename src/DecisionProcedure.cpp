@@ -3,10 +3,12 @@
 #include "DecisionProcedure.h"
 
 Equation decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span, std::size_t num_vars) {
+    Equation eqn{num_vars}, eqn_reduced{num_vars}, eqn_not_reduced{num_vars};
     for (std::size_t i = 0; i < num_vars; ++i) {
-        Equation eqn = basis[i];
-        Equation eqn_reduced = trail_span.reduce_copy(eqn);
-        Equation eqn_not_reduced = eqn_reduced;
+        eqn.unsafe_copy(basis[i]);
+        eqn_reduced.unsafe_copy(eqn);
+        trail_span.reduce(eqn_reduced);
+        eqn_not_reduced.unsafe_copy(eqn_reduced);
         eqn_not_reduced.flip(num_vars);
         if (eqn_reduced.any() && eqn_not_reduced.any()) {
             return eqn;
@@ -18,7 +20,7 @@ Equation decide_from_basis(const std::vector<Equation>& basis, const RowSpace& t
 void FixedUnit::reinitialize() {
     decision_basis.clear();
     for (std::size_t i = 0; i < num_vars; i++) {
-        decision_basis.push_back(Equation::unit(num_vars + 1, i));
+        decision_basis.emplace_back(Equation::unit(num_vars + 1, i));
     }
 }
 
@@ -29,7 +31,7 @@ Equation FixedUnit::make_decision(const RowSpace& trail_span) {
 void RandomUnit::reinitialize() {
     decision_basis.clear();
     for (std::size_t i = 0; i < num_vars; i++) {
-        decision_basis.push_back(Equation::unit(num_vars + 1, i));
+        decision_basis.emplace_back(Equation::unit(num_vars + 1, i));
     }
 
     std::random_device rd;
@@ -44,9 +46,11 @@ Equation RandomUnit::make_decision(const RowSpace& trail_span) {
 void RandomEq::reinitialize() {
     decision_basis.clear();
     REFMatrix M(num_vars);
+    Equation eqn{num_vars}, eqn_reduced{num_vars};
     while (decision_basis.size() < num_vars) {
-        Equation eqn = Equation::random(num_vars + 1);
-        Equation eqn_reduced = M.reduce_copy(eqn);
+        eqn.unsafe_copy(Equation::random(num_vars + 1));
+        eqn_reduced.unsafe_copy(eqn);
+        M.reduce(eqn_reduced);
         if (eqn_reduced != Equation::zeros(num_vars + 1) && 
             eqn_reduced != Equation::unit(num_vars + 1, num_vars)) {
             decision_basis.push_back(eqn_reduced);
@@ -75,17 +79,19 @@ void VsidsUnit::reinitialize() {
 }
 
 Equation VsidsUnit::make_decision(const RowSpace& trail_span) { 
-    Equation eqn, eqn_reduced, eqn_not_reduced;
+    Equation eqn{num_vars}, eqn_reduced{num_vars}, eqn_not_reduced{num_vars};
+    std::optional<Equation> maybe_eqn;
     do {
-        auto maybe_eqn = vsids_params.activity_heap.extract_max();
+        maybe_eqn = vsids_params.activity_heap.extract_max();
         if (maybe_eqn.has_value()) {
-            eqn = maybe_eqn.value();
+            eqn = std::move(maybe_eqn.value());
         } else {
             reinitialize();
             eqn = vsids_params.activity_heap.extract_max().value();
         }
-        eqn_reduced = trail_span.reduce_copy(eqn);
-        eqn_not_reduced = eqn_reduced;
+        eqn_reduced.unsafe_copy(eqn);
+        trail_span.reduce(eqn_reduced);
+        eqn_not_reduced.unsafe_copy(eqn_reduced);
         eqn_not_reduced.flip(num_vars);
     } while (eqn_reduced.none() || eqn_not_reduced.none());
     return eqn;

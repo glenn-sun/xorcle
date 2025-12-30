@@ -40,26 +40,29 @@ class Solver {
 private:
     const std::size_t num_vars;
     Trail trail;
-    ClauseSelector clause_sel;
-    DecisionProcedure dec_proc;
+    std::unique_ptr<ClauseSelector> clause_sel;
+    std::unique_ptr<DecisionProcedure> dec_proc;
 
     /// @brief Determine if the given clause can learn an equation.
     /// Returns std::nullopt if not possible
     /// @param clause The clause to test
     std::optional<Equation> unit_prop_one_clause(ClauseId id);
 
+    Equation working_eqn;
+    Equation working_eqn2;
+
 public:
-    Solver(const std::size_t num_vars, DecisionProcedure dec_proc) : 
+    Solver(const std::size_t num_vars, std::unique_ptr<DecisionProcedure> dec_proc) : 
         num_vars(num_vars), 
         trail(num_vars),
-        clause_sel(LTWatchlist(num_vars)),
-        dec_proc(dec_proc) {};
+        clause_sel(std::make_unique<Cyclic>(num_vars)),
+        dec_proc(std::move(dec_proc)),
+        working_eqn(bit::vector<>::zeros(num_vars + 1)),
+        working_eqn2(bit::vector<>::zeros(num_vars + 1)) {};
 
     std::size_t get_num_vars() const { return num_vars; }
     std::size_t get_num_clauses() const { 
-        return std::visit([](auto const& clause_sel_concrete) { 
-            return clause_sel_concrete.get_num_clauses(); 
-        }, clause_sel); 
+        return clause_sel->get_num_clauses();
     }
 
     /// @brief Number of decisions made so far.
@@ -71,21 +74,15 @@ public:
             return;
         }
 
-        std::visit([&clause](auto& clause_sel_concrete) {
-            clause_sel_concrete.add_clause(clause);
-        }, clause_sel);
+        clause_sel->add_clause(clause);
     }
 
     const std::vector<Clause>& get_clauses() const {
-        return std::visit([](const auto& clause_sel_concrete) -> const std::vector<Clause>& {
-            return clause_sel_concrete.get_clauses();
-        }, clause_sel);
+        return clause_sel->get_clauses();
     }
 
     Clause& get_clause(ClauseId id) { 
-        return std::visit([&id](auto& clause_sel_concrete) -> Clause&{ 
-            return clause_sel_concrete.get_clause(id); 
-        }, clause_sel); 
+        return clause_sel->get_clause(id); 
     }
 
     const Equation eqn_true{Equation::zeros(num_vars + 1)};
