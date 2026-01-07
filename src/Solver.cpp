@@ -3,25 +3,25 @@
 #include "Solver.h"
 #include "TrailBasisSpace.h"
 
-
-
 std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
     Clause& clause = get_clause(id);
 
     // NOTE: Upon removing this check, unit propagation takes significantly longer?
 
     // // If clause is satisfied, don't do anything
-    // Equation witness = trail.span().reduce_copy(clause.row(clause.true_witness));
-    // witness.flip(num_vars);
-    // if (witness.none()) {
+    // working_eqn.unsafe_copy(clause.row(clause.true_witness));
+    // trail.span().reduce(working_eqn);
+    // working_eqn.flip(num_vars);
+    // if (working_eqn.none()) {
     //     return std::nullopt;
     // } else {
     //     // Check if clause is satisfied
     //     bool found = false;
     //     for (std::size_t i = 0; i < clause.rows(); ++i) {
-    //         witness = trail.span().reduce_copy(clause.row(i));
-    //         witness.flip(num_vars);
-    //         if (witness.none()) {
+    //         working_eqn.unsafe_copy(clause.row(i));
+    //         trail.span().reduce(working_eqn);
+    //         working_eqn.flip(num_vars);s
+    //         if (working_eqn.none()) {
     //             clause.true_witness = i;
     //             found = true;
     //             break;
@@ -44,16 +44,32 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
         }
     }
 
-    // Otherwise, check watched equations
+    // Otherwise, check both watched equations
     working_eqn.unsafe_copy(clause.row(clause.watched0));
     trail.span().reduce(working_eqn);
-    if (working_eqn.none()) {
+    bool first_is_zero = working_eqn.none();
+
+    working_eqn2.unsafe_copy(clause.row(clause.watched1));
+    trail.span().reduce(working_eqn2);
+    bool second_is_zero = working_eqn2.none();
+
+    bool sum_is_zero = (working_eqn == working_eqn2);
+
+    if (!first_is_zero && !second_is_zero && !sum_is_zero) {
+        // No propagation
+        return std::nullopt;
+    } else if (first_is_zero && second_is_zero) {
+        // Find two new watched literals
+        // If cannot find any, propagate eqn_false
+        // If can only find one, propagate the non-zero watch
+
         std::size_t old_watched0 = clause.watched0;
 
-        // Find a new equation to watch
+        // Find first new equation to watch
+        std::size_t i = 0;
         bool found = false;
-        for (std::size_t i = 0; i < clause.rows(); ++i) {
-            if (i == clause.watched0) continue;
+        for (; i < clause.rows(); ++i) {
+            if (i == clause.watched0 || i == clause.watched1) continue;
             working_eqn.unsafe_copy(clause.row(i));
             trail.span().reduce(working_eqn);
             if (!working_eqn.none()) {
@@ -68,26 +84,19 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
         if (!found) {
             return eqn_false;
         } else {
-            // Update watchlists
-            std::size_t new_watched0 = clause.watched0;
-            clause_sel->update_with_new_watch(id, old_watched0, new_watched0);
+            clause_sel->update_with_new_watch(id, old_watched0, WatchType::Zero, trail);
         }
-    }
-    // Postcondition: clause.row(clause.watched0) is non-zero w.r.t. current trail
 
-    // Do the same things with clause.row(clause.watched1), but reduce using clause.row(clause.watched0).
-    working_eqn2.unsafe_copy(clause.row(clause.watched1));
-    trail.span().reduce_with_extra(working_eqn2, working_eqn);
-    if (working_eqn2.none()) {
+        // Continue with second equation with same i
         std::size_t old_watched1 = clause.watched1;
 
-        // Find a new equation to watch
-        bool found = false;
-        for (std::size_t i = 0; i < clause.rows(); ++i) {
-            if (i == clause.watched0 || i == clause.watched1) continue;
+        found = false;
+        ++i;
+        for (; i < clause.rows(); ++i) {
+            if (i == clause.watched1) continue;
             working_eqn2.unsafe_copy(clause.row(i));
-            trail.span().reduce_with_extra(working_eqn2, working_eqn);
-            if (!working_eqn2.none()) {
+            trail.span().reduce(working_eqn2);
+            if (!working_eqn2.none() && (working_eqn2 != working_eqn)) {
                 clause.watched1 = i;
                 found = true;
                 break;
@@ -95,10 +104,10 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
         }
 
         // If none found, learn clause.row(clause.watched0) + 1
-        if (!found) {
+        if (!found) { 
             // working_eqn still holds trail.span().reduce_copy(clause.row(clause.watched0))
             working_eqn.flip(num_vars);
-            // At this point, eqn may be the zero vector iff the clause is true
+            // At this point, eqn may be the zero vector if the clause is true
             if (working_eqn.none()) {
                 return std::nullopt;
             } else {
@@ -106,11 +115,48 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
             }
         } else {
             // Update watchlists
-            std::size_t new_watched1 = clause.watched1;
-            clause_sel->update_with_new_watch(id, old_watched1, new_watched1);
+            clause_sel->update_with_new_watch(id, old_watched1, WatchType::One, trail);
+            return std::nullopt;
+        }
+    } else {
+        // Find one new watched literal
+        // If cannot find, propagate the non-zero watch
+
+        Equation& non_zero_ref = first_is_zero ? working_eqn2 : working_eqn;
+        Equation& working_ref = first_is_zero ? working_eqn : working_eqn2;
+        std::size_t& changing_watch = first_is_zero ? clause.watched0 : clause.watched1;
+
+        std::size_t old_watch = changing_watch;
+
+        // Find a new equation to watch
+        bool found = false;
+        for (std::size_t i = 0; i < clause.rows(); ++i) {
+            if (i == clause.watched0 || i == clause.watched1) continue;
+            working_ref.unsafe_copy(clause.row(i));
+            trail.span().reduce(working_ref);
+            if (!working_ref.none() && (working_ref != non_zero_ref)) {
+                changing_watch = i;
+                found = true;
+                break;
+            }
+        }
+
+        // If none found, learn clause.row(clause.watched0) + 1
+        if (!found) { 
+            // working_eqn still holds trail.span().reduce_copy(clause.row(clause.watched0))
+            non_zero_ref.flip(num_vars);
+            // At this point, eqn may be the zero vector iff the clause is true
+            if (non_zero_ref.none()) {
+                return std::nullopt;
+            } else {
+                return non_zero_ref;
+            }
+        } else {
+            // Update watchlists
+            clause_sel->update_with_new_watch(id, old_watch, first_is_zero ? WatchType::Zero : WatchType::One, trail);
+            return std::nullopt;
         }
     }
-    return std::nullopt;
 }
 
 std::optional<std::pair<Equation, ClauseId>> Solver::unit_propagate_once() {
@@ -199,10 +245,15 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
 
             dec_proc->update_with_asserting_clause(asserting_clause);
 
-            add_clause(asserting_clause);
-
-            // Jump back in the trail
-            trail.erase(trail.end() - jumpable_levels, trail.end());
+            if (asserting_clause.rows() == 1) {
+                // Restart the trail
+                trail.erase(trail.begin() + 1, trail.end());
+                clause_sel->add_asserting_clause(asserting_clause, trail);
+            } else {
+                // Jump back in the trail
+                trail.erase(trail.end() - jumpable_levels, trail.end());
+                clause_sel->add_asserting_clause(asserting_clause, trail);
+            }
         } else {
             // Check for satisfiability
             if (trail.span().rows() == num_vars) {
@@ -264,8 +315,13 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
 
     std::istringstream iss{line};
     std::size_t num_vars;
+    std::size_t tmp_num_clauses;
     std::string tmp;
-    iss >> tmp >> tmp >> num_vars;
+    iss >> tmp >> tmp >> num_vars >> tmp_num_clauses;
+
+    // if (tmp_num_clauses >= 150) {
+    //     throw std::runtime_error("Too many clauses: " + std::to_string(tmp_num_clauses));
+    // }
 
     std::unique_ptr<DecisionProcedure> dec_proc;
 
@@ -345,7 +401,8 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
 
             clause.add_row(equation);
         }
-        solver.add_clause(clause);
+        solver.clause_sel->add_starting_clause(clause);
+        solver.dec_proc->update_with_starting_clause(clause);
     }
     file.close();
     return solver;

@@ -6,7 +6,7 @@ all:
 
 .PHONY: test
 test: all
-	./bin/main -d tests
+	./bin/main -d tests -p vsids_unit
 
 .PHONY: clean
 clean:

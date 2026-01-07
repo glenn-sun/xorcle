@@ -18,6 +18,7 @@ public:
     virtual Equation make_decision(const RowSpace& trail_span) = 0;
     virtual void update_with_critical_equation(const Equation& eqn) {};
     virtual void update_with_asserting_clause(const Clause& clause) {};
+    virtual void update_with_starting_clause(const Clause& clause) {};
 };
 
 class FixedUnit : public DecisionProcedure {
@@ -64,6 +65,20 @@ private:
 public:
     VsidsUnit(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
     void reinitialize() override ;
+    Equation make_decision(const RowSpace& trail_span) override;
+    void update_with_critical_equation(const Equation& eqn) override;
+    void update_with_asserting_clause(const Clause& clause) override;
+};
+
+class VsidsEq : public DecisionProcedure {
+private:
+    VsidsParams vsids_params;
+public:
+    VsidsEq(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
+    void reinitialize() override {
+        vsids_params.activity_heap.reset();
+        vsids_params.inc_amt = 1;
+    };
     Equation make_decision(const RowSpace& trail_span) override;
     void update_with_critical_equation(const Equation& eqn) override;
     void update_with_asserting_clause(const Clause& clause) override;

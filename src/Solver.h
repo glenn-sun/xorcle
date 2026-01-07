@@ -55,7 +55,7 @@ public:
     Solver(const std::size_t num_vars, std::unique_ptr<DecisionProcedure> dec_proc) : 
         num_vars(num_vars), 
         trail(num_vars),
-        clause_sel(std::make_unique<Cyclic>(num_vars)),
+        clause_sel(std::make_unique<RandomCyclic>(num_vars)),
         dec_proc(std::move(dec_proc)),
         working_eqn(bit::vector<>::zeros(num_vars + 1)),
         working_eqn2(bit::vector<>::zeros(num_vars + 1)) {};
@@ -68,14 +68,14 @@ public:
     /// @brief Number of decisions made so far.
     std::size_t level() const { return trail.size() - 1; }
 
-    /// @brief Add a clause to the solver
-    void add_clause(Clause& clause) {
-        if (clause.rows() == 0) { 
-            return;
-        }
+    // /// @brief Add a clause to the solver
+    // void add_clause(Clause& clause) {
+    //     if (clause.rows() == 0) { 
+    //         return;
+    //     }
 
-        clause_sel->add_clause(clause);
-    }
+    //     clause_sel->add_clause(clause);
+    // }
 
     const std::vector<Clause>& get_clauses() const {
         return clause_sel->get_clauses();

@@ -7,32 +7,37 @@
 namespace fs = std::filesystem;
 
 void solve(std::string& filename, DecisionProcedureName dpn, std::atomic<bool>& stop_flag) {
-    Solver solver = Solver::from_DIMACS(filename, dpn);
-    int num_vars = solver.get_num_vars();
-    int start_num_clauses = solver.get_num_clauses();
+    try {
+        Solver solver = Solver::from_DIMACS(filename, dpn);
+        int num_vars = solver.get_num_vars();
+        int start_num_clauses = solver.get_num_clauses();
 
-    auto start = std::chrono::high_resolution_clock::now();
-    auto result = solver.solve(stop_flag);
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::nano> duration = end - start;
-    auto time = duration.count();
+        auto start = std::chrono::high_resolution_clock::now();
+        auto result = solver.solve(stop_flag);
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::nano> duration = end - start;
+        auto time = duration.count();
 
-    std::stringstream ss;
-    ss << "File: " << filename << std::endl;
-    ss << "Number of variables: " << num_vars << std::endl;
-    ss << "Number of clauses: " << start_num_clauses << std::endl;
-    ss << "Final number of clauses: " << solver.get_num_clauses() << std::endl;
-    ss << "Time: " << std::format("{:.{}g}", time / 1000000000, 3) << " s" << std::endl;
-    if (ResultCase::is_timeout(result)) {
-        ss << "Timeout" << std::endl;
-    } else if (ResultCase::is_unsat(result)) {
-        ss << "Unsatisfiable" << std::endl;
-    } else if (ResultCase::is_sat(result)) {
-        ss << "Satisfiable: " << ResultCase::unwrap_sat(result) << std::endl;
+        std::stringstream ss;
+        ss << "File: " << filename << std::endl;
+        ss << "Number of variables: " << num_vars << std::endl;
+        ss << "Number of clauses: " << start_num_clauses << std::endl;
+        ss << "Final number of clauses: " << solver.get_num_clauses() << std::endl;
+        ss << "Time: " << std::format("{:.{}g}", time / 1000000000, 3) << " s" << std::endl;
+        if (ResultCase::is_timeout(result)) {
+            ss << "Timeout" << std::endl;
+        } else if (ResultCase::is_unsat(result)) {
+            ss << "Unsatisfiable" << std::endl;
+        } else if (ResultCase::is_sat(result)) {
+            ss << "Satisfiable: " << ResultCase::unwrap_sat(result) << std::endl;
+        }
+        ss << std::endl;
+
+        std::cout << ss.str();
+    } catch (const std::runtime_error& e) {
+        std::cerr << e.what() << std::endl;
     }
-    ss << std::endl;
-
-    std::cout << ss.str();
+    
 }
 
 int main(int argc, char *argv[]) {
