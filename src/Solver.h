@@ -5,6 +5,7 @@
 #include "Trail.h"
 #include "DecisionProcedure.h"
 #include "ClauseSelector.h"
+#include "ExactWatchlist.h"
 
 namespace ResultCase {
     struct Timeout {};
@@ -55,7 +56,7 @@ public:
     Solver(const std::size_t num_vars, std::unique_ptr<DecisionProcedure> dec_proc) : 
         num_vars(num_vars), 
         trail(num_vars),
-        clause_sel(std::make_unique<RandomCyclic>(num_vars)),
+        clause_sel(std::make_unique<LTWatchlist>(num_vars)),
         dec_proc(std::move(dec_proc)),
         working_eqn(bit::vector<>::zeros(num_vars + 1)),
         working_eqn2(bit::vector<>::zeros(num_vars + 1)) {};
@@ -139,5 +140,13 @@ public:
     ///
     /// All four ways will be stored as [x1 + x2 = 0] ^ [x3 = 1].
     static Solver from_DIMACS(const std::string& filename, const DecisionProcedureName dpn);
+
+
+    // Statistics
+    std::size_t num_attempt_props = 0;
+    std::size_t num_watch_updates = 0;
+    std::size_t num_propagations = 0;
+    std::size_t num_conflicts = 0;
+
 };
 

@@ -84,6 +84,7 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
         if (!found) {
             return eqn_false;
         } else {
+            ++num_watch_updates;
             clause_sel->update_with_new_watch(id, old_watched0, WatchType::Zero, trail);
         }
 
@@ -115,6 +116,7 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
             }
         } else {
             // Update watchlists
+            ++num_watch_updates;
             clause_sel->update_with_new_watch(id, old_watched1, WatchType::One, trail);
             return std::nullopt;
         }
@@ -153,6 +155,7 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
             }
         } else {
             // Update watchlists
+            ++num_watch_updates;
             clause_sel->update_with_new_watch(id, old_watch, first_is_zero ? WatchType::Zero : WatchType::One, trail);
             return std::nullopt;
         }
@@ -166,6 +169,7 @@ std::optional<std::pair<Equation, ClauseId>> Solver::unit_propagate_once() {
             return std::nullopt;
         } else {
             ClauseId id = maybe_clause.value();
+            ++num_attempt_props;
             auto result = unit_prop_one_clause(id);
             if (result.has_value()) {
                 return std::pair<Equation, ClauseId>{result.value(), id};
@@ -222,9 +226,11 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
         while (!conflict) {
             auto propagate_result = unit_propagate_once();
             if (propagate_result) {
+                ++num_propagations;
                 auto [eqn, reason] = *propagate_result;
-                clause_sel->update_with_new_equation(eqn, trail);
+                trail.span().reduce(eqn);
                 trail.learn(eqn, reason);
+                clause_sel->update_with_propagation(eqn, trail);
                 working_eqn = eqn_false;
                 trail.span().reduce(working_eqn);
                 conflict = working_eqn.none();
@@ -235,6 +241,8 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
 
         // Check for conflict
         if (conflict) {
+            ++num_conflicts;
+
             // Check for unsatisfiability
             if (level() == 0) {
                 return ResultCase::Unsat {};
@@ -248,11 +256,11 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             if (asserting_clause.rows() == 1) {
                 // Restart the trail
                 trail.erase(trail.begin() + 1, trail.end());
-                clause_sel->add_asserting_clause(asserting_clause, trail);
+                clause_sel->add_asserting_clause(asserting_clause, trail, trail.size() - 1);
             } else {
                 // Jump back in the trail
                 trail.erase(trail.end() - jumpable_levels, trail.end());
-                clause_sel->add_asserting_clause(asserting_clause, trail);
+                clause_sel->add_asserting_clause(asserting_clause, trail, jumpable_levels);
             }
         } else {
             // Check for satisfiability
@@ -264,8 +272,9 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
 
             // Make a decision
             auto decision = dec_proc->make_decision(trail.span());
-            clause_sel->update_with_new_equation(decision, trail);
+            trail.span().reduce(decision);
             trail.learn(decision, std::nullopt);
+            clause_sel->update_with_decision(decision, trail);
         }
     }
     return ResultCase::Timeout {};

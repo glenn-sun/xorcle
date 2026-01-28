@@ -23,6 +23,9 @@ void solve(std::string& filename, DecisionProcedureName dpn, std::atomic<bool>& 
         ss << "Number of variables: " << num_vars << std::endl;
         ss << "Number of clauses: " << start_num_clauses << std::endl;
         ss << "Final number of clauses: " << solver.get_num_clauses() << std::endl;
+        ss << "Propagations per conflict: " << (double) solver.num_propagations / solver.num_conflicts << std::endl;
+        ss << "Attempts per propagation: " << (double) solver.num_attempt_props / solver.num_propagations << std::endl;
+        ss << "Attempts per watch update: " << (double) solver.num_attempt_props / solver.num_watch_updates << std::endl;
         ss << "Time: " << std::format("{:.{}g}", time / 1000000000, 3) << " s" << std::endl;
         if (ResultCase::is_timeout(result)) {
             ss << "Timeout" << std::endl;

@@ -43,6 +43,40 @@ public:
         }
     }
 
+    // Remove all entries with priority strictly less than cutoff.
+    // This operation rebuilds the internal heap and updates the position map.
+    void remove_below(double cutoff) {
+        if (heap_.empty()) return;
+
+        std::vector<Node> new_heap;
+        new_heap.reserve(heap_.size());
+
+        // Move kept nodes into new_heap; erase removed nodes from pos_map_
+        for (std::size_t i = 0; i < heap_.size(); ++i) {
+            if (heap_[i].priority < cutoff) {
+                pos_map_.erase(heap_[i].value);
+            } else {
+                new_heap.push_back(std::move(heap_[i]));
+            }
+        }
+
+        heap_.swap(new_heap);
+
+        // Rebuild pos_map_ for the compacted heap
+        pos_map_.clear();
+        for (std::size_t i = 0; i < heap_.size(); ++i) {
+            pos_map_.emplace(heap_[i].value, i);
+        }
+
+        // Heapify in O(n) by sifting down from the last non-leaf node.
+        if (!heap_.empty()) {
+            for (std::size_t i = heap_.size() / 2; i-- > 0; ) {
+                sift_down(i);
+            }
+        }
+    }
+
+
     // Return current priority for element; if not present, return 0.0
     double get_priority(const T& element) const {
         auto it = pos_map_.find(element);
