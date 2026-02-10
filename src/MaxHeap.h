@@ -9,6 +9,8 @@
 #include <utility>
 #include <type_traits>
 #include <optional>
+#include <queue>
+#include <functional> 
 
 template <
     typename T,
@@ -111,6 +113,37 @@ public:
         sift_down(0);
         return top_value;
     }
+
+    // Non-destructively peek the top `k` elements (1..k largest).
+    // Returns a vector of const references to the heap elements in descending priority order.
+    std::vector<std::reference_wrapper<const T>> peek_top_k(std::size_t k) const {
+        if (k == 0) return {};
+        k = std::min(k, heap_.size());
+
+        using Cand = std::pair<double, std::size_t>; // (priority, index)
+        auto cmp = [](const Cand &a, const Cand &b) { return a.first < b.first; }; // max-first
+        std::priority_queue<Cand, std::vector<Cand>, decltype(cmp)> pq(cmp);
+
+        pq.emplace(heap_[0].priority, 0);
+
+        std::vector<std::reference_wrapper<const T>> result;
+        result.reserve(k);
+
+        while (!pq.empty() && result.size() < k) {
+            auto [priority, idx] = pq.top();
+            pq.pop();
+
+            result.emplace_back(std::cref(heap_[idx].value));
+
+            std::size_t l = left(idx);
+            std::size_t r = right(idx);
+            if (l < heap_.size()) pq.emplace(heap_[l].priority, l);
+            if (r < heap_.size()) pq.emplace(heap_[r].priority, r);
+        }
+
+        return result;
+    }
+
 
     // Multiply (rescale) all priorities by k. Requires k > 0 to preserve relative order.
     // Throws std::invalid_argument if k <= 0.

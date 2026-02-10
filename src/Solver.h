@@ -56,7 +56,7 @@ public:
     Solver(const std::size_t num_vars, std::unique_ptr<DecisionProcedure> dec_proc) : 
         num_vars(num_vars), 
         trail(num_vars),
-        clause_sel(std::make_unique<LTWatchlist>(num_vars)),
+        clause_sel(std::make_unique<Cyclic>(num_vars)),
         dec_proc(std::move(dec_proc)),
         working_eqn(bit::vector<>::zeros(num_vars + 1)),
         working_eqn2(bit::vector<>::zeros(num_vars + 1)) {};
@@ -110,37 +110,21 @@ public:
     /// @brief Create a Solver from a DIMACS file.
     /// @param filename Path to a DIMACS file.
     /// 
-    /// The DIMACS file format is extended as follows:
+    /// The DIMACS file format is extended as in [Danner, Kreuzer].
     ///
-    /// Instead of a list of positive and negative literals, we have
-    /// a list of tuples. Each tuple represents a linear equation. 
-    /// Variables in the equation may be positive or negative. An even 
-    /// number of negative literals expresses that the equation sums to 
-    /// 1. An odd number of negative literals expresses that the equation
-    /// sums to 0.
-    /// 
-    /// Spaces around parentheses are optional. As usual, each line
-    /// is terminated by 0. Comments are lines starting with "c". The line
-    /// "p cnf n m" must come before all clauses, where "n" is the number
-    /// of variables and "m" is the number of clauses. For backwards 
-    /// compatability with standard DIMACS format, "k" is treated 
-    /// identically to "(k)" in all clauses. 
+    /// In the standard DIMACS format, each literal is either an integer
+    /// or a negated integer. In the extended format, the basic expressions
+    /// are XOR expressions with infix "+". They may be negated by affixing
+    /// a leading "-".
     ///
-    /// Example: The following is a valid file that consists of four
-    /// equivalent ways to express [x1 + x2 = 1] v [x3 = 0].
+    /// Example: The following file expresses a clause [x1 + x2 = 0] v [x3 = 1].
     ///
     /// c This is a comment
-    /// p cnf 3 4
-    /// c This is another comment
-    /// (1 2) (-3) 0
-    /// (-1 -2) (-3) 0
-    /// c This is yet another comment
-    /// ( 1 2 ) -3 0
-    /// (-1 -2 ) ( -3) 0
+    /// p xnf 3 4
+    /// -1+2 3 0
     ///
-    /// All four ways will be stored as [x1 + x2 = 0] ^ [x3 = 1].
+    /// In our clause encoding, note that this will be stored as [x1 + x2 = 1] ^ [x3 = 0].
     static Solver from_DIMACS(const std::string& filename, const DecisionProcedureName dpn);
-
 
     // Statistics
     std::size_t num_attempt_props = 0;

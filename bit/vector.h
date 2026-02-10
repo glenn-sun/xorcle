@@ -1035,7 +1035,22 @@ public:
     /// @brief Check whether none of of the elements in the bit-vector are set.
     constexpr bool none() const
     {
-        return !any();
+        for (auto b : m_blocks)
+            if (b != 0) return false;
+
+        return true;
+    }
+
+    enum class NoneOrFinal { None, Final, Other };
+    constexpr NoneOrFinal none_or_final() const
+    {
+        auto final_element = size() - 1;
+        auto final_block_idx = block_index_for(final_element);
+        for (std::size_t i = 0; i < final_block_idx; ++i)
+            if (block(i) != 0) return NoneOrFinal::Other;
+        auto final_block = block(final_block_idx);
+        if (final_block == 0) return NoneOrFinal::None;
+        else if (final_block == 1 << bit_index_for(final_element)) return NoneOrFinal::Final;
     }
 
     /// @brief Returns the number of set elements in the bit-vector.

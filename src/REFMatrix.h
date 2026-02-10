@@ -27,6 +27,7 @@ public:
     REFMatrix(bit::matrix<> M);
 
     const bit::vector<>& get_pivot_cols() const { return pivot_cols; }
+    const std::size_t get_col_to_row(std::size_t i) const { return col_to_row[i]; }
 
     /// @brief Add a row into the matrix. Uses copy semantics. Does nothing if v
     /// already belongs to the span of the matrix.

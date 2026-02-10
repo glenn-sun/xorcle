@@ -100,6 +100,10 @@ int main(int argc, char *argv[]) {
                     dpn = DecisionProcedureName::random_eq;
                 } else if (optarg_str == "vsids_unit") {
                     dpn = DecisionProcedureName::vsids_unit; 
+                } else if (optarg_str == "vsids_multiple") {
+                    dpn = DecisionProcedureName::vsids_multiple;
+                } else if (optarg_str == "vsids_clause") {
+                    dpn = DecisionProcedureName::vsids_clause;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
                     return 1;

@@ -47,6 +47,14 @@ std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
     // Otherwise, check both watched equations
     working_eqn.unsafe_copy(clause.row(clause.watched0));
     trail.span().reduce(working_eqn);
+    // auto first_classification = working_eqn.none_or_final();
+    // if (first_classification == bit::vector<>::NoneOrFinal::Final) {
+    //     // first equation is true
+    //     // True clauses are not guaranteed to have a true equation, it may
+    //     // be a linear combination, however in practice this saves significant time
+    //     return std::nullopt;
+    // }
+    // bool first_is_zero = first_classification == bit::vector<>::NoneOrFinal::None;
     bool first_is_zero = working_eqn.none();
 
     working_eqn2.unsafe_copy(clause.row(clause.watched1));
@@ -271,7 +279,7 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             }
 
             // Make a decision
-            auto decision = dec_proc->make_decision(trail.span());
+            auto decision = dec_proc->make_decision(trail.span(), clause_sel->get_clauses());
             trail.span().reduce(decision);
             trail.learn(decision, std::nullopt);
             clause_sel->update_with_decision(decision, trail);
@@ -313,27 +321,21 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
     if (!file.is_open()) {
         throw std::runtime_error("Unable to open file: " + filename);
     }
-    
-    // Skip comments and empty lines
+
+    // Skip comments and empty lines until header
     while (std::getline(file, line) && (line.empty() || line[0] == 'c')) {}
 
-    // Get number of variables from header
-    if (line[0] != 'p') {
+    if (line.empty() || line[0] != 'p') {
         throw std::runtime_error("Invalid DIMACS header: " + line);
     }
 
-    std::istringstream iss{line};
+    std::istringstream header_ss{line};
+    std::string p_tok, cnf_tok;
     std::size_t num_vars;
     std::size_t tmp_num_clauses;
-    std::string tmp;
-    iss >> tmp >> tmp >> num_vars >> tmp_num_clauses;
-
-    // if (tmp_num_clauses >= 150) {
-    //     throw std::runtime_error("Too many clauses: " + std::to_string(tmp_num_clauses));
-    // }
+    header_ss >> p_tok >> cnf_tok >> num_vars >> tmp_num_clauses;
 
     std::unique_ptr<DecisionProcedure> dec_proc;
-
     switch (dpn) {
         case DecisionProcedureName::fixed_unit:
             dec_proc = std::make_unique<FixedUnit>(num_vars);
@@ -347,73 +349,122 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
         case DecisionProcedureName::vsids_unit:
             dec_proc = std::make_unique<VsidsUnit>(num_vars);
             break;
+        case DecisionProcedureName::vsids_multiple:
+            dec_proc = std::make_unique<VsidsMultiple>(num_vars);
+            break;
+        case DecisionProcedureName::vsids_clause:
+            dec_proc = std::make_unique<VsidsClause>(num_vars);
+            break;
     }
 
     Solver solver{num_vars, std::move(dec_proc)};
 
+    // Read clause lines
     while (std::getline(file, line)) {
-        if (line.empty() || line[0] == 'c') {
-            continue; // Skip comments and empty lines
-        }
-        
-        // Insert whitespace around parentheses
-        for (std::string target : {"(", ")"}) {
-            size_t pos{0};
-            while ((pos = line.find(target, pos)) != std::string::npos) {
-                line.replace(pos, target.length(), " " + target + " ");
-                pos += target.length() + 2;
-            }
-        }
-        
+        if (line.empty() || line[0] == 'c') continue;
+
+        // remove any trailing CR (windows files)
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
         Clause clause(num_vars);
         std::istringstream iss{line};
         std::string token;
 
         while (iss >> token) {
-            if (token == "0") {
-                break;
-            }
+            if (token == "0") break;
 
-            Equation equation{solver.eqn_true}; 
+            Equation equation{solver.eqn_true};
 
-            if (token == "(") { // Process equation-type term
-                bool is_neg{false};
-                while (true) {
-                    iss >> token;
-                    if (token == ")") {
-                        break;
-                    }
-                    if (token == "0" || token == "(") {
-                        throw std::runtime_error("Found invalid token inside equation");
-                    }
-                    int literal{std::stoi(token)};
-                    // Negative literals mean negated variables
-                    if (literal < 0) {
-                        is_neg = !is_neg;
-                        literal = std::abs(literal);
-                    }
-                    equation.set(literal - 1);
+            // If token contains '+' it's a plus-expression (equation)
+            if (token.find('+') != std::string::npos) {
+                bool leading_neg = false;
+                size_t pos = 0;
+
+                // allow a leading '-' only; disallow '-' elsewhere
+                if (!token.empty() && token[0] == '-') {
+                    leading_neg = true;
+                    pos = 1; // skip the leading '-'
                 }
-                // Negative means the original intent is = 0. In the annihilator representation
-                // of clauses, this is converted to = 1, thus we set the last bit.
-                if (is_neg) {
+
+                // ensure there is no '-' anywhere else in the token
+                if (token.find('-', pos) != std::string::npos) {
+                    throw std::runtime_error("Illegal '-' inside XOR expression: " + token);
+                }
+
+                // substring to split
+                std::string body = token.substr(pos);
+                if (body.empty()) {
+                    throw std::runtime_error("Empty XOR expression after '-' in token: " + token);
+                }
+
+                // split on '+'
+                size_t start = 0;
+                while (start < body.size()) {
+                    size_t plus_pos = body.find('+', start);
+                    std::string var_str = (plus_pos == std::string::npos)
+                                          ? body.substr(start)
+                                          : body.substr(start, plus_pos - start);
+
+                    if (var_str.empty()) {
+                        throw std::runtime_error("Empty variable in XOR expression: " + token);
+                    }
+
+                    int var;
+                    try {
+                        var = std::stoi(var_str);
+                    } catch (...) {
+                        throw std::runtime_error("Invalid integer in XOR expression: " + var_str);
+                    }
+
+                    if (var <= 0 || static_cast<std::size_t>(var) > num_vars) {
+                        throw std::runtime_error("Variable out of range: " + var_str);
+                    }
+
+                    equation.set(var - 1);
+
+                    if (plus_pos == std::string::npos) break;
+                    start = plus_pos + 1;
+                }
+
+                if (leading_neg) {
+                    // leading negative toggles parity / RHS -> same as other format
                     equation.set(num_vars);
                 }
-            } else { // Process legacy DIMACS-type term
-                int literal{std::stoi(token)};
+
+            } else { // legacy single literal (possibly negative)
+                int literal;
+                try {
+                    literal = std::stoi(token);
+                } catch (...) {
+                    throw std::runtime_error("Invalid literal token: " + token);
+                }
+
+                if (literal == 0) {
+                    break; // defensive: if someone wrote "0" without whitespace
+                }
+
                 if (literal < 0) {
                     literal = std::abs(literal);
-                    equation.set(num_vars);
+                    equation.set(num_vars); // toggle parity for negative single-literal token
                 }
+
+                if (literal <= 0 || static_cast<std::size_t>(literal) > num_vars) {
+                    throw std::runtime_error("Variable out of range: " + token);
+                }
+
                 equation.set(literal - 1);
             }
 
             clause.add_row(equation);
         }
+
+        // Add clause to solver
         solver.clause_sel->add_starting_clause(clause);
         solver.dec_proc->update_with_starting_clause(clause);
     }
+
     file.close();
     return solver;
 }
+
 

@@ -24,7 +24,7 @@ void FixedUnit::reinitialize() {
     }
 }
 
-Equation FixedUnit::make_decision(const RowSpace& trail_span) { 
+Equation FixedUnit::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
     return decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
@@ -39,7 +39,7 @@ void RandomUnit::reinitialize() {
 
     std::shuffle(decision_basis.begin(), decision_basis.end(), g);
 }
-Equation RandomUnit::make_decision(const RowSpace& trail_span) { 
+Equation RandomUnit::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
     return decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
@@ -58,7 +58,7 @@ void RandomEq::reinitialize() {
         }
     }
 }
-Equation RandomEq::make_decision(const RowSpace& trail_span) { 
+Equation RandomEq::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
     return decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
@@ -78,23 +78,18 @@ void VsidsUnit::reinitialize() {
     vsids_params.inc_amt = 1;
 }
 
-Equation VsidsUnit::make_decision(const RowSpace& trail_span) { 
-    Equation eqn{num_vars}, eqn_reduced{num_vars}, eqn_not_reduced{num_vars};
-    std::optional<Equation> maybe_eqn;
-    do {
-        maybe_eqn = vsids_params.activity_heap.extract_max();
-        if (maybe_eqn.has_value()) {
-            eqn = std::move(maybe_eqn.value());
-        } else {
+Equation VsidsUnit::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
+    while (true) {
+        std::optional<Equation> maybe_eqn = vsids_params.activity_heap.extract_max();
+        if (!maybe_eqn.has_value()) {
             reinitialize();
-            eqn = vsids_params.activity_heap.extract_max().value();
+            maybe_eqn = vsids_params.activity_heap.extract_max();
         }
-        eqn_reduced.unsafe_copy(eqn);
-        trail_span.reduce(eqn_reduced);
-        eqn_not_reduced.unsafe_copy(eqn_reduced);
-        eqn_not_reduced.flip(num_vars);
-    } while (eqn_reduced.none() || eqn_not_reduced.none());
-    return eqn;
+        trail_span.reduce(*maybe_eqn);
+        if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
+            return *maybe_eqn;
+        };
+    }
 }
 
 void VsidsUnit::update_with_critical_equation(const Equation& eqn) {
