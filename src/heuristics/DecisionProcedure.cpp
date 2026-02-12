@@ -4,7 +4,20 @@
 #include "util/DecisionUtils.h"
 
 namespace heuristics {
+namespace {
+void ensure_unit_eqns_impl(std::vector<Equation>& unit_eqns, std::size_t num_vars) {
+    if (unit_eqns.size() != num_vars) {
+        unit_eqns.clear();
+        unit_eqns.reserve(num_vars);
+        for (std::size_t i = 0; i < num_vars; i++) {
+            unit_eqns.emplace_back(Equation::unit(num_vars + 1, i));
+        }
+    }
+}
+} // namespace
+
 void FixedUnit::reinitialize() {
+    reset_stats();
     decision_basis.clear();
     for (std::size_t i = 0; i < num_vars; i++) {
         decision_basis.emplace_back(Equation::unit(num_vars + 1, i));
@@ -12,47 +25,12 @@ void FixedUnit::reinitialize() {
 }
 
 Equation FixedUnit::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
-    return util::decide_from_basis(decision_basis, trail_span, num_vars);
-}
-
-void RandomUnit::reinitialize() {
-    decision_basis.clear();
-    for (std::size_t i = 0; i < num_vars; i++) {
-        decision_basis.emplace_back(Equation::unit(num_vars + 1, i));
-    }
-
-    std::random_device rd;
-    std::mt19937 g(rd());
-
-    std::shuffle(decision_basis.begin(), decision_basis.end(), g);
-}
-Equation RandomUnit::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
-    return util::decide_from_basis(decision_basis, trail_span, num_vars);
-}
-
-void RandomEq::reinitialize() {
-    decision_basis.clear();
-    REFMatrix M(num_vars);
-    Equation eqn{num_vars}, eqn_reduced{num_vars};
-    while (decision_basis.size() < num_vars) {
-        Equation random_eqn = Equation::random(num_vars + 1);
-        assert(eqn.size() == random_eqn.size());
-        eqn.unsafe_copy(random_eqn);
-        assert(eqn_reduced.size() == eqn.size());
-        eqn_reduced.unsafe_copy(eqn);
-        M.reduce(eqn_reduced);
-        if (eqn_reduced != Equation::zeros(num_vars + 1) && 
-            eqn_reduced != Equation::unit(num_vars + 1, num_vars)) {
-            decision_basis.push_back(eqn_reduced);
-            M.add_row(eqn_reduced);
-        }
-    }
-}
-Equation RandomEq::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
+    record_decision(false);
     return util::decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
 void RandomClauseSum::reinitialize() {
+    reset_stats();
     decision_basis.clear();
     for (std::size_t i = 0; i < num_vars; i++) {
         decision_basis.emplace_back(Equation::unit(num_vars + 1, i));
@@ -62,6 +40,7 @@ void RandomClauseSum::reinitialize() {
 
 Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
     if (clauses.empty()) {
+        record_decision(true);
         return util::decide_from_basis(decision_basis, trail_span, num_vars);
     }
 
@@ -77,21 +56,13 @@ Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::v
             continue;
         }
 
-        while (true) {
-            bit::vector<> coeffs = bit::vector<>::random(clause.rows());
-            candidate.reset();
-            coeffs.if_set_call([&](std::size_t i) {
-                candidate ^= clause.row(i);
-            });
-            assert(reduced.size() == candidate.size());
-            reduced.unsafe_copy(candidate);
-            trail_span.reduce(reduced);
-            if (reduced.any()) {
-                return candidate;
-            }
+        if (util::sample_equation_from_clause(clause, trail_span, num_vars, candidate, reduced)) {
+            record_decision(false);
+            return candidate;
         }
     }
 
+    record_decision(true);
     return util::decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
@@ -104,6 +75,7 @@ void VsidsParams::bump_activity(const Equation& eqn) {
 }
 
 void VsidsUnit::reinitialize() {
+    reset_stats();
     vsids_params.activity_heap.reset();
     if (unit_eqns.size() != num_vars) {
         unit_eqns.clear();
@@ -129,6 +101,7 @@ Equation VsidsUnit::make_decision(const RowSpace& trail_span, const std::vector<
         }
         trail_span.reduce(*maybe_eqn);
         if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
+            record_decision(false);
             return *maybe_eqn;
         };
     }
@@ -152,5 +125,261 @@ void VsidsUnit::update_with_asserting_clause(const Clause& clause) {
     vsids_params.inc_amt *= (1 / vsids_params.decay);
 
     vsids_params.activity_heap.rebuild();
+}
+
+void BerkminDecision::reinitialize() {
+    reset_stats();
+    conflict_clauses.clear();
+    pending_conflict_clause = false;
+    last_decision_clause.reset();
+    ensure_unit_eqns_impl(unit_eqns, num_vars);
+}
+
+Equation BerkminDecision::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
+    ensure_unit_eqns_impl(unit_eqns, num_vars);
+    Equation candidate{num_vars};
+    Equation reduced{num_vars};
+    for (ClauseId id : conflict_clauses) {
+        if (id >= clauses.size()) {
+            continue;
+        }
+        const Clause& clause = clauses[id];
+        if (util::clause_satisfied_by_trail(trail_span, clause, num_vars)) {
+            continue;
+        }
+        last_decision_clause = id;
+        if (util::sample_equation_from_clause(clause, trail_span, num_vars, candidate, reduced)) {
+            record_decision(false);
+            return reduced;
+        }
+    }
+    last_decision_clause.reset();
+    record_decision(true);
+    return util::decide_from_units(trail_span, unit_eqns, num_vars);
+}
+
+void BerkminDecision::update_with_asserting_clause(const Clause& /*clause*/) {
+    pending_conflict_clause = true;
+}
+
+void BerkminDecision::update_with_new_clause(const Clause& /*clause*/, ClauseId id) {
+    if (!pending_conflict_clause) {
+        return;
+    }
+    conflict_clauses.push_front(id);
+    pending_conflict_clause = false;
+}
+
+std::optional<ClauseId> BerkminDecision::decision_clause_hint() const {
+    return last_decision_clause;
+}
+
+void CBHDecision::ensure_unit_eqns() {
+    ensure_unit_eqns_impl(unit_eqns, num_vars);
+}
+
+void CBHDecision::reinitialize() {
+    reset_stats();
+    clause_list.clear();
+    positions.clear();
+    list_built = false;
+    current = clause_list.end();
+    pending_responsible.clear();
+    pending_mark.clear();
+    pending_conflict_clause = false;
+    pending_conflict_clause_id.reset();
+    last_decision_clause.reset();
+    ensure_unit_eqns();
+}
+
+void CBHDecision::build_initial_list(const std::vector<Clause>& clauses) {
+    clause_list.clear();
+    positions.clear();
+    positions.resize(clauses.size(), clause_list.end());
+    list_built = true;
+
+    if (clauses.empty()) {
+        current = clause_list.end();
+        return;
+    }
+
+    const std::size_t nvars = num_vars;
+    std::vector<std::vector<ClauseId>> var_to_clauses(nvars);
+    std::vector<std::vector<std::size_t>> clause_vars(clauses.size());
+    std::vector<int> igs(nvars, 0);
+
+    for (ClauseId id = 0; id < clauses.size(); ++id) {
+        std::vector<char> seen(nvars, false);
+        const Clause& clause = clauses[id];
+        for (std::size_t r = 0; r < clause.rows(); ++r) {
+            clause.row(r).if_set_call([&](std::size_t idx) {
+                if (idx >= nvars || seen[idx]) {
+                    return;
+                }
+                seen[idx] = true;
+                clause_vars[id].push_back(idx);
+                igs[idx] += 1;
+                var_to_clauses[idx].push_back(id);
+            });
+        }
+    }
+
+    MaxHeap<std::size_t> heap;
+    for (std::size_t v = 0; v < nvars; ++v) {
+        heap.set_activity(v, static_cast<double>(igs[v]));
+        heap.insert(v);
+    }
+
+    std::vector<char> picked(nvars, false);
+    std::vector<char> clause_added(clauses.size(), false);
+    std::size_t picked_count = 0;
+
+    while (picked_count < nvars) {
+        std::optional<std::size_t> maybe_var = heap.extract_max();
+        if (!maybe_var.has_value()) {
+            break;
+        }
+        std::size_t var = maybe_var.value();
+        if (picked[var]) {
+            continue;
+        }
+        picked[var] = true;
+        ++picked_count;
+
+        for (ClauseId id : var_to_clauses[var]) {
+            if (clause_added[id]) {
+                continue;
+            }
+            clause_added[id] = true;
+            clause_list.push_back(id);
+            auto it = std::prev(clause_list.end());
+            positions[id] = it;
+            for (std::size_t v : clause_vars[id]) {
+                heap.increase_key(v, 1.0);
+            }
+        }
+    }
+
+    for (ClauseId id = 0; id < clauses.size(); ++id) {
+        if (!clause_added[id]) {
+            clause_list.push_back(id);
+            positions[id] = std::prev(clause_list.end());
+        }
+    }
+
+    current = clause_list.begin();
+
+    if (pending_conflict_clause_id.has_value()) {
+        apply_pending_reorder(pending_conflict_clause_id.value());
+        pending_conflict_clause_id.reset();
+    }
+}
+
+void CBHDecision::apply_pending_reorder(ClauseId conflict_id) {
+    if (!list_built) {
+        return;
+    }
+    if (positions.size() <= conflict_id) {
+        positions.resize(conflict_id + 1, clause_list.end());
+    }
+
+    if (positions[conflict_id] == clause_list.end()) {
+        clause_list.push_front(conflict_id);
+        positions[conflict_id] = clause_list.begin();
+    } else {
+        clause_list.splice(clause_list.begin(), clause_list, positions[conflict_id]);
+        positions[conflict_id] = clause_list.begin();
+    }
+
+    auto insert_pos = std::next(positions[conflict_id]);
+    for (ClauseId id : pending_responsible) {
+        if (id == conflict_id) {
+            if (id < pending_mark.size()) {
+                pending_mark[id] = false;
+            }
+            continue;
+        }
+        if (positions.size() <= id) {
+            positions.resize(id + 1, clause_list.end());
+        }
+        if (positions[id] == clause_list.end()) {
+            positions[id] = clause_list.insert(insert_pos, id);
+            insert_pos = std::next(positions[id]);
+        } else {
+            clause_list.splice(insert_pos, clause_list, positions[id]);
+            insert_pos = std::next(positions[id]);
+        }
+        if (id < pending_mark.size()) {
+            pending_mark[id] = false;
+        }
+    }
+    pending_responsible.clear();
+    current = clause_list.begin();
+}
+
+Equation CBHDecision::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
+    ensure_unit_eqns();
+    if (!list_built) {
+        build_initial_list(clauses);
+    }
+    if (clause_list.empty()) {
+        record_decision(true);
+        return util::decide_from_units(trail_span, unit_eqns, num_vars);
+    }
+
+    Equation candidate{num_vars};
+    Equation reduced{num_vars};
+
+    auto it = (current == clause_list.end()) ? clause_list.begin() : current;
+    for (; it != clause_list.end(); ++it) {
+        ClauseId id = *it;
+        if (id >= clauses.size()) {
+            continue;
+        }
+        const Clause& clause = clauses[id];
+        if (util::clause_satisfied_by_trail(trail_span, clause, num_vars)) {
+            continue;
+        }
+        last_decision_clause = id;
+        current = it;
+        if (util::sample_equation_from_clause(clause, trail_span, num_vars, candidate, reduced)) {
+            record_decision(false);
+            return reduced;
+        }
+    }
+
+    last_decision_clause.reset();
+    record_decision(true);
+    return util::decide_from_units(trail_span, unit_eqns, num_vars);
+}
+
+void CBHDecision::update_with_asserting_clause(const Clause& /*clause*/) {
+    pending_conflict_clause = true;
+}
+
+void CBHDecision::update_with_resolved_clause(ClauseId id) {
+    if (pending_mark.size() <= id) {
+        pending_mark.resize(id + 1, false);
+    }
+    if (!pending_mark[id]) {
+        pending_mark[id] = true;
+        pending_responsible.push_back(id);
+    }
+}
+
+void CBHDecision::update_with_new_clause(const Clause& /*clause*/, ClauseId id) {
+    if (!pending_conflict_clause) {
+        return;
+    }
+    pending_conflict_clause = false;
+    if (!list_built) {
+        pending_conflict_clause_id = id;
+        return;
+    }
+    apply_pending_reorder(id);
+}
+
+std::optional<ClauseId> CBHDecision::decision_clause_hint() const {
+    return last_decision_clause;
 }
 } // namespace heuristics

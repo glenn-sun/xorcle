@@ -28,6 +28,9 @@ void solve(std::string& filename, heuristics::DecisionProcedureName dpn, heurist
         ss << "Propagations per conflict: " << (double) solver.num_propagations / solver.num_conflicts << std::endl;
         ss << "Attempts per propagation: " << (double) solver.num_attempt_props / solver.num_propagations << std::endl;
         ss << "Attempts per watch update: " << (double) solver.num_attempt_props / solver.num_watch_updates << std::endl;
+        auto stats = solver.decision_stats();
+        double fallback_pct = stats.decisions == 0 ? 0.0 : 100.0 * static_cast<double>(stats.fallback_decisions) / static_cast<double>(stats.decisions);
+        ss << "Decision fallback: " << std::format("{:.{}g}", fallback_pct, 3) << "% (" << stats.fallback_decisions << "/" << stats.decisions << ")" << std::endl;
         ss << "Time: " << std::format("{:.{}g}", time / 1000000000, 3) << " s" << std::endl;
         if (search::ResultCase::is_timeout(result)) {
             ss << "Timeout" << std::endl;
@@ -98,22 +101,18 @@ int main(int argc, char *argv[]) {
                 std::string optarg_str{optarg};
                 if (optarg_str == "fixed_unit") {
                     dpn = heuristics::DecisionProcedureName::fixed_unit;
-                } else if (optarg_str == "random_unit") {
-                    dpn = heuristics::DecisionProcedureName::random_unit;
-                } else if (optarg_str == "random_eq") {
-                    dpn = heuristics::DecisionProcedureName::random_eq;
                 } else if (optarg_str == "random_clause_sum") {
                     dpn = heuristics::DecisionProcedureName::random_clause_sum;
                 } else if (optarg_str == "vsids_unit") {
                     dpn = heuristics::DecisionProcedureName::vsids_unit; 
-                } else if (optarg_str == "vsids_multiple") {
-                    dpn = heuristics::DecisionProcedureName::vsids_multiple;
                 } else if (optarg_str == "vsids_clause") {
                     dpn = heuristics::DecisionProcedureName::vsids_clause;
                 } else if (optarg_str == "cvsids") {
                     dpn = heuristics::DecisionProcedureName::cvsids;
-                } else if (optarg_str == "cvsids_sum") {
-                    dpn = heuristics::DecisionProcedureName::cvsids_sum;
+                } else if (optarg_str == "berkmin") {
+                    dpn = heuristics::DecisionProcedureName::berkmin;
+                } else if (optarg_str == "cbh") {
+                    dpn = heuristics::DecisionProcedureName::cbh;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
                     return 1;
@@ -124,16 +123,10 @@ int main(int argc, char *argv[]) {
                 std::string optarg_str{optarg};
                 if (optarg_str == "cyclic") {
                     csn = heuristics::ClauseSelectorName::cyclic;
-                } else if (optarg_str == "random_cyclic") {
-                    csn = heuristics::ClauseSelectorName::random_cyclic;
                 } else if (optarg_str == "lt_watchlist") {
                     csn = heuristics::ClauseSelectorName::lt_watchlist;
                 } else if (optarg_str == "exact_watchlist") {
                     csn = heuristics::ClauseSelectorName::exact_watchlist;
-                } else if (optarg_str == "cvsids") {
-                    csn = heuristics::ClauseSelectorName::cvsids;
-                } else if (optarg_str == "cvsids_sum") {
-                    csn = heuristics::ClauseSelectorName::cvsids_sum;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a clause selector" << std::endl;
                     return 1;
@@ -163,9 +156,9 @@ int main(int argc, char *argv[]) {
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
         std::cout << "  -t, --threads <n>            Number of threads (default: 4)" << std::endl;
         std::cout << "  -p, --decproc <proc>         Decision procedure (default: fixed_unit)" << std::endl;
-        std::cout << "                               Options: fixed_unit, random_unit, random_eq, random_clause_sum, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum" << std::endl;
+        std::cout << "                               Options: fixed_unit, random_clause_sum, vsids_unit, vsids_clause, cvsids, berkmin, cbh" << std::endl;
         std::cout << "  -c, --clausesel <selector>   Clause selector (default: cyclic)" << std::endl;
-        std::cout << "                               Options: cyclic, random_cyclic, lt_watchlist, exact_watchlist, cvsids, cvsids_sum" << std::endl;
+        std::cout << "                               Options: cyclic, lt_watchlist, exact_watchlist" << std::endl;
         std::cout << "  -s, --seconds <s>            Timeout in seconds (default: 10)" << std::endl;
         
         return 0;

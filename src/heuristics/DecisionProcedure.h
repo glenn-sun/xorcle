@@ -1,5 +1,7 @@
 #pragma once
 
+#include <deque>
+#include <list>
 #include <queue>
 #include <variant>
 #include <vector>
@@ -17,13 +19,27 @@ namespace heuristics {
 using Clause = algebra::Clause;
 using Equation = algebra::Equation;
 using RowSpace = algebra::RowSpace;
-using REFMatrix = algebra::REFMatrix;
 
-enum class DecisionProcedureName { fixed_unit, random_unit, random_eq, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum, random_clause_sum };
+enum class DecisionProcedureName { fixed_unit, random_clause_sum, vsids_unit, vsids_clause, cvsids, berkmin, cbh };
 
 class DecisionProcedure {
 protected:
     std::size_t num_vars;
+    std::size_t decisions = 0;
+    std::size_t fallback_decisions = 0;
+
+    void record_decision(bool used_fallback) {
+        ++decisions;
+        if (used_fallback) {
+            ++fallback_decisions;
+        }
+    }
+
+    void reset_stats() {
+        decisions = 0;
+        fallback_decisions = 0;
+    }
+
 public:
     DecisionProcedure(std::size_t n) : num_vars(n) {}
     virtual ~DecisionProcedure() = default;
@@ -31,8 +47,18 @@ public:
     virtual Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) = 0;
     virtual void update_with_critical_equation(const Equation& eqn) {};
     virtual void update_with_asserting_clause(const Clause& clause) {};
-    virtual void update_with_starting_clause(const Clause& clause) {};
+    virtual void update_with_new_clause(const Clause& clause, ClauseId id) {};
     virtual void update_with_resolved_clause(ClauseId id) {};
+    virtual std::optional<ClauseId> decision_clause_hint() const { return std::nullopt; }
+
+    struct DecisionStats {
+        std::size_t decisions = 0;
+        std::size_t fallback_decisions = 0;
+    };
+
+    virtual DecisionStats decision_stats() const {
+        return DecisionStats{decisions, fallback_decisions};
+    }
 };
 
 class FixedUnit : public DecisionProcedure {
@@ -40,24 +66,6 @@ private:
     std::vector<Equation> decision_basis;
 public:
     FixedUnit(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
-    void reinitialize() override;
-    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>&) override;
-};
-
-class RandomUnit : public DecisionProcedure {
-private:
-    std::vector<Equation> decision_basis;
-public:
-    RandomUnit(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
-    void reinitialize() override;
-    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>&) override;
-};
-
-class RandomEq : public DecisionProcedure {
-private:
-    std::vector<Equation> decision_basis;
-public:
-    RandomEq(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
     void reinitialize() override;
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>&) override;
 };
@@ -98,32 +106,6 @@ public:
     void update_with_asserting_clause(const Clause& clause) override;
 };
 
-class VsidsMultiple : public VsidsUnit {
-private:
-    std::vector<int> weights;
-
-public:
-    VsidsMultiple(std::size_t n) : VsidsUnit(n), weights(n, 1) { weights[0] = 0; if (n > 2) weights[1] = n - 2; }
-    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>&) override {
-        while (true) {
-            int num_to_peek = util::weighted_random_index(weights) - 1;
-            std::optional<Equation> maybe_eqn = vsids_params.activity_heap.extract_max();
-            if (!maybe_eqn.has_value()) {
-                reinitialize();
-                maybe_eqn = vsids_params.activity_heap.extract_max();
-            }
-            auto next_eqns = vsids_params.activity_heap.peek_top_k(num_to_peek);
-            for (auto& eqn : next_eqns) {
-                *maybe_eqn += eqn;
-            }
-            trail_span.reduce(*maybe_eqn);
-            if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
-                return *maybe_eqn;
-            };
-        }
-    }
-};
-
 class VsidsClause : public VsidsUnit {
 public:
     VsidsClause(std::size_t n) : VsidsUnit(n) { }
@@ -145,11 +127,55 @@ public:
                     (*maybe_eqn).unsafe_copy(clauses[j].row(clauses[j].get_col_to_row(k)));
                     trail_span.reduce(*maybe_eqn);
                     if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
+                        record_decision(false);
                         return *maybe_eqn;
                     };
                 }
             }
         }
     }
+};
+
+class BerkminDecision : public DecisionProcedure {
+private:
+    std::deque<ClauseId> conflict_clauses;
+    bool pending_conflict_clause = false;
+    std::vector<Equation> unit_eqns;
+    std::optional<ClauseId> last_decision_clause;
+
+public:
+    BerkminDecision(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
+    void reinitialize() override;
+    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
+    void update_with_asserting_clause(const Clause& clause) override;
+    void update_with_new_clause(const Clause& clause, ClauseId id) override;
+    std::optional<ClauseId> decision_clause_hint() const override;
+};
+
+class CBHDecision : public DecisionProcedure {
+private:
+    std::list<ClauseId> clause_list;
+    std::vector<std::list<ClauseId>::iterator> positions;
+    bool list_built = false;
+    std::list<ClauseId>::iterator current;
+    std::vector<ClauseId> pending_responsible;
+    std::vector<char> pending_mark;
+    bool pending_conflict_clause = false;
+    std::optional<ClauseId> pending_conflict_clause_id;
+    std::vector<Equation> unit_eqns;
+    std::optional<ClauseId> last_decision_clause;
+
+    void ensure_unit_eqns();
+    void build_initial_list(const std::vector<Clause>& clauses);
+    void apply_pending_reorder(ClauseId conflict_id);
+
+public:
+    CBHDecision(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
+    void reinitialize() override;
+    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
+    void update_with_asserting_clause(const Clause& clause) override;
+    void update_with_resolved_clause(ClauseId id) override;
+    void update_with_new_clause(const Clause& clause, ClauseId id) override;
+    std::optional<ClauseId> decision_clause_hint() const override;
 };
 } // namespace heuristics

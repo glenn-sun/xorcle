@@ -17,4 +17,10 @@ algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
 bool clause_satisfied_by_trail(const algebra::RowSpace& trail_span,
                                const algebra::Clause& clause,
                                std::size_t num_vars);
+
+bool sample_equation_from_clause(const algebra::Clause& clause,
+                                 const algebra::RowSpace& trail_span,
+                                 std::size_t num_vars,
+                                 algebra::Equation& out_candidate,
+                                 algebra::Equation& out_reduced);
 } // namespace util

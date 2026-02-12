@@ -94,6 +94,8 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
                 trail.erase(trail.end() - jumpable_levels, trail.end());
                 clause_sel->add_asserting_clause(asserting_clause, trail, jumpable_levels);
             }
+            heuristics::ClauseId new_clause_id = clause_sel->get_num_clauses() - 1;
+            dec_proc->update_with_new_clause(asserting_clause, new_clause_id);
         } else {
             // Check for satisfiability
             if (trail.span().rows() == num_vars) {
@@ -107,6 +109,7 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             trail.span().reduce(decision);
             trail.learn(decision, std::nullopt);
             clause_sel->update_with_decision(decision, trail);
+            clause_sel->update_with_decision_clause(dec_proc->decision_clause_hint());
         }
     }
     return ResultCase::Timeout {};
@@ -144,24 +147,15 @@ Solver Solver::from_DIMACS(const std::string& filename, const heuristics::Decisi
     std::shared_ptr<heuristics::DecisionProcedure> dec_proc;
     std::shared_ptr<heuristics::ClauseSelector> clause_sel;
 
-    if (dpn == heuristics::DecisionProcedureName::cvsids_sum || csn == heuristics::ClauseSelectorName::cvsids_sum) {
-        auto shared_state = std::make_shared<heuristics::CVsidsState>(parsed.num_vars);
-        dec_proc = std::make_shared<heuristics::CVsidsSumDecision>(parsed.num_vars, shared_state);
-        clause_sel = std::make_shared<heuristics::CVsidsSelector>(parsed.num_vars, shared_state);
-    } else if (dpn == heuristics::DecisionProcedureName::cvsids || csn == heuristics::ClauseSelectorName::cvsids) {
-        auto shared_state = std::make_shared<heuristics::CVsidsState>(parsed.num_vars);
-        dec_proc = std::make_shared<heuristics::CVsidsDecision>(parsed.num_vars, shared_state);
-        clause_sel = std::make_shared<heuristics::CVsidsSelector>(parsed.num_vars, shared_state);
-    } else {
-        dec_proc = heuristics::create_decision_procedure(dpn, parsed.num_vars);
-        clause_sel = heuristics::create_clause_selector(csn, parsed.num_vars);
-    }
+    dec_proc = heuristics::create_decision_procedure(dpn, parsed.num_vars);
+    clause_sel = heuristics::create_clause_selector(csn, parsed.num_vars);
 
     Solver solver{parsed.num_vars, std::move(clause_sel), std::move(dec_proc)};
 
     for (const auto& clause : parsed.clauses) {
         solver.clause_sel->add_starting_clause(clause);
-        solver.dec_proc->update_with_starting_clause(clause);
+        heuristics::ClauseId new_clause_id = solver.clause_sel->get_num_clauses() - 1;
+        solver.dec_proc->update_with_new_clause(clause, new_clause_id);
     }
 
     return solver;

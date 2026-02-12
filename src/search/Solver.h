@@ -68,6 +68,10 @@ public:
         return clause_sel->get_num_clauses();
     }
 
+    heuristics::DecisionProcedure::DecisionStats decision_stats() const {
+        return dec_proc->decision_stats();
+    }
+
     /// @brief Number of decisions made so far.
     std::size_t level() const { return trail.size() - 1; }
 

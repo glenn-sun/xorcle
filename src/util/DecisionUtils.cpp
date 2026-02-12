@@ -2,6 +2,8 @@
 
 #include <cassert>
 
+#include "bit/vector.h"
+
 namespace util {
 algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
                                     const algebra::RowSpace& trail_span,
@@ -56,5 +58,34 @@ bool clause_satisfied_by_trail(const algebra::RowSpace& trail_span,
     algebra::Equation eqn_false = algebra::Equation::unit(num_vars + 1, num_vars);
     combined.reduce(eqn_false);
     return eqn_false.none();
+}
+
+bool sample_equation_from_clause(const algebra::Clause& clause,
+                                 const algebra::RowSpace& trail_span,
+                                 std::size_t num_vars,
+                                 algebra::Equation& out_candidate,
+                                 algebra::Equation& out_reduced) {
+    if (clause.rows() == 0) {
+        return false;
+    }
+    if (out_candidate.size() != num_vars) {
+        out_candidate = algebra::Equation{num_vars};
+    }
+    if (out_reduced.size() != num_vars) {
+        out_reduced = algebra::Equation{num_vars};
+    }
+    while (true) {
+        bit::vector<> coeffs = bit::vector<>::random(clause.rows());
+        out_candidate.reset();
+        coeffs.if_set_call([&](std::size_t i) {
+            out_candidate ^= clause.row(i);
+        });
+        assert(out_reduced.size() == out_candidate.size());
+        out_reduced.unsafe_copy(out_candidate);
+        trail_span.reduce(out_reduced);
+        if (out_reduced.any()) {
+            return true;
+        }
+    }
 }
 } // namespace util

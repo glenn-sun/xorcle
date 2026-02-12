@@ -12,7 +12,6 @@
 #include "algebra/Equation.h"
 #include "search/Trail.h"
 #include "heuristics/Types.h"
-#include <random>
 #include <cassert>
 
 namespace heuristics {
@@ -21,7 +20,7 @@ using Equation = algebra::Equation;
 using Trail = search::Trail;
 
 enum class WatchType { Zero, One, Sum };
-enum class ClauseSelectorName { cyclic, random_cyclic, lt_watchlist, exact_watchlist, cvsids, cvsids_sum };
+enum class ClauseSelectorName { cyclic, lt_watchlist, exact_watchlist };
 
 class ClauseSelector {
 protected:
@@ -43,6 +42,7 @@ public:
     virtual void add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t jumpable_levels) { add_clause(clause); }
     virtual void update_with_propagation(const Equation& reduced_eqn, const Trail& trail) { update_with_new_equation(reduced_eqn, trail); };
     virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail) { update_with_new_equation(reduced_eqn, trail); };
+    virtual void update_with_decision_clause(std::optional<ClauseId> clause_id) {};
     virtual void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail) {};
 };
 
@@ -50,9 +50,18 @@ class Cyclic : public ClauseSelector {
 private:
     ClauseId id;
     std::size_t count;
+    std::optional<ClauseId> pending_restart_clause;
 public:
     Cyclic(std::size_t num_vars) : ClauseSelector(), id(0), count(0) {}
     std::optional<ClauseId> next() override {
+        if (pending_restart_clause.has_value()) {
+            ClauseId restart_id = pending_restart_clause.value();
+            pending_restart_clause.reset();
+            if (restart_id < clauses.size()) {
+                id = restart_id;
+                count = 0;
+            }
+        }
         if (count == clauses.size()) {
             count = 0;
             return std::nullopt;
@@ -72,40 +81,15 @@ public:
     void update_with_new_equation(const Equation& eqn, const Trail& trail) override { 
         count = 0;
     }
-};
 
-class RandomCyclic : public ClauseSelector {
-private:
-    std::mt19937 rng;
-    std::size_t count;
-    std::size_t index;
-    std::vector<ClauseId> permutation;
-public:
-    RandomCyclic(std::size_t num_vars) : ClauseSelector(), rng(std::random_device{}()), count(0), index(0), permutation() {}
-    std::optional<ClauseId> next() override {
-        if (count == clauses.size()) {
-            count = 0;
-            return std::nullopt;
+    void update_with_decision_clause(std::optional<ClauseId> clause_id) override {
+        if (clause_id.has_value() && clause_id.value() < clauses.size()) {
+            pending_restart_clause = clause_id;
+        } else {
+            pending_restart_clause.reset();
         }
-        std::size_t old_index = index;
-        index = (index + 1) % clauses.size();
-        ++count;
-        return permutation[old_index];
-    }
-
-    void add_clause(const Clause& clause) override {
-        clauses.push_back(clause);
-        std::shuffle(permutation.begin(), permutation.end(), rng);
-        permutation.push_back(clauses.size() - 1);
-        index = clauses.size() - 1;
-        count = 0;
-    }
-
-    void update_with_new_equation(const Equation& eqn, const Trail& trail) override { 
-        count = 0;
     }
 };
-
 
 class LTWatchlist : public ClauseSelector {
 private:
