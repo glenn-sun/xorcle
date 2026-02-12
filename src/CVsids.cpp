@@ -152,7 +152,7 @@ Equation CVsidsSum::make_decision(const RowSpace& trail_span, const std::vector<
             Equation reduced = candidate;
             trail_span.reduce(reduced);
             if (reduced.any()) {
-                return candidate;
+                return reduced;
             }
         }
     }

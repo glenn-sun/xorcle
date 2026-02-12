@@ -358,6 +358,9 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
             case DecisionProcedureName::random_eq:
                 dec_proc = std::make_shared<RandomEq>(num_vars);
                 break;
+            case DecisionProcedureName::random_clause_sum:
+                dec_proc = std::make_shared<RandomClauseSum>(num_vars);
+                break;
             case DecisionProcedureName::vsids_unit:
                 dec_proc = std::make_shared<VsidsUnit>(num_vars);
                 break;

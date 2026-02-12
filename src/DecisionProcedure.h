@@ -11,7 +11,7 @@
 
 using ClauseId = std::size_t;
 
-enum class DecisionProcedureName { fixed_unit, random_unit, random_eq, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum };
+enum class DecisionProcedureName { fixed_unit, random_unit, random_eq, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum, random_clause_sum };
 
 class DecisionProcedure {
 protected:
@@ -52,6 +52,17 @@ public:
     RandomEq(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
     void reinitialize() override;
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>&) override;
+};
+
+class RandomClauseSum : public DecisionProcedure {
+private:
+    std::vector<Equation> decision_basis;
+    std::vector<ClauseId> clause_perm;
+    std::mt19937 rng;
+public:
+    RandomClauseSum(std::size_t n) : DecisionProcedure(n), rng(std::random_device{}()) { reinitialize(); }
+    void reinitialize() override;
+    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
 };
 
 struct VsidsParams {
@@ -151,7 +162,6 @@ public:
                     (*maybe_eqn).unsafe_copy(clauses[j].row(clauses[j].get_col_to_row(k)));
                     trail_span.reduce(*maybe_eqn);
                         if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
-                            (*maybe_eqn).flip(num_vars);
                             return *maybe_eqn;
                         };
                 }

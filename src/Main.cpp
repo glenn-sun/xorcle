@@ -100,6 +100,8 @@ int main(int argc, char *argv[]) {
                     dpn = DecisionProcedureName::random_unit;
                 } else if (optarg_str == "random_eq") {
                     dpn = DecisionProcedureName::random_eq;
+                } else if (optarg_str == "random_clause_sum") {
+                    dpn = DecisionProcedureName::random_clause_sum;
                 } else if (optarg_str == "vsids_unit") {
                     dpn = DecisionProcedureName::vsids_unit; 
                 } else if (optarg_str == "vsids_multiple") {
@@ -159,7 +161,7 @@ int main(int argc, char *argv[]) {
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
         std::cout << "  -t, --threads <n>            Number of threads (default: 4)" << std::endl;
         std::cout << "  -p, --decproc <proc>         Decision procedure (default: fixed_unit)" << std::endl;
-        std::cout << "                               Options: fixed_unit, random_unit, random_eq, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum" << std::endl;
+        std::cout << "                               Options: fixed_unit, random_unit, random_eq, random_clause_sum, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum" << std::endl;
         std::cout << "  -c, --clausesel <selector>   Clause selector (default: cyclic)" << std::endl;
         std::cout << "                               Options: cyclic, random_cyclic, lt_watchlist, exact_watchlist, cvsids, cvsids_sum" << std::endl;
         std::cout << "  -s, --seconds <s>            Timeout in seconds (default: 10)" << std::endl;

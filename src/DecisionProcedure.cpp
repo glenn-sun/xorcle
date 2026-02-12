@@ -62,6 +62,56 @@ Equation RandomEq::make_decision(const RowSpace& trail_span, const std::vector<C
     return decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
+static bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause, std::size_t num_vars) {
+    RowSpace combined = trail_span;
+    for (std::size_t i = 0; i < clause.rows(); ++i) {
+        combined.add_row(clause.row(i));
+    }
+    Equation eqn_false = Equation::unit(num_vars + 1, num_vars);
+    combined.reduce(eqn_false);
+    return eqn_false.none();
+}
+
+void RandomClauseSum::reinitialize() {
+    decision_basis.clear();
+    for (std::size_t i = 0; i < num_vars; i++) {
+        decision_basis.emplace_back(Equation::unit(num_vars + 1, i));
+    }
+    clause_perm.clear();
+}
+
+Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
+    if (clauses.empty()) {
+        return decide_from_basis(decision_basis, trail_span, num_vars);
+    }
+
+    clause_perm.resize(clauses.size());
+    std::iota(clause_perm.begin(), clause_perm.end(), 0);
+    std::shuffle(clause_perm.begin(), clause_perm.end(), rng);
+
+    for (ClauseId id : clause_perm) {
+        const Clause& clause = clauses[id];
+        if (clause_satisfied_by_trail(trail_span, clause, num_vars)) {
+            continue;
+        }
+
+        while (true) {
+            bit::vector<> coeffs = bit::vector<>::random(clause.rows());
+            Equation candidate{num_vars};
+            coeffs.if_set_call([&](std::size_t i) {
+                candidate ^= clause.row(i);
+            });
+            Equation reduced = candidate;
+            trail_span.reduce(reduced);
+            if (reduced.any()) {
+                return candidate;
+            }
+        }
+    }
+
+    return decide_from_basis(decision_basis, trail_span, num_vars);
+}
+
 void VsidsParams::bump_activity(const Equation& eqn) {
     activity_heap.increase_key(eqn, inc_amt);
     if (activity_heap.get_priority(eqn) > 1e100) {
