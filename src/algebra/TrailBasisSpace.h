@@ -1,12 +1,14 @@
 #pragma once
 
-#include "Trail.h"
+#include "algebra/RowSpace.h"
+#include "search/Trail.h"
 
 /// @brief A vector of coefficients over GF(2).
 /// 
 /// Used when representing equations as linear combinations of other
 /// equations. The length of this vector is the dimension of the current
 /// subspace, not the number of variables + 1. 
+namespace algebra {
 class Coefficients : public bit::vector<> {
 public:
     Coefficients() {}
@@ -21,10 +23,10 @@ public:
 /// to the last equation in the trail, i.e. often false).
 class TrailBasisSpace : public REFMatrix {
 private:
-    const Trail& trail;
+    const search::Trail& trail;
 
 public:
-    TrailBasisSpace(const Trail& trail) : REFMatrix(trail.span().rows()), trail(trail) {}
+    TrailBasisSpace(const search::Trail& trail) : REFMatrix(trail.span().rows()), trail(trail) {}
 
     /// @brief Construct a TrailBasisSpace from a RowSpace w.r.t. a Trail
     ///
@@ -38,7 +40,7 @@ public:
     /// in the trail basis this is [0, 1].
     ///
     /// Requires: rs belongs to trail.span()
-    static TrailBasisSpace from_RowSpace(const RowSpace& rs, const Trail& trail);
+    static TrailBasisSpace from_RowSpace(const RowSpace& rs, const search::Trail& trail);
 
     /// @brief Convert this TrailBasisSpace back to the original RowSpace
     RowSpace to_RowSpace() const;
@@ -47,3 +49,4 @@ public:
     /// second row starts is zero. The clause is asserting if jumpable_level() > 0.
     std::size_t jumpable_levels() const;
 };
+} // namespace algebra

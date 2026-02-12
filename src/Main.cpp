@@ -2,13 +2,15 @@
 #include <filesystem>
 #include <thread>
 #include <getopt.h>
-#include "Solver.h"
+#include "search/Solver.h"
+#include "heuristics/DecisionProcedure.h"
+#include "heuristics/ClauseSelector.h"
 
 namespace fs = std::filesystem;
 
-void solve(std::string& filename, DecisionProcedureName dpn, ClauseSelectorName csn, std::atomic<bool>& stop_flag) {
+void solve(std::string& filename, heuristics::DecisionProcedureName dpn, heuristics::ClauseSelectorName csn, std::atomic<bool>& stop_flag) {
     try {
-        Solver solver = Solver::from_DIMACS(filename, dpn, csn);
+        search::Solver solver = search::Solver::from_DIMACS(filename, dpn, csn);
         int num_vars = solver.get_num_vars();
         int start_num_clauses = solver.get_num_clauses();
 
@@ -27,12 +29,12 @@ void solve(std::string& filename, DecisionProcedureName dpn, ClauseSelectorName 
         ss << "Attempts per propagation: " << (double) solver.num_attempt_props / solver.num_propagations << std::endl;
         ss << "Attempts per watch update: " << (double) solver.num_attempt_props / solver.num_watch_updates << std::endl;
         ss << "Time: " << std::format("{:.{}g}", time / 1000000000, 3) << " s" << std::endl;
-        if (ResultCase::is_timeout(result)) {
+        if (search::ResultCase::is_timeout(result)) {
             ss << "Timeout" << std::endl;
-        } else if (ResultCase::is_unsat(result)) {
+        } else if (search::ResultCase::is_unsat(result)) {
             ss << "Unsatisfiable" << std::endl;
-        } else if (ResultCase::is_sat(result)) {
-            ss << "Satisfiable: " << ResultCase::unwrap_sat(result) << std::endl;
+        } else if (search::ResultCase::is_sat(result)) {
+            ss << "Satisfiable: " << search::ResultCase::unwrap_sat(result) << std::endl;
         }
         ss << std::endl;
 
@@ -49,8 +51,8 @@ int main(int argc, char *argv[]) {
     bool help{false};
     bool verbose{false};
     uint threads{4};
-    DecisionProcedureName dpn{DecisionProcedureName::fixed_unit};
-    ClauseSelectorName csn{ClauseSelectorName::cyclic};
+    heuristics::DecisionProcedureName dpn{heuristics::DecisionProcedureName::fixed_unit};
+    heuristics::ClauseSelectorName csn{heuristics::ClauseSelectorName::cyclic};
     uint seconds{10};
 
     static constexpr struct option long_options[] = {
@@ -95,23 +97,23 @@ int main(int argc, char *argv[]) {
             case 'p': {
                 std::string optarg_str{optarg};
                 if (optarg_str == "fixed_unit") {
-                    dpn = DecisionProcedureName::fixed_unit;
+                    dpn = heuristics::DecisionProcedureName::fixed_unit;
                 } else if (optarg_str == "random_unit") {
-                    dpn = DecisionProcedureName::random_unit;
+                    dpn = heuristics::DecisionProcedureName::random_unit;
                 } else if (optarg_str == "random_eq") {
-                    dpn = DecisionProcedureName::random_eq;
+                    dpn = heuristics::DecisionProcedureName::random_eq;
                 } else if (optarg_str == "random_clause_sum") {
-                    dpn = DecisionProcedureName::random_clause_sum;
+                    dpn = heuristics::DecisionProcedureName::random_clause_sum;
                 } else if (optarg_str == "vsids_unit") {
-                    dpn = DecisionProcedureName::vsids_unit; 
+                    dpn = heuristics::DecisionProcedureName::vsids_unit; 
                 } else if (optarg_str == "vsids_multiple") {
-                    dpn = DecisionProcedureName::vsids_multiple;
+                    dpn = heuristics::DecisionProcedureName::vsids_multiple;
                 } else if (optarg_str == "vsids_clause") {
-                    dpn = DecisionProcedureName::vsids_clause;
+                    dpn = heuristics::DecisionProcedureName::vsids_clause;
                 } else if (optarg_str == "cvsids") {
-                    dpn = DecisionProcedureName::cvsids;
+                    dpn = heuristics::DecisionProcedureName::cvsids;
                 } else if (optarg_str == "cvsids_sum") {
-                    dpn = DecisionProcedureName::cvsids_sum;
+                    dpn = heuristics::DecisionProcedureName::cvsids_sum;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
                     return 1;
@@ -121,17 +123,17 @@ int main(int argc, char *argv[]) {
             case 'c': {
                 std::string optarg_str{optarg};
                 if (optarg_str == "cyclic") {
-                    csn = ClauseSelectorName::cyclic;
+                    csn = heuristics::ClauseSelectorName::cyclic;
                 } else if (optarg_str == "random_cyclic") {
-                    csn = ClauseSelectorName::random_cyclic;
+                    csn = heuristics::ClauseSelectorName::random_cyclic;
                 } else if (optarg_str == "lt_watchlist") {
-                    csn = ClauseSelectorName::lt_watchlist;
+                    csn = heuristics::ClauseSelectorName::lt_watchlist;
                 } else if (optarg_str == "exact_watchlist") {
-                    csn = ClauseSelectorName::exact_watchlist;
+                    csn = heuristics::ClauseSelectorName::exact_watchlist;
                 } else if (optarg_str == "cvsids") {
-                    csn = ClauseSelectorName::cvsids;
+                    csn = heuristics::ClauseSelectorName::cvsids;
                 } else if (optarg_str == "cvsids_sum") {
-                    csn = ClauseSelectorName::cvsids_sum;
+                    csn = heuristics::ClauseSelectorName::cvsids_sum;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a clause selector" << std::endl;
                     return 1;

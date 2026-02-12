@@ -1,6 +1,8 @@
-#include "RowSpace.h"
-#include "Equation.h"
+#include "algebra/RowSpace.h"
+#include "algebra/Equation.h"
+#include <sstream>
 
+namespace algebra {
 bit::vector<> RowSpace::get_unique_solution() const {
     bit::matrix<> M_copy = M;
     M_copy.to_reduced_echelon_form();
@@ -15,3 +17,4 @@ std::string Clause::to_string(PrintMode mode) const {
     }
     return oss.str();
 }
+} // namespace algebra

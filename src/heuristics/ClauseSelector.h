@@ -5,14 +5,20 @@
 #include <unordered_set>
 #include <bit>
 #include <algorithm>
+#include <optional>
+#include <vector>
 #include "bit/vector.h"
-#include "RowSpace.h"
-#include "Equation.h"
-#include "Trail.h"
+#include "algebra/RowSpace.h"
+#include "algebra/Equation.h"
+#include "search/Trail.h"
+#include "heuristics/Types.h"
+#include <random>
 #include <cassert>
 
-using ClauseId = std::size_t;
-using EquationId = std::size_t;
+namespace heuristics {
+using Clause = algebra::Clause;
+using Equation = algebra::Equation;
+using Trail = search::Trail;
 
 enum class WatchType { Zero, One, Sum };
 enum class ClauseSelectorName { cyclic, random_cyclic, lt_watchlist, exact_watchlist, cvsids, cvsids_sum };
@@ -179,7 +185,7 @@ public:
     void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& /*unused*/) override {
         auto& v = by_leading_term[clauses[id].row(old_watch).first_set()];
         std::erase(v, id);
-        EquationId new_watch;
+        EquationId new_watch = 0;
         switch (wt) {
             case WatchType::Zero:
                 new_watch = clauses[id].watched0;
@@ -189,8 +195,10 @@ public:
                 break;
             case WatchType::Sum:
                 // Should never happen
-                break;
+                assert(false && "WatchType::Sum not expected in LTWatchlist");
+                return;
         }
         by_leading_term[clauses[id].row(new_watch).first_set()].push_back(id);
     }
 };
+} // namespace heuristics

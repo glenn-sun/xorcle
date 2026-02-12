@@ -1,9 +1,13 @@
 #pragma once
 
-#include "RowSpace.h"
-#include "Equation.h"
+#include <optional>
+#include <vector>
 
-using ClauseId = std::size_t;
+#include "algebra/RowSpace.h"
+#include "algebra/Equation.h"
+#include "heuristics/Types.h"
+
+namespace search {
 
 /// @brief A snapshot of all entries at level <= some k in the trail.
 class TrailSnapshot {
@@ -15,10 +19,10 @@ public:
     std::vector<std::size_t> reverse_order_map;
 
     // Space of known true equations
-    RowSpace span;
+    algebra::RowSpace span;
 
     // Map from trail insertion order to reason
-    std::vector<std::optional<ClauseId>> reasons;
+    std::vector<std::optional<heuristics::ClauseId>> reasons;
 
     TrailSnapshot(std::size_t num_vars) : span(num_vars) {}
 
@@ -26,7 +30,7 @@ public:
     /// eqn will be reduced by the current trail span before learning.
     /// @param eqn The equation to learn
     /// @param reason The reason for learning eqn, or std::nullopt if eqn is a decision
-    void learn(const Equation& eqn, std::optional<ClauseId> reason);
+    void learn(const algebra::Equation& eqn, std::optional<heuristics::ClauseId> reason);
 };
 
 
@@ -44,7 +48,7 @@ public:
     /// if eqn is a decision.
     /// @param eqn The equation to learn
     /// @param reason The reason for learning eqn, or std::nullopt if eqn is a decision
-    void learn(const Equation& eqn, std::optional<ClauseId> reason) {
+    void learn(const algebra::Equation& eqn, std::optional<heuristics::ClauseId> reason) {
         if (!reason.has_value()) {
             TrailSnapshot new_snapshot = back();
             push_back(new_snapshot);
@@ -53,7 +57,7 @@ public:
     }
 
     /// @brief The space of known true equations
-    const RowSpace& span() const { 
+    const algebra::RowSpace& span() const { 
         return back().span; 
     }
 
@@ -68,7 +72,8 @@ public:
     }
 
     /// @brief The map from trail insertion order to reason
-    const std::vector<std::optional<ClauseId>>& reasons() const {
+    const std::vector<std::optional<heuristics::ClauseId>>& reasons() const {
         return back().reasons;
     }
 };
+} // namespace search

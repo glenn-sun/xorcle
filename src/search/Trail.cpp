@@ -1,6 +1,7 @@
-#include "Trail.h"
+#include "search/Trail.h"
 
-void TrailSnapshot::learn(const Equation& eqn, std::optional<ClauseId> reason) {
+namespace search {
+void TrailSnapshot::learn(const algebra::Equation& eqn, std::optional<heuristics::ClauseId> reason) {
     std::optional<std::size_t> maybe_inserted_index = span.add_row_get_index(eqn);
     if (maybe_inserted_index) {
         std::size_t inserted_index = *maybe_inserted_index;
@@ -18,3 +19,4 @@ void TrailSnapshot::learn(const Equation& eqn, std::optional<ClauseId> reason) {
         reverse_order_map.insert(reverse_order_map.begin() + inserted_index, order_map.size() - 1);
     }
 }
+} // namespace search

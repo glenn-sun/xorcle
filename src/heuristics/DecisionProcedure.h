@@ -5,11 +5,19 @@
 #include <vector>
 #include <random>
 #include <numeric>
-#include "Equation.h"
-#include "RowSpace.h"
+#include <cassert>
+#include <optional>
+#include "algebra/Equation.h"
+#include "algebra/RowSpace.h"
 #include "MaxHeap.h"
+#include "heuristics/Types.h"
+#include "util/RandomUtils.h"
 
-using ClauseId = std::size_t;
+namespace heuristics {
+using Clause = algebra::Clause;
+using Equation = algebra::Equation;
+using RowSpace = algebra::RowSpace;
+using REFMatrix = algebra::REFMatrix;
 
 enum class DecisionProcedureName { fixed_unit, random_unit, random_eq, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum, random_clause_sum };
 
@@ -80,6 +88,7 @@ class VsidsUnit : public DecisionProcedure {
 protected:
     VsidsParams vsids_params;
     Equation eqn_false;
+    std::vector<Equation> unit_eqns;
 
 public:
     VsidsUnit(std::size_t n) : DecisionProcedure(n) { reinitialize(); eqn_false = Equation::unit(num_vars + 1, num_vars); }
@@ -89,33 +98,6 @@ public:
     void update_with_asserting_clause(const Clause& clause) override;
 };
 
-inline int weighted_random_index(const std::vector<int>& weights) {
-    static std::mt19937 rng(std::random_device{}());
-
-    int total = std::accumulate(weights.begin(), weights.end(), 0);
-    std::uniform_int_distribution<int> dist(0, total - 1);
-
-    int r = dist(rng);
-    int cumulative = 0;
-
-    for (size_t i = 0; i < weights.size(); ++i) {
-        cumulative += weights[i];
-        if (r < cumulative) {
-            return static_cast<int>(i);
-        }
-    }
-
-    // Should never happen if weights are valid
-    return -1;
-}
-
-inline int random_int(int n) {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());  // Mersenne Twister RNG
-    std::uniform_int_distribution<> dist(0, n - 1);
-    return dist(gen);
-}
-
 class VsidsMultiple : public VsidsUnit {
 private:
     std::vector<int> weights;
@@ -124,7 +106,7 @@ public:
     VsidsMultiple(std::size_t n) : VsidsUnit(n), weights(n, 1) { weights[0] = 0; if (n > 2) weights[1] = n - 2; }
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>&) override {
         while (true) {
-            int num_to_peek = weighted_random_index(weights) - 1;
+            int num_to_peek = util::weighted_random_index(weights) - 1;
             std::optional<Equation> maybe_eqn = vsids_params.activity_heap.extract_max();
             if (!maybe_eqn.has_value()) {
                 reinitialize();
@@ -155,17 +137,19 @@ public:
             
             std::size_t k = (*maybe_eqn).first_set();
 
-            std::size_t start = random_int(clauses.size());
+            std::size_t start = util::random_int(clauses.size());
             for (std::size_t i = 0; i < clauses.size(); ++i) {
                 std::size_t j = (start + i) % clauses.size();
                 if (clauses[j].get_pivot_cols()[k]) {
+                    assert((*maybe_eqn).size() == clauses[j].row(clauses[j].get_col_to_row(k)).size());
                     (*maybe_eqn).unsafe_copy(clauses[j].row(clauses[j].get_col_to_row(k)));
                     trail_span.reduce(*maybe_eqn);
-                        if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
-                            return *maybe_eqn;
-                        };
+                    if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
+                        return *maybe_eqn;
+                    };
                 }
             }
         }
     }
 };
+} // namespace heuristics

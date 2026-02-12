@@ -1,22 +1,9 @@
 #include <cassert>
 #include <algorithm>
-#include "DecisionProcedure.h"
+#include "heuristics/DecisionProcedure.h"
+#include "util/DecisionUtils.h"
 
-Equation decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span, std::size_t num_vars) {
-    Equation eqn{num_vars}, eqn_reduced{num_vars}, eqn_not_reduced{num_vars};
-    for (std::size_t i = 0; i < num_vars; ++i) {
-        eqn.unsafe_copy(basis[i]);
-        eqn_reduced.unsafe_copy(eqn);
-        trail_span.reduce(eqn_reduced);
-        eqn_not_reduced.unsafe_copy(eqn_reduced);
-        eqn_not_reduced.flip(num_vars);
-        if (eqn_reduced.any() && eqn_not_reduced.any()) {
-            return eqn;
-        }
-    }
-    assert(false);
-}
-
+namespace heuristics {
 void FixedUnit::reinitialize() {
     decision_basis.clear();
     for (std::size_t i = 0; i < num_vars; i++) {
@@ -25,7 +12,7 @@ void FixedUnit::reinitialize() {
 }
 
 Equation FixedUnit::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
-    return decide_from_basis(decision_basis, trail_span, num_vars);
+    return util::decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
 void RandomUnit::reinitialize() {
@@ -40,7 +27,7 @@ void RandomUnit::reinitialize() {
     std::shuffle(decision_basis.begin(), decision_basis.end(), g);
 }
 Equation RandomUnit::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
-    return decide_from_basis(decision_basis, trail_span, num_vars);
+    return util::decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
 void RandomEq::reinitialize() {
@@ -48,7 +35,10 @@ void RandomEq::reinitialize() {
     REFMatrix M(num_vars);
     Equation eqn{num_vars}, eqn_reduced{num_vars};
     while (decision_basis.size() < num_vars) {
-        eqn.unsafe_copy(Equation::random(num_vars + 1));
+        Equation random_eqn = Equation::random(num_vars + 1);
+        assert(eqn.size() == random_eqn.size());
+        eqn.unsafe_copy(random_eqn);
+        assert(eqn_reduced.size() == eqn.size());
         eqn_reduced.unsafe_copy(eqn);
         M.reduce(eqn_reduced);
         if (eqn_reduced != Equation::zeros(num_vars + 1) && 
@@ -59,17 +49,7 @@ void RandomEq::reinitialize() {
     }
 }
 Equation RandomEq::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) { 
-    return decide_from_basis(decision_basis, trail_span, num_vars);
-}
-
-static bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause, std::size_t num_vars) {
-    RowSpace combined = trail_span;
-    for (std::size_t i = 0; i < clause.rows(); ++i) {
-        combined.add_row(clause.row(i));
-    }
-    Equation eqn_false = Equation::unit(num_vars + 1, num_vars);
-    combined.reduce(eqn_false);
-    return eqn_false.none();
+    return util::decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
 void RandomClauseSum::reinitialize() {
@@ -82,26 +62,29 @@ void RandomClauseSum::reinitialize() {
 
 Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
     if (clauses.empty()) {
-        return decide_from_basis(decision_basis, trail_span, num_vars);
+        return util::decide_from_basis(decision_basis, trail_span, num_vars);
     }
 
+    Equation candidate{num_vars};
+    Equation reduced{num_vars};
     clause_perm.resize(clauses.size());
     std::iota(clause_perm.begin(), clause_perm.end(), 0);
     std::shuffle(clause_perm.begin(), clause_perm.end(), rng);
 
     for (ClauseId id : clause_perm) {
         const Clause& clause = clauses[id];
-        if (clause_satisfied_by_trail(trail_span, clause, num_vars)) {
+        if (util::clause_satisfied_by_trail(trail_span, clause, num_vars)) {
             continue;
         }
 
         while (true) {
             bit::vector<> coeffs = bit::vector<>::random(clause.rows());
-            Equation candidate{num_vars};
+            candidate.reset();
             coeffs.if_set_call([&](std::size_t i) {
                 candidate ^= clause.row(i);
             });
-            Equation reduced = candidate;
+            assert(reduced.size() == candidate.size());
+            reduced.unsafe_copy(candidate);
             trail_span.reduce(reduced);
             if (reduced.any()) {
                 return candidate;
@@ -109,7 +92,7 @@ Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::v
         }
     }
 
-    return decide_from_basis(decision_basis, trail_span, num_vars);
+    return util::decide_from_basis(decision_basis, trail_span, num_vars);
 }
 
 void VsidsParams::bump_activity(const Equation& eqn) {
@@ -122,8 +105,15 @@ void VsidsParams::bump_activity(const Equation& eqn) {
 
 void VsidsUnit::reinitialize() {
     vsids_params.activity_heap.reset();
+    if (unit_eqns.size() != num_vars) {
+        unit_eqns.clear();
+        unit_eqns.reserve(num_vars);
+        for (std::size_t i = 0; i < num_vars; i++) {
+            unit_eqns.emplace_back(Equation::unit(num_vars + 1, i));
+        }
+    }
     for (std::size_t i = 0; i < num_vars; i++) {
-        Equation unit = Equation::unit(num_vars + 1, i);
+        const Equation& unit = unit_eqns[i];
         vsids_params.activity_heap.set_activity(unit, 0);
         vsids_params.activity_heap.insert(unit);
     }
@@ -146,16 +136,16 @@ Equation VsidsUnit::make_decision(const RowSpace& trail_span, const std::vector<
 
 void VsidsUnit::update_with_critical_equation(const Equation& eqn) {
     std::size_t leading_term = eqn.first_set();
-    Equation unit = Equation::unit(num_vars + 1, leading_term);
-    vsids_params.bump_activity(unit);
+    assert(leading_term < unit_eqns.size());
+    vsids_params.bump_activity(unit_eqns[leading_term]);
 }
 
 void VsidsUnit::update_with_asserting_clause(const Clause& clause) {
     // Bump vars in final clause
     for (std::size_t i = 0; i < clause.rows(); ++i) {
         std::size_t var = clause.row(i).first_set();
-        Equation unit = Equation::unit(num_vars + 1, var);
-        vsids_params.bump_activity(unit);
+        assert(var < unit_eqns.size());
+        vsids_params.bump_activity(unit_eqns[var]);
     }
 
     // Decay activity by increasing increment
@@ -163,3 +153,4 @@ void VsidsUnit::update_with_asserting_clause(const Clause& clause) {
 
     vsids_params.activity_heap.rebuild();
 }
+} // namespace heuristics

@@ -1,9 +1,11 @@
 #pragma once
 
-#include "Trail.h"
-#include "ClauseSelector.h"
+#include "search/Trail.h"
+#include "heuristics/ClauseSelector.h"
+#include <limits>
 #include <cassert>
 
+namespace heuristics {
 class WatchedId {
 private:
     std::size_t raw_;
@@ -229,7 +231,7 @@ public:
 
     void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail) override {
         // Find new bucket
-        EquationId new_watch;
+        EquationId new_watch = 0;
         switch (wt) {
             case WatchType::Zero:
                 new_watch = clauses[id].watched0;
@@ -239,7 +241,8 @@ public:
                 break;
             case WatchType::Sum:
                 // Should never happen
-                break;
+                assert(false && "WatchType::Sum not expected in ExactWatchlist");
+                return;
         }
         working_eqn.unsafe_copy(clauses[id].row(new_watch));
         trail.span().reduce(working_eqn);
@@ -258,3 +261,4 @@ public:
         }
     }
 };
+} // namespace heuristics

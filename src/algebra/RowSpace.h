@@ -1,9 +1,10 @@
 #pragma once
 
-#include "REFMatrix.h"
+#include "algebra/REFMatrix.h"
 #include "PrintMode.h"
 
 
+namespace algebra {
 /// @brief A subspace of the space of linear equations over GF(2),
 /// represented as a basis in row-echelon form. Each column corresponds
 /// to a variable in the original order.
@@ -38,3 +39,4 @@ public:
     Clause(std::size_t num_vars) : RowSpace(num_vars) {}
     Clause(const RowSpace& rs) : RowSpace(rs) {}
 };
+} // namespace algebra

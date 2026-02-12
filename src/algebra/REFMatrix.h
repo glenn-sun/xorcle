@@ -3,6 +3,7 @@
 #include "bit/vector.h"
 #include "bit/matrix.h"
 
+namespace algebra {
 /// @brief A matrix over GF(2) in row-echelon form. Used to represent
 /// both equation space and equation space in different bases. 
 class REFMatrix {
@@ -93,3 +94,4 @@ public:
     iterator begin() const { return iterator(this, 0); }
     iterator end() const { return iterator(this, M.rows()); }
 };
+} // namespace algebra

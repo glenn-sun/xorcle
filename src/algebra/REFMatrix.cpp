@@ -1,5 +1,6 @@
-#include "REFMatrix.h"
+#include "algebra/REFMatrix.h"
 
+namespace algebra {
 REFMatrix::REFMatrix(bit::matrix<> M) {
     this->M = M.to_echelon_form(&pivot_cols);
     col_to_row = std::vector<std::size_t>(M.cols());
@@ -112,3 +113,4 @@ bit::vector<> REFMatrix::pop_first_row() {
     }
     return first_row;
 }
+} // namespace algebra

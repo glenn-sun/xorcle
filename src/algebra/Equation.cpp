@@ -1,6 +1,8 @@
 #include <string>
-#include "Equation.h"
+#include <sstream>
+#include "algebra/Equation.h"
 
+namespace algebra {
 std::string Equation::to_string(PrintMode mode) const {
     std::ostringstream oss;
     if_set_call([&](std::size_t i) {
@@ -37,3 +39,4 @@ std::string Equation::to_string(PrintMode mode) const {
     
     return "[" + oss.str() + "]";
 }
+} // namespace algebra

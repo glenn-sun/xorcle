@@ -10,6 +10,7 @@
 /// x1 + x3 = 1 is represented as [1, 0, 1, 1]. Note that the false
 /// equation 1 = 0 has a representation in this form: when there are
 /// 3 variables, it is [0, 0, 0, 1].
+namespace algebra {
 class Equation : public bit::vector<> {
 public:
     Equation() {}
@@ -22,11 +23,12 @@ public:
 
     // Equation(bit::vector<>&& v) noexcept : bit::vector<>(std::move(v)) {}
 };
+} // namespace algebra
 
 namespace std {
     template<>
-    struct hash<Equation> {
-        std::size_t operator()(Equation const& eqn) const noexcept {
+    struct hash<algebra::Equation> {
+        std::size_t operator()(algebra::Equation const& eqn) const noexcept {
             uint64_t hash = 0;
             for (uint64_t block : eqn.blocks()) {
                 hash ^= block;

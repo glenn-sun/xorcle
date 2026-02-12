@@ -3,11 +3,14 @@
 #include <variant>
 #include <algorithm>
 #include <memory>
-#include "Trail.h"
-#include "DecisionProcedure.h"
-#include "ClauseSelector.h"
-#include "ExactWatchlist.h"
+#include <atomic>
+#include <stdexcept>
+#include "search/Trail.h"
+#include "search/PropagationEngine.h"
+#include "heuristics/DecisionProcedure.h"
+#include "heuristics/ClauseSelector.h"
 
+namespace search {
 namespace ResultCase {
     struct Timeout {};
     struct Unsat {};
@@ -42,28 +45,23 @@ class Solver {
 private:
     const std::size_t num_vars;
     Trail trail;
-    std::shared_ptr<ClauseSelector> clause_sel;
-    std::shared_ptr<DecisionProcedure> dec_proc;
+    std::shared_ptr<heuristics::ClauseSelector> clause_sel;
+    std::shared_ptr<heuristics::DecisionProcedure> dec_proc;
+    PropagationEngine propagation;
 
-    /// @brief Determine if the given clause can learn an equation.
-    /// Returns std::nullopt if not possible
-    /// @param clause The clause to test
-    std::optional<Equation> unit_prop_one_clause(ClauseId id);
-
-    Equation working_eqn;
-    Equation working_eqn2;
+    algebra::Equation working_eqn;
 
 public:
-    Solver(const std::size_t num_vars, std::shared_ptr<ClauseSelector> clause_sel_in, std::shared_ptr<DecisionProcedure> dec_proc) : 
+    Solver(const std::size_t num_vars, std::shared_ptr<heuristics::ClauseSelector> clause_sel_in, std::shared_ptr<heuristics::DecisionProcedure> dec_proc) : 
         num_vars(num_vars), 
         trail(num_vars),
         clause_sel(std::move(clause_sel_in)),
         dec_proc(std::move(dec_proc)),
-        working_eqn(bit::vector<>::zeros(num_vars + 1)),
-        working_eqn2(bit::vector<>::zeros(num_vars + 1)) {};
+        propagation(num_vars),
+        working_eqn(bit::vector<>::zeros(num_vars + 1)) {};
 
-    Solver(const std::size_t num_vars, std::shared_ptr<DecisionProcedure> dec_proc) :
-        Solver(num_vars, std::make_shared<Cyclic>(num_vars), std::move(dec_proc)) {}
+    Solver(const std::size_t num_vars, std::shared_ptr<heuristics::DecisionProcedure> dec_proc) :
+        Solver(num_vars, std::make_shared<heuristics::Cyclic>(num_vars), std::move(dec_proc)) {}
 
     std::size_t get_num_vars() const { return num_vars; }
     std::size_t get_num_clauses() const { 
@@ -82,27 +80,23 @@ public:
     //     clause_sel->add_clause(clause);
     // }
 
-    const std::vector<Clause>& get_clauses() const {
+    const std::vector<algebra::Clause>& get_clauses() const {
         return clause_sel->get_clauses();
     }
 
-    Clause& get_clause(ClauseId id) { 
+    algebra::Clause& get_clause(heuristics::ClauseId id) { 
         return clause_sel->get_clause(id); 
     }
 
-    const Equation eqn_true{Equation::zeros(num_vars + 1)};
-    const Equation eqn_false{Equation::unit(num_vars + 1, num_vars)};
-
-    /// @brief Run unit propagation to find a single learnable equation.
-    /// Returns std::nullopt if no equation is learnable.
-    std::optional<std::pair<Equation, ClauseId>> unit_propagate_once();
+    const algebra::Equation eqn_true{algebra::Equation::zeros(num_vars + 1)};
+    const algebra::Equation eqn_false{algebra::Equation::unit(num_vars + 1, num_vars)};
 
     /// @brief Find a clause that is asserting with respect to the trail.
     /// A clause is asserting if it creates a unit propgation from trail prior
     /// to the last decision. Also returns the number of levels to jump back.
     ///
     /// Requires: trail is complete (ends with contradiction)
-    std::pair<Clause, std::size_t>  find_asserting_clause(const Trail& trail);
+    std::pair<algebra::Clause, std::size_t>  find_asserting_clause(const Trail& trail);
 
     /// @brief Determine if the set of clauses is satisfiable. If it is,
     /// return a satisfying assignment. Otherwise, return std::nullopt.
@@ -128,7 +122,7 @@ public:
     /// -1+2 3 0
     ///
     /// In our clause encoding, note that this will be stored as [x1 + x2 = 1] ^ [x3 = 0].
-    static Solver from_DIMACS(const std::string& filename, const DecisionProcedureName dpn, const ClauseSelectorName csn);
+    static Solver from_DIMACS(const std::string& filename, const heuristics::DecisionProcedureName dpn, const heuristics::ClauseSelectorName csn);
 
     // Statistics
     std::size_t num_attempt_props = 0;
@@ -137,3 +131,4 @@ public:
     std::size_t num_conflicts = 0;
 
 };
+} // namespace search
