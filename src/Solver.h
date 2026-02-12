@@ -2,6 +2,7 @@
 
 #include <variant>
 #include <algorithm>
+#include <memory>
 #include "Trail.h"
 #include "DecisionProcedure.h"
 #include "ClauseSelector.h"
@@ -41,8 +42,8 @@ class Solver {
 private:
     const std::size_t num_vars;
     Trail trail;
-    std::unique_ptr<ClauseSelector> clause_sel;
-    std::unique_ptr<DecisionProcedure> dec_proc;
+    std::shared_ptr<ClauseSelector> clause_sel;
+    std::shared_ptr<DecisionProcedure> dec_proc;
 
     /// @brief Determine if the given clause can learn an equation.
     /// Returns std::nullopt if not possible
@@ -53,13 +54,16 @@ private:
     Equation working_eqn2;
 
 public:
-    Solver(const std::size_t num_vars, std::unique_ptr<DecisionProcedure> dec_proc) : 
+    Solver(const std::size_t num_vars, std::shared_ptr<ClauseSelector> clause_sel_in, std::shared_ptr<DecisionProcedure> dec_proc) : 
         num_vars(num_vars), 
         trail(num_vars),
-        clause_sel(std::make_unique<Cyclic>(num_vars)),
+        clause_sel(std::move(clause_sel_in)),
         dec_proc(std::move(dec_proc)),
         working_eqn(bit::vector<>::zeros(num_vars + 1)),
         working_eqn2(bit::vector<>::zeros(num_vars + 1)) {};
+
+    Solver(const std::size_t num_vars, std::shared_ptr<DecisionProcedure> dec_proc) :
+        Solver(num_vars, std::make_shared<Cyclic>(num_vars), std::move(dec_proc)) {}
 
     std::size_t get_num_vars() const { return num_vars; }
     std::size_t get_num_clauses() const { 
@@ -124,7 +128,7 @@ public:
     /// -1+2 3 0
     ///
     /// In our clause encoding, note that this will be stored as [x1 + x2 = 1] ^ [x3 = 0].
-    static Solver from_DIMACS(const std::string& filename, const DecisionProcedureName dpn);
+    static Solver from_DIMACS(const std::string& filename, const DecisionProcedureName dpn, const ClauseSelectorName csn);
 
     // Statistics
     std::size_t num_attempt_props = 0;
@@ -133,4 +137,3 @@ public:
     std::size_t num_conflicts = 0;
 
 };
-

@@ -4,15 +4,18 @@
 #include <queue>
 #include <unordered_set>
 #include <bit>
+#include <algorithm>
 #include "bit/vector.h"
 #include "RowSpace.h"
 #include "Equation.h"
+#include "Trail.h"
 #include <cassert>
 
 using ClauseId = std::size_t;
 using EquationId = std::size_t;
 
 enum class WatchType { Zero, One, Sum };
+enum class ClauseSelectorName { cyclic, random_cyclic, lt_watchlist, exact_watchlist, cvsids, cvsids_sum };
 
 class ClauseSelector {
 protected:

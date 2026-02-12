@@ -9,7 +9,9 @@
 #include "RowSpace.h"
 #include "MaxHeap.h"
 
-enum class DecisionProcedureName { fixed_unit, random_unit, random_eq, vsids_unit, vsids_multiple, vsids_clause };
+using ClauseId = std::size_t;
+
+enum class DecisionProcedureName { fixed_unit, random_unit, random_eq, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum };
 
 class DecisionProcedure {
 protected:
@@ -22,6 +24,7 @@ public:
     virtual void update_with_critical_equation(const Equation& eqn) {};
     virtual void update_with_asserting_clause(const Clause& clause) {};
     virtual void update_with_starting_clause(const Clause& clause) {};
+    virtual void update_with_resolved_clause(ClauseId id) {};
 };
 
 class FixedUnit : public DecisionProcedure {
@@ -148,6 +151,7 @@ public:
                     (*maybe_eqn).unsafe_copy(clauses[j].row(clauses[j].get_col_to_row(k)));
                     trail_span.reduce(*maybe_eqn);
                         if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
+                            (*maybe_eqn).flip(num_vars);
                             return *maybe_eqn;
                         };
                 }

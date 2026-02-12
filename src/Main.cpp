@@ -6,9 +6,9 @@
 
 namespace fs = std::filesystem;
 
-void solve(std::string& filename, DecisionProcedureName dpn, std::atomic<bool>& stop_flag) {
+void solve(std::string& filename, DecisionProcedureName dpn, ClauseSelectorName csn, std::atomic<bool>& stop_flag) {
     try {
-        Solver solver = Solver::from_DIMACS(filename, dpn);
+        Solver solver = Solver::from_DIMACS(filename, dpn, csn);
         int num_vars = solver.get_num_vars();
         int start_num_clauses = solver.get_num_clauses();
 
@@ -50,6 +50,7 @@ int main(int argc, char *argv[]) {
     bool verbose{false};
     uint threads{4};
     DecisionProcedureName dpn{DecisionProcedureName::fixed_unit};
+    ClauseSelectorName csn{ClauseSelectorName::cyclic};
     uint seconds{10};
 
     static constexpr struct option long_options[] = {
@@ -59,13 +60,14 @@ int main(int argc, char *argv[]) {
         {"verbose", no_argument, 0, 'v'},
         {"threads", required_argument, 0, 't'},
         {"decproc", required_argument, 0, 'p'},
+        {"clausesel", required_argument, 0, 'c'},
         {"seconds", required_argument, 0, 's'},
         {0, 0, 0, 0}
     };
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "f:d:hvt:p:s:", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "f:d:hvt:p:c:s:", long_options, &option_index);
         if (option == -1) {
             break;
         }
@@ -104,8 +106,32 @@ int main(int argc, char *argv[]) {
                     dpn = DecisionProcedureName::vsids_multiple;
                 } else if (optarg_str == "vsids_clause") {
                     dpn = DecisionProcedureName::vsids_clause;
+                } else if (optarg_str == "cvsids") {
+                    dpn = DecisionProcedureName::cvsids;
+                } else if (optarg_str == "cvsids_sum") {
+                    dpn = DecisionProcedureName::cvsids_sum;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
+                    return 1;
+                }
+                break;
+            }
+            case 'c': {
+                std::string optarg_str{optarg};
+                if (optarg_str == "cyclic") {
+                    csn = ClauseSelectorName::cyclic;
+                } else if (optarg_str == "random_cyclic") {
+                    csn = ClauseSelectorName::random_cyclic;
+                } else if (optarg_str == "lt_watchlist") {
+                    csn = ClauseSelectorName::lt_watchlist;
+                } else if (optarg_str == "exact_watchlist") {
+                    csn = ClauseSelectorName::exact_watchlist;
+                } else if (optarg_str == "cvsids") {
+                    csn = ClauseSelectorName::cvsids;
+                } else if (optarg_str == "cvsids_sum") {
+                    csn = ClauseSelectorName::cvsids_sum;
+                } else {
+                    std::cerr << "Error: '" << optarg << "' is not a clause selector" << std::endl;
                     return 1;
                 }
                 break;
@@ -133,7 +159,9 @@ int main(int argc, char *argv[]) {
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
         std::cout << "  -t, --threads <n>            Number of threads (default: 4)" << std::endl;
         std::cout << "  -p, --decproc <proc>         Decision procedure (default: fixed_unit)" << std::endl;
-        std::cout << "                               Options: fixed_unit, random_unit, random_eq, vsids_unit" << std::endl;
+        std::cout << "                               Options: fixed_unit, random_unit, random_eq, vsids_unit, vsids_multiple, vsids_clause, cvsids, cvsids_sum" << std::endl;
+        std::cout << "  -c, --clausesel <selector>   Clause selector (default: cyclic)" << std::endl;
+        std::cout << "                               Options: cyclic, random_cyclic, lt_watchlist, exact_watchlist, cvsids, cvsids_sum" << std::endl;
         std::cout << "  -s, --seconds <s>            Timeout in seconds (default: 10)" << std::endl;
         
         return 0;
@@ -202,7 +230,7 @@ int main(int argc, char *argv[]) {
                 
                 // Run the task
                 std::thread task_thread([&] {
-                    solve(filename, dpn, stop_flag);
+                    solve(filename, dpn, csn, stop_flag);
                     {
                         std::lock_guard<std::mutex> lock(mtx);
                         task_completed = true;

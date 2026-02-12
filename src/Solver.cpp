@@ -2,6 +2,7 @@
 #include <cassert>
 #include "Solver.h"
 #include "TrailBasisSpace.h"
+#include "CVsids.h"
 
 std::optional<Equation> Solver::unit_prop_one_clause(ClauseId id) {
     Clause& clause = get_clause(id);
@@ -206,6 +207,7 @@ std::pair<Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail)
         std::size_t index = as_tbs.cols() - 1 - non_zero_col;
         std::optional<ClauseId> reason_rs_id = trail.reasons()[index];
         RowSpace reason_rs = get_clause(reason_rs_id.value());
+        dec_proc->update_with_resolved_clause(reason_rs_id.value());
         TrailBasisSpace reason = TrailBasisSpace::from_RowSpace(reason_rs, trail);
         Coefficients reason_first = reason.pop_first_row();
 
@@ -314,7 +316,7 @@ void Solver::print_trail(const EquationPrintMode eqn_mode) const {
     }
 }
 
-Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureName dpn) {
+Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureName dpn, const ClauseSelectorName csn) {
     std::ifstream file{filename};
     std::string line;
 
@@ -335,29 +337,67 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
     std::size_t tmp_num_clauses;
     header_ss >> p_tok >> cnf_tok >> num_vars >> tmp_num_clauses;
 
-    std::unique_ptr<DecisionProcedure> dec_proc;
-    switch (dpn) {
-        case DecisionProcedureName::fixed_unit:
-            dec_proc = std::make_unique<FixedUnit>(num_vars);
-            break;
-        case DecisionProcedureName::random_unit:
-            dec_proc = std::make_unique<RandomUnit>(num_vars);
-            break;
-        case DecisionProcedureName::random_eq:
-            dec_proc = std::make_unique<RandomEq>(num_vars);
-            break;
-        case DecisionProcedureName::vsids_unit:
-            dec_proc = std::make_unique<VsidsUnit>(num_vars);
-            break;
-        case DecisionProcedureName::vsids_multiple:
-            dec_proc = std::make_unique<VsidsMultiple>(num_vars);
-            break;
-        case DecisionProcedureName::vsids_clause:
-            dec_proc = std::make_unique<VsidsClause>(num_vars);
-            break;
+    std::shared_ptr<DecisionProcedure> dec_proc;
+    std::shared_ptr<ClauseSelector> clause_sel;
+    if (dpn == DecisionProcedureName::cvsids_sum || csn == ClauseSelectorName::cvsids_sum) {
+        auto cv = std::make_shared<CVsidsSum>(num_vars);
+        dec_proc = cv;
+        clause_sel = cv;
+    } else if (dpn == DecisionProcedureName::cvsids || csn == ClauseSelectorName::cvsids) {
+        auto cv = std::make_shared<CVsids>(num_vars);
+        dec_proc = cv;
+        clause_sel = cv;
+    } else {
+        switch (dpn) {
+            case DecisionProcedureName::fixed_unit:
+                dec_proc = std::make_shared<FixedUnit>(num_vars);
+                break;
+            case DecisionProcedureName::random_unit:
+                dec_proc = std::make_shared<RandomUnit>(num_vars);
+                break;
+            case DecisionProcedureName::random_eq:
+                dec_proc = std::make_shared<RandomEq>(num_vars);
+                break;
+            case DecisionProcedureName::vsids_unit:
+                dec_proc = std::make_shared<VsidsUnit>(num_vars);
+                break;
+            case DecisionProcedureName::vsids_multiple:
+                dec_proc = std::make_shared<VsidsMultiple>(num_vars);
+                break;
+            case DecisionProcedureName::vsids_clause:
+                dec_proc = std::make_shared<VsidsClause>(num_vars);
+                break;
+            case DecisionProcedureName::cvsids:
+                dec_proc = std::make_shared<CVsids>(num_vars);
+                break;
+            case DecisionProcedureName::cvsids_sum:
+                dec_proc = std::make_shared<CVsidsSum>(num_vars);
+                break;
+        }
+
+        switch (csn) {
+            case ClauseSelectorName::cyclic:
+                clause_sel = std::make_shared<Cyclic>(num_vars);
+                break;
+            case ClauseSelectorName::random_cyclic:
+                clause_sel = std::make_shared<RandomCyclic>(num_vars);
+                break;
+            case ClauseSelectorName::lt_watchlist:
+                clause_sel = std::make_shared<LTWatchlist>(num_vars);
+                break;
+            case ClauseSelectorName::exact_watchlist:
+                clause_sel = std::make_shared<ExactWatchlist>(num_vars);
+                break;
+            case ClauseSelectorName::cvsids:
+                clause_sel = std::make_shared<CVsids>(num_vars);
+                break;
+            case ClauseSelectorName::cvsids_sum:
+                clause_sel = std::make_shared<CVsidsSum>(num_vars);
+                break;
+        }
     }
 
-    Solver solver{num_vars, std::move(dec_proc)};
+    Solver solver{num_vars, std::move(clause_sel), std::move(dec_proc)};
 
     // Read clause lines
     while (std::getline(file, line)) {
@@ -466,5 +506,3 @@ Solver Solver::from_DIMACS(const std::string& filename, const DecisionProcedureN
     file.close();
     return solver;
 }
-
-

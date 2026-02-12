@@ -73,7 +73,9 @@ void VsidsParams::bump_activity(const Equation& eqn) {
 void VsidsUnit::reinitialize() {
     vsids_params.activity_heap.reset();
     for (std::size_t i = 0; i < num_vars; i++) {
-        vsids_params.activity_heap.increase_key(Equation::unit(num_vars + 1, i), 0);
+        Equation unit = Equation::unit(num_vars + 1, i);
+        vsids_params.activity_heap.set_activity(unit, 0);
+        vsids_params.activity_heap.insert(unit);
     }
     vsids_params.inc_amt = 1;
 }
@@ -108,4 +110,6 @@ void VsidsUnit::update_with_asserting_clause(const Clause& clause) {
 
     // Decay activity by increasing increment
     vsids_params.inc_amt *= (1 / vsids_params.decay);
+
+    vsids_params.activity_heap.rebuild();
 }
