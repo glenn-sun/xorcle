@@ -1,10 +1,13 @@
-#include <cassert>
 #include <algorithm>
+#include <cassert>
+#include <numeric>
 #include "heuristics/DecisionProcedure.h"
 #include "util/DecisionUtils.h"
+#include "util/RandomUtils.h"
 
 namespace heuristics {
 namespace {
+/// @brief Ensure a unit equation basis is initialized to size num_vars.
 void ensure_unit_eqns_impl(std::vector<Equation>& unit_eqns, std::size_t num_vars) {
     if (unit_eqns.size() != num_vars) {
         unit_eqns.clear();
@@ -104,6 +107,32 @@ Equation VsidsUnit::make_decision(const RowSpace& trail_span, const std::vector<
             record_decision(false);
             return *maybe_eqn;
         };
+    }
+}
+
+Equation VsidsClause::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
+    while (true) {
+        std::optional<Equation> maybe_eqn = vsids_params.activity_heap.extract_max();
+        if (!maybe_eqn.has_value()) {
+            reinitialize();
+            maybe_eqn = vsids_params.activity_heap.extract_max();
+        }
+
+        std::size_t k = (*maybe_eqn).first_set();
+
+        std::size_t start = util::random_int(clauses.size());
+        for (std::size_t i = 0; i < clauses.size(); ++i) {
+            std::size_t j = (start + i) % clauses.size();
+            if (clauses[j].get_pivot_cols()[k]) {
+                assert((*maybe_eqn).size() == clauses[j].row(clauses[j].get_col_to_row(k)).size());
+                (*maybe_eqn).unsafe_copy(clauses[j].row(clauses[j].get_col_to_row(k)));
+                trail_span.reduce(*maybe_eqn);
+                if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
+                    record_decision(false);
+                    return *maybe_eqn;
+                };
+            }
+        }
     }
 }
 

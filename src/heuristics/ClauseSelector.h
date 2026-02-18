@@ -1,188 +1,164 @@
 #pragma once
 
-#include <variant>
-#include <queue>
-#include <unordered_set>
-#include <bit>
-#include <algorithm>
+#include <cstddef>
 #include <optional>
 #include <vector>
-#include "bit/vector.h"
-#include "algebra/RowSpace.h"
+
 #include "algebra/Equation.h"
-#include "search/Trail.h"
+#include "algebra/RowSpace.h"
 #include "heuristics/Types.h"
-#include <cassert>
+#include "search/Trail.h"
 
 namespace heuristics {
 using Clause = algebra::Clause;
 using Equation = algebra::Equation;
 using Trail = search::Trail;
 
-enum class WatchType { Zero, One, Sum };
-enum class ClauseSelectorName { cyclic, lt_watchlist, exact_watchlist };
+/// @brief Watch variants used by watchlist-based clause selectors.
+enum class WatchType {
+    Zero, ///< Watch the first equation.
+    One,  ///< Watch the second equation.
+    Sum   ///< Watch the xor of the two watched equations.
+};
 
+/// @brief Available clause-selection strategies.
+enum class ClauseSelectorName {
+    cyclic,          ///< Simple cyclic iteration.
+    lt_watchlist,    ///< Leading-term watchlist.
+    exact_watchlist  ///< Exact watchlist with reduced equations.
+};
+
+/// @brief Base interface for selecting clauses to attempt propagation.
 class ClauseSelector {
 protected:
+    /// @brief Stored clauses; clause ids are indices into this vector.
     std::vector<Clause> clauses;
-    // Trail after learning, new eqn must be reduced by trail before learning
+
+    /// @brief Hook for subclasses when a new reduced equation is learned.
     virtual void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) {}
+
+    /// @brief Add a clause to internal storage with no other side effects.
     virtual void add_clause(const Clause& clause) { clauses.push_back(clause); }
+
 public:
-    ClauseSelector() : clauses() {}
+    /// @brief Construct an empty selector.
+    ClauseSelector();
+
+    /// @brief Virtual destructor for interface use.
     virtual ~ClauseSelector() = default;
 
-    std::size_t get_num_clauses() const { return clauses.size(); }
-    const std::vector<Clause>& get_clauses() const { return clauses; }
-    Clause& get_clause(ClauseId id) { return clauses[id]; }
+    /// @brief Return the number of clauses currently tracked.
+    std::size_t get_num_clauses() const;
 
+    /// @brief Return a read-only view of the clause list.
+    const std::vector<Clause>& get_clauses() const;
+
+    /// @brief Return a mutable reference to a clause by id.
+    Clause& get_clause(ClauseId id);
+
+    /// @brief Return the next clause id to consider, or std::nullopt if none.
     virtual std::optional<ClauseId> next() = 0;
-    virtual void add_starting_clause(const Clause& clause) { add_clause(clause); }
-    // Trail after backjumping
-    virtual void add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t jumpable_levels) { add_clause(clause); }
-    virtual void update_with_propagation(const Equation& reduced_eqn, const Trail& trail) { update_with_new_equation(reduced_eqn, trail); };
-    virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail) { update_with_new_equation(reduced_eqn, trail); };
-    virtual void update_with_decision_clause(std::optional<ClauseId> clause_id) {};
-    virtual void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail) {};
+
+    /// @brief Add an initial clause before any propagation or decisions.
+    virtual void add_starting_clause(const Clause& clause);
+
+    /// @brief Add a learned asserting clause after backjumping.
+    /// @param clause The asserting clause to add.
+    /// @param trail Trail after backjumping.
+    /// @param jumpable_levels Number of decision levels removed.
+    virtual void add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t jumpable_levels);
+
+    /// @brief Notify selector that a propagation occurred.
+    /// @param reduced_eqn The reduced equation that was learned.
+    /// @param trail Current trail after learning.
+    virtual void update_with_propagation(const Equation& reduced_eqn, const Trail& trail);
+
+    /// @brief Notify selector that a decision occurred.
+    /// @param reduced_eqn The reduced equation for the decision.
+    /// @param trail Current trail after learning.
+    virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail);
+
+    /// @brief Provide an optional clause id hint that should be prioritized.
+    virtual void update_with_decision_clause(std::optional<ClauseId> clause_id);
+
+    /// @brief Notify selector that a watch was updated on a clause.
+    /// @param id Clause id being updated.
+    /// @param old_watch The previously watched equation index.
+    /// @param wt Which watch is being updated.
+    /// @param trail Current trail.
+    virtual void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail);
 };
 
+/// @brief Simple cyclic clause selector.
 class Cyclic : public ClauseSelector {
 private:
+    /// @brief Next clause id to return.
     ClauseId id;
+
+    /// @brief Number of clauses returned since the last full cycle.
     std::size_t count;
+
+    /// @brief Optional restart target based on the last decision clause.
     std::optional<ClauseId> pending_restart_clause;
+
 public:
-    Cyclic(std::size_t num_vars) : ClauseSelector(), id(0), count(0) {}
-    std::optional<ClauseId> next() override {
-        if (pending_restart_clause.has_value()) {
-            ClauseId restart_id = pending_restart_clause.value();
-            pending_restart_clause.reset();
-            if (restart_id < clauses.size()) {
-                id = restart_id;
-                count = 0;
-            }
-        }
-        if (count == clauses.size()) {
-            count = 0;
-            return std::nullopt;
-        }
-        std::size_t old_id = id;
-        id = (id + 1) % clauses.size();
-        ++count;
-        return old_id;
-    }
+    /// @brief Construct a cyclic selector.
+    explicit Cyclic(std::size_t num_vars);
 
-    void add_clause(const Clause& clause) override {
-        clauses.push_back(clause);
-        id = clauses.size() - 1;
-        count = 0;
-    }
+    /// @brief Return the next clause in cyclic order.
+    std::optional<ClauseId> next() override;
 
-    void update_with_new_equation(const Equation& eqn, const Trail& trail) override { 
-        count = 0;
-    }
+    /// @brief Add a clause and restart the cycle from it.
+    void add_clause(const Clause& clause) override;
 
-    void update_with_decision_clause(std::optional<ClauseId> clause_id) override {
-        if (clause_id.has_value() && clause_id.value() < clauses.size()) {
-            pending_restart_clause = clause_id;
-        } else {
-            pending_restart_clause.reset();
-        }
-    }
+    /// @brief Reset cycle position when a new equation is learned.
+    void update_with_new_equation(const Equation& eqn, const Trail& trail) override;
+
+    /// @brief Set a pending restart clause if the id is valid.
+    void update_with_decision_clause(std::optional<ClauseId> clause_id) override;
 };
 
+/// @brief Watchlist selector keyed by leading terms.
 class LTWatchlist : public ClauseSelector {
 private:
-    // Map from leading term to list of clauses watching 
-    // some equation with that leading term
+    /// @brief Map from leading term index to clauses watching that term.
     std::vector<std::vector<ClauseId>> by_leading_term;
 
+    /// @brief Stack of clause ids to process.
     std::vector<ClauseId> stack;
+
+    /// @brief Boolean membership flags for clause ids in the stack.
     std::vector<bool> stack_set;
 
+    /// @brief List of unit clause ids.
     std::vector<ClauseId> unit_clauses;
 
-    void push(ClauseId id) {
-        if (!stack_set[id]) {
-            stack.push_back(id);
-            stack_set[id] = true;
-        }
-    }
+    /// @brief Push a clause id if it is not already queued.
+    void push(ClauseId id);
 
-    void append(const std::vector<ClauseId>& ids) {
-        for (ClauseId id : ids) {
-            push(id);
-        }
-    }
+    /// @brief Push multiple clause ids.
+    void append(const std::vector<ClauseId>& ids);
 
-    ClauseId get_pop() {
-        ClauseId id = stack.back();
-        stack.pop_back();
-        stack_set[id] = false;
-        return id;
-    }
+    /// @brief Pop a clause id from the stack.
+    ClauseId get_pop();
 
 public:
-    LTWatchlist(std::size_t num_vars) : ClauseSelector(), by_leading_term(num_vars+1) {}
-    
-    std::optional<ClauseId> next() override {
-        if (stack.empty()) {
-            return std::nullopt;
-        }
-        return get_pop();
-    }
+    /// @brief Construct a watchlist for the given number of variables.
+    explicit LTWatchlist(std::size_t num_vars);
 
-    void add_clause(const Clause& clause) override {
-        if (clause.rows() > 1) {
-            by_leading_term[clause.row(clause.watched0).first_set()].push_back(clauses.size());
-            by_leading_term[clause.row(clause.watched1).first_set()].push_back(clauses.size());
-            stack_set.push_back(false);
-        } else {
-            unit_clauses.push_back(clauses.size());
-            stack_set.push_back(true);
-            stack.push_back(clauses.size());
-        }
-        clauses.push_back(clause);
-    }
+    /// @brief Return the next queued clause id.
+    std::optional<ClauseId> next() override;
 
-    void add_asserting_clause(const Clause& clause, const Trail& /*unused*/, std::size_t /*unused*/) override {
-        add_clause(clause);
-        
-        stack.clear();
-        std::fill(stack_set.begin(), stack_set.end(), false);
-        append(unit_clauses);
-        push(clauses.size() - 1);
-    }
+    /// @brief Add a clause and update watchlists.
+    void add_clause(const Clause& clause) override;
 
-    void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override {
-        // Because of linear combinations, need to check all lists corresponding
-        // to reducible leading terms in position at most reduced.first_set()
+    /// @brief Add an asserting clause and refresh the queue.
+    void add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t jumpable_levels) override;
 
-        for (std::size_t i = 0; i < reduced_eqn.first_set(); ++i) {
-            if (trail.span().get_pivot_cols()[i]) {
-                append(by_leading_term[i]);
-            }
-        }
-        append(by_leading_term[reduced_eqn.first_set()]);
-    }
+    /// @brief Queue affected clauses when a new equation is learned.
+    void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
-    void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& /*unused*/) override {
-        auto& v = by_leading_term[clauses[id].row(old_watch).first_set()];
-        std::erase(v, id);
-        EquationId new_watch = 0;
-        switch (wt) {
-            case WatchType::Zero:
-                new_watch = clauses[id].watched0;
-                break;
-            case WatchType::One:
-                new_watch = clauses[id].watched1;
-                break;
-            case WatchType::Sum:
-                // Should never happen
-                assert(false && "WatchType::Sum not expected in LTWatchlist");
-                return;
-        }
-        by_leading_term[clauses[id].row(new_watch).first_set()].push_back(id);
-    }
+    /// @brief Update watchlists when a watched equation changes.
+    void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail) override;
 };
 } // namespace heuristics

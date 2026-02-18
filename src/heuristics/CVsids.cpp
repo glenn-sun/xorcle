@@ -6,6 +6,13 @@
 
 namespace heuristics {
 namespace {
+/// @brief Shared decision implementation for CVsids-based strategies.
+/// @param state Shared CVsids state.
+/// @param num_vars Number of variables in the instance.
+/// @param trail_span Current trail span.
+/// @param clauses Current clause list.
+/// @param decisions Decision counter to update.
+/// @param fallback_decisions Fallback counter to update.
 Equation make_decision_impl(CVsidsState& state,
                             std::size_t num_vars,
                             const RowSpace& trail_span,

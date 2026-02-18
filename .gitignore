@@ -8,3 +8,5 @@ submitted/
 out.txt
 bin/
 filtered/
+venv/
+docs/

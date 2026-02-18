@@ -12,77 +12,93 @@ enum class ClauseSelectorName;
 
 namespace stats {
 
-enum class SolveResult { Timeout, Unsat, Sat };
+/// @brief Solver result classification used in run statistics.
+enum class SolveResult {
+    Timeout, ///< Solver did not finish before the timeout.
+    Unsat,   ///< Solver proved the instance unsatisfiable.
+    Sat      ///< Solver found a satisfying assignment.
+};
 
+/// @brief Per-run solver statistics.
 struct RunStats {
-    SolveResult result = SolveResult::Timeout;
-    double time_s = 0.0;
-    std::size_t num_vars = 0;
-    std::size_t start_clauses = 0;
-    std::size_t final_clauses = 0;
-    std::size_t num_conflicts = 0;
-    std::size_t num_propagations = 0;
-    std::size_t num_attempt_props = 0;
-    std::size_t num_watch_updates = 0;
-    std::size_t decisions = 0;
-    std::size_t fallback_decisions = 0;
-    std::optional<std::string> sat_assignment;
+    SolveResult result = SolveResult::Timeout; ///< Final status of the run.
+    double time_s = 0.0;                       ///< Wall-clock time in seconds.
+    std::size_t num_vars = 0;                  ///< Number of variables in the instance.
+    std::size_t start_clauses = 0;             ///< Number of clauses before solving.
+    std::size_t final_clauses = 0;             ///< Number of clauses after solving.
+    std::size_t num_conflicts = 0;             ///< Count of conflicts encountered.
+    std::size_t num_propagations = 0;          ///< Count of unit propagations performed.
+    std::size_t num_attempt_props = 0;         ///< Count of attempted propagations.
+    std::size_t num_watch_updates = 0;         ///< Count of watch updates performed.
+    std::size_t decisions = 0;                 ///< Count of decisions made.
+    std::size_t fallback_decisions = 0;        ///< Count of decisions that used fallback logic.
+    std::optional<std::string> sat_assignment; ///< Satisfying assignment string, when available.
 };
 
+/// @brief Metadata describing an aggregation request.
 struct AggregateMeta {
-    std::string run_id;
-    std::string timestamp_utc;
-    std::string file;
-    heuristics::DecisionProcedureName decision_procedure;
-    heuristics::ClauseSelectorName clause_selector;
-    std::size_t threads = 0;
-    std::size_t timeout_s = 0;
-    bool deterministic = true;
-    std::size_t runs_requested = 1;
+    std::string run_id;                               ///< Unique id for the aggregation run.
+    std::string timestamp_utc;                        ///< Timestamp in UTC (ISO-like format).
+    std::string file;                                 ///< Input file path.
+    heuristics::DecisionProcedureName decision_procedure; ///< Decision procedure used.
+    heuristics::ClauseSelectorName clause_selector;   ///< Clause selector used.
+    std::size_t threads = 0;                          ///< Number of threads requested.
+    std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
+    bool deterministic = true;                        ///< Whether the run is deterministic.
+    std::size_t runs_requested = 1;                   ///< Number of runs requested.
 };
 
+/// @brief Aggregated statistics across multiple runs.
 struct AggregateStats {
-    std::string run_id;
-    std::string timestamp_utc;
-    std::string file;
-    heuristics::DecisionProcedureName decision_procedure;
-    heuristics::ClauseSelectorName clause_selector;
-    std::size_t threads = 0;
-    std::size_t timeout_s = 0;
-    bool deterministic = true;
+    std::string run_id;                               ///< Unique id for the aggregation run.
+    std::string timestamp_utc;                        ///< Timestamp in UTC (ISO-like format).
+    std::string file;                                 ///< Input file path.
+    heuristics::DecisionProcedureName decision_procedure; ///< Decision procedure used.
+    heuristics::ClauseSelectorName clause_selector;   ///< Clause selector used.
+    std::size_t threads = 0;                          ///< Number of threads requested.
+    std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
+    bool deterministic = true;                        ///< Whether the run is deterministic.
 
-    std::size_t runs_requested = 1;
-    std::size_t runs_completed = 0;
-    std::size_t timeout_count = 0;
-    std::size_t sat_count = 0;
-    std::size_t unsat_count = 0;
-    std::string result;
+    std::size_t runs_requested = 1;                   ///< Number of runs requested.
+    std::size_t runs_completed = 0;                   ///< Number of non-timeout runs completed.
+    std::size_t timeout_count = 0;                    ///< Number of timed-out runs.
+    std::size_t sat_count = 0;                        ///< Number of SAT runs.
+    std::size_t unsat_count = 0;                      ///< Number of UNSAT runs.
+    std::string result;                               ///< Selected run classification.
 
-    std::size_t num_vars = 0;
-    std::size_t start_clauses = 0;
+    std::size_t num_vars = 0;                         ///< Number of variables in the instance.
+    std::size_t start_clauses = 0;                    ///< Number of clauses before solving.
 
-    std::size_t final_clauses = 0;
-    std::size_t learned_clauses = 0;
-    double time_s = 0.0;
-    std::size_t conflicts = 0;
-    std::size_t propagations = 0;
-    std::size_t attempt_props = 0;
-    std::size_t watch_updates = 0;
-    std::size_t decisions = 0;
-    std::size_t fallback_decisions = 0;
-    std::optional<double> fallback_pct;
-    std::optional<double> prop_per_conflict;
-    std::optional<double> attempts_per_prop;
-    std::optional<double> attempts_per_watch;
+    std::size_t final_clauses = 0;                    ///< Number of clauses after solving.
+    std::size_t learned_clauses = 0;                  ///< Learned clause count (final - start).
+    double time_s = 0.0;                              ///< Selected run time in seconds.
+    std::size_t conflicts = 0;                        ///< Selected run conflicts.
+    std::size_t propagations = 0;                     ///< Selected run propagations.
+    std::size_t attempt_props = 0;                    ///< Selected run attempted propagations.
+    std::size_t watch_updates = 0;                    ///< Selected run watch updates.
+    std::size_t decisions = 0;                        ///< Selected run decisions.
+    std::size_t fallback_decisions = 0;               ///< Selected run fallback decisions.
+    std::optional<double> fallback_pct;               ///< Fallback decisions / decisions * 100.
+    std::optional<double> prop_per_conflict;          ///< Propagations per conflict.
+    std::optional<double> attempts_per_prop;          ///< Attempted propagations per propagation.
+    std::optional<double> attempts_per_watch;         ///< Attempted propagations per watch update.
 
-    std::optional<std::string> sat_assignment;
+    std::optional<std::string> sat_assignment;        ///< Satisfying assignment for selected run.
 };
 
+/// @brief Convert a decision procedure enum to a stable string label.
 std::string to_string(heuristics::DecisionProcedureName name);
+
+/// @brief Convert a clause selector enum to a stable string label.
 std::string to_string(heuristics::ClauseSelectorName name);
+
+/// @brief Return true if a decision procedure is inherently nondeterministic.
 bool is_nondeterministic(heuristics::DecisionProcedureName name);
+
+/// @brief Divide two doubles and return std::nullopt when denom is zero.
 std::optional<double> safe_div(double numer, double denom);
 
+/// @brief Aggregate multiple RunStats into a summary record.
 AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunStats>& runs);
 
 } // namespace stats

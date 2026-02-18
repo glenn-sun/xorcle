@@ -1,18 +1,18 @@
-#include <future>
-#include <filesystem>
-#include <thread>
-#include <getopt.h>
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <ctime>
+#include <filesystem>
+#include <getopt.h>
 #include <iomanip>
+#include <iostream>
+#include <mutex>
 #include <optional>
 #include <sstream>
-#include <atomic>
-#include <format>
-#include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
-#include <algorithm>
 #include "search/Solver.h"
 #include "heuristics/DecisionProcedure.h"
 #include "heuristics/ClauseSelector.h"
@@ -21,8 +21,17 @@
 
 namespace fs = std::filesystem;
 
-enum class StatsMode { console, csv };
+/// @brief Output mode for statistics reporting.
+enum class StatsMode {
+    console, ///< Print stats to stdout.
+    csv      ///< Append stats to a CSV file.
+};
 
+/// @brief Run the solver once and collect run statistics.
+/// @param filename DIMACS file path.
+/// @param dpn Decision procedure to use.
+/// @param csn Clause selector to use.
+/// @param stop_flag External stop signal to interrupt solving.
 stats::RunStats run_once(const std::string& filename,
                          heuristics::DecisionProcedureName dpn,
                          heuristics::ClauseSelectorName csn,
@@ -63,6 +72,12 @@ stats::RunStats run_once(const std::string& filename,
     return out;
 }
 
+/// @brief Run the solver once with a timeout and collect statistics.
+/// @param filename DIMACS file path.
+/// @param dpn Decision procedure to use.
+/// @param csn Clause selector to use.
+/// @param timeout_s Timeout in seconds.
+/// @return RunStats on success; std::nullopt on error.
 std::optional<stats::RunStats> run_once_with_timeout(const std::string& filename,
                                                      heuristics::DecisionProcedureName dpn,
                                                      heuristics::ClauseSelectorName csn,
@@ -110,6 +125,7 @@ std::optional<stats::RunStats> run_once_with_timeout(const std::string& filename
     return result;
 }
 
+/// @brief Return the current UTC timestamp in ISO-like format.
 std::string utc_timestamp() {
     auto now = std::chrono::system_clock::now();
     std::time_t now_time_t = std::chrono::system_clock::to_time_t(now);
@@ -124,6 +140,7 @@ std::string utc_timestamp() {
     return ss.str();
 }
 
+/// @brief Create a unique run id by combining timestamp and epoch millis.
 std::string run_id_from_timestamp(const std::string& timestamp_utc) {
     auto now = std::chrono::system_clock::now();
     auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
@@ -132,6 +149,7 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
     return ss.str();
 }
 
+/// @brief Entry point for the solver CLI.
 int main(int argc, char *argv[]) {
     std::string filename;
     std::string directory;
@@ -379,10 +397,11 @@ int main(int argc, char *argv[]) {
         cs_list = {csn};
     }
 
+    /// @brief Unit of work combining an input file and heuristic choices.
     struct WorkItem {
-        std::string file;
-        heuristics::DecisionProcedureName dpn;
-        heuristics::ClauseSelectorName csn;
+        std::string file; ///< Input file path.
+        heuristics::DecisionProcedureName dpn; ///< Decision procedure to run.
+        heuristics::ClauseSelectorName csn; ///< Clause selector to run.
     };
 
     std::vector<WorkItem> work_items;

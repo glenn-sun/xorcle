@@ -1,4 +1,6 @@
 #include <cassert>
+#include <iostream>
+#include <stdexcept>
 
 #include "search/Solver.h"
 
@@ -8,6 +10,59 @@
 #include "io/DimacsParser.h"
 
 namespace search {
+
+bool ResultCase::is_timeout(const std::variant<Timeout, Unsat, Sat>& result) {
+    return std::holds_alternative<Timeout>(result);
+}
+
+bool ResultCase::is_unsat(const std::variant<Timeout, Unsat, Sat>& result) {
+    return std::holds_alternative<Unsat>(result);
+}
+
+bool ResultCase::is_sat(const std::variant<Timeout, Unsat, Sat>& result) {
+    return std::holds_alternative<Sat>(result);
+}
+
+const bit::vector<>& ResultCase::unwrap_sat(const std::variant<Timeout, Unsat, Sat>& result) {
+    if (const Sat* sat = std::get_if<Sat>(&result)) {
+        return sat->values;
+    }
+    throw std::runtime_error("Expected Sat result");
+}
+
+Solver::Solver(std::size_t num_vars,
+               std::shared_ptr<heuristics::ClauseSelector> clause_sel_in,
+               std::shared_ptr<heuristics::DecisionProcedure> dec_proc)
+    : num_vars(num_vars),
+      trail(num_vars),
+      clause_sel(std::move(clause_sel_in)),
+      dec_proc(std::move(dec_proc)),
+      propagation(num_vars),
+      working_eqn(bit::vector<>::zeros(num_vars + 1)) {}
+
+Solver::Solver(std::size_t num_vars,
+               std::shared_ptr<heuristics::DecisionProcedure> dec_proc)
+    : Solver(num_vars, std::make_shared<heuristics::Cyclic>(num_vars), std::move(dec_proc)) {}
+
+std::size_t Solver::get_num_vars() const { return num_vars; }
+
+std::size_t Solver::get_num_clauses() const {
+    return clause_sel->get_num_clauses();
+}
+
+heuristics::DecisionProcedure::DecisionStats Solver::decision_stats() const {
+    return dec_proc->decision_stats();
+}
+
+std::size_t Solver::level() const { return trail.size() - 1; }
+
+const std::vector<algebra::Clause>& Solver::get_clauses() const {
+    return clause_sel->get_clauses();
+}
+
+algebra::Clause& Solver::get_clause(heuristics::ClauseId id) {
+    return clause_sel->get_clause(id);
+}
 
 std::pair<algebra::Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail) {
     // Fact: last_reason should never be std::nullopt here

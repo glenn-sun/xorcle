@@ -1,17 +1,24 @@
 #pragma once
 
-// This file was generated with the assistance of AI.
+/// @file MaxHeap.h
+/// @brief Max-heap with activity scores for arbitrary keys.
+/// @note This file was generated with the assistance of AI.
 
-#include <vector>
-#include <unordered_map>
-#include <stdexcept>
+#include <algorithm>
 #include <cstddef>
-#include <utility>
-#include <type_traits>
+#include <functional>
 #include <optional>
 #include <queue>
-#include <functional> 
+#include <stdexcept>
+#include <type_traits>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
+/// @brief Max-heap keyed by activity values stored externally.
+/// @tparam T Element type.
+/// @tparam Hash Hash functor for T.
+/// @tparam KeyEqual Equality functor for T.
 template <
     typename T,
     typename Hash = std::hash<T>,
@@ -19,15 +26,16 @@ template <
 >
 class MaxHeap {
 public:
-    // Construct empty heap
+    /// @brief Construct an empty heap.
     MaxHeap() = default;
 
-    // Non-copyable/non-movable map keys may still be copied into nodes; require T to be hashable and copyable/movable.
+    /// @brief Require T to be hashable and copyable or movable.
     static_assert(std::is_copy_constructible<T>::value || std::is_move_constructible<T>::value,
                   "T must be copyable or movable");
 
-    // Increase activity by delta. Element must already have an activity entry.
-    // If delta < 0 this does nothing.
+    /// @brief Increase activity by delta.
+    /// @pre Element already has an activity entry.
+    /// @note If delta < 0 this does nothing.
     void increase_key(const T& element, double delta) {
         if (delta < 0.0) return; // nothing to do for non-positive delta
         auto act_it = activity_map_.find(element);
@@ -49,8 +57,8 @@ public:
         }
     }
 
-    // Remove all entries with priority strictly less than cutoff.
-    // This operation rebuilds the internal heap and updates the position map.
+    /// @brief Remove all entries with priority strictly less than cutoff.
+    /// @note This operation rebuilds the internal heap and updates the position map.
     void remove_below(double cutoff) {
         if (heap_.empty()) return;
 
@@ -83,15 +91,15 @@ public:
     }
 
 
-    // Return current priority for element; if not present, return 0.0
+    /// @brief Return current priority for element; if not present, return 0.0.
     double get_priority(const T& element) const {
         auto it = activity_map_.find(element);
         if (it == activity_map_.end()) return 0.0;
         return it->second;
     }
 
-    // Extract and return the element with maximum priority.
-    // Throws std::runtime_error if called on empty heap.
+    /// @brief Extract and return the element with maximum priority.
+    /// @return The max element or std::nullopt if the heap is empty.
     std::optional<T> extract_max() {
         if (heap_.empty()) return std::nullopt;
         // if (heap_.empty()) throw std::runtime_error("extract_max called on empty heap");
@@ -119,8 +127,8 @@ public:
         return top_value;
     }
 
-    // Non-destructively peek the top `k` elements (1..k largest).
-    // Returns a vector of const references to the heap elements in descending priority order.
+    /// @brief Non-destructively peek the top `k` elements (1..k largest).
+    /// @return References to heap elements in descending priority order.
     std::vector<std::reference_wrapper<const T>> peek_top_k(std::size_t k) const {
         if (k == 0) return {};
         k = std::min(k, heap_.size());
@@ -150,15 +158,15 @@ public:
     }
 
 
-    // Multiply (rescale) all priorities by k. Requires k > 0 to preserve relative order.
-    // Throws std::invalid_argument if k <= 0.
+    /// @brief Multiply (rescale) all priorities by k.
+    /// @pre k > 0.
     void rescale(double k) {
         if (!(k > 0.0)) throw std::invalid_argument("rescale requires k > 0");
         for (auto &entry : activity_map_) entry.second *= k;
         // Multiplying by a positive constant preserves comparisons; no heapify needed.
     }
 
-    // Reset the heap, deleting everything.
+    /// @brief Reset the heap, deleting everything.
     void reset() noexcept {
         heap_.clear();
         pos_map_.clear();
@@ -166,17 +174,19 @@ public:
         popped_.clear();
     }
 
-    // Optional convenience: peek at max element without removing. Throws if empty.
+    /// @brief Peek at max element without removing.
+    /// @pre Heap is not empty.
     const T& peek_max() const {
         if (heap_.empty()) throw std::runtime_error("peek_max on empty heap");
         return heap_.front();
     }
 
-    // Number of elements currently in heap
+    /// @brief Number of elements currently in heap.
     std::size_t size() const noexcept { return heap_.size(); }
+    /// @brief Return true if the heap is empty.
     bool empty() const noexcept { return heap_.empty(); }
 
-    // Register or overwrite an activity score without inserting into the heap.
+    /// @brief Register or overwrite an activity score without inserting into the heap.
     void set_activity(const T& element, double value) {
         double old_value = 0.0;
         bool had_entry = false;
@@ -200,7 +210,7 @@ public:
         }
     }
 
-    // Insert an element into the heap using its existing activity score.
+    /// @brief Insert an element into the heap using its existing activity score.
     void insert(const T& element) {
         if (pos_map_.find(element) != pos_map_.end()) return;
         if (activity_map_.find(element) == activity_map_.end()) {
@@ -212,7 +222,7 @@ public:
         sift_up(idx);
     }
 
-    // Reinsert all popped elements into the heap.
+    /// @brief Reinsert all popped elements into the heap.
     void rebuild() {
         for (const auto& element : popped_) {
             if (pos_map_.find(element) == pos_map_.end()) {
@@ -223,16 +233,22 @@ public:
     }
 
 private:
-    std::vector<T> heap_;                                      // binary heap (0-based)
-    std::unordered_map<T, std::size_t, Hash, KeyEqual> pos_map_; // element -> index in heap_
-    std::unordered_map<T, double, Hash, KeyEqual> activity_map_; // element -> activity
-    std::vector<T> popped_;
+    std::vector<T> heap_; ///< Binary heap (0-based).
+    std::unordered_map<T, std::size_t, Hash, KeyEqual> pos_map_; ///< Element -> index in heap_.
+    std::unordered_map<T, double, Hash, KeyEqual> activity_map_; ///< Element -> activity.
+    std::vector<T> popped_; ///< Elements extracted since last rebuild.
 
-    // Heap index helpers
+    /// @brief Return parent index in the heap.
     static std::size_t parent(std::size_t i) { return (i - 1) / 2; }
+
+    /// @brief Return left child index in the heap.
     static std::size_t left(std::size_t i)   { return 2 * i + 1; }
+
+    /// @brief Return right child index in the heap.
     static std::size_t right(std::size_t i)  { return 2 * i + 2; }
 
+    /// @brief Return the activity value for an element.
+    /// @pre Element must exist in activity_map_.
     double activity_of(const T& element) const {
         auto it = activity_map_.find(element);
         if (it == activity_map_.end()) {
@@ -241,7 +257,7 @@ private:
         return it->second;
     }
 
-    // swap two positions in heap (indices are positions in heap_)
+    /// @brief Swap two positions in heap (indices are positions in heap_).
     void swap_positions(std::size_t a, std::size_t b) {
         if (a == b) return;
         std::swap(heap_[a], heap_[b]);
@@ -249,7 +265,7 @@ private:
         pos_map_[ heap_[b] ] = b;
     }
 
-    // sift-up from position pos (restore max-heap property going up)
+    /// @brief Sift-up from position pos (restore max-heap property going up).
     void sift_up(std::size_t pos) {
         while (pos > 0) {
             std::size_t p = parent(pos);
@@ -260,7 +276,7 @@ private:
         }
     }
 
-    // sift-down from position pos (restore max-heap property going down)
+    /// @brief Sift-down from position pos (restore max-heap property going down).
     void sift_down(std::size_t pos) {
         std::size_t n = heap_.size();
         while (true) {
