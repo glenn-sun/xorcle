@@ -16,6 +16,7 @@
 #include "heuristics/DecisionProcedure.h"
 #include "search/PropagationEngine.h"
 #include "search/Trail.h"
+#include "io/ProofLogger.h"
 
 namespace search {
 namespace ResultCase {
@@ -58,6 +59,7 @@ private:
     std::shared_ptr<heuristics::ClauseSelector> clause_sel; ///< Clause selector strategy.
     std::shared_ptr<heuristics::DecisionProcedure> dec_proc; ///< Decision procedure strategy.
     PropagationEngine propagation; ///< Unit propagation engine.
+    std::shared_ptr<io::ProofLogger> proof_logger; ///< Optional proof logger.
 
     algebra::Equation working_eqn; ///< Reusable buffer for conflict checks.
 
@@ -65,11 +67,13 @@ public:
     /// @brief Construct a solver from variable count, clause selector, and decision procedure.
     Solver(std::size_t num_vars,
            std::shared_ptr<heuristics::ClauseSelector> clause_sel_in,
-           std::shared_ptr<heuristics::DecisionProcedure> dec_proc);
+           std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
+           std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr);
 
     /// @brief Construct a solver with a default cyclic clause selector.
     Solver(std::size_t num_vars,
-           std::shared_ptr<heuristics::DecisionProcedure> dec_proc);
+           std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
+           std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr);
 
     /// @brief Return the variable count for this solver instance.
     std::size_t get_num_vars() const;
@@ -97,7 +101,9 @@ public:
 
     /// @brief Find an asserting clause for the current conflict.
     /// @pre trail ends with a contradiction equation.
-    std::pair<algebra::Clause, std::size_t> find_asserting_clause(const Trail& trail);
+    std::pair<algebra::Clause, std::size_t> find_asserting_clause(
+        const Trail& trail,
+        std::vector<heuristics::ClauseId>* reason_ids = nullptr);
 
     /// @brief Determine if the set of clauses is satisfiable.
     /// @param stop_flag External stop signal; set to true to stop early.
@@ -113,10 +119,12 @@ public:
     /// @param filename Path to a DIMACS file.
     /// @param dpn Decision procedure to use.
     /// @param csn Clause selector to use.
+    /// @param proof_logger Optional proof logger.
     /// @note The DIMACS format is extended as in Danner/Kreuzer to support XOR literals.
     static Solver from_DIMACS(const std::string& filename,
                               heuristics::DecisionProcedureName dpn,
-                              heuristics::ClauseSelectorName csn);
+                              heuristics::ClauseSelectorName csn,
+                              std::shared_ptr<io::ProofLogger> proof_logger = nullptr);
 
     /// @brief Total number of attempted propagations.
     std::size_t num_attempt_props = 0;

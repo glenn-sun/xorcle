@@ -12,6 +12,9 @@ Sampling rules implemented:
  - Sparse (max size s): uniformly sample a non-empty subset of size <= s.
                         Achieved by picking k with weight C(n,k) and then
                         sampling a uniform k-subset.
+ - Dense k-XNF: each clause is a disjunction of k random dense linear equations.
+                The clause count m is chosen so that the expected number of
+                satisfying assignments is 1/2.
 
 Output format:
  - tokens separated by spaces, clause terminated by "0"
@@ -19,7 +22,7 @@ Output format:
  - e.g. "1+2 -3 0" or "-1+3+4 2 0"
 """
 
-from math import comb, floor
+from math import comb, floor, log, log1p
 import random
 from typing import List, Optional
 
@@ -66,6 +69,20 @@ def _sample_uniform_subset_upto_s(n: int, s: int) -> List[int]:
         k = s
     return random.sample(range(1, n+1), k=k)
 
+def _expected_kxnf_clause_count(n: int, k: int) -> int:
+    """
+    Compute the clause count m for dense k-XNF such that
+      E[#SAT] = 2^n * (1 - 2^-k)^m = 1/2.
+    Thus:
+      m = (n + 1) * ln 2 / -ln(1 - 2^-k).
+    """
+    if n < 1 or k < 1:
+        raise ValueError("n and k must be >= 1")
+    p_unsat = 2.0 ** (-k)
+    denom = -log1p(-p_unsat)
+    m = (n + 1) * log(2.0) / denom
+    return int(round(m))
+
 def generate_random_system(m: int,
                            n: int,
                            filepath: str,
@@ -103,21 +120,52 @@ def generate_random_system(m: int,
     with open(filepath, "w") as f:
         f.write("\n".join(lines) + "\n")
 
+def generate_dense_kxnf(n: int,
+                        k: int,
+                        filepath: str,
+                        *,
+                        seed: Optional[int] = None) -> int:
+    """
+    Generate a CNF file representing a dense random k-XNF on n variables.
+
+    Each clause is a disjunction of k random dense linear equations.
+    The number of clauses m is chosen so E[#SAT] = 1/2.
+    Returns the computed m.
+    """
+    if seed is not None:
+        random.seed(seed)
+
+    if n < 1 or k < 1:
+        raise ValueError("n and k must be >= 1")
+
+    m = _expected_kxnf_clause_count(n, k)
+    lines = [f"p cnf {n} {m}"]
+
+    for _ in range(m):
+        tokens = []
+        for _ in range(k):
+            vars_ = _sample_dense_subset_nonempty(n)
+            rhs_zero = random.choice([False, True])
+            tokens.append(_format_equation(vars_, rhs_zero))
+        lines.append(f"{' '.join(tokens)} 0")
+
+    with open(filepath, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return m
+
 def generate_mixed_system(n: int,
                           filepath: str,
                           *,
-                          first_block_sparse_max_size: Optional[int] = None,
                           seed: Optional[int] = None) -> None:
     """
     Generate a CNF file containing:
-      - floor(n/2) single-equation clauses (dense by default, or sparse if first_block_sparse_max_size set)
+      - floor(n/2) single-equation clauses
       - n clauses of length 2; each equation in these clauses is uniformly sampled
         among subsets with size <= floor(n/20)
 
     Parameters:
       n: number of variables
       filepath: output filename
-      first_block_sparse_max_size: optional max size for first block; if None use dense Bernoulli(1/2)
       seed: optional RNG seed
     """
     if seed is not None:
@@ -133,18 +181,14 @@ def generate_mixed_system(n: int,
 
     # first block: m1 clauses, either dense or sparse as requested
     for _ in range(m1):
-        if first_block_sparse_max_size is None:
-            vars_ = _sample_dense_subset_nonempty(n)
-        else:
-            vars_ = _sample_uniform_subset_upto_s(n, first_block_sparse_max_size)
+        vars_ = _sample_dense_subset_nonempty(n)
         rhs_zero = random.choice([False, True])
         lines.append(f"{_format_equation(vars_, rhs_zero)} 0")
 
     # second block: m2 clauses of length 2, each equation size <= floor(n/20)
-    max_eq_size_block2 = max(1, n // 20)
     for _ in range(m2):
-        vars1 = _sample_uniform_subset_upto_s(n, max_eq_size_block2)
-        vars2 = _sample_uniform_subset_upto_s(n, max_eq_size_block2)
+        vars1 = _sample_dense_subset_nonempty(n)
+        vars2 = _sample_dense_subset_nonempty(n)
         rhs1 = random.choice([False, True])
         rhs2 = random.choice([False, True])
         lines.append(f"{_format_equation(vars1, rhs1)} {_format_equation(vars2, rhs2)} 0")
@@ -168,20 +212,26 @@ if __name__ == "__main__":
                     help="If provided, sample each equation uniformly from subsets of size <= this.")
     p1.add_argument("--seed", type=int, default=None)
 
-    p2 = sub.add_parser("mixed", help="Generate floor(n/2) eqs then n clauses of length 2 (sparse second block).")
+    p2 = sub.add_parser("mixed", help="Generate floor(n/2) eqs then n clauses of length 2.")
     p2.add_argument("n", type=int)
     p2.add_argument("out", help="output file")
-    p2.add_argument("--first_block_sparse_max_size", type=int, default=None,
-                    help="If provided, make the first block sparse with this max size.")
     p2.add_argument("--seed", type=int, default=None)
+
+    p3 = sub.add_parser("kxnf", help="Generate dense random k-XNF with m at the 50 percent expectation threshold.")
+    p3.add_argument("n", type=int)
+    p3.add_argument("k", type=int)
+    p3.add_argument("out", help="output file")
+    p3.add_argument("--seed", type=int, default=None)
 
     args = parser.parse_args()
     if args.cmd == "random":
         generate_random_system(args.m, args.n, args.out,
                                sparse_max_size=args.sparse_max_size, seed=args.seed)
         print(f"Wrote random system m={args.m}, n={args.n} to {args.out}")
-    else:
+    elif args.cmd == "mixed":
         generate_mixed_system(args.n, args.out,
-                              first_block_sparse_max_size=args.first_block_sparse_max_size,
                               seed=args.seed)
         print(f"Wrote mixed system for n={args.n} to {args.out}")
+    else:
+        m = generate_dense_kxnf(args.n, args.k, args.out, seed=args.seed)
+        print(f"Wrote dense k-XNF m={m}, n={args.n}, k={args.k} to {args.out}")

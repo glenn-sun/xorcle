@@ -16,6 +16,7 @@
 #include "search/Solver.h"
 #include "heuristics/DecisionProcedure.h"
 #include "heuristics/ClauseSelector.h"
+#include "io/ProofLogger.h"
 #include "util/Stats.h"
 #include "util/StatsLogger.h"
 
@@ -32,11 +33,17 @@ enum class StatsMode {
 /// @param dpn Decision procedure to use.
 /// @param csn Clause selector to use.
 /// @param stop_flag External stop signal to interrupt solving.
+/// @param proof_path Optional proof output path.
 stats::RunStats run_once(const std::string& filename,
                          heuristics::DecisionProcedureName dpn,
                          heuristics::ClauseSelectorName csn,
-                         std::atomic<bool>& stop_flag) {
-    search::Solver solver = search::Solver::from_DIMACS(filename, dpn, csn);
+                         std::atomic<bool>& stop_flag,
+                         const std::string& proof_path = {}) {
+    std::shared_ptr<io::ProofLogger> proof_logger;
+    if (!proof_path.empty()) {
+        proof_logger = std::make_shared<io::ProofLogger>(proof_path);
+    }
+    search::Solver solver = search::Solver::from_DIMACS(filename, dpn, csn, proof_logger);
     std::size_t num_vars = solver.get_num_vars();
     std::size_t start_num_clauses = solver.get_num_clauses();
 
@@ -44,6 +51,9 @@ stats::RunStats run_once(const std::string& filename,
     auto result = solver.solve(stop_flag);
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
+    if (proof_logger) {
+        proof_logger->finalize(search::ResultCase::is_unsat(result));
+    }
 
     stats::RunStats out;
     out.num_vars = num_vars;
@@ -77,11 +87,13 @@ stats::RunStats run_once(const std::string& filename,
 /// @param dpn Decision procedure to use.
 /// @param csn Clause selector to use.
 /// @param timeout_s Timeout in seconds.
+/// @param proof_path Optional proof output path.
 /// @return RunStats on success; std::nullopt on error.
 std::optional<stats::RunStats> run_once_with_timeout(const std::string& filename,
                                                      heuristics::DecisionProcedureName dpn,
                                                      heuristics::ClauseSelectorName csn,
-                                                     std::size_t timeout_s) {
+                                                     std::size_t timeout_s,
+                                                     const std::string& proof_path = {}) {
     std::optional<stats::RunStats> result;
     std::exception_ptr err;
     std::atomic<bool> stop_flag(false);
@@ -91,7 +103,7 @@ std::optional<stats::RunStats> run_once_with_timeout(const std::string& filename
 
     std::thread task([&] {
         try {
-            result = run_once(filename, dpn, csn, stop_flag);
+            result = run_once(filename, dpn, csn, stop_flag, proof_path);
         } catch (...) {
             err = std::current_exception();
         }
@@ -161,6 +173,7 @@ int main(int argc, char *argv[]) {
     uint seconds{10};
     StatsMode stats_mode{StatsMode::console};
     std::string csv_path;
+    std::string proof_path;
     uint runs{5};
     bool all_decproc{false};
     bool all_clausesel{false};
@@ -176,13 +189,14 @@ int main(int argc, char *argv[]) {
         {"seconds", required_argument, 0, 's'},
         {"stats-mode", required_argument, 0, 'm'},
         {"csv", required_argument, 0, 'o'},
+        {"proof", required_argument, 0, 'P'},
         {"runs", required_argument, 0, 'r'},
         {0, 0, 0, 0}
     };
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "f:d:hvt:p:c:s:m:o:r:", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "f:d:hvt:p:c:s:m:o:P:r:", long_options, &option_index);
         if (option == -1) {
             break;
         }
@@ -280,6 +294,9 @@ int main(int argc, char *argv[]) {
             case 'o':
                 csv_path = optarg;
                 break;
+            case 'P':
+                proof_path = optarg;
+                break;
             case 'r':
                 try {
                     runs = std::stoul(optarg);
@@ -313,6 +330,7 @@ int main(int argc, char *argv[]) {
         std::cout << "  -s, --seconds <s>            Timeout in seconds (default: 10)" << std::endl;
         std::cout << "  -m, --stats-mode <mode>      Stats output: console or csv (default: console)" << std::endl;
         std::cout << "  -o, --csv <path>             CSV output path when stats-mode=csv (default: stats.csv)" << std::endl;
+        std::cout << "  -P, --proof <path>           Proof output path for DRUP(⊕) (default: disabled)" << std::endl;
         std::cout << "  -r, --runs <n>               Runs for nondeterministic settings (random_clause_sum, vsids_clause, cvsids, berkmin, cbh; median selected, default: 5)" << std::endl;
         
         return 0;
@@ -321,6 +339,20 @@ int main(int argc, char *argv[]) {
     if ((filename.empty() && directory.empty()) || (!filename.empty() && !directory.empty())) {
         std::cerr << "Exactly one of filename or directory is required. Usage: " << argv[0] << " [-f <file> | -d <directory>] [options]" << std::endl;
         return 1;
+    }
+    if (!proof_path.empty()) {
+        if (!directory.empty()) {
+            std::cerr << "Proof logging requires a single input file (no directory mode)." << std::endl;
+            return 1;
+        }
+        if (all_decproc || all_clausesel) {
+            std::cerr << "Proof logging does not support 'all' decision procedures or clause selectors." << std::endl;
+            return 1;
+        }
+        if (runs != 1) {
+            std::cerr << "Proof logging requires --runs 1." << std::endl;
+            return 1;
+        }
     }
 
     if (verbose && stats_mode == StatsMode::console) {
@@ -435,7 +467,7 @@ int main(int argc, char *argv[]) {
                 run_stats.reserve(runs_requested);
 
                 for (std::size_t r = 0; r < runs_requested; ++r) {
-                    auto maybe_stats = run_once_with_timeout(item.file, item.dpn, item.csn, seconds);
+                    auto maybe_stats = run_once_with_timeout(item.file, item.dpn, item.csn, seconds, proof_path);
                     if (!maybe_stats.has_value()) {
                         run_stats.clear();
                         break;

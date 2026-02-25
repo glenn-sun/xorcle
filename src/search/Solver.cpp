@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <stdexcept>
@@ -32,17 +33,21 @@ const bit::vector<>& ResultCase::unwrap_sat(const std::variant<Timeout, Unsat, S
 
 Solver::Solver(std::size_t num_vars,
                std::shared_ptr<heuristics::ClauseSelector> clause_sel_in,
-               std::shared_ptr<heuristics::DecisionProcedure> dec_proc)
+               std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
+               std::shared_ptr<io::ProofLogger> proof_logger_in)
     : num_vars(num_vars),
       trail(num_vars),
       clause_sel(std::move(clause_sel_in)),
       dec_proc(std::move(dec_proc)),
       propagation(num_vars),
+      proof_logger(std::move(proof_logger_in)),
       working_eqn(bit::vector<>::zeros(num_vars + 1)) {}
 
 Solver::Solver(std::size_t num_vars,
-               std::shared_ptr<heuristics::DecisionProcedure> dec_proc)
-    : Solver(num_vars, std::make_shared<heuristics::Cyclic>(num_vars), std::move(dec_proc)) {}
+               std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
+               std::shared_ptr<io::ProofLogger> proof_logger_in)
+    : Solver(num_vars, std::make_shared<heuristics::Cyclic>(num_vars), std::move(dec_proc),
+             std::move(proof_logger_in)) {}
 
 std::size_t Solver::get_num_vars() const { return num_vars; }
 
@@ -64,9 +69,14 @@ algebra::Clause& Solver::get_clause(heuristics::ClauseId id) {
     return clause_sel->get_clause(id);
 }
 
-std::pair<algebra::Clause, std::size_t> Solver::find_asserting_clause(const Trail& trail) {
+std::pair<algebra::Clause, std::size_t> Solver::find_asserting_clause(
+    const Trail& trail,
+    std::vector<heuristics::ClauseId>* reason_ids) {
     // Fact: last_reason should never be std::nullopt here
     std::optional<heuristics::ClauseId> last_reason_id = trail.reasons()[trail.span().rows() - 1];
+    if (reason_ids && last_reason_id.has_value()) {
+        reason_ids->push_back(last_reason_id.value());
+    }
     algebra::Clause& last_reason = get_clause(last_reason_id.value());
     algebra::TrailBasisSpace as_tbs = algebra::TrailBasisSpace::from_RowSpace(last_reason, trail);
 
@@ -83,6 +93,9 @@ std::pair<algebra::Clause, std::size_t> Solver::find_asserting_clause(const Trai
         // is in the trail. Thus, the conversion loses the +1 on that equation.
         std::size_t index = as_tbs.cols() - 1 - non_zero_col;
         std::optional<heuristics::ClauseId> reason_rs_id = trail.reasons()[index];
+        if (reason_ids && reason_rs_id.has_value()) {
+            reason_ids->push_back(reason_rs_id.value());
+        }
         algebra::RowSpace reason_rs = get_clause(reason_rs_id.value());
         dec_proc->update_with_resolved_clause(reason_rs_id.value());
         algebra::TrailBasisSpace reason = algebra::TrailBasisSpace::from_RowSpace(reason_rs, trail);
@@ -132,11 +145,24 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
 
             // Check for unsatisfiability
             if (level() == 0) {
+                if (proof_logger) {
+                    std::vector<heuristics::ClauseId> reason_ids;
+                    reason_ids.reserve(trail.reasons().size());
+                    for (const auto& reason : trail.reasons()) {
+                        if (reason.has_value()) {
+                            reason_ids.push_back(reason.value());
+                        }
+                    }
+                    heuristics::ClauseId final_clause_id = clause_sel->get_num_clauses();
+                    proof_logger->log_empty_clause(final_clause_id, reason_ids);
+                }
                 return ResultCase::Unsat {};
             }
 
             // Learn an asserting clause
-            auto [asserting_clause, jumpable_levels] = find_asserting_clause(trail);
+            std::vector<heuristics::ClauseId> reason_ids;
+            auto [asserting_clause, jumpable_levels] = find_asserting_clause(
+                trail, proof_logger ? &reason_ids : nullptr);
 
             dec_proc->update_with_asserting_clause(asserting_clause);
 
@@ -151,6 +177,10 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             }
             heuristics::ClauseId new_clause_id = clause_sel->get_num_clauses() - 1;
             dec_proc->update_with_new_clause(asserting_clause, new_clause_id);
+            if (proof_logger) {
+                std::reverse(reason_ids.begin(), reason_ids.end());
+                proof_logger->log_learned_clause(new_clause_id, asserting_clause, reason_ids);
+            }
         } else {
             // Check for satisfiability
             if (trail.span().rows() == num_vars) {
@@ -196,7 +226,10 @@ void Solver::print_trail(const EquationPrintMode eqn_mode) const {
     }
 }
 
-Solver Solver::from_DIMACS(const std::string& filename, const heuristics::DecisionProcedureName dpn, const heuristics::ClauseSelectorName csn) {
+Solver Solver::from_DIMACS(const std::string& filename,
+                           const heuristics::DecisionProcedureName dpn,
+                           const heuristics::ClauseSelectorName csn,
+                           std::shared_ptr<io::ProofLogger> proof_logger) {
     io::ParsedDimacs parsed = io::parse_dimacs_file(filename);
 
     std::shared_ptr<heuristics::DecisionProcedure> dec_proc;
@@ -205,7 +238,7 @@ Solver Solver::from_DIMACS(const std::string& filename, const heuristics::Decisi
     dec_proc = heuristics::create_decision_procedure(dpn, parsed.num_vars);
     clause_sel = heuristics::create_clause_selector(csn, parsed.num_vars);
 
-    Solver solver{parsed.num_vars, std::move(clause_sel), std::move(dec_proc)};
+    Solver solver{parsed.num_vars, std::move(clause_sel), std::move(dec_proc), std::move(proof_logger)};
 
     for (const auto& clause : parsed.clauses) {
         solver.clause_sel->add_starting_clause(clause);
