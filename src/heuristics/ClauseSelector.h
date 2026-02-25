@@ -25,7 +25,8 @@ enum class WatchType {
 enum class ClauseSelectorName {
     cyclic,          ///< Simple cyclic iteration.
     lt_watchlist,    ///< Leading-term watchlist.
-    exact_watchlist  ///< Exact watchlist with reduced equations.
+    exact_watchlist, ///< Exact watchlist with reduced equations.
+    exact_watchlist2 ///< Level-indexed exact watchlist with partial reductions.
 };
 
 /// @brief Base interface for selecting clauses to attempt propagation.

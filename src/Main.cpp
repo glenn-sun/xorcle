@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <condition_variable>
 #include <ctime>
@@ -8,6 +9,7 @@
 #include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -21,6 +23,49 @@
 #include "util/StatsLogger.h"
 
 namespace fs = std::filesystem;
+
+namespace {
+
+std::optional<double> parse_double_token(const char* token) {
+    if (token == nullptr) {
+        return std::nullopt;
+    }
+    try {
+        std::size_t pos = 0;
+        double value = std::stod(token, &pos);
+        if (pos != std::string(token).size()) {
+            return std::nullopt;
+        }
+        return value;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+std::optional<std::size_t> parse_size_t_token(const char* token) {
+    if (token == nullptr) {
+        return std::nullopt;
+    }
+    std::string s(token);
+    if (s.empty() || s[0] == '-') {
+        return std::nullopt;
+    }
+    try {
+        std::size_t pos = 0;
+        unsigned long long value = std::stoull(s, &pos);
+        if (pos != s.size()) {
+            return std::nullopt;
+        }
+        if (value > std::numeric_limits<std::size_t>::max()) {
+            return std::nullopt;
+        }
+        return static_cast<std::size_t>(value);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+} // namespace
 
 /// @brief Output mode for statistics reporting.
 enum class StatsMode {
@@ -37,13 +82,15 @@ enum class StatsMode {
 stats::RunStats run_once(const std::string& filename,
                          heuristics::DecisionProcedureName dpn,
                          heuristics::ClauseSelectorName csn,
+                         heuristics::DecisionPhase phase,
+                         const search::RestartConfig& restart_config,
                          std::atomic<bool>& stop_flag,
                          const std::string& proof_path = {}) {
     std::shared_ptr<io::ProofLogger> proof_logger;
     if (!proof_path.empty()) {
         proof_logger = std::make_shared<io::ProofLogger>(proof_path);
     }
-    search::Solver solver = search::Solver::from_DIMACS(filename, dpn, csn, proof_logger);
+    search::Solver solver = search::Solver::from_DIMACS(filename, dpn, csn, phase, proof_logger, restart_config);
     std::size_t num_vars = solver.get_num_vars();
     std::size_t start_num_clauses = solver.get_num_clauses();
 
@@ -64,6 +111,7 @@ stats::RunStats run_once(const std::string& filename,
     out.num_propagations = solver.num_propagations;
     out.num_attempt_props = solver.num_attempt_props;
     out.num_watch_updates = solver.num_watch_updates;
+    out.num_restarts = solver.num_restarts;
     auto dec_stats = solver.decision_stats();
     out.decisions = dec_stats.decisions;
     out.fallback_decisions = dec_stats.fallback_decisions;
@@ -92,6 +140,8 @@ stats::RunStats run_once(const std::string& filename,
 std::optional<stats::RunStats> run_once_with_timeout(const std::string& filename,
                                                      heuristics::DecisionProcedureName dpn,
                                                      heuristics::ClauseSelectorName csn,
+                                                     heuristics::DecisionPhase phase,
+                                                     const search::RestartConfig& restart_config,
                                                      std::size_t timeout_s,
                                                      const std::string& proof_path = {}) {
     std::optional<stats::RunStats> result;
@@ -103,7 +153,7 @@ std::optional<stats::RunStats> run_once_with_timeout(const std::string& filename
 
     std::thread task([&] {
         try {
-            result = run_once(filename, dpn, csn, stop_flag, proof_path);
+            result = run_once(filename, dpn, csn, phase, restart_config, stop_flag, proof_path);
         } catch (...) {
             err = std::current_exception();
         }
@@ -163,65 +213,48 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
 
 /// @brief Entry point for the solver CLI.
 int main(int argc, char *argv[]) {
-    std::string filename;
-    std::string directory;
     bool help{false};
     bool verbose{false};
     uint threads{4};
     heuristics::DecisionProcedureName dpn{heuristics::DecisionProcedureName::fixed_unit};
     heuristics::ClauseSelectorName csn{heuristics::ClauseSelectorName::cyclic};
+    heuristics::DecisionPhase phase{heuristics::DecisionPhase::unsat};
     uint seconds{10};
     StatsMode stats_mode{StatsMode::console};
-    std::string csv_path;
+    std::string stats_file;
     std::string proof_path;
     uint runs{5};
     bool all_decproc{false};
     bool all_clausesel{false};
+    search::RestartConfig restart_config{};
+
+    enum OptionId {
+        OPT_THREADS = 1000,
+        OPT_RESTART
+    };
 
     static constexpr struct option long_options[] = {
-        {"file", required_argument, 0, 'f'},
-        {"directory", required_argument, 0, 'd'},
-        {"help", no_argument, 0, 'h'},
-        {"verbose", no_argument, 0, 'v'},
-        {"threads", required_argument, 0, 't'},
-        {"decproc", required_argument, 0, 'p'},
-        {"clausesel", required_argument, 0, 'c'},
-        {"seconds", required_argument, 0, 's'},
-        {"stats-mode", required_argument, 0, 'm'},
-        {"csv", required_argument, 0, 'o'},
-        {"proof", required_argument, 0, 'P'},
+        {"decision-proc", required_argument, 0, 'd'},
+        {"decision-phase", required_argument, 0, 'p'},
+        {"stats-file", required_argument, 0, 's'},
+        {"clause-selector", required_argument, 0, 'c'},
+        {"timeout", required_argument, 0, 't'},
+        {"threads", required_argument, 0, OPT_THREADS},
+        {"restart", required_argument, 0, OPT_RESTART},
         {"runs", required_argument, 0, 'r'},
+        {"verbose", no_argument, 0, 'v'},
+        {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "f:d:hvt:p:c:s:m:o:P:r:", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "d:p:s:c:t:r:vh", long_options, &option_index);
         if (option == -1) {
             break;
         }
         switch (option) {
-            case 'f':
-                filename = optarg;
-                break;
-            case 'd':
-                directory = optarg;
-                break;
-            case 'h':
-                help = true;
-                break;
-            case 'v':
-                verbose = true;
-                break;
-            case 't':
-                try {
-                    threads = std::stoul(optarg);
-                } catch (const std::exception& e) {
-                    std::cerr << "Error: Cannot convert '" << optarg << "' to uint" << std::endl;
-                    return 1;
-                }
-                break;
-            case 'p': {
+            case 'd': {
                 std::string optarg_str{optarg};
                 if (optarg_str == "all") {
                     all_decproc = true;
@@ -252,6 +285,23 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             }
+            case 'p': {
+                std::string optarg_str{optarg};
+                if (optarg_str == "unsat") {
+                    phase = heuristics::DecisionPhase::unsat;
+                } else if (optarg_str == "sat") {
+                    phase = heuristics::DecisionPhase::sat;
+                } else if (optarg_str == "random") {
+                    phase = heuristics::DecisionPhase::random;
+                } else {
+                    std::cerr << "Error: '" << optarg << "' is not a decision phase" << std::endl;
+                    return 1;
+                }
+                break;
+            }
+            case 's':
+                stats_file = optarg;
+                break;
             case 'c': {
                 std::string optarg_str{optarg};
                 if (optarg_str == "all") {
@@ -265,13 +315,16 @@ int main(int argc, char *argv[]) {
                 } else if (optarg_str == "exact_watchlist") {
                     all_clausesel = false;
                     csn = heuristics::ClauseSelectorName::exact_watchlist;
+                } else if (optarg_str == "exact_watchlist2") {
+                    all_clausesel = false;
+                    csn = heuristics::ClauseSelectorName::exact_watchlist2;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a clause selector" << std::endl;
                     return 1;
                 }
                 break;
             }
-            case 's':
+            case 't':
                 try {
                     seconds = std::stoul(optarg);
                 } catch (const std::exception& e) {
@@ -279,24 +332,60 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 break;
-            case 'm': {
-                std::string mode{optarg};
-                if (mode == "console") {
-                    stats_mode = StatsMode::console;
-                } else if (mode == "csv") {
-                    stats_mode = StatsMode::csv;
+            case OPT_THREADS:
+                try {
+                    threads = std::stoul(optarg);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error: Cannot convert '" << optarg << "' to uint" << std::endl;
+                    return 1;
+                }
+                break;
+            case OPT_RESTART: {
+                restart_config = search::RestartConfig{};
+                std::string method{optarg};
+                if (method == "none") {
+                    restart_config.method = search::RestartMethod::none;
+                } else if (method == "geometric") {
+                    restart_config.method = search::RestartMethod::geometric;
+                    if (optind < argc) {
+                        if (auto maybe_rate = parse_double_token(argv[optind]); maybe_rate.has_value()) {
+                            restart_config.geometric_multiplier = *maybe_rate;
+                            ++optind;
+                        }
+                    }
+                    if (optind < argc) {
+                        if (auto maybe_initial = parse_size_t_token(argv[optind]); maybe_initial.has_value()) {
+                            restart_config.geometric_initial_conflicts = *maybe_initial;
+                            ++optind;
+                        }
+                    }
+                    if (!std::isfinite(restart_config.geometric_multiplier) ||
+                        restart_config.geometric_multiplier < 1.0) {
+                        std::cerr << "Error: geometric restart rate_increase must be finite and >= 1.0" << std::endl;
+                        return 1;
+                    }
+                    if (restart_config.geometric_initial_conflicts < 1) {
+                        std::cerr << "Error: geometric restart initial_conflicts must be >= 1" << std::endl;
+                        return 1;
+                    }
+                } else if (method == "luby") {
+                    restart_config.method = search::RestartMethod::luby;
+                    if (optind < argc) {
+                        if (auto maybe_unit = parse_size_t_token(argv[optind]); maybe_unit.has_value()) {
+                            restart_config.luby_unit_conflicts = *maybe_unit;
+                            ++optind;
+                        }
+                    }
+                    if (restart_config.luby_unit_conflicts < 1) {
+                        std::cerr << "Error: luby restart unit_conflicts must be >= 1" << std::endl;
+                        return 1;
+                    }
                 } else {
-                    std::cerr << "Error: '" << optarg << "' is not a stats mode" << std::endl;
+                    std::cerr << "Error: '" << method << "' is not a restart method" << std::endl;
                     return 1;
                 }
                 break;
             }
-            case 'o':
-                csv_path = optarg;
-                break;
-            case 'P':
-                proof_path = optarg;
-                break;
             case 'r':
                 try {
                     runs = std::stoul(optarg);
@@ -309,39 +398,71 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 break;
+            case 'v':
+                verbose = true;
+                break;
+            case 'h':
+                help = true;
+                break;
             default:
-                std::cerr << "Usage: " << argv[0] << " [-f <file> | -d <directory>] [options]" << std::endl;
+                std::cerr << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
                 return 1;
         }
     }
 
     if (help) {
-        std::cout << "Usage: " << argv[0] << " [-f <file> | -d <directory>] [options]" << std::endl;
+        std::cout << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
         std::cout << "Options:" << std::endl;
-        std::cout << "  -f, --file <filename>        Specify the CNF file" << std::endl;
-        std::cout << "  -d, --directory <directory>  Process all .cnf files in the directory" << std::endl;
-        std::cout << "  -h, --help                   Show this help message" << std::endl;
-        std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
-        std::cout << "  -t, --threads <n>            Number of threads (default: 4)" << std::endl;
-        std::cout << "  -p, --decproc <proc>         Decision procedure (default: fixed_unit)" << std::endl;
+        std::cout << "  -d, --decision-proc <proc>   Decision procedure (default: fixed_unit)" << std::endl;
         std::cout << "                               Options: fixed_unit, random_clause_sum, vsids_unit, vsids_clause, cvsids, berkmin, cbh, all" << std::endl;
-        std::cout << "  -c, --clausesel <selector>   Clause selector (default: cyclic)" << std::endl;
-        std::cout << "                               Options: cyclic, lt_watchlist, exact_watchlist, all" << std::endl;
-        std::cout << "  -s, --seconds <s>            Timeout in seconds (default: 10)" << std::endl;
-        std::cout << "  -m, --stats-mode <mode>      Stats output: console or csv (default: console)" << std::endl;
-        std::cout << "  -o, --csv <path>             CSV output path when stats-mode=csv (default: stats.csv)" << std::endl;
-        std::cout << "  -P, --proof <path>           Proof output path for DRUP(⊕) (default: disabled)" << std::endl;
+        std::cout << "  -p, --decision-phase <phase> Decision phase for clause-based decisions (default: unsat)" << std::endl;
+        std::cout << "                               Options: unsat, sat, random" << std::endl;
+        std::cout << "  -s, --stats-file <path>      CSV output path (implies CSV stats format)" << std::endl;
+        std::cout << "  -c, --clause-selector <sel>  Clause selector (default: cyclic)" << std::endl;
+        std::cout << "                               Options: cyclic, lt_watchlist, exact_watchlist, exact_watchlist2, all" << std::endl;
+        std::cout << "  -t, --timeout <s>            Timeout in seconds (default: 10)" << std::endl;
+        std::cout << "      --threads <n>            Number of threads (default: 4)" << std::endl;
+        std::cout << "      --restart <method> [rate] [arg2]" << std::endl;
+        std::cout << "                               Restart policy (default: none)" << std::endl;
+        std::cout << "                               none" << std::endl;
+        std::cout << "                               geometric [rate_increase>=1.0] [initial_conflicts>=1] (defaults: 1.5, 100)" << std::endl;
+        std::cout << "                               luby [unit_conflicts>=1] (default: 100)" << std::endl;
         std::cout << "  -r, --runs <n>               Runs for nondeterministic settings (random_clause_sum, vsids_clause, cvsids, berkmin, cbh; median selected, default: 5)" << std::endl;
+        std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
+        std::cout << "  -h, --help                   Show this help message" << std::endl;
+        std::cout << "Notes:" << std::endl;
+        std::cout << "  proof_path is an optional second positional argument for DRUP(⊕) output." << std::endl;
         
         return 0;
     }
 
-    if ((filename.empty() && directory.empty()) || (!filename.empty() && !directory.empty())) {
-        std::cerr << "Exactly one of filename or directory is required. Usage: " << argv[0] << " [-f <file> | -d <directory>] [options]" << std::endl;
+    std::vector<std::string> positional_args;
+    for (int i = optind; i < argc; ++i) {
+        positional_args.emplace_back(argv[i]);
+    }
+    if (positional_args.empty() || positional_args.size() > 2) {
+        std::cerr << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
         return 1;
     }
+
+    const std::string input_path = positional_args[0];
+    if (positional_args.size() == 2) {
+        proof_path = positional_args[1];
+    }
+
+    if (!fs::exists(input_path)) {
+        std::cerr << "Error: input does not exist: " << input_path << std::endl;
+        return 1;
+    }
+
+    const bool input_is_dir = fs::is_directory(input_path);
+    if (!input_is_dir && !fs::is_regular_file(input_path)) {
+        std::cerr << "Error: input is neither a file nor a directory: " << input_path << std::endl;
+        return 1;
+    }
+
     if (!proof_path.empty()) {
-        if (!directory.empty()) {
+        if (input_is_dir) {
             std::cerr << "Proof logging requires a single input file (no directory mode)." << std::endl;
             return 1;
         }
@@ -355,33 +476,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    stats_mode = stats_file.empty() ? StatsMode::console : StatsMode::csv;
+
     if (verbose && stats_mode == StatsMode::console) {
         std::cout << "Verbose mode enabled" << std::endl;
     }
 
     std::vector<std::string> files;
 
-    if (!filename.empty()) {
-        if (!fs::exists(filename)) {
-            std::cerr << "Error: file does not exist: " << filename << std::endl;
-            return 1;
-        }
-        if (!fs::is_regular_file(filename)) {
-            std::cerr << "Error: " << filename << " is not a regular file" << std::endl;
-            return 1;
-        }
-        files.push_back(filename);
+    if (!input_is_dir) {
+        files.push_back(input_path);
     } else {
-        if (!fs::exists(directory)) {
-            std::cerr << "Error: directory does not exist: " << directory << std::endl;
-            return 1;
-        }
-        if (!fs::is_directory(directory)) {
-            std::cerr << "Error: " << directory << " is not a directory" << std::endl;
-            return 1;
-        }
-
-        for (auto const& entry : fs::recursive_directory_iterator(directory)) {
+        for (auto const& entry : fs::recursive_directory_iterator(input_path)) {
             if (entry.is_regular_file() && entry.path().extension() == ".cnf") {
                 files.push_back(fs::relative(entry.path(), fs::current_path()).string());
             }
@@ -389,13 +495,9 @@ int main(int argc, char *argv[]) {
         std::sort(files.begin(), files.end());
     }
 
-    if (stats_mode == StatsMode::csv && csv_path.empty()) {
-        csv_path = "stats.csv";
-    }
-
     std::shared_ptr<stats::StatsSink> sink;
     if (stats_mode == StatsMode::csv) {
-        sink = std::make_shared<stats::CsvStatsSink>(csv_path);
+        sink = std::make_shared<stats::CsvStatsSink>(stats_file);
     } else {
         sink = std::make_shared<stats::ConsoleStatsSink>();
     }
@@ -423,7 +525,8 @@ int main(int argc, char *argv[]) {
         cs_list = {
             heuristics::ClauseSelectorName::cyclic,
             heuristics::ClauseSelectorName::lt_watchlist,
-            heuristics::ClauseSelectorName::exact_watchlist
+            heuristics::ClauseSelectorName::exact_watchlist,
+            heuristics::ClauseSelectorName::exact_watchlist2
         };
     } else {
         cs_list = {csn};
@@ -467,7 +570,8 @@ int main(int argc, char *argv[]) {
                 run_stats.reserve(runs_requested);
 
                 for (std::size_t r = 0; r < runs_requested; ++r) {
-                    auto maybe_stats = run_once_with_timeout(item.file, item.dpn, item.csn, seconds, proof_path);
+                    auto maybe_stats = run_once_with_timeout(
+                        item.file, item.dpn, item.csn, phase, restart_config, seconds, proof_path);
                     if (!maybe_stats.has_value()) {
                         run_stats.clear();
                         break;
@@ -484,6 +588,7 @@ int main(int argc, char *argv[]) {
                 meta.timestamp_utc = timestamp_utc;
                 meta.file = item.file;
                 meta.decision_procedure = item.dpn;
+                meta.decision_phase = phase;
                 meta.clause_selector = item.csn;
                 meta.threads = threads;
                 meta.timeout_s = seconds;

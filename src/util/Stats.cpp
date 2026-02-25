@@ -31,6 +31,19 @@ std::string to_string(heuristics::DecisionProcedureName name) {
     return "unknown";
 }
 
+std::string to_string(heuristics::DecisionPhase phase) {
+    using heuristics::DecisionPhase;
+    switch (phase) {
+        case DecisionPhase::unsat:
+            return "unsat";
+        case DecisionPhase::sat:
+            return "sat";
+        case DecisionPhase::random:
+            return "random";
+    }
+    return "unknown";
+}
+
 std::string to_string(heuristics::ClauseSelectorName name) {
     using heuristics::ClauseSelectorName;
     switch (name) {
@@ -40,6 +53,8 @@ std::string to_string(heuristics::ClauseSelectorName name) {
             return "lt_watchlist";
         case ClauseSelectorName::exact_watchlist:
             return "exact_watchlist";
+        case ClauseSelectorName::exact_watchlist2:
+            return "exact_watchlist2";
     }
     return "unknown";
 }
@@ -66,6 +81,7 @@ AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunSt
     out.timestamp_utc = meta.timestamp_utc;
     out.file = meta.file;
     out.decision_procedure = meta.decision_procedure;
+    out.decision_phase = meta.decision_phase;
     out.clause_selector = meta.clause_selector;
     out.threads = meta.threads;
     out.timeout_s = meta.timeout_s;
@@ -140,16 +156,16 @@ AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunSt
     out.propagations = selected.num_propagations;
     out.attempt_props = selected.num_attempt_props;
     out.watch_updates = selected.num_watch_updates;
+    out.restarts = selected.num_restarts;
     out.decisions = selected.decisions;
     out.fallback_decisions = selected.fallback_decisions;
     out.fallback_pct = safe_div(100.0 * static_cast<double>(selected.fallback_decisions),
                                 static_cast<double>(selected.decisions));
     out.prop_per_conflict = safe_div(static_cast<double>(selected.num_propagations),
                                      static_cast<double>(selected.num_conflicts));
-    out.attempts_per_prop = safe_div(static_cast<double>(selected.num_attempt_props),
-                                     static_cast<double>(selected.num_propagations));
-    out.attempts_per_watch = safe_div(static_cast<double>(selected.num_attempt_props),
-                                      static_cast<double>(selected.num_watch_updates));
+    out.attempts_per_prop_watch_conflict =
+        safe_div(static_cast<double>(selected.num_attempt_props),
+                 static_cast<double>(selected.num_propagations + selected.num_watch_updates + selected.num_conflicts));
 
     if (selected.result == SolveResult::Sat && selected.sat_assignment.has_value()) {
         out.sat_assignment = selected.sat_assignment;

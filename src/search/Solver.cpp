@@ -6,7 +6,7 @@
 #include "search/Solver.h"
 
 #include "algebra/TrailBasisSpace.h"
-#include "heuristics/CVsids.h"
+#include "heuristics/ClauseBasedDecisions.h"
 #include "heuristics/Factory.h"
 #include "io/DimacsParser.h"
 
@@ -34,20 +34,23 @@ const bit::vector<>& ResultCase::unwrap_sat(const std::variant<Timeout, Unsat, S
 Solver::Solver(std::size_t num_vars,
                std::shared_ptr<heuristics::ClauseSelector> clause_sel_in,
                std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
-               std::shared_ptr<io::ProofLogger> proof_logger_in)
+               std::shared_ptr<io::ProofLogger> proof_logger_in,
+               const RestartConfig& restart_config)
     : num_vars(num_vars),
       trail(num_vars),
       clause_sel(std::move(clause_sel_in)),
       dec_proc(std::move(dec_proc)),
       propagation(num_vars),
+      restart_policy(restart_config),
       proof_logger(std::move(proof_logger_in)),
       working_eqn(bit::vector<>::zeros(num_vars + 1)) {}
 
 Solver::Solver(std::size_t num_vars,
                std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
-               std::shared_ptr<io::ProofLogger> proof_logger_in)
+               std::shared_ptr<io::ProofLogger> proof_logger_in,
+               const RestartConfig& restart_config)
     : Solver(num_vars, std::make_shared<heuristics::Cyclic>(num_vars), std::move(dec_proc),
-             std::move(proof_logger_in)) {}
+             std::move(proof_logger_in), restart_config) {}
 
 std::size_t Solver::get_num_vars() const { return num_vars; }
 
@@ -166,15 +169,20 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
 
             dec_proc->update_with_asserting_clause(asserting_clause);
 
-            if (asserting_clause.rows() == 1) {
-                // Restart the trail
+            assert((asserting_clause.rows() != 1) || (jumpable_levels == trail.size() - 1));
+            const bool do_restart = restart_policy.should_restart_after_conflict();
+            std::size_t levels_removed = jumpable_levels;
+            if (do_restart) {
+                levels_removed = trail.size() - 1;
                 trail.erase(trail.begin() + 1, trail.end());
-                clause_sel->add_asserting_clause(asserting_clause, trail, trail.size() - 1);
+                restart_policy.note_restart();
+                ++num_restarts;
             } else {
                 // Jump back in the trail
                 trail.erase(trail.end() - jumpable_levels, trail.end());
-                clause_sel->add_asserting_clause(asserting_clause, trail, jumpable_levels);
             }
+            clause_sel->add_asserting_clause(asserting_clause, trail, levels_removed);
+
             heuristics::ClauseId new_clause_id = clause_sel->get_num_clauses() - 1;
             dec_proc->update_with_new_clause(asserting_clause, new_clause_id);
             if (proof_logger) {
@@ -229,16 +237,19 @@ void Solver::print_trail(const EquationPrintMode eqn_mode) const {
 Solver Solver::from_DIMACS(const std::string& filename,
                            const heuristics::DecisionProcedureName dpn,
                            const heuristics::ClauseSelectorName csn,
-                           std::shared_ptr<io::ProofLogger> proof_logger) {
+                           const heuristics::DecisionPhase phase,
+                           std::shared_ptr<io::ProofLogger> proof_logger,
+                           const RestartConfig& restart_config) {
     io::ParsedDimacs parsed = io::parse_dimacs_file(filename);
 
     std::shared_ptr<heuristics::DecisionProcedure> dec_proc;
     std::shared_ptr<heuristics::ClauseSelector> clause_sel;
 
-    dec_proc = heuristics::create_decision_procedure(dpn, parsed.num_vars);
+    dec_proc = heuristics::create_decision_procedure(dpn, parsed.num_vars, phase);
     clause_sel = heuristics::create_clause_selector(csn, parsed.num_vars);
 
-    Solver solver{parsed.num_vars, std::move(clause_sel), std::move(dec_proc), std::move(proof_logger)};
+    Solver solver{parsed.num_vars, std::move(clause_sel), std::move(dec_proc), std::move(proof_logger),
+                  restart_config};
 
     for (const auto& clause : parsed.clauses) {
         solver.clause_sel->add_starting_clause(clause);

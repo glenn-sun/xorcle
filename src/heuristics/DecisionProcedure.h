@@ -28,11 +28,21 @@ enum class DecisionProcedureName {
     cbh               ///< CBH clause ordering heuristic.
 };
 
+/// @brief Phase selection for clause-based decisions.
+enum class DecisionPhase {
+    unsat,  ///< Decide equations in the negated clause (current behavior).
+    sat,    ///< Decide the negation of the equation in the negated clause.
+    random  ///< Randomly choose sat/unsat per decision.
+};
+
 /// @brief Base class for decision procedures.
 class DecisionProcedure {
 protected:
     /// @brief Number of variables in the problem.
     std::size_t num_vars;
+
+    /// @brief Phase selection for clause-based decisions.
+    DecisionPhase decision_phase = DecisionPhase::unsat;
 
     /// @brief Count of decisions made so far.
     std::size_t decisions = 0;
@@ -53,6 +63,9 @@ protected:
         decisions = 0;
         fallback_decisions = 0;
     }
+
+    /// @brief Apply the configured decision phase to a clause-based decision.
+    Equation apply_phase(Equation eqn) const;
 
 public:
     /// @brief Construct a decision procedure for a given variable count.
@@ -101,6 +114,12 @@ public:
     virtual DecisionStats decision_stats() const {
         return DecisionStats{decisions, fallback_decisions};
     }
+
+    /// @brief Set the phase selection for clause-based decisions.
+    void set_decision_phase(DecisionPhase phase) { decision_phase = phase; }
+
+    /// @brief Get the phase selection for clause-based decisions.
+    DecisionPhase get_decision_phase() const { return decision_phase; }
 };
 
 /// @brief Fixed unit-basis decision procedure.

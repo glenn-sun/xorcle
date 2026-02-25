@@ -5,8 +5,9 @@
 #include <string>
 #include <vector>
 
+#include "heuristics/DecisionProcedure.h"
+
 namespace heuristics {
-enum class DecisionProcedureName;
 enum class ClauseSelectorName;
 }
 
@@ -30,6 +31,7 @@ struct RunStats {
     std::size_t num_propagations = 0;          ///< Count of unit propagations performed.
     std::size_t num_attempt_props = 0;         ///< Count of attempted propagations.
     std::size_t num_watch_updates = 0;         ///< Count of watch updates performed.
+    std::size_t num_restarts = 0;              ///< Count of restarts performed.
     std::size_t decisions = 0;                 ///< Count of decisions made.
     std::size_t fallback_decisions = 0;        ///< Count of decisions that used fallback logic.
     std::optional<std::string> sat_assignment; ///< Satisfying assignment string, when available.
@@ -41,6 +43,7 @@ struct AggregateMeta {
     std::string timestamp_utc;                        ///< Timestamp in UTC (ISO-like format).
     std::string file;                                 ///< Input file path.
     heuristics::DecisionProcedureName decision_procedure; ///< Decision procedure used.
+    heuristics::DecisionPhase decision_phase = heuristics::DecisionPhase::unsat; ///< Decision phase used.
     heuristics::ClauseSelectorName clause_selector;   ///< Clause selector used.
     std::size_t threads = 0;                          ///< Number of threads requested.
     std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
@@ -54,6 +57,7 @@ struct AggregateStats {
     std::string timestamp_utc;                        ///< Timestamp in UTC (ISO-like format).
     std::string file;                                 ///< Input file path.
     heuristics::DecisionProcedureName decision_procedure; ///< Decision procedure used.
+    heuristics::DecisionPhase decision_phase = heuristics::DecisionPhase::unsat; ///< Decision phase used.
     heuristics::ClauseSelectorName clause_selector;   ///< Clause selector used.
     std::size_t threads = 0;                          ///< Number of threads requested.
     std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
@@ -76,18 +80,21 @@ struct AggregateStats {
     std::size_t propagations = 0;                     ///< Selected run propagations.
     std::size_t attempt_props = 0;                    ///< Selected run attempted propagations.
     std::size_t watch_updates = 0;                    ///< Selected run watch updates.
+    std::size_t restarts = 0;                         ///< Selected run restarts.
     std::size_t decisions = 0;                        ///< Selected run decisions.
     std::size_t fallback_decisions = 0;               ///< Selected run fallback decisions.
     std::optional<double> fallback_pct;               ///< Fallback decisions / decisions * 100.
     std::optional<double> prop_per_conflict;          ///< Propagations per conflict.
-    std::optional<double> attempts_per_prop;          ///< Attempted propagations per propagation.
-    std::optional<double> attempts_per_watch;         ///< Attempted propagations per watch update.
+    std::optional<double> attempts_per_prop_watch_conflict; ///< attempt_props / (propagations + watch_updates + conflicts).
 
     std::optional<std::string> sat_assignment;        ///< Satisfying assignment for selected run.
 };
 
 /// @brief Convert a decision procedure enum to a stable string label.
 std::string to_string(heuristics::DecisionProcedureName name);
+
+/// @brief Convert a decision phase enum to a stable string label.
+std::string to_string(heuristics::DecisionPhase phase);
 
 /// @brief Convert a clause selector enum to a stable string label.
 std::string to_string(heuristics::ClauseSelectorName name);

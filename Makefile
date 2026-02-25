@@ -6,7 +6,7 @@ all:
 
 .PHONY: test
 test: all
-	./bin/main -d tests -p cvsids
+	./bin/main tests --decision-proc cvsids
 
 .PHONY: clean
 clean:

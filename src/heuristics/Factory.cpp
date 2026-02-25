@@ -1,26 +1,40 @@
 #include "heuristics/Factory.h"
 
 #include "heuristics/ExactWatchlist.h"
+#include "heuristics/ExactWatchlist2.h"
 
 namespace heuristics {
-std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureName name, std::size_t num_vars) {
+std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureName name,
+                                                             std::size_t num_vars,
+                                                             DecisionPhase phase) {
+    std::shared_ptr<DecisionProcedure> proc;
     switch (name) {
         case DecisionProcedureName::fixed_unit:
-            return std::make_shared<FixedUnit>(num_vars);
+            proc = std::make_shared<FixedUnit>(num_vars);
+            break;
         case DecisionProcedureName::random_clause_sum:
-            return std::make_shared<RandomClauseSum>(num_vars);
+            proc = std::make_shared<RandomClauseSum>(num_vars);
+            break;
         case DecisionProcedureName::vsids_unit:
-            return std::make_shared<VsidsUnit>(num_vars);
+            proc = std::make_shared<VsidsUnit>(num_vars);
+            break;
         case DecisionProcedureName::vsids_clause:
-            return std::make_shared<VsidsClause>(num_vars);
+            proc = std::make_shared<VsidsClause>(num_vars);
+            break;
         case DecisionProcedureName::cvsids:
-            return std::make_shared<CVsidsDecision>(num_vars);
+            proc = std::make_shared<CVsidsDecision>(num_vars);
+            break;
         case DecisionProcedureName::berkmin:
-            return std::make_shared<BerkminDecision>(num_vars);
+            proc = std::make_shared<BerkminDecision>(num_vars);
+            break;
         case DecisionProcedureName::cbh:
-            return std::make_shared<CBHDecision>(num_vars);
+            proc = std::make_shared<CBHDecision>(num_vars);
+            break;
     }
-    return nullptr;
+    if (proc) {
+        proc->set_decision_phase(phase);
+    }
+    return proc;
 }
 
 std::shared_ptr<ClauseSelector> create_clause_selector(ClauseSelectorName name, std::size_t num_vars) {
@@ -31,6 +45,8 @@ std::shared_ptr<ClauseSelector> create_clause_selector(ClauseSelectorName name, 
             return std::make_shared<LTWatchlist>(num_vars);
         case ClauseSelectorName::exact_watchlist:
             return std::make_shared<ExactWatchlist>(num_vars);
+        case ClauseSelectorName::exact_watchlist2:
+            return std::make_shared<ExactWatchlist2>(num_vars);
     }
     return nullptr;
 }

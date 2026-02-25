@@ -15,6 +15,7 @@
 #include "heuristics/ClauseSelector.h"
 #include "heuristics/DecisionProcedure.h"
 #include "search/PropagationEngine.h"
+#include "search/RestartPolicy.h"
 #include "search/Trail.h"
 #include "io/ProofLogger.h"
 
@@ -59,6 +60,7 @@ private:
     std::shared_ptr<heuristics::ClauseSelector> clause_sel; ///< Clause selector strategy.
     std::shared_ptr<heuristics::DecisionProcedure> dec_proc; ///< Decision procedure strategy.
     PropagationEngine propagation; ///< Unit propagation engine.
+    RestartPolicy restart_policy; ///< Conflict-driven restart scheduler.
     std::shared_ptr<io::ProofLogger> proof_logger; ///< Optional proof logger.
 
     algebra::Equation working_eqn; ///< Reusable buffer for conflict checks.
@@ -68,12 +70,14 @@ public:
     Solver(std::size_t num_vars,
            std::shared_ptr<heuristics::ClauseSelector> clause_sel_in,
            std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
-           std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr);
+           std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr,
+           const RestartConfig& restart_config = {});
 
     /// @brief Construct a solver with a default cyclic clause selector.
     Solver(std::size_t num_vars,
            std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
-           std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr);
+           std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr,
+           const RestartConfig& restart_config = {});
 
     /// @brief Return the variable count for this solver instance.
     std::size_t get_num_vars() const;
@@ -119,12 +123,15 @@ public:
     /// @param filename Path to a DIMACS file.
     /// @param dpn Decision procedure to use.
     /// @param csn Clause selector to use.
+    /// @param phase Decision phase selection for clause-based decisions.
     /// @param proof_logger Optional proof logger.
     /// @note The DIMACS format is extended as in Danner/Kreuzer to support XOR literals.
     static Solver from_DIMACS(const std::string& filename,
                               heuristics::DecisionProcedureName dpn,
                               heuristics::ClauseSelectorName csn,
-                              std::shared_ptr<io::ProofLogger> proof_logger = nullptr);
+                              heuristics::DecisionPhase phase,
+                              std::shared_ptr<io::ProofLogger> proof_logger = nullptr,
+                              const RestartConfig& restart_config = {});
 
     /// @brief Total number of attempted propagations.
     std::size_t num_attempt_props = 0;
@@ -137,5 +144,8 @@ public:
 
     /// @brief Total number of conflicts encountered.
     std::size_t num_conflicts = 0;
+
+    /// @brief Total number of restarts performed.
+    std::size_t num_restarts = 0;
 };
 } // namespace search

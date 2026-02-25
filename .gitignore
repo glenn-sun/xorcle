@@ -10,3 +10,6 @@ bin/
 filtered/
 venv/
 docs/
+external/
+proof.*
+out.*
