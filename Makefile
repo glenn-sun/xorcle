@@ -1,13 +1,21 @@
+.PHONY: all profile release test clean rebuild
 
-.PHONY: all
 all:
 	mkdir -p bin
-	/usr/bin/g++ -std=c++23 -pthread -g -fdiagnostics-show-template-tree -fno-elide-constructors -fdiagnostics-color=always -Wall -I . -I src $(shell find src -name '*.cpp') -o bin/main
+	/usr/bin/g++ -std=c++23 -pthread -Og -g -Wall -fdiagnostics-show-template-tree -fdiagnostics-color=auto -fno-omit-frame-pointer -I . -I src $(shell find src -name '*.cpp') -o bin/main
 
-.PHONY: test
+profile:
+	mkdir -p bin
+	/usr/bin/g++ -std=c++23 -pthread -O2 -g -Wall -fdiagnostics-show-template-tree -fdiagnostics-color=auto -fno-omit-frame-pointer -I . -I src $(shell find src -name '*.cpp') -o bin/main-profile
+
+release:
+	mkdir -p bin
+	/usr/bin/g++ -std=c++23 -pthread -O3 -DNDEBUG -Wall -fdiagnostics-show-template-tree -fdiagnostics-color=auto -I . -I src $(shell find src -name '*.cpp') -o bin/main-release
+
 test: all
 	./bin/main tests --decision-proc cvsids
 
-.PHONY: clean
 clean:
-	rm -rf bin
+	rm -rf bin build
+
+rebuild: clean all

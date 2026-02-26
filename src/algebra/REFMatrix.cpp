@@ -81,8 +81,8 @@ void REFMatrix::reduce(bit::vector<>& v, bit::vector<>* coeffs) const {
 }
 
 std::size_t REFMatrix::partial_reduce(bit::vector<>& v) const {
+    std::size_t f = v.first_set();
     while (true) {
-        std::size_t f = v.first_set();
         if (f == bit::vector<>::npos) {
             return f;
         }
@@ -90,26 +90,29 @@ std::size_t REFMatrix::partial_reduce(bit::vector<>& v) const {
             return f;
         }
         v ^= M.row(col_to_row[f]);
+        f = v.next_set(f);
     }
 }
 
 // Requires extra to be already partial reduced by the matrix (and may be 0 = 1).
 std::size_t REFMatrix::partial_reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) const {
     std::size_t extra_col = extra.first_set();
+    std::size_t f = v.first_set();
     while (true) {
-        std::size_t f = v.first_set();
         if (f == bit::vector<>::npos) {
             return f;
         }
         if (!pivot_cols.element(f)) {
             if (f == extra_col) {
                 v ^= extra;
+                f = v.next_set(f);
                 continue;
             }
             return f;
         }
         assert(pivot_cols.element(f));
         v ^= M.row(col_to_row[f]);
+        f = v.next_set(f);
     }
 }
 

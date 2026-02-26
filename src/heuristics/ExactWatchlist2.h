@@ -18,7 +18,7 @@ enum class PendingDiscipline {
 };
 
 struct ExactWatchlist2Config {
-    PendingDiscipline discipline = PendingDiscipline::lifo_stack;
+    PendingDiscipline discipline = PendingDiscipline::fifo_queue;
 };
 
 /// @brief Encoded identifier for a watched expression row in ExactWatchlist2.
@@ -51,13 +51,31 @@ private:
     static constexpr std::size_t invalid_bucket = std::numeric_limits<std::size_t>::max();
     static constexpr std::size_t invalid_wid_idx = std::numeric_limits<std::size_t>::max();
 
+    struct DeferredRowRef {
+        std::size_t row_idx;
+        std::uint64_t version;
+    };
+
+    enum class DeferredWorkKind : std::uint8_t {
+        bucket_reassign,
+        zero_reseed
+    };
+
+    struct DeferredWorkItem {
+        DeferredWorkKind kind;
+        std::vector<DeferredRowRef> rows;
+        std::size_t pos = 0;
+    };
+
     std::size_t num_vars;
     ExactWatchlist2Config config;
     std::size_t current_level = 0;
+    const Trail* current_trail_ptr = nullptr;
 
     // Row-wise cache indexed by WatchedId then trail level.
     std::vector<std::vector<CacheCell>> cells_by_row;
     std::vector<std::uint8_t> row_structural_placeholder;
+    std::vector<std::uint64_t> row_work_version;
 
     // Active current-level bucket lists.
     std::vector<std::size_t> active_next_idx;
@@ -69,6 +87,7 @@ private:
     std::deque<ClauseSelection> pending;
     std::vector<std::uint8_t> pending_unit_set;
     std::vector<std::uint8_t> pending_watch_set;
+    std::deque<DeferredWorkItem> deferred_work;
     std::vector<ClauseId> unit_clauses;
 
     // Debug counters: queue entries enqueued vs popped vs discarded on conflict clears.
@@ -76,6 +95,11 @@ private:
     std::size_t debug_pending_popped = 0;
     std::size_t debug_pending_discarded_on_conflict_clear = 0;
     std::size_t debug_conflict_clears = 0;
+    std::size_t debug_deferred_bucket_scans_created = 0;
+    std::size_t debug_deferred_reseed_scans_created = 0;
+    std::size_t debug_deferred_rows_processed = 0;
+    std::size_t debug_deferred_rows_skipped_stale = 0;
+    std::size_t debug_deferred_rows_skipped_not_zero = 0;
 
     Equation working_eqn;
     Equation working_eqn2;
@@ -99,6 +123,7 @@ private:
     bool cell_is_valid(EW2WatchedId wid, std::size_t level) const;
     CacheCell* ensure_cell(EW2WatchedId wid, std::size_t level, const Trail& trail);
     CacheCell* ensure_cell_existing_row(EW2WatchedId wid, std::size_t level, const Trail& trail);
+    void set_current_trail(const Trail& trail) { current_trail_ptr = &trail; }
 
     void build_base_expression(EW2WatchedId wid, Equation& out) const;
 
@@ -112,6 +137,11 @@ private:
     void discard_levels_after(std::size_t level);
     void seed_pending_from_zero_bucket();
     void on_level_change_incremental(const Trail& trail);
+    std::vector<DeferredRowRef> detach_bucket_to_snapshot(std::size_t bucket);
+    std::vector<DeferredRowRef> snapshot_zero_bucket_rows() const;
+    void push_deferred_bucket_scan(std::vector<DeferredRowRef>&& rows);
+    void push_deferred_zero_reseed(std::vector<DeferredRowRef>&& rows);
+    bool step_one_deferred_work();
 
     void invalidate_row(EW2WatchedId wid);
     void refresh_watched_row_now(EW2WatchedId wid, const Trail& trail);
