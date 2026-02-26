@@ -13,3 +13,7 @@ docs/
 external/
 proof.*
 out.*
+*.o
+*.cnf
+*.cpython
+*.pyc
