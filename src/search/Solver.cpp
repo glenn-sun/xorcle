@@ -135,7 +135,7 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
                 clause_sel->update_with_propagation(eqn, trail);
                 assert(working_eqn.size() == eqn_false.size());
                 working_eqn.unsafe_copy(eqn_false);
-                conflict = (trail.span().partial_reduce(working_eqn) == algebra::ReduceResult::Zero);
+                conflict = (trail.span().partial_reduce(working_eqn) == bit::vector<>::npos);
             } else {
                 break;
             }

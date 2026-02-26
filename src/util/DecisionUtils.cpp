@@ -8,14 +8,15 @@ namespace util {
 algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
                                     const algebra::RowSpace& trail_span,
                                     std::size_t num_vars) {
+    const std::size_t constant_col = num_vars;
     algebra::Equation eqn{num_vars}, eqn_reduced{num_vars};
     for (std::size_t i = 0; i < num_vars; ++i) {
         assert(eqn.size() == basis[i].size());
         eqn.unsafe_copy(basis[i]);
         assert(eqn_reduced.size() == eqn.size());
         eqn_reduced.unsafe_copy(eqn);
-        algebra::ReduceResult rr = trail_span.partial_reduce(eqn_reduced);
-        if (rr == algebra::ReduceResult::Nontrivial) {
+        std::size_t f = trail_span.partial_reduce(eqn_reduced);
+        if ((f != bit::vector<>::npos) && (f != constant_col)) {
             return eqn;
         }
     }
@@ -26,6 +27,7 @@ algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
 algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
                                     const std::vector<algebra::Equation>& unit_eqns,
                                     std::size_t num_vars) {
+    const std::size_t constant_col = num_vars;
     algebra::Equation eqn{num_vars}, eqn_reduced{num_vars};
     for (std::size_t i = 0; i < num_vars; ++i) {
         assert(i < unit_eqns.size());
@@ -33,8 +35,8 @@ algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
         eqn.unsafe_copy(unit_eqns[i]);
         assert(eqn_reduced.size() == eqn.size());
         eqn_reduced.unsafe_copy(eqn);
-        algebra::ReduceResult rr = trail_span.partial_reduce(eqn_reduced);
-        if (rr == algebra::ReduceResult::Nontrivial) {
+        std::size_t f = trail_span.partial_reduce(eqn_reduced);
+        if ((f != bit::vector<>::npos) && (f != constant_col)) {
             return eqn;
         }
     }
@@ -50,7 +52,7 @@ bool clause_satisfied_by_trail(const algebra::RowSpace& trail_span,
         combined.add_row(clause.row(i));
     }
     algebra::Equation eqn_false = algebra::Equation::unit(num_vars + 1, num_vars);
-    return combined.partial_reduce(eqn_false) == algebra::ReduceResult::Zero;
+    return combined.partial_reduce(eqn_false) == bit::vector<>::npos;
 }
 
 bool sample_equation_from_clause(const algebra::Clause& clause,
@@ -75,8 +77,8 @@ bool sample_equation_from_clause(const algebra::Clause& clause,
         });
         assert(out_reduced.size() == out_candidate.size());
         out_reduced.unsafe_copy(out_candidate);
-        algebra::ReduceResult rr = trail_span.partial_reduce(out_reduced);
-        if (rr != algebra::ReduceResult::Zero) {
+        std::size_t f = trail_span.partial_reduce(out_reduced);
+        if (f != bit::vector<>::npos) {
             return true;
         }
     }

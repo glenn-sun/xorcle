@@ -9,15 +9,6 @@
 
 namespace algebra {
 
-/// @brief Classification of an affine equation after partial reduction.
-///
-/// The last column is interpreted as the affine constant term.
-enum class ReduceResult {
-    Zero,       ///< The equation partially reduces to 0 = 0.
-    One,        ///< The equation partially reduces to 0 = 1.
-    Nontrivial  ///< The equation partially reduces to an irreducible variable-leading equation.
-};
-
 /// @brief A matrix over GF(2) in row-echelon form.
 ///
 /// Used to represent equation spaces and to perform reductions.
@@ -67,18 +58,21 @@ public:
     /// corresponding to rows used in the reduction will be set.
     void reduce(bit::vector<>& v, bit::vector<>* coeffs = nullptr) const;
 
-    /// @brief Partially reduce a vector in lex order and classify the result.
+    /// @brief Partially reduce a vector in lex order.
     ///
     /// Repeatedly eliminates the current leading term while it is pivoted. Stops as soon as the
-    /// leading term is not pivoted. This is sufficient to detect 0 = 0 and 0 = 1 exactly.
+    /// leading term is not pivoted.
     /// @param v The vector to partially reduce in place.
-    /// @return Classification of the partially reduced affine equation.
-    ReduceResult partial_reduce(bit::vector<>& v) const;
+    /// @return v.first_set() after partial reduction.
+    ///         - bit::vector<>::npos means the equation is 0 = 0.
+    ///         - cols() - 1 means the equation is 0 = 1.
+    ///         - any smaller index means the equation is variable-leading and irreducible.
+    std::size_t partial_reduce(bit::vector<>& v) const;
 
     /// @brief Partially reduce a vector using this matrix augmented with an extra vector.
     /// @pre extra is already partially reduced by this matrix (it may be 0 = 1).
-    /// @return Classification of the partially reduced affine equation.
-    ReduceResult partial_reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) const;
+    /// @return v.first_set() after partial reduction (same conventions as partial_reduce()).
+    std::size_t partial_reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) const;
 
     /// @brief Reduce a vector using this matrix augmented with an extra vector.
     /// @pre extra is already reduced by this matrix.

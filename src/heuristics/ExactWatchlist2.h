@@ -49,6 +49,7 @@ private:
     };
 
     static constexpr std::size_t invalid_bucket = std::numeric_limits<std::size_t>::max();
+    static constexpr std::size_t invalid_wid_idx = std::numeric_limits<std::size_t>::max();
 
     std::size_t num_vars;
     ExactWatchlist2Config config;
@@ -56,19 +57,25 @@ private:
 
     // Row-wise cache indexed by WatchedId then trail level.
     std::vector<std::vector<CacheCell>> cells_by_row;
-    std::vector<bool> row_structural_placeholder;
+    std::vector<std::uint8_t> row_structural_placeholder;
 
     // Active current-level bucket lists.
-    std::vector<EW2WatchedId> active_next;
-    std::vector<EW2WatchedId> active_prev;
+    std::vector<std::size_t> active_next_idx;
+    std::vector<std::size_t> active_prev_idx;
     std::vector<std::size_t> active_bucket;
-    std::vector<EW2WatchedId> bucket_head;
+    std::vector<std::size_t> bucket_head_idx;
 
     // Pending clause scheduler.
     std::deque<ClauseSelection> pending;
-    std::vector<bool> pending_unit_set;
-    std::vector<bool> pending_watch_set;
+    std::vector<std::uint8_t> pending_unit_set;
+    std::vector<std::uint8_t> pending_watch_set;
     std::vector<ClauseId> unit_clauses;
+
+    // Debug counters: queue entries enqueued vs popped vs discarded on conflict clears.
+    std::size_t debug_pending_enqueued = 0;
+    std::size_t debug_pending_popped = 0;
+    std::size_t debug_pending_discarded_on_conflict_clear = 0;
+    std::size_t debug_conflict_clears = 0;
 
     Equation working_eqn;
     Equation working_eqn2;
@@ -91,16 +98,16 @@ private:
     bool row_is_placeholder(EW2WatchedId wid) const;
     bool cell_is_valid(EW2WatchedId wid, std::size_t level) const;
     CacheCell* ensure_cell(EW2WatchedId wid, std::size_t level, const Trail& trail);
+    CacheCell* ensure_cell_existing_row(EW2WatchedId wid, std::size_t level, const Trail& trail);
 
-    void partial_reduce_in_place(Equation& eqn, const algebra::RowSpace& span) const;
     void build_base_expression(EW2WatchedId wid, Equation& out) const;
 
+    std::size_t classify_bucket_from_first_set(std::size_t f) const;
     std::size_t classify_bucket(const Equation& eqn) const;
 
     void clear_active_buckets();
     void insert_active(EW2WatchedId wid, std::size_t bucket);
     void remove_active(EW2WatchedId wid);
-    void rebuild_active_from_level(const Trail& trail);
     void sync_current_level_rebuild_only(const Trail& trail);
     void discard_levels_after(std::size_t level);
     void seed_pending_from_zero_bucket();
@@ -118,6 +125,7 @@ private:
 
 public:
     explicit ExactWatchlist2(std::size_t num_vars, ExactWatchlist2Config config = {});
+    ~ExactWatchlist2() override;
 
     std::optional<ClauseId> next() override;
     std::optional<ClauseSelection> next_with_hint() override;

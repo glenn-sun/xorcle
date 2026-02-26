@@ -74,8 +74,9 @@ Equation VsidsClause::make_decision(const RowSpace& trail_span, const std::vecto
             if (clauses[j].get_pivot_cols()[k]) {
                 assert((*maybe_eqn).size() == clauses[j].row(clauses[j].get_col_to_row(k)).size());
                 (*maybe_eqn).unsafe_copy(clauses[j].row(clauses[j].get_col_to_row(k)));
-                algebra::ReduceResult rr = trail_span.partial_reduce(*maybe_eqn);
-                if (rr == algebra::ReduceResult::Nontrivial) {
+                const std::size_t constant_col = maybe_eqn->size() - 1;
+                std::size_t f = trail_span.partial_reduce(*maybe_eqn);
+                if ((f != bit::vector<>::npos) && (f != constant_col)) {
                     record_decision(false);
                     return apply_phase(*maybe_eqn);
                 };

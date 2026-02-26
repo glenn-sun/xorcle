@@ -68,8 +68,8 @@ Equation VsidsUnit::make_decision(const RowSpace& trail_span, const std::vector<
             reinitialize();
             maybe_eqn = vsids_params.activity_heap.extract_max();
         }
-        algebra::ReduceResult rr = trail_span.partial_reduce(*maybe_eqn);
-        if (rr == algebra::ReduceResult::Nontrivial) {
+        std::size_t f = trail_span.partial_reduce(*maybe_eqn);
+        if ((f != bit::vector<>::npos) && (f != num_vars)) {
             record_decision(false);
             return *maybe_eqn;
         };

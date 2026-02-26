@@ -15,13 +15,16 @@ std::optional<algebra::Equation> PropagationEngine::unit_prop_one_clause(heurist
                                                                          std::optional<heuristics::WatchType> zero_watch_hint,
                                                                          std::size_t& num_watch_updates) {
     algebra::Clause& clause = clause_sel.get_clause(id);
+    const std::size_t constant_col = num_vars;
+    const auto is_zero = [](std::size_t f) { return f == bit::vector<>::npos; };
+    const auto is_one = [constant_col](std::size_t f) { return f == constant_col; };
 
     // If clause is unit, conflict/propagate are the same
     if (clause.rows() == 1) {
         assert(working_eqn.size() == clause.row(0).size());
         working_eqn.unsafe_copy(clause.row(0));
-        algebra::ReduceResult rr = trail.span().partial_reduce(working_eqn);
-        if (rr == algebra::ReduceResult::One) {
+        std::size_t f = trail.span().partial_reduce(working_eqn);
+        if (is_one(f)) {
             return std::nullopt;
         }
         working_eqn.flip(num_vars);
@@ -38,8 +41,8 @@ std::optional<algebra::Equation> PropagationEngine::unit_prop_one_clause(heurist
             if (i == clause.watched0 || i == clause.watched1) continue;
             assert(scratch.size() == clause.row(i).size());
             scratch.unsafe_copy(clause.row(i));
-            algebra::ReduceResult candidate_rr = trail.span().partial_reduce_with_extra(scratch, distinct_from);
-            if (candidate_rr != algebra::ReduceResult::Zero) {
+            std::size_t candidate_f = trail.span().partial_reduce_with_extra(scratch, distinct_from);
+            if (!is_zero(candidate_f)) {
                 clause.next_watch_search_start = (i + 1) % clause.rows();
                 return i;
             }
@@ -64,13 +67,13 @@ std::optional<algebra::Equation> PropagationEngine::unit_prop_one_clause(heurist
         tasks[num_tasks++] = {&clause.watched1, &clause.watched0, heuristics::WatchType::One};
     } else {
         working_eqn.unsafe_copy(clause.row(clause.watched0));
-        algebra::ReduceResult rr0 = trail.span().partial_reduce(working_eqn);
-        if (rr0 == algebra::ReduceResult::Zero) {
+        std::size_t f0 = trail.span().partial_reduce(working_eqn);
+        if (is_zero(f0)) {
             tasks[num_tasks++] = {&clause.watched0, &clause.watched1, heuristics::WatchType::Zero};
         }
         working_eqn2.unsafe_copy(clause.row(clause.watched1));
-        algebra::ReduceResult rr1 = trail.span().partial_reduce_with_extra(working_eqn2, working_eqn);
-        if (rr1 == algebra::ReduceResult::Zero) {
+        std::size_t f1 = trail.span().partial_reduce_with_extra(working_eqn2, working_eqn);
+        if (is_zero(f1)) {
             tasks[num_tasks++] = {&clause.watched1, &clause.watched0, heuristics::WatchType::One};
         }
     }
@@ -78,7 +81,7 @@ std::optional<algebra::Equation> PropagationEngine::unit_prop_one_clause(heurist
     for (std::size_t i = 0; i < num_tasks; ++i) {
         auto& task = tasks[i];
         working_eqn2.unsafe_copy(clause.row(*task.complem_ptr));
-        algebra::ReduceResult complem_rr = trail.span().partial_reduce(working_eqn2);
+        std::size_t complem_f = trail.span().partial_reduce(working_eqn2);
 
         if (auto replacement = find_replacement_cyclic(working_eqn, working_eqn2);
             replacement.has_value()) {
@@ -92,7 +95,7 @@ std::optional<algebra::Equation> PropagationEngine::unit_prop_one_clause(heurist
         } else {
             // No replacement, learn complement watch if not satisfied.
             // Reuse the complement reduction already computed above.
-            if (complem_rr == algebra::ReduceResult::One) {
+            if (is_one(complem_f)) {
                 // Clause is satisfied by complement watch
                 continue;
             }
