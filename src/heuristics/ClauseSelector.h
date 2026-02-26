@@ -21,6 +21,12 @@ enum class WatchType {
     Sum   ///< Watch the xor of the two watched equations.
 };
 
+/// @brief A clause selected for propagation, optionally with a zero-watch hint.
+struct ClauseSelection {
+    ClauseId id;
+    std::optional<WatchType> zero_watch_hint;
+};
+
 /// @brief Available clause-selection strategies.
 enum class ClauseSelectorName {
     cyclic,          ///< Simple cyclic iteration.
@@ -59,6 +65,10 @@ public:
 
     /// @brief Return the next clause id to consider, or std::nullopt if none.
     virtual std::optional<ClauseId> next() = 0;
+
+    /// @brief Return the next clause to consider, optionally carrying a zero-watch hint.
+    /// Default implementation drops hints and delegates to next().
+    virtual std::optional<ClauseSelection> next_with_hint();
 
     /// @brief Add an initial clause before any propagation or decisions.
     virtual void add_starting_clause(const Clause& clause);

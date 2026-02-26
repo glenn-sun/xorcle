@@ -13,6 +13,14 @@ const std::vector<Clause>& ClauseSelector::get_clauses() const { return clauses;
 
 Clause& ClauseSelector::get_clause(ClauseId id) { return clauses[id]; }
 
+std::optional<ClauseSelection> ClauseSelector::next_with_hint() {
+    auto id = next();
+    if (!id.has_value()) {
+        return std::nullopt;
+    }
+    return ClauseSelection{id.value(), std::nullopt};
+}
+
 void ClauseSelector::add_starting_clause(const Clause& clause) { add_clause(clause); }
 
 void ClauseSelector::add_asserting_clause(const Clause& clause, const Trail& /*trail*/, std::size_t /*jumpable_levels*/) {

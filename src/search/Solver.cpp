@@ -130,13 +130,12 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             if (propagate_result) {
                 ++num_propagations;
                 auto [eqn, reason] = *propagate_result;
-                trail.span().reduce(eqn);
+                (void)trail.span().partial_reduce(eqn);
                 trail.learn(eqn, reason);
                 clause_sel->update_with_propagation(eqn, trail);
                 assert(working_eqn.size() == eqn_false.size());
                 working_eqn.unsafe_copy(eqn_false);
-                trail.span().reduce(working_eqn);
-                conflict = working_eqn.none();
+                conflict = (trail.span().partial_reduce(working_eqn) == algebra::ReduceResult::Zero);
             } else {
                 break;
             }
@@ -199,7 +198,7 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
 
             // Make a decision
             auto decision = dec_proc->make_decision(trail.span(), clause_sel->get_clauses());
-            trail.span().reduce(decision);
+            (void)trail.span().partial_reduce(decision);
             trail.learn(decision, std::nullopt);
             clause_sel->update_with_decision(decision, trail);
             clause_sel->update_with_decision_clause(dec_proc->decision_clause_hint());

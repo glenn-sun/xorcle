@@ -38,6 +38,9 @@ public:
     /// @brief Index of a known-true equation to skip recomputation.
     std::size_t true_witness = 0;
 
+    /// @brief Starting index for the next cyclic search for a replacement watch.
+    std::size_t next_watch_search_start = 0;
+
     /// @brief Convert the clause to a printable string.
     std::string to_string(PrintMode mode = PrintMode()) const;
 

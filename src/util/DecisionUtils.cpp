@@ -8,17 +8,14 @@ namespace util {
 algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
                                     const algebra::RowSpace& trail_span,
                                     std::size_t num_vars) {
-    algebra::Equation eqn{num_vars}, eqn_reduced{num_vars}, eqn_not_reduced{num_vars};
+    algebra::Equation eqn{num_vars}, eqn_reduced{num_vars};
     for (std::size_t i = 0; i < num_vars; ++i) {
         assert(eqn.size() == basis[i].size());
         eqn.unsafe_copy(basis[i]);
         assert(eqn_reduced.size() == eqn.size());
         eqn_reduced.unsafe_copy(eqn);
-        trail_span.reduce(eqn_reduced);
-        assert(eqn_not_reduced.size() == eqn_reduced.size());
-        eqn_not_reduced.unsafe_copy(eqn_reduced);
-        eqn_not_reduced.flip(num_vars);
-        if (eqn_reduced.any() && eqn_not_reduced.any()) {
+        algebra::ReduceResult rr = trail_span.partial_reduce(eqn_reduced);
+        if (rr == algebra::ReduceResult::Nontrivial) {
             return eqn;
         }
     }
@@ -29,18 +26,15 @@ algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
 algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
                                     const std::vector<algebra::Equation>& unit_eqns,
                                     std::size_t num_vars) {
-    algebra::Equation eqn{num_vars}, eqn_reduced{num_vars}, eqn_not_reduced{num_vars};
+    algebra::Equation eqn{num_vars}, eqn_reduced{num_vars};
     for (std::size_t i = 0; i < num_vars; ++i) {
         assert(i < unit_eqns.size());
         assert(eqn.size() == unit_eqns[i].size());
         eqn.unsafe_copy(unit_eqns[i]);
         assert(eqn_reduced.size() == eqn.size());
         eqn_reduced.unsafe_copy(eqn);
-        trail_span.reduce(eqn_reduced);
-        assert(eqn_not_reduced.size() == eqn_reduced.size());
-        eqn_not_reduced.unsafe_copy(eqn_reduced);
-        eqn_not_reduced.flip(num_vars);
-        if (eqn_reduced.any() && eqn_not_reduced.any()) {
+        algebra::ReduceResult rr = trail_span.partial_reduce(eqn_reduced);
+        if (rr == algebra::ReduceResult::Nontrivial) {
             return eqn;
         }
     }
@@ -56,8 +50,7 @@ bool clause_satisfied_by_trail(const algebra::RowSpace& trail_span,
         combined.add_row(clause.row(i));
     }
     algebra::Equation eqn_false = algebra::Equation::unit(num_vars + 1, num_vars);
-    combined.reduce(eqn_false);
-    return eqn_false.none();
+    return combined.partial_reduce(eqn_false) == algebra::ReduceResult::Zero;
 }
 
 bool sample_equation_from_clause(const algebra::Clause& clause,
@@ -82,8 +75,8 @@ bool sample_equation_from_clause(const algebra::Clause& clause,
         });
         assert(out_reduced.size() == out_candidate.size());
         out_reduced.unsafe_copy(out_candidate);
-        trail_span.reduce(out_reduced);
-        if (out_reduced.any()) {
+        algebra::ReduceResult rr = trail_span.partial_reduce(out_reduced);
+        if (rr != algebra::ReduceResult::Zero) {
             return true;
         }
     }

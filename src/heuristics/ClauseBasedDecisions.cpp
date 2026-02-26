@@ -74,8 +74,8 @@ Equation VsidsClause::make_decision(const RowSpace& trail_span, const std::vecto
             if (clauses[j].get_pivot_cols()[k]) {
                 assert((*maybe_eqn).size() == clauses[j].row(clauses[j].get_col_to_row(k)).size());
                 (*maybe_eqn).unsafe_copy(clauses[j].row(clauses[j].get_col_to_row(k)));
-                trail_span.reduce(*maybe_eqn);
-                if ((*maybe_eqn).any() && *maybe_eqn != eqn_false) {
+                algebra::ReduceResult rr = trail_span.partial_reduce(*maybe_eqn);
+                if (rr == algebra::ReduceResult::Nontrivial) {
                     record_decision(false);
                     return apply_phase(*maybe_eqn);
                 };

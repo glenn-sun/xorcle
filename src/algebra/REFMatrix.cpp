@@ -1,5 +1,7 @@
 #include "algebra/REFMatrix.h"
 
+#include <cassert>
+
 namespace algebra {
 REFMatrix::REFMatrix(bit::matrix<> M) {
     this->M = M.to_echelon_form(&pivot_cols);
@@ -75,6 +77,45 @@ void REFMatrix::reduce(bit::vector<>& v, bit::vector<>* coeffs) const {
             }
         });
         return;
+    }
+}
+
+ReduceResult REFMatrix::partial_reduce(bit::vector<>& v) const {
+    while (true) {
+        std::size_t f = v.first_set();
+        if (f == bit::vector<>::npos) {
+            return ReduceResult::Zero;
+        }
+        if (!pivot_cols.element(f)) {
+            if (f == M.cols() - 1) {
+                return ReduceResult::One;
+            }
+            return ReduceResult::Nontrivial;
+        }
+        v ^= M.row(col_to_row[f]);
+    }
+}
+
+// Requires extra to be already partial reduced by the matrix (and may be 0 = 1).
+ReduceResult REFMatrix::partial_reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) const {
+    std::size_t extra_col = extra.first_set();
+    while (true) {
+        std::size_t f = v.first_set();
+        if (f == bit::vector<>::npos) {
+            return ReduceResult::Zero;
+        }
+        if (!pivot_cols.element(f)) {
+            if (f == extra_col) {
+                v ^= extra;
+                continue;
+            } else if (f == M.cols() - 1) {
+                return ReduceResult::One;
+            } else {
+                return ReduceResult::Nontrivial;
+            }
+        }
+        assert(pivot_cols.element(f));
+        v ^= M.row(col_to_row[f]);
     }
 }
 

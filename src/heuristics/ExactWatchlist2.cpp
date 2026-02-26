@@ -11,61 +11,117 @@ ExactWatchlist2::ExactWatchlist2(std::size_t num_vars, ExactWatchlist2Config con
     : ClauseSelector(),
       num_vars(num_vars),
       config(config),
-      level_stamp_by_index(1, 1),
-      next_level_stamp(2),
       cells_by_row(),
-      row_epoch(),
       row_structural_placeholder(),
       active_next(),
       active_prev(),
       active_bucket(),
       bucket_head(num_vars + 2),
       pending(),
-      pending_set(),
+      pending_unit_set(),
+      pending_watch_set(),
       unit_clauses(),
-      working_eqn(num_vars + 1) {
+      working_eqn(num_vars),
+      working_eqn2(num_vars) {
     clear_active_buckets();
 }
 
-void ExactWatchlist2::push_pending(ClauseId id) {
-    if (dedup_enabled()) {
-        if (id >= pending_set.size()) {
-            pending_set.resize(id + 1, false);
-        }
-        if (pending_set[id]) {
-            return;
-        }
-        pending_set[id] = true;
+WatchType ExactWatchlist2::normalize_nonunit_hint(WatchType wt) const {
+    switch (wt) {
+        case WatchType::Zero:
+            return WatchType::Zero;
+        case WatchType::One:
+        case WatchType::Sum:
+            return WatchType::One;
     }
-    pending.push_back(id);
+    assert(false && "unreachable WatchType");
+    return WatchType::One;
 }
 
-ClauseId ExactWatchlist2::pop_pending() {
-    ClauseId id;
+std::size_t ExactWatchlist2::watch_pending_key(ClauseId id, WatchType wt) const {
+    WatchType norm = normalize_nonunit_hint(wt);
+    assert(norm == WatchType::Zero || norm == WatchType::One);
+    return 2 * id + (norm == WatchType::One ? 1 : 0);
+}
+
+void ExactWatchlist2::push_pending_unit(ClauseId id) {
+    if (id >= pending_unit_set.size()) {
+        pending_unit_set.resize(id + 1, false);
+    }
+    if (pending_unit_set[id]) {
+        return;
+    }
+    pending_unit_set[id] = true;
+    pending.push_back(ClauseSelection{id, std::nullopt});
+}
+
+void ExactWatchlist2::push_pending_watch(ClauseId id, WatchType wt) {
+    assert(id < clauses.size());
+    assert(clauses[id].rows() > 1);
+    WatchType norm = normalize_nonunit_hint(wt);
+    std::size_t key = watch_pending_key(id, norm);
+    if (key >= pending_watch_set.size()) {
+        pending_watch_set.resize(key + 1, false);
+    }
+    if (pending_watch_set[key]) {
+        return;
+    }
+    pending_watch_set[key] = true;
+    pending.push_back(ClauseSelection{id, norm});
+}
+
+void ExactWatchlist2::push_pending_from_zero_row(EW2WatchedId wid) {
+    ClauseId id = wid.clauseId();
+    if (clauses[id].rows() <= 1) {
+        push_pending_unit(id);
+        return;
+    }
+    push_pending_watch(id, wid.watchType());
+}
+
+ClauseSelection ExactWatchlist2::pop_pending() {
+    ClauseSelection out;
     if (config.discipline == PendingDiscipline::fifo_queue) {
-        id = pending.front();
+        out = pending.front();
         pending.pop_front();
     } else {
-        id = pending.back();
+        out = pending.back();
         pending.pop_back();
     }
 
-    if (dedup_enabled()) {
-        assert(id < pending_set.size());
-        pending_set[id] = false;
+    if (out.zero_watch_hint.has_value()) {
+        assert(*out.zero_watch_hint == WatchType::Zero || *out.zero_watch_hint == WatchType::One);
+        std::size_t key = watch_pending_key(out.id, *out.zero_watch_hint);
+        assert(key < pending_watch_set.size());
+        pending_watch_set[key] = false;
+        assert(out.id < clauses.size());
+        assert(clauses[out.id].rows() > 1);
+    } else {
+        assert(out.id < clauses.size());
+        assert(clauses[out.id].rows() <= 1);
+        assert(out.id < pending_unit_set.size());
+        pending_unit_set[out.id] = false;
     }
-    return id;
+    return out;
 }
 
 void ExactWatchlist2::ensure_row_capacity(EW2WatchedId wid) {
-    std::size_t idx = static_cast<std::size_t>(wid);
-    if (cells_by_row.size() <= idx) {
-        cells_by_row.resize(idx + 1);
-        row_epoch.resize(idx + 1, 0);
-        row_structural_placeholder.resize(idx + 1, false);
-        active_next.resize(idx + 1);
-        active_prev.resize(idx + 1);
-        active_bucket.resize(idx + 1, invalid_bucket);
+    ensure_row_capacity_up_to(static_cast<std::size_t>(wid));
+}
+
+void ExactWatchlist2::ensure_row_capacity_up_to(std::size_t max_idx) {
+    if (cells_by_row.size() <= max_idx) {
+        std::size_t old_size = cells_by_row.size();
+        cells_by_row.resize(max_idx + 1);
+        row_structural_placeholder.resize(max_idx + 1, false);
+        active_next.resize(max_idx + 1);
+        active_prev.resize(max_idx + 1);
+        active_bucket.resize(max_idx + 1, invalid_bucket);
+
+        // A small reserve amortizes cache-column growth without much footprint.
+        for (std::size_t i = old_size; i <= max_idx; ++i) {
+            cells_by_row[i].reserve(8);
+        }
     }
 }
 
@@ -81,11 +137,7 @@ bool ExactWatchlist2::cell_is_valid(EW2WatchedId wid, std::size_t level) const {
     if (level >= cells_by_row[idx].size()) {
         return false;
     }
-    const CacheCell& cell = cells_by_row[idx][level];
-    return cell.computed &&
-           cell.epoch == row_epoch[idx] &&
-           level < level_stamp_by_index.size() &&
-           cell.level_stamp == level_stamp_by_index[level];
+    return cells_by_row[idx][level].valid;
 }
 
 void ExactWatchlist2::partial_reduce_in_place(Equation& eqn, const algebra::RowSpace& span) const {
@@ -129,27 +181,27 @@ ExactWatchlist2::CacheCell* ExactWatchlist2::ensure_cell(EW2WatchedId wid, std::
     }
 
     if (cells_by_row[idx].size() <= level) {
+        std::size_t old_size = cells_by_row[idx].size();
         cells_by_row[idx].resize(level + 1);
+        for (std::size_t i = old_size; i <= level; ++i) {
+            cells_by_row[idx][i].eqn.resize(num_vars + 1);
+            cells_by_row[idx][i].valid = false;
+        }
     }
 
     CacheCell& cell = cells_by_row[idx][level];
-    if (cell.computed &&
-        cell.epoch == row_epoch[idx] &&
-        level < level_stamp_by_index.size() &&
-        cell.level_stamp == level_stamp_by_index[level]) {
+    if (cell.valid) {
         return &cell;
     }
 
     assert(level < trail.size());
     const Clause& clause = clauses[wid.clauseId()];
     if (cell.eqn.size() != clause.cols()) {
-        cell.eqn = Equation(clause.cols() - 1);
+        cell.eqn.resize(clause.cols());
     }
     build_base_expression(wid, cell.eqn);
     partial_reduce_in_place(cell.eqn, trail[level].span);
-    cell.epoch = row_epoch[idx];
-    cell.level_stamp = level_stamp_by_index[level];
-    cell.computed = true;
+    cell.valid = true;
     return &cell;
 }
 
@@ -229,26 +281,35 @@ void ExactWatchlist2::rebuild_active_from_level(const Trail& trail) {
 
 void ExactWatchlist2::sync_current_level_rebuild_only(const Trail& trail) {
     current_level = trail.size() - 1;
-    if (level_stamp_by_index.size() <= current_level) {
-        level_stamp_by_index.resize(current_level + 1, 0);
-    }
-    level_stamp_by_index[current_level] = next_level_stamp++;
-    // Materialize the current column first, then rebuild active buckets.
+    discard_levels_after(current_level);
+    clear_active_buckets();
+    // Materialize the current column and rebuild active buckets in one pass.
     for (std::size_t i = 0; i < cells_by_row.size(); ++i) {
         EW2WatchedId wid{i};
-        (void)ensure_cell(wid, current_level, trail);
+        CacheCell* cell = ensure_cell(wid, current_level, trail);
+        if (cell == nullptr) {
+            continue;
+        }
+        insert_active(wid, classify_bucket(cell->eqn));
     }
-    rebuild_active_from_level(trail);
 #if defined(PARITY_ENABLE_EXPENSIVE_SELECTOR_CHECKS)
     assert_active_membership_matches_current_level(trail);
 #endif
+}
+
+void ExactWatchlist2::discard_levels_after(std::size_t level) {
+    for (auto& row : cells_by_row) {
+        for (std::size_t i = level + 1; i < row.size(); ++i) {
+            row[i].valid = false;
+        }
+    }
 }
 
 void ExactWatchlist2::seed_pending_from_zero_bucket() {
     // Conservative backjump/restart seeding: any currently-zero watched expression may need
     // reevaluation under the restored trail, even if it was already examined deeper.
     for (EW2WatchedId wid = bucket_head[zero_bucket()]; wid.has_value(); wid = active_next[wid]) {
-        push_pending(wid.clauseId());
+        push_pending_from_zero_row(wid);
     }
 }
 
@@ -262,16 +323,13 @@ void ExactWatchlist2::on_level_change_incremental(const Trail& trail) {
     // sync_current_level_rebuild_only() from add_asserting_clause().
     assert(new_level == current_level + 1);
     current_level = new_level;
-    if (level_stamp_by_index.size() <= current_level) {
-        level_stamp_by_index.resize(current_level + 1, 0);
-    }
-    level_stamp_by_index[current_level] = next_level_stamp++;
 }
 
 void ExactWatchlist2::invalidate_row(EW2WatchedId wid) {
     ensure_row_capacity(wid);
-    std::size_t idx = static_cast<std::size_t>(wid);
-    ++row_epoch[idx];
+    for (CacheCell& cell : cells_by_row[static_cast<std::size_t>(wid)]) {
+        cell.valid = false;
+    }
 }
 
 void ExactWatchlist2::refresh_watched_row_now(EW2WatchedId wid, const Trail& trail) {
@@ -284,39 +342,70 @@ void ExactWatchlist2::refresh_watched_row_now(EW2WatchedId wid, const Trail& tra
     std::size_t bucket = classify_bucket(cell->eqn);
     insert_active(wid, bucket);
     if (bucket == zero_bucket()) {
-        push_pending(wid.clauseId());
+        push_pending_from_zero_row(wid);
+    }
+}
+
+void ExactWatchlist2::enqueue_clause_watch_tasks_now(ClauseId id, const Trail& trail) {
+    assert(id < clauses.size());
+    const Clause& clause = clauses[id];
+    if (clause.rows() <= 1) {
+        push_pending_unit(id);
+        return;
+    }
+
+    working_eqn.unsafe_copy(clause.row(clause.watched0));
+    working_eqn2.unsafe_copy(clause.row(clause.watched1));
+    trail.span().reduce(working_eqn);
+    trail.span().reduce(working_eqn2);
+
+    if (working_eqn.none()) {
+        push_pending_watch(id, WatchType::Zero);
+    }
+    if (working_eqn2.none() || working_eqn == working_eqn2) {
+        push_pending_watch(id, WatchType::One);
     }
 }
 
 void ExactWatchlist2::append_clause_rows(const Clause& clause, bool enqueue_if_unit) {
     ClauseId id = clauses.size();
     clauses.push_back(clause);
+    ensure_row_capacity_up_to(3 * id + 2);
 
     for (WatchType wt : {WatchType::Zero, WatchType::One, WatchType::Sum}) {
         EW2WatchedId wid{id, wt};
-        ensure_row_capacity(wid);
         std::size_t idx = static_cast<std::size_t>(wid);
         row_structural_placeholder[idx] = (clause.rows() <= 1);
-        row_epoch[idx] = 0;
         cells_by_row[idx].clear();
         active_next[idx] = EW2WatchedId();
         active_prev[idx] = EW2WatchedId();
         active_bucket[idx] = invalid_bucket;
     }
 
-    if (pending_set.size() <= id) {
-        pending_set.resize(id + 1, false);
+    if (pending_unit_set.size() <= id) {
+        pending_unit_set.resize(id + 1, false);
+    }
+    if (pending_watch_set.size() < 2 * (id + 1)) {
+        pending_watch_set.resize(2 * (id + 1), false);
     }
 
     if (clause.rows() <= 1) {
         unit_clauses.push_back(id);
         if (enqueue_if_unit) {
-            push_pending(id);
+            push_pending_unit(id);
         }
     }
 }
 
 std::optional<ClauseId> ExactWatchlist2::next() {
+    auto sel = next_with_hint();
+    if (!sel.has_value()) {
+        return std::nullopt;
+    }
+    return sel->id;
+}
+
+std::optional<ClauseSelection> ExactWatchlist2::next_with_hint() {
     if (pending.empty()) {
         return std::nullopt;
     }
@@ -337,12 +426,10 @@ void ExactWatchlist2::add_starting_clause(const Clause& clause) {
             }
             CacheCell& cell = cells_by_row[wid][0];
             if (cell.eqn.size() != clause.cols()) {
-                cell.eqn = Equation(clause.cols() - 1);
+                cell.eqn.resize(clause.cols());
             }
             build_base_expression(wid, cell.eqn);
-            cell.epoch = row_epoch[wid];
-            cell.level_stamp = level_stamp_by_index[0];
-            cell.computed = true;
+            cell.valid = true;
             insert_active(wid, classify_bucket(cell.eqn));
         }
     }
@@ -350,18 +437,18 @@ void ExactWatchlist2::add_starting_clause(const Clause& clause) {
 
 void ExactWatchlist2::add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t /*jumpable_levels*/) {
     append_clause_rows(clause, false);
+    ClauseId asserting_id = clauses.size() - 1;
 
     pending.clear();
-    if (dedup_enabled()) {
-        std::fill(pending_set.begin(), pending_set.end(), false);
-    }
+    std::fill(pending_unit_set.begin(), pending_unit_set.end(), false);
+    std::fill(pending_watch_set.begin(), pending_watch_set.end(), false);
     for (ClauseId id : unit_clauses) {
-        push_pending(id);
+        push_pending_unit(id);
     }
-    push_pending(clauses.size() - 1);
 
     sync_current_level_rebuild_only(trail);
     seed_pending_from_zero_bucket();
+    enqueue_clause_watch_tasks_now(asserting_id, trail);
 }
 
 void ExactWatchlist2::update_with_new_equation(const Equation& eqn, const Trail& trail) {
@@ -397,7 +484,7 @@ void ExactWatchlist2::update_with_new_equation(const Equation& eqn, const Trail&
             std::size_t new_bucket = classify_bucket(cell->eqn);
             insert_active(head, new_bucket);
             if (new_bucket == zero_bucket()) {
-                push_pending(head.clauseId());
+                push_pending_from_zero_row(head);
             }
         }
 

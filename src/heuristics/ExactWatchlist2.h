@@ -17,14 +17,8 @@ enum class PendingDiscipline {
     fifo_queue
 };
 
-enum class PendingDedupPolicy {
-    dedup,
-    allow_duplicates
-};
-
 struct ExactWatchlist2Config {
     PendingDiscipline discipline = PendingDiscipline::lifo_stack;
-    PendingDedupPolicy dedup = PendingDedupPolicy::dedup;
 };
 
 /// @brief Encoded identifier for a watched expression row in ExactWatchlist2.
@@ -51,9 +45,7 @@ class ExactWatchlist2 : public ClauseSelector {
 private:
     struct CacheCell {
         Equation eqn;
-        std::size_t epoch = 0;
-        std::uint64_t level_stamp = 0;
-        bool computed = false;
+        bool valid = false;
     };
 
     static constexpr std::size_t invalid_bucket = std::numeric_limits<std::size_t>::max();
@@ -61,12 +53,9 @@ private:
     std::size_t num_vars;
     ExactWatchlist2Config config;
     std::size_t current_level = 0;
-    std::vector<std::uint64_t> level_stamp_by_index;
-    std::uint64_t next_level_stamp = 1;
 
     // Row-wise cache indexed by WatchedId then trail level.
     std::vector<std::vector<CacheCell>> cells_by_row;
-    std::vector<std::uint64_t> row_epoch;
     std::vector<bool> row_structural_placeholder;
 
     // Active current-level bucket lists.
@@ -76,23 +65,28 @@ private:
     std::vector<EW2WatchedId> bucket_head;
 
     // Pending clause scheduler.
-    std::deque<ClauseId> pending;
-    std::vector<bool> pending_set;
+    std::deque<ClauseSelection> pending;
+    std::vector<bool> pending_unit_set;
+    std::vector<bool> pending_watch_set;
     std::vector<ClauseId> unit_clauses;
 
     Equation working_eqn;
+    Equation working_eqn2;
 
     std::size_t zero_bucket() const { return num_vars + 1; }
     std::size_t const_bucket() const { return num_vars; }
     std::size_t num_buckets() const { return num_vars + 2; }
 
-    bool dedup_enabled() const { return config.dedup == PendingDedupPolicy::dedup; }
-
-    void push_pending(ClauseId id);
-    ClauseId pop_pending();
+    WatchType normalize_nonunit_hint(WatchType wt) const;
+    std::size_t watch_pending_key(ClauseId id, WatchType wt) const;
+    void push_pending_unit(ClauseId id);
+    void push_pending_watch(ClauseId id, WatchType wt);
+    void push_pending_from_zero_row(EW2WatchedId wid);
+    ClauseSelection pop_pending();
 
     void append_clause_rows(const Clause& clause, bool enqueue_if_unit);
     void ensure_row_capacity(EW2WatchedId wid);
+    void ensure_row_capacity_up_to(std::size_t max_idx);
 
     bool row_is_placeholder(EW2WatchedId wid) const;
     bool cell_is_valid(EW2WatchedId wid, std::size_t level) const;
@@ -108,11 +102,13 @@ private:
     void remove_active(EW2WatchedId wid);
     void rebuild_active_from_level(const Trail& trail);
     void sync_current_level_rebuild_only(const Trail& trail);
+    void discard_levels_after(std::size_t level);
     void seed_pending_from_zero_bucket();
     void on_level_change_incremental(const Trail& trail);
 
     void invalidate_row(EW2WatchedId wid);
     void refresh_watched_row_now(EW2WatchedId wid, const Trail& trail);
+    void enqueue_clause_watch_tasks_now(ClauseId id, const Trail& trail);
 
 // Expensive O(num_clauses) invariant checks are opt-in even in debug builds.
 // Define PARITY_ENABLE_EXPENSIVE_SELECTOR_CHECKS to enable them.
@@ -124,6 +120,7 @@ public:
     explicit ExactWatchlist2(std::size_t num_vars, ExactWatchlist2Config config = {});
 
     std::optional<ClauseId> next() override;
+    std::optional<ClauseSelection> next_with_hint() override;
     void add_starting_clause(const Clause& clause) override;
     void add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t jumpable_levels) override;
     void update_with_new_equation(const Equation& eqn, const Trail& trail) override;

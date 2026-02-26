@@ -368,7 +368,11 @@ def run_kissat_or_cms(
     used_conversion: bool,
     conversion_format: str,
 ) -> Dict[str, str]:
-    proc = run_process([str(bin_path), str(input_file)], timeout_s=timeout_s)
+    cmd = [str(bin_path)]
+    if solver_name == "kissat":
+        cmd.append("--plain")
+    cmd.append(str(input_file))
+    proc = run_process(cmd, timeout_s=timeout_s)
     row = empty_raw_row(file_label, input_format, solver_name, solver_config, backend_input_kind, run_index)
     row["elapsed_wall_s"] = f"{proc.elapsed_wall_s:.6f}"
     row["timeout_s"] = f"{timeout_s:.6f}"

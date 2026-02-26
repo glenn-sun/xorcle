@@ -28,6 +28,7 @@ private:
                                                          const Trail& trail,
                                                          const algebra::Equation& eqn_false,
                                                          heuristics::ClauseId id,
+                                                         std::optional<heuristics::WatchType> zero_watch_hint,
                                                          std::size_t& num_watch_updates);
 
 public:
@@ -47,5 +48,6 @@ public:
         const algebra::Equation& eqn_false,
         std::size_t& num_attempt_props,
         std::size_t& num_watch_updates);
+
 };
 } // namespace search
