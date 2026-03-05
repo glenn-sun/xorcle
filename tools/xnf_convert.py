@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Convert DIMACS-plus (XNF) files to CNF or CNF-XOR.
+Convert DIMACS-plus (XNF) files to CNF, CNF-XOR, or 2-XNF.
 
 CLI usage:
   python3 tools/xnf_convert.py <format> <input.xnf> <output>
-Where <format> is one of: cnf, cnf-xor
+Where <format> is one of: cnf, cnf-xor, 2-xnf
 
 Library usage:
   from tools.xnf_convert import parse_xnf_file, convert_xnf, write_cnf, write_cnf_xor
@@ -13,14 +13,21 @@ Library usage:
 from __future__ import annotations
 
 import argparse
-from typing import Dict, List, Tuple
+from typing import List
 
 import os
 import sys
 
 sys.path.append(os.path.dirname(__file__))
 
-from xnf_lib import parse_xnf_file, convert_xnf_to_cnf, convert_xnf_to_cnf_xor
+from xnf_lib import (
+    parse_xnf_file,
+    convert_xnf_to_cnf,
+    convert_xnf_to_cnf_xor,
+    convert_xnf_to_2xnf,
+    write_cnf,
+    write_xnf,
+)
 
 
 def write_cnf_xor(path: str, nvars: int, cnf_clauses: List[List[int]], xor_clauses: List[List[int]]) -> None:
@@ -41,8 +48,8 @@ def write_cnf_xor(path: str, nvars: int, cnf_clauses: List[List[int]], xor_claus
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Convert XNF (DIMACS-plus) to CNF or CNF-XOR.")
-    parser.add_argument("format", choices=["cnf", "cnf-xor"], help="Output format")
+    parser = argparse.ArgumentParser(description="Convert XNF (DIMACS-plus) to CNF, CNF-XOR, or 2-XNF.")
+    parser.add_argument("format", choices=["cnf", "cnf-xor", "2-xnf"], help="Output format")
     parser.add_argument("input", help="Input XNF file")
     parser.add_argument("output", help="Output file")
     args = parser.parse_args()
@@ -50,11 +57,13 @@ def main() -> int:
     nvars, clauses = parse_xnf_file(args.input)
     if args.format == "cnf":
         cnf, _, total_vars = convert_xnf_to_cnf(nvars, clauses)
-        from xnf_lib import write_cnf
         write_cnf(args.output, total_vars, cnf)
-    else:
+    elif args.format == "cnf-xor":
         cnf, xor, _, total_vars = convert_xnf_to_cnf_xor(nvars, clauses)
         write_cnf_xor(args.output, total_vars, cnf, xor)
+    else:
+        total_vars, clauses_2xnf = convert_xnf_to_2xnf(nvars, clauses)
+        write_xnf(args.output, total_vars, clauses_2xnf)
     return 0
 
 

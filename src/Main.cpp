@@ -2,18 +2,15 @@
 #include <atomic>
 #include <cmath>
 #include <chrono>
-#include <condition_variable>
 #include <ctime>
 #include <filesystem>
 #include <getopt.h>
 #include <iomanip>
 #include <iostream>
-#include <mutex>
 #include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <vector>
 #include "search/Solver.h"
 #include "heuristics/DecisionProcedure.h"
@@ -130,63 +127,6 @@ stats::RunStats run_once(const std::string& filename,
     return out;
 }
 
-/// @brief Run the solver once with a timeout and collect statistics.
-/// @param filename DIMACS file path.
-/// @param dpn Decision procedure to use.
-/// @param csn Clause selector to use.
-/// @param timeout_s Timeout in seconds.
-/// @param proof_path Optional proof output path.
-/// @return RunStats on success; std::nullopt on error.
-std::optional<stats::RunStats> run_once_with_timeout(const std::string& filename,
-                                                     heuristics::DecisionProcedureName dpn,
-                                                     heuristics::ClauseSelectorName csn,
-                                                     heuristics::DecisionPhase phase,
-                                                     const search::RestartConfig& restart_config,
-                                                     std::size_t timeout_s,
-                                                     const std::string& proof_path = {}) {
-    std::optional<stats::RunStats> result;
-    std::exception_ptr err;
-    std::atomic<bool> stop_flag(false);
-    std::mutex mtx;
-    std::condition_variable cv;
-    bool completed = false;
-
-    std::thread task([&] {
-        try {
-            result = run_once(filename, dpn, csn, phase, restart_config, stop_flag, proof_path);
-        } catch (...) {
-            err = std::current_exception();
-        }
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            completed = true;
-        }
-        cv.notify_one();
-    });
-
-    {
-        std::unique_lock<std::mutex> lock(mtx);
-        if (!cv.wait_for(lock, std::chrono::seconds(timeout_s), [&] { return completed; })) {
-            stop_flag = true;
-        }
-    }
-
-    if (task.joinable()) {
-        task.join();
-    }
-
-    if (err) {
-        try {
-            std::rethrow_exception(err);
-        } catch (const std::exception& e) {
-            std::cerr << e.what() << std::endl;
-        }
-        return std::nullopt;
-    }
-
-    return result;
-}
-
 /// @brief Return the current UTC timestamp in ISO-like format.
 std::string utc_timestamp() {
     auto now = std::chrono::system_clock::now();
@@ -215,33 +155,20 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
 int main(int argc, char *argv[]) {
     bool help{false};
     bool verbose{false};
-    uint threads{4};
-    heuristics::DecisionProcedureName dpn{heuristics::DecisionProcedureName::fixed_unit};
+    heuristics::DecisionProcedureName dpn{heuristics::DecisionProcedureName::cvsids};
     heuristics::ClauseSelectorName csn{heuristics::ClauseSelectorName::cyclic};
     heuristics::DecisionPhase phase{heuristics::DecisionPhase::unsat};
-    uint seconds{10};
     StatsMode stats_mode{StatsMode::console};
     std::string stats_file;
     std::string proof_path;
-    uint runs{5};
-    bool all_decproc{false};
-    bool all_clausesel{false};
     search::RestartConfig restart_config{};
-
-    enum OptionId {
-        OPT_THREADS = 1000,
-        OPT_RESTART
-    };
 
     static constexpr struct option long_options[] = {
         {"decision-proc", required_argument, 0, 'd'},
         {"decision-phase", required_argument, 0, 'p'},
         {"stats-file", required_argument, 0, 's'},
         {"clause-selector", required_argument, 0, 'c'},
-        {"timeout", required_argument, 0, 't'},
-        {"threads", required_argument, 0, OPT_THREADS},
-        {"restart", required_argument, 0, OPT_RESTART},
-        {"runs", required_argument, 0, 'r'},
+        {"restart", required_argument, 0, 'r'},
         {"verbose", no_argument, 0, 'v'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
@@ -249,35 +176,26 @@ int main(int argc, char *argv[]) {
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "d:p:s:c:t:r:vh", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "d:p:s:c:r:vh", long_options, &option_index);
         if (option == -1) {
             break;
         }
         switch (option) {
             case 'd': {
                 std::string optarg_str{optarg};
-                if (optarg_str == "all") {
-                    all_decproc = true;
-                } else if (optarg_str == "fixed_unit") {
-                    all_decproc = false;
+                if (optarg_str == "fixed_unit") {
                     dpn = heuristics::DecisionProcedureName::fixed_unit;
                 } else if (optarg_str == "random_clause_sum") {
-                    all_decproc = false;
                     dpn = heuristics::DecisionProcedureName::random_clause_sum;
                 } else if (optarg_str == "vsids_unit") {
-                    all_decproc = false;
                     dpn = heuristics::DecisionProcedureName::vsids_unit; 
                 } else if (optarg_str == "vsids_clause") {
-                    all_decproc = false;
                     dpn = heuristics::DecisionProcedureName::vsids_clause;
                 } else if (optarg_str == "cvsids") {
-                    all_decproc = false;
                     dpn = heuristics::DecisionProcedureName::cvsids;
                 } else if (optarg_str == "berkmin") {
-                    all_decproc = false;
                     dpn = heuristics::DecisionProcedureName::berkmin;
                 } else if (optarg_str == "cbh") {
-                    all_decproc = false;
                     dpn = heuristics::DecisionProcedureName::cbh;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
@@ -304,43 +222,22 @@ int main(int argc, char *argv[]) {
                 break;
             case 'c': {
                 std::string optarg_str{optarg};
-                if (optarg_str == "all") {
-                    all_clausesel = true;
-                } else if (optarg_str == "cyclic") {
-                    all_clausesel = false;
+                if (optarg_str == "cyclic") {
                     csn = heuristics::ClauseSelectorName::cyclic;
                 } else if (optarg_str == "lt_watchlist") {
-                    all_clausesel = false;
                     csn = heuristics::ClauseSelectorName::lt_watchlist;
                 } else if (optarg_str == "exact_watchlist") {
-                    all_clausesel = false;
                     csn = heuristics::ClauseSelectorName::exact_watchlist;
                 } else if (optarg_str == "exact_watchlist2") {
-                    all_clausesel = false;
-                    csn = heuristics::ClauseSelectorName::exact_watchlist2;
+                    // Backward-compatible alias: EW2 was renamed to exact_watchlist.
+                    csn = heuristics::ClauseSelectorName::exact_watchlist;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a clause selector" << std::endl;
                     return 1;
                 }
                 break;
             }
-            case 't':
-                try {
-                    seconds = std::stoul(optarg);
-                } catch (const std::exception& e) {
-                    std::cerr << "Error: Cannot convert '" << optarg << "' to uint" << std::endl;
-                    return 1;
-                }
-                break;
-            case OPT_THREADS:
-                try {
-                    threads = std::stoul(optarg);
-                } catch (const std::exception& e) {
-                    std::cerr << "Error: Cannot convert '" << optarg << "' to uint" << std::endl;
-                    return 1;
-                }
-                break;
-            case OPT_RESTART: {
+            case 'r': {
                 restart_config = search::RestartConfig{};
                 std::string method{optarg};
                 if (method == "none") {
@@ -386,18 +283,6 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             }
-            case 'r':
-                try {
-                    runs = std::stoul(optarg);
-                } catch (const std::exception& e) {
-                    std::cerr << "Error: Cannot convert '" << optarg << "' to uint" << std::endl;
-                    return 1;
-                }
-                if (runs == 0) {
-                    std::cerr << "Error: runs must be >= 1" << std::endl;
-                    return 1;
-                }
-                break;
             case 'v':
                 verbose = true;
                 break;
@@ -413,21 +298,18 @@ int main(int argc, char *argv[]) {
     if (help) {
         std::cout << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
         std::cout << "Options:" << std::endl;
-        std::cout << "  -d, --decision-proc <proc>   Decision procedure (default: fixed_unit)" << std::endl;
-        std::cout << "                               Options: fixed_unit, random_clause_sum, vsids_unit, vsids_clause, cvsids, berkmin, cbh, all" << std::endl;
+        std::cout << "  -d, --decision-proc <proc>   Decision procedure (default: cvsids)" << std::endl;
+        std::cout << "                               Options: fixed_unit, random_clause_sum, vsids_unit, vsids_clause, cvsids, berkmin, cbh" << std::endl;
         std::cout << "  -p, --decision-phase <phase> Decision phase for clause-based decisions (default: unsat)" << std::endl;
         std::cout << "                               Options: unsat, sat, random" << std::endl;
         std::cout << "  -s, --stats-file <path>      CSV output path (implies CSV stats format)" << std::endl;
         std::cout << "  -c, --clause-selector <sel>  Clause selector (default: cyclic)" << std::endl;
-        std::cout << "                               Options: cyclic, lt_watchlist, exact_watchlist, exact_watchlist2, all" << std::endl;
-        std::cout << "  -t, --timeout <s>            Timeout in seconds (default: 10)" << std::endl;
-        std::cout << "      --threads <n>            Number of threads (default: 4)" << std::endl;
-        std::cout << "      --restart <method> [rate] [arg2]" << std::endl;
+        std::cout << "                               Options: cyclic, lt_watchlist, exact_watchlist" << std::endl;
+        std::cout << "  -r, --restart <method> [rate] [arg2]" << std::endl;
         std::cout << "                               Restart policy (default: none)" << std::endl;
         std::cout << "                               none" << std::endl;
         std::cout << "                               geometric [rate_increase>=1.0] [initial_conflicts>=1] (defaults: 1.5, 100)" << std::endl;
         std::cout << "                               luby [unit_conflicts>=1] (default: 100)" << std::endl;
-        std::cout << "  -r, --runs <n>               Runs for nondeterministic settings (random_clause_sum, vsids_clause, cvsids, berkmin, cbh; median selected, default: 5)" << std::endl;
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
         std::cout << "  -h, --help                   Show this help message" << std::endl;
         std::cout << "Notes:" << std::endl;
@@ -455,44 +337,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    const bool input_is_dir = fs::is_directory(input_path);
-    if (!input_is_dir && !fs::is_regular_file(input_path)) {
-        std::cerr << "Error: input is neither a file nor a directory: " << input_path << std::endl;
+    if (!fs::is_regular_file(input_path)) {
+        std::cerr << "Error: input must be a regular file: " << input_path << std::endl;
         return 1;
-    }
-
-    if (!proof_path.empty()) {
-        if (input_is_dir) {
-            std::cerr << "Proof logging requires a single input file (no directory mode)." << std::endl;
-            return 1;
-        }
-        if (all_decproc || all_clausesel) {
-            std::cerr << "Proof logging does not support 'all' decision procedures or clause selectors." << std::endl;
-            return 1;
-        }
-        if (runs != 1) {
-            std::cerr << "Proof logging requires --runs 1." << std::endl;
-            return 1;
-        }
     }
 
     stats_mode = stats_file.empty() ? StatsMode::console : StatsMode::csv;
 
     if (verbose && stats_mode == StatsMode::console) {
         std::cout << "Verbose mode enabled" << std::endl;
-    }
-
-    std::vector<std::string> files;
-
-    if (!input_is_dir) {
-        files.push_back(input_path);
-    } else {
-        for (auto const& entry : fs::recursive_directory_iterator(input_path)) {
-            if (entry.is_regular_file() && entry.path().extension() == ".cnf") {
-                files.push_back(fs::relative(entry.path(), fs::current_path()).string());
-            }
-        }
-        std::sort(files.begin(), files.end());
     }
 
     std::shared_ptr<stats::StatsSink> sink;
@@ -505,113 +358,29 @@ int main(int argc, char *argv[]) {
     const std::string timestamp_utc = utc_timestamp();
     const std::string run_id = run_id_from_timestamp(timestamp_utc);
 
-    std::vector<heuristics::DecisionProcedureName> dp_list;
-    if (all_decproc) {
-        dp_list = {
-            heuristics::DecisionProcedureName::fixed_unit,
-            heuristics::DecisionProcedureName::random_clause_sum,
-            heuristics::DecisionProcedureName::vsids_unit,
-            heuristics::DecisionProcedureName::vsids_clause,
-            heuristics::DecisionProcedureName::cvsids,
-            heuristics::DecisionProcedureName::berkmin,
-            heuristics::DecisionProcedureName::cbh
-        };
-    } else {
-        dp_list = {dpn};
+    const bool deterministic = !stats::is_nondeterministic(dpn);
+    std::vector<stats::RunStats> run_stats;
+    run_stats.reserve(1);
+    try {
+        std::atomic<bool> stop_flag(false);
+        run_stats.push_back(run_once(input_path, dpn, csn, phase, restart_config, stop_flag, proof_path));
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << std::endl;
+        return 1;
     }
 
-    std::vector<heuristics::ClauseSelectorName> cs_list;
-    if (all_clausesel) {
-        cs_list = {
-            heuristics::ClauseSelectorName::cyclic,
-            heuristics::ClauseSelectorName::lt_watchlist,
-            heuristics::ClauseSelectorName::exact_watchlist,
-            heuristics::ClauseSelectorName::exact_watchlist2
-        };
-    } else {
-        cs_list = {csn};
-    }
-
-    /// @brief Unit of work combining an input file and heuristic choices.
-    struct WorkItem {
-        std::string file; ///< Input file path.
-        heuristics::DecisionProcedureName dpn; ///< Decision procedure to run.
-        heuristics::ClauseSelectorName csn; ///< Clause selector to run.
-    };
-
-    std::vector<WorkItem> work_items;
-    work_items.reserve(files.size() * dp_list.size() * cs_list.size());
-    for (const auto& file : files) {
-        for (const auto& dp : dp_list) {
-            for (const auto& cs : cs_list) {
-                work_items.push_back(WorkItem{file, dp, cs});
-            }
-        }
-    }
-
-    std::vector<std::optional<stats::AggregateStats>> results(work_items.size());
-    std::atomic<std::size_t> next_idx{0};
-    
-    // Create worker threads
-    std::vector<std::thread> workers;
-    for (int i = 0; i < threads; ++i) {
-        workers.emplace_back([&] {
-            while (true) {
-                std::size_t idx = next_idx.fetch_add(1);
-                if (idx >= work_items.size()) {
-                    break;
-                }
-
-                const auto& item = work_items[idx];
-                
-                std::size_t runs_requested = stats::is_nondeterministic(item.dpn) ? runs : 1;
-                bool deterministic = !stats::is_nondeterministic(item.dpn);
-                std::vector<stats::RunStats> run_stats;
-                run_stats.reserve(runs_requested);
-
-                for (std::size_t r = 0; r < runs_requested; ++r) {
-                    auto maybe_stats = run_once_with_timeout(
-                        item.file, item.dpn, item.csn, phase, restart_config, seconds, proof_path);
-                    if (!maybe_stats.has_value()) {
-                        run_stats.clear();
-                        break;
-                    }
-                    run_stats.push_back(*maybe_stats);
-                }
-
-                if (run_stats.empty()) {
-                    continue;
-                }
-
-                stats::AggregateMeta meta;
-                meta.run_id = run_id;
-                meta.timestamp_utc = timestamp_utc;
-                meta.file = item.file;
-                meta.decision_procedure = item.dpn;
-                meta.decision_phase = phase;
-                meta.clause_selector = item.csn;
-                meta.threads = threads;
-                meta.timeout_s = seconds;
-                meta.deterministic = deterministic;
-                meta.runs_requested = runs_requested;
-
-                results[idx] = stats::aggregate_runs(meta, run_stats);
-            }
-        });
-    }
-    
-    // Wait for all workers to finish
-    for (auto& worker : workers) {
-        if (worker.joinable()) {
-            worker.join();
-        }
-    }
-
-    for (const auto& result : results) {
-        if (result.has_value()) {
-            sink->log(*result);
-        }
-    }
+    stats::AggregateMeta meta;
+    meta.run_id = run_id;
+    meta.timestamp_utc = timestamp_utc;
+    meta.file = input_path;
+    meta.decision_procedure = dpn;
+    meta.decision_phase = phase;
+    meta.clause_selector = csn;
+    meta.threads = 1;
+    meta.timeout_s = 0;
+    meta.deterministic = deterministic;
+    meta.runs_requested = 1;
+    sink->log(stats::aggregate_runs(meta, run_stats));
 
     return 0;
 }

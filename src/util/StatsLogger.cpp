@@ -46,7 +46,7 @@ void ConsoleStatsSink::log_impl(const AggregateStats& stats) {
     }
     ss << "\n";
 
-    std::cout << ss.str();
+    std::cout << ss.str() << std::flush;
 }
 
 CsvStatsSink::CsvStatsSink(std::string path) : path_(std::move(path)) {

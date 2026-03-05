@@ -85,6 +85,31 @@ def parse_xnf_file(path: str) -> Tuple[int, List[Clause]]:
     return nvars, clauses
 
 
+def negate_equation(eq: Equation) -> Equation:
+    return Equation(vars=eq.vars, rhs=1 - eq.rhs)
+
+
+def xor_compose_equations(lhs: Equation, rhs: Equation) -> Equation:
+    # XOR linerals by parity over variable multiplicities and affine-constant adjustment.
+    parity: Dict[int, int] = {}
+    for v in lhs.vars:
+        parity[v] = parity.get(v, 0) ^ 1
+    for v in rhs.vars:
+        parity[v] = parity.get(v, 0) ^ 1
+    vars_out = sorted(v for v, bit in parity.items() if bit == 1)
+    if not vars_out:
+        raise ValueError("xor composition produced an empty equation")
+    rhs_out = 1 ^ lhs.rhs ^ rhs.rhs
+    return Equation(vars=tuple(vars_out), rhs=rhs_out)
+
+
+def equation_to_token(eq: Equation) -> str:
+    if not eq.vars:
+        raise ValueError("cannot format empty equation")
+    body = "+".join(str(v) for v in eq.vars)
+    return body if eq.rhs == 1 else "-" + body
+
+
 def xor_to_cnf_direct(vars_: Iterable[int], rhs: int) -> List[List[int]]:
     vars_list = list(vars_)
     k = len(vars_list)
@@ -224,3 +249,38 @@ def write_cnf(path: str, nvars: int, clauses: List[List[int]]) -> None:
                 f.write(" ".join(str(l) for l in clause) + " 0\n")
             else:
                 f.write("0\n")
+
+
+def write_xnf(path: str, nvars: int, clauses: List[Clause]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"p cnf {nvars} {len(clauses)}\n")
+        for clause in clauses:
+            if clause.equations:
+                f.write(" ".join(equation_to_token(eq) for eq in clause.equations) + " 0\n")
+            else:
+                f.write("0\n")
+
+
+def convert_xnf_to_2xnf(nvars: int, clauses: List[Clause]) -> Tuple[int, List[Clause]]:
+    next_var = nvars
+    out: List[Clause] = []
+
+    for clause in clauses:
+        current = list(clause.equations)
+        while len(current) > 2:
+            l1 = current[0]
+            l2 = current[1]
+            rest = current[2:]
+
+            next_var += 1
+            yi = Equation(vars=(next_var,), rhs=1)
+
+            current = [yi] + rest
+            out.append(Clause(equations=[yi, negate_equation(l2)]))
+
+            yi_xor_l1 = xor_compose_equations(yi, l1)
+            out.append(Clause(equations=[negate_equation(yi_xor_l1), l2]))
+
+        out.append(Clause(equations=current))
+
+    return next_var, out

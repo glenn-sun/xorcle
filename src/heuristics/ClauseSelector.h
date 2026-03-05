@@ -22,6 +22,7 @@ enum class WatchType {
 };
 
 /// @brief A clause selected for propagation, optionally with a zero-watch hint.
+/// For non-unit clauses, selectors may return `Zero`, `One`, or `Sum`.
 struct ClauseSelection {
     ClauseId id;
     std::optional<WatchType> zero_watch_hint;
@@ -31,8 +32,7 @@ struct ClauseSelection {
 enum class ClauseSelectorName {
     cyclic,          ///< Simple cyclic iteration.
     lt_watchlist,    ///< Leading-term watchlist.
-    exact_watchlist, ///< Exact watchlist with reduced equations.
-    exact_watchlist2 ///< Level-indexed exact watchlist with partial reductions.
+    exact_watchlist  ///< Exact watchlist with lazy reduced-watch processing.
 };
 
 /// @brief Base interface for selecting clauses to attempt propagation.

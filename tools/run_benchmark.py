@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -44,6 +45,16 @@ RAW_CSV_FIELDS = [
     "error_message",
 ]
 
+SOLVER_CHOICES = (
+    "xorcle_0_1",
+    "2xornado",
+    "xorricane",
+    "kissat_plain",
+    "kissat_default",
+    "cryptominisat",
+)
+XORCLE_PUBLIC_NAME = "Xorcle 0.1"
+
 
 @dataclass
 class ProcRun:
@@ -76,7 +87,7 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
     main_argv, solver_passthrough = split_main_and_solver_args(argv)
     root = repo_root()
     parser = argparse.ArgumentParser(
-        description="Benchmark parity-sat-cpp vs Kissat and CryptoMiniSAT on CNF or XNF inputs."
+        description="Benchmark parity-sat-cpp and external SAT solvers on CNF or XNF inputs."
     )
     parser.add_argument("input_path", help="Input file or directory")
     parser.add_argument("-i", "--input-format", required=True, metavar="{cnf,xnf}")
@@ -85,25 +96,26 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
         "-t",
         "--timeout",
         type=float,
-        default=10.0,
-        help="Timeout in seconds for kissat and CryptoMiniSAT (default: 10.0)",
+        default=5.0,
+        help="Timeout in seconds for all solver runs (default: 5.0)",
     )
-    parser.add_argument("-b", "--solver-bin", default=str(root / "bin" / "main"))
+    parser.add_argument("-b", "--solver-bin", default=str(root / "bin" / "main-release"))
     parser.add_argument("-k", "--kissat-bin", default=str(root / "external" / "kissat"))
     parser.add_argument("-m", "--cms-bin", default=str(root / "external" / "cryptominisat5"))
+    parser.add_argument("--2xornado-bin", dest="xornado_bin", default=str(root / "external" / "2xornado"))
+    parser.add_argument("--xorricane-bin", default=str(root / "external" / "xorricane"))
     parser.add_argument("-c", "--csv", dest="csv_path", default="", help="Optional CSV path for raw benchmark rows")
-    parser.add_argument("-l", "--lift", type=int, default=None, help="Lift CNF to XNF using XORs of K fresh vars")
     parser.add_argument(
-        "-w",
-        "--write-lifted-xnf",
-        action="store_true",
-        help="When using --lift, write lifted XNF beside input as *_xnf.cnf",
+        "--kissat-mode",
+        choices=["plain", "default", "both"],
+        default="plain",
+        help="Kissat run mode: --plain only, default mode only, or both (default: plain)",
     )
     parser.add_argument(
         "-e",
         "--exp-cnf",
         action="store_true",
-        help="For XNF inputs, also benchmark naive no-new-vars exponential CNF encoding (including my solver)",
+        help=f"For XNF inputs, also benchmark naive no-new-vars exponential CNF encoding (including {XORCLE_PUBLIC_NAME})",
     )
     parser.add_argument(
         "-g",
@@ -111,6 +123,24 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
         action="store_true",
         default=True,
         help="Continue after per-file/per-solver errors (default behavior)",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=4,
+        help="Number of files to benchmark concurrently (default: 4)",
+    )
+    parser.add_argument(
+        "--solvers",
+        nargs="+",
+        choices=SOLVER_CHOICES,
+        default=list(SOLVER_CHOICES),
+        help="Subset of solver routes to execute",
+    )
+    parser.add_argument(
+        "--saveconverted",
+        action="store_true",
+        help="Persist converted CNF/CNF-XOR/2-XNF files under tests/converted/<type>/.",
     )
     args = parser.parse_args(main_argv)
 
@@ -124,30 +154,25 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
 
     if args.repeat < 1:
         parser.error("--repeat must be >= 1")
+    if args.jobs < 1:
+        parser.error("--jobs must be >= 1")
     if args.timeout <= 0:
         parser.error("--timeout must be > 0")
-    if args.lift is not None:
-        if args.lift < 1:
-            parser.error("--lift must be >= 1")
-        if args.input_format != "cnf":
-            parser.error("--lift is only valid with --input-format cnf")
-    elif args.write_lifted_xnf:
-        parser.error("--write-lifted-xnf requires --lift")
-    if args.exp_cnf and not (args.input_format == "xnf" or args.lift is not None):
-        parser.error("--exp-cnf requires XNF input (or --lift on CNF input)")
+    if args.exp_cnf and args.input_format != "xnf":
+        parser.error("--exp-cnf requires --input-format xnf")
 
     validate_solver_passthrough(solver_passthrough, parser)
     return args, solver_passthrough
 
 
 def validate_solver_passthrough(tokens: Sequence[str], parser: argparse.ArgumentParser) -> None:
-    reserved_exact = {"--stats-file", "-s", "--runs", "-r", "--help", "-h"}
-    reserved_prefix = ("--stats-file=", "--runs=")
+    reserved_exact = {"--stats-file", "-s", "--help", "-h"}
+    reserved_prefix = ("--stats-file=",)
     for tok in tokens:
         if tok in reserved_exact or any(tok.startswith(pfx) for pfx in reserved_prefix):
             parser.error(
                 f"Solver pass-through contains reserved flag '{tok}'. "
-                "The benchmark script manages --stats-file and --runs, and blocks --help."
+                "The benchmark script manages --stats-file and blocks --help."
             )
     # Intentionally not attempting to validate arbitrary positional solver args here.
     # The solver's option surface may evolve and the script supports arbitrary pass-through flags.
@@ -234,7 +259,7 @@ def parse_solver_status_and_time_from_console(output: str) -> tuple[Optional[str
     return status, t_s
 
 
-def parse_my_solver_csv(csv_path: Path) -> tuple[Optional[str], Optional[float], str]:
+def parse_xorcle_csv(csv_path: Path) -> tuple[Optional[str], Optional[float], str]:
     if not csv_path.exists():
         return None, None, f"missing solver stats CSV: {csv_path}"
     try:
@@ -255,54 +280,6 @@ def parse_my_solver_csv(csv_path: Path) -> tuple[Optional[str], Optional[float],
         except ValueError:
             pass
     return status, t_s, ""
-
-
-def validate_standard_cnf_via_xnf_parser(input_file: Path) -> tuple[int, List[XnfClause]]:
-    try:
-        nvars, clauses = parse_xnf_file(str(input_file))
-    except Exception as exc:
-        raise ValueError(f"failed to parse CNF/XNF file for lifting: {exc}") from exc
-
-    for cidx, clause in enumerate(clauses, start=1):
-        for eidx, eq in enumerate(clause.equations, start=1):
-            if len(eq.vars) != 1:
-                raise ValueError(
-                    f"--lift requires standard CNF; found linear/XNF equation with {len(eq.vars)} variables "
-                    f"in clause {cidx}, token {eidx}"
-                )
-    return nvars, clauses
-
-
-def lifted_var_block(v: int, k: int) -> List[int]:
-    start = (v - 1) * k + 1
-    return list(range(start, start + k))
-
-
-def lifted_token_from_unary_equation(var: int, rhs: int, k: int) -> str:
-    block = lifted_var_block(var, k)
-    body = "+".join(str(x) for x in block)
-    if rhs == 1:
-        return body
-    return "-" + body
-
-
-def write_lifted_xnf(path: Path, orig_nvars: int, clauses: Sequence[XnfClause], k: int) -> None:
-    lifted_nvars = orig_nvars * k
-    with path.open("w", encoding="utf-8") as f:
-        f.write(f"p cnf {lifted_nvars} {len(clauses)}\n")
-        for clause in clauses:
-            toks: List[str] = []
-            for eq in clause.equations:
-                if len(eq.vars) != 1:
-                    raise ValueError("--lift writer received non-unary equation")
-                toks.append(lifted_token_from_unary_equation(eq.vars[0], eq.rhs, k))
-            f.write((" ".join(toks) + " 0\n") if toks else "0\n")
-
-
-def lifted_output_filename(input_file: Path) -> Path:
-    if input_file.suffix:
-        return input_file.with_name(f"{input_file.stem}_xnf{input_file.suffix}")
-    return input_file.with_name(f"{input_file.name}_xnf")
 
 
 def evaluate_equation(eq: XnfEquation, assignment_map: Dict[int, int]) -> bool:
@@ -353,6 +330,23 @@ def convert_xnf(converter_script: Path, fmt: str, src: Path, dst: Path) -> Optio
     return None
 
 
+def persist_converted_file(*, converted_file: Path, source_input: Path, converted_kind: str) -> Optional[str]:
+    root = repo_root()
+    tests_root = (root / "tests").resolve()
+    source_resolved = source_input.resolve()
+    try:
+        rel = source_resolved.relative_to(tests_root)
+    except ValueError:
+        rel = Path(source_input.name)
+    out_path = root / "tests" / "converted" / converted_kind / rel
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        out_path.write_bytes(converted_file.read_bytes())
+    except Exception as exc:
+        return f"failed to persist converted file '{converted_file}' -> '{out_path}': {exc}"
+    return None
+
+
 def run_kissat_or_cms(
     solver_name: str,
     solver_config: str,
@@ -367,9 +361,10 @@ def run_kissat_or_cms(
     lift_k: Optional[int],
     used_conversion: bool,
     conversion_format: str,
+    kissat_plain: Optional[bool] = None,
 ) -> Dict[str, str]:
     cmd = [str(bin_path)]
-    if solver_name == "kissat":
+    if solver_name == "kissat" and kissat_plain:
         cmd.append("--plain")
     cmd.append(str(input_file))
     proc = run_process(cmd, timeout_s=timeout_s)
@@ -400,7 +395,7 @@ def run_kissat_or_cms(
     return row
 
 
-def run_my_solver(
+def run_xorcle_solver(
     solver_bin: Path,
     input_file: Path,
     solver_passthrough: Sequence[str],
@@ -411,6 +406,7 @@ def run_my_solver(
     used_lift: bool,
     lift_k: Optional[int],
     backend_input_kind: str,
+    timeout_s: float,
     used_conversion: bool = False,
     conversion_format: str = "",
 ) -> Dict[str, str]:
@@ -419,33 +415,36 @@ def run_my_solver(
         *solver_passthrough,
         "--stats-file",
         str(stats_csv_path),
-        "--runs",
-        "1",
         str(input_file),
     ]
-    proc = run_process(cmd, timeout_s=None)
+    proc = run_process(cmd, timeout_s=timeout_s)
     row = empty_raw_row(
         file_label,
         input_format,
-        "my_solver",
-        my_solver_config_name(backend_input_kind),
+        "xorcle_0_1",
+        xorcle_config_name(backend_input_kind),
         backend_input_kind,
         run_index,
     )
     row["elapsed_wall_s"] = f"{proc.elapsed_wall_s:.6f}"
-    row["timeout_s"] = ""
+    row["timeout_s"] = f"{timeout_s:.6f}"
     row["returncode"] = "" if proc.returncode is None else str(proc.returncode)
     row["used_lift"] = "true" if used_lift else "false"
     row["lift_k"] = "" if lift_k is None else str(lift_k)
     row["used_conversion"] = "true" if used_conversion else "false"
     row["conversion_format"] = conversion_format
 
+    if proc.timed_out:
+        row["status"] = "TIMEOUT"
+        row["error_message"] = proc.error_message
+        return row
+
     if proc.error_message:
         row["status"] = "ERROR"
         row["error_message"] = proc.error_message
         return row
 
-    status, parsed_t_s, csv_err = parse_my_solver_csv(stats_csv_path)
+    status, parsed_t_s, csv_err = parse_xorcle_csv(stats_csv_path)
     if status is None:
         fallback_status, fallback_t_s = parse_solver_status_and_time_from_console(proc.combined_output)
         if fallback_status is None:
@@ -559,14 +558,22 @@ def print_summary(summary: Dict[str, Dict[str, object]], total_rows: int) -> Non
     any_inconsistent = False
     any_errors = False
     preferred_order = {
-        "my_solver_cnf": 0,
-        "my_solver_xnf": 0,
-        "my_solver_cnf_exp": 1,
-        "kissat_cnf": 2,
-        "cryptominisat_cnf": 3,
-        "cryptominisat_cnf_xor": 3,
-        "kissat_cnf_exp": 4,
-        "cryptominisat_cnf_exp": 5,
+        "xorcle_0_1_cnf": 0,
+        "xorcle_0_1_xnf": 0,
+        "2xornado_2xnf": 1,
+        "xorricane_xnf": 2,
+        "xorricane_cnf": 2,
+        "xorcle_0_1_cnf_exp": 3,
+        "kissat_plain_cnf": 4,
+        "kissat_default_cnf": 5,
+        "kissat_cnf": 4,
+        "cryptominisat_cnf": 6,
+        "cryptominisat_cnf_xor": 6,
+        "xorricane_cnf_exp": 7,
+        "kissat_plain_cnf_exp": 8,
+        "kissat_default_cnf_exp": 9,
+        "kissat_cnf_exp": 8,
+        "cryptominisat_cnf_exp": 10,
     }
     for file_label in files:
         print(f"\nFile: {file_label}")
@@ -611,28 +618,57 @@ def write_raw_csv(path: Path, rows: List[Dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def my_solver_config_name(backend_input_kind: str) -> str:
+def xorcle_config_name(backend_input_kind: str) -> str:
     if backend_input_kind == "cnf-exp":
-        return "my_solver_cnf_exp"
-    return f"my_solver_{backend_input_kind}"
+        return "xorcle_0_1_cnf_exp"
+    return f"xorcle_0_1_{backend_input_kind}"
 
 
-def external_solver_config_name(solver_name: str, backend_input_kind: str) -> str:
+def external_solver_config_name(solver_name: str, backend_input_kind: str, kissat_plain: Optional[bool] = None) -> str:
     if solver_name == "kissat":
-        return "kissat_cnf_exp" if backend_input_kind == "cnf-exp" else "kissat_cnf"
+        suffix = "cnf_exp" if backend_input_kind == "cnf-exp" else "cnf"
+        if kissat_plain is None:
+            return f"kissat_{suffix}"
+        mode = "plain" if kissat_plain else "default"
+        return f"kissat_{mode}_{suffix}"
     if solver_name == "cryptominisat":
         if backend_input_kind == "cnf-xor":
             return "cryptominisat_cnf_xor"
         if backend_input_kind == "cnf-exp":
             return "cryptominisat_cnf_exp"
         return "cryptominisat_cnf"
-    return f"{solver_name}_{backend_input_kind}"
+    if solver_name == "2xornado":
+        return "2xornado_2xnf"
+    if solver_name == "xorricane":
+        if backend_input_kind == "cnf-exp":
+            return "xorricane_cnf_exp"
+        if backend_input_kind == "xnf":
+            return "xorricane_xnf"
+        return "xorricane_cnf"
+    suffix = backend_input_kind.replace("-", "_")
+    return f"{solver_name}_{suffix}"
+
+
+def selected_kissat_modes(args: argparse.Namespace) -> List[bool]:
+    wants_plain = "kissat_plain" in args.solvers
+    wants_default = "kissat_default" in args.solvers
+    if args.kissat_mode == "plain":
+        return [True] if wants_plain else []
+    if args.kissat_mode == "default":
+        return [False] if wants_default else []
+    modes: List[bool] = []
+    if wants_plain:
+        modes.append(True)
+    if wants_default:
+        modes.append(False)
+    return modes
 
 
 def make_external_error_row(
     file_label: str,
     input_format: str,
     solver_name: str,
+    solver_config: str,
     backend_input_kind: str,
     run_idx: int,
     timeout_s: float,
@@ -646,7 +682,7 @@ def make_external_error_row(
         file_label,
         input_format,
         solver_name,
-        external_solver_config_name(solver_name, backend_input_kind),
+        solver_config,
         backend_input_kind,
         run_idx,
     )
@@ -676,30 +712,33 @@ def benchmark_file(
         used_lift = False
         lift_k: Optional[int] = None
 
-        if args.lift is not None:
-            orig_nvars, lifted_clauses = validate_standard_cnf_via_xnf_parser(file_path)
-            lifted_file = tmpdir_path / "lifted_input.xnf"
-            write_lifted_xnf(lifted_file, orig_nvars, lifted_clauses, args.lift)
-            if args.write_lifted_xnf:
-                persisted_lifted = lifted_output_filename(file_path)
-                write_lifted_xnf(persisted_lifted, orig_nvars, lifted_clauses, args.lift)
-                print(f"Wrote lifted XNF: {persisted_lifted}")
-            effective_input_file = lifted_file
-            effective_input_format = "xnf"
-            used_lift = True
-            lift_k = args.lift
-
         kissat_input = effective_input_file
         cms_input = effective_input_file
+        xornado_input = tmpdir_path / "2xornado_input.cnf"
         kissat_conversion_err = ""
         cms_conversion_err = ""
+        xornado_conversion_err = ""
         kissat_conversion_used = False
         cms_conversion_used = False
+        xornado_conversion_used = False
         kissat_conv_fmt = ""
         cms_conv_fmt = ""
+        xornado_conv_fmt = "2-xnf"
         exp_cnf_enabled = args.exp_cnf and effective_input_format == "xnf"
         exp_cnf_input = tmpdir_path / "exp_input.cnf"
         exp_cnf_err = ""
+
+        if "2xornado" in args.solvers:
+            xornado_conversion_err = convert_xnf(converter_script, "2-xnf", effective_input_file, xornado_input) or ""
+            xornado_conversion_used = True
+            if args.saveconverted and not xornado_conversion_err:
+                save_err = persist_converted_file(
+                    converted_file=xornado_input,
+                    source_input=effective_input_file,
+                    converted_kind="2_xnf",
+                )
+                if save_err:
+                    xornado_conversion_err = save_err
 
         if effective_input_format == "xnf":
             kissat_input = tmpdir_path / "kissat_input.cnf"
@@ -710,223 +749,373 @@ def benchmark_file(
             cms_conversion_used = True
             kissat_conv_fmt = "cnf"
             cms_conv_fmt = "cnf-xor"
+            if args.saveconverted and not kissat_conversion_err:
+                save_err = persist_converted_file(
+                    converted_file=kissat_input,
+                    source_input=effective_input_file,
+                    converted_kind="cnf",
+                )
+                if save_err:
+                    kissat_conversion_err = save_err
+            if args.saveconverted and not cms_conversion_err:
+                save_err = persist_converted_file(
+                    converted_file=cms_input,
+                    source_input=effective_input_file,
+                    converted_kind="cnf_xor",
+                )
+                if save_err:
+                    cms_conversion_err = save_err
             if exp_cnf_enabled:
                 try:
                     exp_nvars, exp_xnf_clauses = parse_xnf_file(str(effective_input_file))
                     exp_cnf_clauses = convert_xnf_to_cnf_naive(exp_nvars, exp_xnf_clauses)
                     write_cnf(str(exp_cnf_input), exp_nvars, exp_cnf_clauses)
+                    if args.saveconverted:
+                        save_err = persist_converted_file(
+                            converted_file=exp_cnf_input,
+                            source_input=effective_input_file,
+                            converted_kind="cnf_exp",
+                        )
+                        if save_err:
+                            exp_cnf_err = save_err
                 except Exception as exc:
                     exp_cnf_err = f"naive exponential CNF generation failed: {exc}"
 
         for run_idx in range(1, args.repeat + 1):
-            my_stats_csv = tmpdir_path / f"my_solver_stats_{run_idx}.csv"
-            my_row = run_my_solver(
-                solver_bin=Path(args.solver_bin),
-                input_file=effective_input_file,
-                solver_passthrough=solver_passthrough,
-                stats_csv_path=my_stats_csv,
-                file_label=file_label,
-                input_format=args.input_format,
-                run_index=run_idx,
-                used_lift=used_lift,
-                lift_k=lift_k,
-                backend_input_kind=effective_input_format,
-            )
-            file_rows.append(my_row)
+            if "xorcle_0_1" in args.solvers:
+                my_stats_csv = tmpdir_path / f"xorcle_0_1_stats_{run_idx}.csv"
+                my_row = run_xorcle_solver(
+                    solver_bin=Path(args.solver_bin),
+                    input_file=effective_input_file,
+                    solver_passthrough=solver_passthrough,
+                    stats_csv_path=my_stats_csv,
+                    file_label=file_label,
+                    input_format=args.input_format,
+                    run_index=run_idx,
+                    used_lift=used_lift,
+                    lift_k=lift_k,
+                    backend_input_kind=effective_input_format,
+                    timeout_s=args.timeout,
+                )
+                file_rows.append(my_row)
 
-            if kissat_conversion_err:
-                file_rows.append(
-                    make_external_error_row(
-                        file_label=file_label,
-                        input_format=args.input_format,
-                        solver_name="kissat",
-                        backend_input_kind="cnf",
-                        run_idx=run_idx,
-                        timeout_s=args.timeout,
-                        used_lift=used_lift,
-                        lift_k=lift_k,
-                        used_conversion=True,
-                        conversion_format=kissat_conv_fmt,
-                        error_message=kissat_conversion_err,
-                    )
-                )
-            else:
-                file_rows.append(
-                    run_kissat_or_cms(
-                        solver_name="kissat",
-                        solver_config=external_solver_config_name("kissat", "cnf"),
-                        backend_input_kind="cnf",
-                        bin_path=Path(args.kissat_bin),
-                        input_file=kissat_input,
-                        timeout_s=args.timeout,
-                        file_label=file_label,
-                        input_format=args.input_format,
-                        run_index=run_idx,
-                        used_lift=used_lift,
-                        lift_k=lift_k,
-                        used_conversion=kissat_conversion_used,
-                        conversion_format=kissat_conv_fmt,
-                    )
-                )
-
-            cms_backend_kind = "cnf-xor" if effective_input_format == "xnf" else "cnf"
-            if cms_conversion_err:
-                file_rows.append(
-                    make_external_error_row(
-                        file_label=file_label,
-                        input_format=args.input_format,
-                        solver_name="cryptominisat",
-                        backend_input_kind=cms_backend_kind,
-                        run_idx=run_idx,
-                        timeout_s=args.timeout,
-                        used_lift=used_lift,
-                        lift_k=lift_k,
-                        used_conversion=bool(cms_conv_fmt),
-                        conversion_format=cms_conv_fmt,
-                        error_message=cms_conversion_err,
-                    )
-                )
-            else:
-                file_rows.append(
-                    run_kissat_or_cms(
-                        solver_name="cryptominisat",
-                        solver_config=external_solver_config_name("cryptominisat", cms_backend_kind),
-                        backend_input_kind=cms_backend_kind,
-                        bin_path=Path(args.cms_bin),
-                        input_file=cms_input,
-                        timeout_s=args.timeout,
-                        file_label=file_label,
-                        input_format=args.input_format,
-                        run_index=run_idx,
-                        used_lift=used_lift,
-                        lift_k=lift_k,
-                        used_conversion=cms_conversion_used,
-                        conversion_format=cms_conv_fmt,
-                    )
-                )
-
-            if exp_cnf_enabled:
-                if exp_cnf_err:
-                    row = empty_raw_row(
-                        file_label,
-                        args.input_format,
-                        "my_solver",
-                        my_solver_config_name("cnf-exp"),
-                        "cnf-exp",
-                        run_idx,
-                    )
-                    row["status"] = "ERROR"
-                    row["used_lift"] = "true" if used_lift else "false"
-                    row["lift_k"] = "" if lift_k is None else str(lift_k)
-                    row["used_conversion"] = "true"
-                    row["conversion_format"] = "cnf-exp"
-                    row["error_message"] = exp_cnf_err
-                    file_rows.append(row)
+            if "2xornado" in args.solvers:
+                xornado_solver_config = external_solver_config_name("2xornado", "2xnf")
+                if xornado_conversion_err:
                     file_rows.append(
                         make_external_error_row(
                             file_label=file_label,
                             input_format=args.input_format,
-                            solver_name="kissat",
-                            backend_input_kind="cnf-exp",
+                            solver_name="2xornado",
+                            solver_config=xornado_solver_config,
+                            backend_input_kind="2xnf",
                             run_idx=run_idx,
                             timeout_s=args.timeout,
                             used_lift=used_lift,
                             lift_k=lift_k,
                             used_conversion=True,
-                            conversion_format="cnf-exp",
-                            error_message=exp_cnf_err,
-                        )
-                    )
-                    file_rows.append(
-                        make_external_error_row(
-                            file_label=file_label,
-                            input_format=args.input_format,
-                            solver_name="cryptominisat",
-                            backend_input_kind="cnf-exp",
-                            run_idx=run_idx,
-                            timeout_s=args.timeout,
-                            used_lift=used_lift,
-                            lift_k=lift_k,
-                            used_conversion=True,
-                            conversion_format="cnf-exp",
-                            error_message=exp_cnf_err,
+                            conversion_format=xornado_conv_fmt,
+                            error_message=xornado_conversion_err,
                         )
                     )
                 else:
                     file_rows.append(
-                        run_my_solver(
-                            solver_bin=Path(args.solver_bin),
-                            input_file=exp_cnf_input,
-                            solver_passthrough=solver_passthrough,
-                            stats_csv_path=tmpdir_path / f"my_solver_exp_stats_{run_idx}.csv",
+                        run_kissat_or_cms(
+                            solver_name="2xornado",
+                            solver_config=xornado_solver_config,
+                            backend_input_kind="2xnf",
+                            bin_path=Path(args.xornado_bin),
+                            input_file=xornado_input,
+                            timeout_s=args.timeout,
                             file_label=file_label,
                             input_format=args.input_format,
                             run_index=run_idx,
                             used_lift=used_lift,
                             lift_k=lift_k,
-                            backend_input_kind="cnf-exp",
-                            used_conversion=True,
-                            conversion_format="cnf-exp",
+                            used_conversion=xornado_conversion_used,
+                            conversion_format=xornado_conv_fmt,
                         )
                     )
+
+            if "xorricane" in args.solvers:
+                file_rows.append(
+                    run_kissat_or_cms(
+                        solver_name="xorricane",
+                        solver_config=external_solver_config_name("xorricane", effective_input_format),
+                        backend_input_kind=effective_input_format,
+                        bin_path=Path(args.xorricane_bin),
+                        input_file=effective_input_file,
+                        timeout_s=args.timeout,
+                        file_label=file_label,
+                        input_format=args.input_format,
+                        run_index=run_idx,
+                        used_lift=used_lift,
+                        lift_k=lift_k,
+                        used_conversion=False,
+                        conversion_format="",
+                    )
+                )
+
+            for kissat_plain in selected_kissat_modes(args):
+                kissat_solver_config = external_solver_config_name("kissat", "cnf", kissat_plain=kissat_plain)
+                if kissat_conversion_err:
+                    file_rows.append(
+                        make_external_error_row(
+                            file_label=file_label,
+                            input_format=args.input_format,
+                            solver_name="kissat",
+                            solver_config=kissat_solver_config,
+                            backend_input_kind="cnf",
+                            run_idx=run_idx,
+                            timeout_s=args.timeout,
+                            used_lift=used_lift,
+                            lift_k=lift_k,
+                            used_conversion=True,
+                            conversion_format=kissat_conv_fmt,
+                            error_message=kissat_conversion_err,
+                        )
+                    )
+                else:
                     file_rows.append(
                         run_kissat_or_cms(
                             solver_name="kissat",
-                            solver_config=external_solver_config_name("kissat", "cnf-exp"),
-                            backend_input_kind="cnf-exp",
+                            solver_config=kissat_solver_config,
+                            backend_input_kind="cnf",
                             bin_path=Path(args.kissat_bin),
-                            input_file=exp_cnf_input,
+                            input_file=kissat_input,
                             timeout_s=args.timeout,
                             file_label=file_label,
                             input_format=args.input_format,
                             run_index=run_idx,
                             used_lift=used_lift,
                             lift_k=lift_k,
-                            used_conversion=True,
-                            conversion_format="cnf-exp",
+                            used_conversion=kissat_conversion_used,
+                            conversion_format=kissat_conv_fmt,
+                            kissat_plain=kissat_plain,
                         )
                     )
+
+            if "cryptominisat" in args.solvers:
+                cms_backend_kind = "cnf-xor" if effective_input_format == "xnf" else "cnf"
+                if cms_conversion_err:
+                    file_rows.append(
+                        make_external_error_row(
+                            file_label=file_label,
+                            input_format=args.input_format,
+                            solver_name="cryptominisat",
+                            solver_config=external_solver_config_name("cryptominisat", cms_backend_kind),
+                            backend_input_kind=cms_backend_kind,
+                            run_idx=run_idx,
+                            timeout_s=args.timeout,
+                            used_lift=used_lift,
+                            lift_k=lift_k,
+                            used_conversion=bool(cms_conv_fmt),
+                            conversion_format=cms_conv_fmt,
+                            error_message=cms_conversion_err,
+                        )
+                    )
+                else:
                     file_rows.append(
                         run_kissat_or_cms(
                             solver_name="cryptominisat",
-                            solver_config=external_solver_config_name("cryptominisat", "cnf-exp"),
-                            backend_input_kind="cnf-exp",
+                            solver_config=external_solver_config_name("cryptominisat", cms_backend_kind),
+                            backend_input_kind=cms_backend_kind,
                             bin_path=Path(args.cms_bin),
-                            input_file=exp_cnf_input,
+                            input_file=cms_input,
                             timeout_s=args.timeout,
                             file_label=file_label,
                             input_format=args.input_format,
                             run_index=run_idx,
                             used_lift=used_lift,
                             lift_k=lift_k,
-                            used_conversion=True,
-                            conversion_format="cnf-exp",
+                            used_conversion=cms_conversion_used,
+                            conversion_format=cms_conv_fmt,
                         )
                     )
+
+            if exp_cnf_enabled:
+                if exp_cnf_err:
+                    if "xorcle_0_1" in args.solvers:
+                        row = empty_raw_row(
+                            file_label,
+                            args.input_format,
+                            "xorcle_0_1",
+                            xorcle_config_name("cnf-exp"),
+                            "cnf-exp",
+                            run_idx,
+                        )
+                        row["status"] = "ERROR"
+                        row["used_lift"] = "true" if used_lift else "false"
+                        row["lift_k"] = "" if lift_k is None else str(lift_k)
+                        row["used_conversion"] = "true"
+                        row["conversion_format"] = "cnf-exp"
+                        row["error_message"] = exp_cnf_err
+                        file_rows.append(row)
+                    for kissat_plain in selected_kissat_modes(args):
+                        file_rows.append(
+                            make_external_error_row(
+                                file_label=file_label,
+                                input_format=args.input_format,
+                                solver_name="kissat",
+                                solver_config=external_solver_config_name("kissat", "cnf-exp", kissat_plain=kissat_plain),
+                                backend_input_kind="cnf-exp",
+                                run_idx=run_idx,
+                                timeout_s=args.timeout,
+                                used_lift=used_lift,
+                                lift_k=lift_k,
+                                used_conversion=True,
+                                conversion_format="cnf-exp",
+                                error_message=exp_cnf_err,
+                            )
+                        )
+                    if "cryptominisat" in args.solvers:
+                        file_rows.append(
+                            make_external_error_row(
+                                file_label=file_label,
+                                input_format=args.input_format,
+                                solver_name="cryptominisat",
+                                solver_config=external_solver_config_name("cryptominisat", "cnf-exp"),
+                                backend_input_kind="cnf-exp",
+                                run_idx=run_idx,
+                                timeout_s=args.timeout,
+                                used_lift=used_lift,
+                                lift_k=lift_k,
+                                used_conversion=True,
+                                conversion_format="cnf-exp",
+                                error_message=exp_cnf_err,
+                            )
+                        )
+                    if "xorricane" in args.solvers:
+                        file_rows.append(
+                            make_external_error_row(
+                                file_label=file_label,
+                                input_format=args.input_format,
+                                solver_name="xorricane",
+                                solver_config=external_solver_config_name("xorricane", "cnf-exp"),
+                                backend_input_kind="cnf-exp",
+                                run_idx=run_idx,
+                                timeout_s=args.timeout,
+                                used_lift=used_lift,
+                                lift_k=lift_k,
+                                used_conversion=True,
+                                conversion_format="cnf-exp",
+                                error_message=exp_cnf_err,
+                            )
+                        )
+                else:
+                    if "xorcle_0_1" in args.solvers:
+                        file_rows.append(
+                            run_xorcle_solver(
+                                solver_bin=Path(args.solver_bin),
+                                input_file=exp_cnf_input,
+                                solver_passthrough=solver_passthrough,
+                                stats_csv_path=tmpdir_path / f"xorcle_0_1_exp_stats_{run_idx}.csv",
+                                file_label=file_label,
+                                input_format=args.input_format,
+                                run_index=run_idx,
+                                used_lift=used_lift,
+                                lift_k=lift_k,
+                                backend_input_kind="cnf-exp",
+                                timeout_s=args.timeout,
+                                used_conversion=True,
+                                conversion_format="cnf-exp",
+                            )
+                        )
+                    if "xorricane" in args.solvers:
+                        file_rows.append(
+                            run_kissat_or_cms(
+                                solver_name="xorricane",
+                                solver_config=external_solver_config_name("xorricane", "cnf-exp"),
+                                backend_input_kind="cnf-exp",
+                                bin_path=Path(args.xorricane_bin),
+                                input_file=exp_cnf_input,
+                                timeout_s=args.timeout,
+                                file_label=file_label,
+                                input_format=args.input_format,
+                                run_index=run_idx,
+                                used_lift=used_lift,
+                                lift_k=lift_k,
+                                used_conversion=True,
+                                conversion_format="cnf-exp",
+                            )
+                        )
+                    for kissat_plain in selected_kissat_modes(args):
+                        file_rows.append(
+                            run_kissat_or_cms(
+                                solver_name="kissat",
+                                solver_config=external_solver_config_name("kissat", "cnf-exp", kissat_plain=kissat_plain),
+                                backend_input_kind="cnf-exp",
+                                bin_path=Path(args.kissat_bin),
+                                input_file=exp_cnf_input,
+                                timeout_s=args.timeout,
+                                file_label=file_label,
+                                input_format=args.input_format,
+                                run_index=run_idx,
+                                used_lift=used_lift,
+                                lift_k=lift_k,
+                                used_conversion=True,
+                                conversion_format="cnf-exp",
+                                kissat_plain=kissat_plain,
+                            )
+                        )
+                    if "cryptominisat" in args.solvers:
+                        file_rows.append(
+                            run_kissat_or_cms(
+                                solver_name="cryptominisat",
+                                solver_config=external_solver_config_name("cryptominisat", "cnf-exp"),
+                                backend_input_kind="cnf-exp",
+                                bin_path=Path(args.cms_bin),
+                                input_file=exp_cnf_input,
+                                timeout_s=args.timeout,
+                                file_label=file_label,
+                                input_format=args.input_format,
+                                run_index=run_idx,
+                                used_lift=used_lift,
+                                lift_k=lift_k,
+                                used_conversion=True,
+                                conversion_format="cnf-exp",
+                            )
+                        )
 
     return file_rows
 
 
 def default_solver_routes_for_args(args: argparse.Namespace) -> List[tuple[str, str, str]]:
-    effective_is_xnf = args.input_format == "xnf" or args.lift is not None
+    effective_is_xnf = args.input_format == "xnf"
+    routes: List[tuple[str, str, str]] = []
+    kissat_backend_kind = "cnf"
+    kissat_routes = [
+        ("kissat", external_solver_config_name("kissat", kissat_backend_kind, kissat_plain=kissat_plain), kissat_backend_kind)
+        for kissat_plain in selected_kissat_modes(args)
+    ]
     if effective_is_xnf:
-        routes: List[tuple[str, str, str]] = [
-            ("my_solver", "my_solver_xnf", "xnf"),
-            ("kissat", "kissat_cnf", "cnf"),
-            ("cryptominisat", "cryptominisat_cnf_xor", "cnf-xor"),
-        ]
+        if "xorcle_0_1" in args.solvers:
+            routes.append(("xorcle_0_1", "xorcle_0_1_xnf", "xnf"))
+        if "xorricane" in args.solvers:
+            routes.append(("xorricane", external_solver_config_name("xorricane", "xnf"), "xnf"))
+        if "cryptominisat" in args.solvers:
+            routes.append(("cryptominisat", "cryptominisat_cnf_xor", "cnf-xor"))
     else:
-        routes = [
-            ("my_solver", "my_solver_cnf", "cnf"),
-            ("kissat", "kissat_cnf", "cnf"),
-            ("cryptominisat", "cryptominisat_cnf", "cnf"),
-        ]
+        if "xorcle_0_1" in args.solvers:
+            routes.append(("xorcle_0_1", "xorcle_0_1_cnf", "cnf"))
+        if "xorricane" in args.solvers:
+            routes.append(("xorricane", external_solver_config_name("xorricane", "cnf"), "cnf"))
+        if "cryptominisat" in args.solvers:
+            routes.append(("cryptominisat", "cryptominisat_cnf", "cnf"))
+    if "2xornado" in args.solvers:
+        routes.append(("2xornado", external_solver_config_name("2xornado", "2xnf"), "2xnf"))
+    routes.extend(kissat_routes)
+    if args.exp_cnf and effective_is_xnf and "xorcle_0_1" in args.solvers:
+        routes.append(("xorcle_0_1", "xorcle_0_1_cnf_exp", "cnf-exp"))
+    if args.exp_cnf and effective_is_xnf and "xorricane" in args.solvers:
+        routes.append(("xorricane", external_solver_config_name("xorricane", "cnf-exp"), "cnf-exp"))
+    if args.exp_cnf and effective_is_xnf and "cryptominisat" in args.solvers:
+        routes.append(("cryptominisat", "cryptominisat_cnf_exp", "cnf-exp"))
     if args.exp_cnf and effective_is_xnf:
         routes.extend(
             [
-                ("my_solver", "my_solver_cnf_exp", "cnf-exp"),
-                ("kissat", "kissat_cnf_exp", "cnf-exp"),
-                ("cryptominisat", "cryptominisat_cnf_exp", "cnf-exp"),
+                ("kissat", external_solver_config_name("kissat", "cnf-exp", kissat_plain=kissat_plain), "cnf-exp")
+                for kissat_plain in selected_kissat_modes(args)
             ]
         )
     return routes
@@ -943,38 +1132,56 @@ def main(argv: Sequence[str]) -> int:
         return 2
 
     converter_script = repo_root() / "tools" / "xnf_convert.py"
-    if (args.input_format == "xnf" or args.lift is not None) and not converter_script.exists():
+    needs_converter = args.input_format == "xnf" or "2xornado" in args.solvers
+    if needs_converter and not converter_script.exists():
         print(f"Error: converter script not found: {converter_script}", file=sys.stderr)
         return 2
 
     raw_rows: List[Dict[str, str]] = []
     fatal_error = False
-    for file_path in input_files:
-        try:
-            raw_rows.extend(benchmark_file(file_path, args, solver_passthrough, converter_script))
-        except Exception as exc:
-            if not args.keep_going:
-                print(f"Fatal error while benchmarking {file_path}: {exc}", file=sys.stderr)
-                return 2
-            fatal_error = True
-            # Emit ERROR rows for all solvers for this file/run if something unexpected happened.
-            for run_idx in range(1, args.repeat + 1):
-                for solver_name, solver_config, backend_input_kind in default_solver_routes_for_args(args):
-                    row = empty_raw_row(
-                        str(file_path),
-                        args.input_format,
-                        solver_name,
-                        solver_config,
-                        backend_input_kind,
-                        run_idx,
-                    )
-                    row["status"] = "ERROR"
-                    row["error_message"] = f"unexpected benchmark error: {exc}"
-                    raw_rows.append(row)
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        future_to_file = {
+            executor.submit(benchmark_file, file_path, args, solver_passthrough, converter_script): file_path
+            for file_path in input_files
+        }
+        for future in as_completed(future_to_file):
+            file_path = future_to_file[future]
+            try:
+                raw_rows.extend(future.result())
+            except Exception as exc:
+                if not args.keep_going:
+                    print(f"Fatal error while benchmarking {file_path}: {exc}", file=sys.stderr)
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    return 2
+                fatal_error = True
+                # Emit ERROR rows for all solvers for this file/run if something unexpected happened.
+                for run_idx in range(1, args.repeat + 1):
+                    for solver_name, solver_config, backend_input_kind in default_solver_routes_for_args(args):
+                        row = empty_raw_row(
+                            str(file_path),
+                            args.input_format,
+                            solver_name,
+                            solver_config,
+                            backend_input_kind,
+                            run_idx,
+                        )
+                        row["status"] = "ERROR"
+                        row["error_message"] = f"unexpected benchmark error: {exc}"
+                        raw_rows.append(row)
 
     if not raw_rows:
         print("Error: no benchmark rows produced", file=sys.stderr)
         return 2
+
+    raw_rows.sort(
+        key=lambda row: (
+            row.get("file", ""),
+            int(row.get("run_index", "0") or 0),
+            row.get("solver_config", ""),
+            row.get("backend_input_kind", ""),
+            row.get("solver", ""),
+        )
+    )
 
     summary = summarize_rows(raw_rows)
     print_summary(summary, total_rows=len(raw_rows))

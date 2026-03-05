@@ -1,7 +1,6 @@
 #include "heuristics/Factory.h"
 
 #include "heuristics/ExactWatchlist.h"
-#include "heuristics/ExactWatchlist2.h"
 
 namespace heuristics {
 std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureName name,
@@ -45,8 +44,6 @@ std::shared_ptr<ClauseSelector> create_clause_selector(ClauseSelectorName name, 
             return std::make_shared<LTWatchlist>(num_vars);
         case ClauseSelectorName::exact_watchlist:
             return std::make_shared<ExactWatchlist>(num_vars);
-        case ClauseSelectorName::exact_watchlist2:
-            return std::make_shared<ExactWatchlist2>(num_vars);
     }
     return nullptr;
 }

@@ -17,3 +17,5 @@ out.*
 *.cnf
 *.cpython
 *.pyc
+*.csv
+*.png

@@ -13,7 +13,7 @@ release:
 	/usr/bin/g++ -std=c++23 -pthread -O3 -DNDEBUG -Wall -fdiagnostics-show-template-tree -fdiagnostics-color=auto -I . -I src $(shell find src -name '*.cpp') -o bin/main-release
 
 test: all
-	./bin/main tests --decision-proc cvsids
+	./bin/main tests/bphp/bphp-6-5.cnf
 
 clean:
 	rm -rf bin build

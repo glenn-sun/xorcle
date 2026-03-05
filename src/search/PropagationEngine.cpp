@@ -1,6 +1,8 @@
 #include "search/PropagationEngine.h"
 
 #include <cassert>
+#include <sstream>
+#include <stdexcept>
 
 namespace search {
 PropagationEngine::PropagationEngine(std::size_t num_vars)
@@ -21,6 +23,11 @@ std::optional<algebra::Equation> PropagationEngine::unit_prop_one_clause(heurist
 
     // If clause is unit, conflict/propagate are the same
     if (clause.rows() == 1) {
+        if (zero_watch_hint.has_value()) {
+            std::ostringstream msg;
+            msg << "PropagationEngine got non-unit hint for unit clause " << id;
+            throw std::logic_error(msg.str());
+        }
         assert(working_eqn.size() == clause.row(0).size());
         working_eqn.unsafe_copy(clause.row(0));
         std::size_t f = trail.span().partial_reduce(working_eqn);
@@ -59,12 +66,61 @@ std::optional<algebra::Equation> PropagationEngine::unit_prop_one_clause(heurist
     std::array<PropagationTask, 2> tasks;
     std::size_t num_tasks = 0;
 
-    // Deduce which watches to update from hint, or reduce
-    // WatchType::Sum should be converted to WatchType::One by the clause selector
-    if (zero_watch_hint == heuristics::WatchType::Zero) {
-        tasks[num_tasks++] = {&clause.watched0, &clause.watched1, heuristics::WatchType::Zero};
-    } else if (zero_watch_hint == heuristics::WatchType::One) {
-        tasks[num_tasks++] = {&clause.watched1, &clause.watched0, heuristics::WatchType::One};
+    // Deduce which watches to update from hint, or reduce.
+    // Sum hints are normalized here to updating watched1.
+    if (zero_watch_hint.has_value()) {
+        working_eqn.unsafe_copy(clause.row(clause.watched0));
+        working_eqn2.unsafe_copy(clause.row(clause.watched1));
+        trail.span().reduce(working_eqn);
+        trail.span().reduce(working_eqn2);
+        const bool watch0_is_zero = working_eqn.none();
+        const bool watch1_is_zero = working_eqn2.none();
+        const bool sum_is_zero = (working_eqn == working_eqn2);
+        const bool watch0_is_one = (working_eqn.first_set() == constant_col);
+        const bool watch1_is_one = (working_eqn2.first_set() == constant_col);
+
+        const auto throw_bad_hint = [&](const char* why) -> void {
+            std::ostringstream msg;
+            msg << "invalid zero-watch hint " << static_cast<int>(*zero_watch_hint)
+                << " on clause " << id << ": " << why
+                << " [watch0_zero=" << watch0_is_zero
+                << ", watch1_zero=" << watch1_is_zero
+                << ", sum_zero=" << sum_is_zero
+                << ", watch0_one=" << watch0_is_one
+                << ", watch1_one=" << watch1_is_one << "]";
+            throw std::logic_error(msg.str());
+        };
+
+        switch (*zero_watch_hint) {
+            case heuristics::WatchType::Zero:
+                if (!watch0_is_zero) {
+                    throw_bad_hint("hinted Zero trigger is not 0=0");
+                }
+                if (watch1_is_one) {
+                    throw_bad_hint("hinted Zero trigger has companion 0=1");
+                }
+                tasks[num_tasks++] = {&clause.watched0, &clause.watched1, heuristics::WatchType::Zero};
+                break;
+            case heuristics::WatchType::One:
+                if (!watch1_is_zero) {
+                    throw_bad_hint("hinted One trigger is not 0=0");
+                }
+                if (watch0_is_one) {
+                    throw_bad_hint("hinted One trigger has companion 0=1");
+                }
+                tasks[num_tasks++] = {&clause.watched1, &clause.watched0, heuristics::WatchType::One};
+                break;
+            case heuristics::WatchType::Sum:
+                if (!sum_is_zero) {
+                    throw_bad_hint("hinted Sum trigger is not 0=0");
+                }
+                if (watch1_is_one) {
+                    throw_bad_hint("hinted Sum trigger has companion 0=1");
+                }
+                // Sum hint is normalized to updating watched1.
+                tasks[num_tasks++] = {&clause.watched1, &clause.watched0, heuristics::WatchType::One};
+                break;
+        }
     } else {
         working_eqn.unsafe_copy(clause.row(clause.watched0));
         std::size_t f0 = trail.span().partial_reduce(working_eqn);

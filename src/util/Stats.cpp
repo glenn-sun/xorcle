@@ -53,8 +53,6 @@ std::string to_string(heuristics::ClauseSelectorName name) {
             return "lt_watchlist";
         case ClauseSelectorName::exact_watchlist:
             return "exact_watchlist";
-        case ClauseSelectorName::exact_watchlist2:
-            return "exact_watchlist2";
     }
     return "unknown";
 }
