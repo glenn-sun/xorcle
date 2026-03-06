@@ -20,6 +20,8 @@ private:
     /// @brief Convert from pivot column to row index (undefined if column is not pivot).
     std::vector<std::size_t> col_to_row;
 
+    std::size_t num_vars;
+
 protected:
     /// @brief Underlying matrix data in row-echelon form.
     bit::matrix<> M;
@@ -29,6 +31,7 @@ public:
     explicit REFMatrix(std::size_t num_vars) {
         pivot_cols = bit::vector<>::zeros(num_vars + 1);
         col_to_row = std::vector<std::size_t>(num_vars + 1);
+        this->num_vars = num_vars;
     };
 
     /// @brief Construct a REFMatrix from a matrix.

@@ -50,6 +50,7 @@ struct CVsidsState {
 class CVsidsDecision : public DecisionProcedure {
 protected:
     std::shared_ptr<CVsidsState> state; ///< Shared CVsids state.
+    util::ClauseSatisfactionWorkspace clause_sat_ws; ///< Reused clause-satisfaction scratch state.
 
 public:
     /// @brief Construct with optional shared state.

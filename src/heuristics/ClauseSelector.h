@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "algebra/Equation.h"
@@ -45,7 +46,7 @@ protected:
     virtual void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) {}
 
     /// @brief Add a clause to internal storage with no other side effects.
-    virtual void add_clause(const Clause& clause) { clauses.push_back(clause); }
+    virtual void add_clause(Clause clause) { clauses.push_back(std::move(clause)); }
 
 public:
     /// @brief Construct an empty selector.
@@ -71,13 +72,13 @@ public:
     virtual std::optional<ClauseSelection> next_with_hint();
 
     /// @brief Add an initial clause before any propagation or decisions.
-    virtual void add_starting_clause(const Clause& clause);
+    virtual void add_starting_clause(Clause clause);
 
     /// @brief Add a learned asserting clause after backjumping.
     /// @param clause The asserting clause to add.
     /// @param trail Trail after backjumping.
     /// @param jumpable_levels Number of decision levels removed.
-    virtual void add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t jumpable_levels);
+    virtual void add_asserting_clause(Clause clause, const Trail& trail, std::size_t jumpable_levels);
 
     /// @brief Notify selector that a propagation occurred.
     /// @param reduced_eqn The reduced equation that was learned.
@@ -120,7 +121,7 @@ public:
     std::optional<ClauseId> next() override;
 
     /// @brief Add a clause and restart the cycle from it.
-    void add_clause(const Clause& clause) override;
+    void add_clause(Clause clause) override;
 
     /// @brief Reset cycle position when a new equation is learned.
     void update_with_new_equation(const Equation& eqn, const Trail& trail) override;
@@ -161,10 +162,10 @@ public:
     std::optional<ClauseId> next() override;
 
     /// @brief Add a clause and update watchlists.
-    void add_clause(const Clause& clause) override;
+    void add_clause(Clause clause) override;
 
     /// @brief Add an asserting clause and refresh the queue.
-    void add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t jumpable_levels) override;
+    void add_asserting_clause(Clause clause, const Trail& trail, std::size_t jumpable_levels) override;
 
     /// @brief Queue affected clauses when a new equation is learned.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;

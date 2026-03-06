@@ -5,8 +5,25 @@
 
 #include "algebra/Equation.h"
 #include "algebra/RowSpace.h"
+#include "bit/vector.h"
 
 namespace util {
+
+/// @brief Reusable scratch state for clause satisfaction checks.
+struct ClauseSatisfactionWorkspace {
+    std::size_t num_vars;
+
+    algebra::Equation eqn_false;
+    algebra::Equation scratch_false;
+    algebra::Equation scratch_row;
+
+    bit::vector<> pivot_cols;
+    std::vector<std::size_t> col_to_row;
+    std::vector<algebra::Equation> basis_rows;
+    std::size_t basis_size = 0;
+
+    explicit ClauseSatisfactionWorkspace(std::size_t num_vars);
+};
 
 /// @brief Choose a decision from a basis of equations that is not yet implied by the trail.
 /// @pre basis contains num_vars unit equations or an equivalent basis.
@@ -23,7 +40,7 @@ algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
 /// @brief Return true if the clause is already satisfied by the trail.
 bool clause_satisfied_by_trail(const algebra::RowSpace& trail_span,
                                const algebra::Clause& clause,
-                               std::size_t num_vars);
+                               ClauseSatisfactionWorkspace& ws);
 
 /// @brief Sample a non-zero equation from a clause with respect to the trail.
 /// @param clause Clause to sample from.

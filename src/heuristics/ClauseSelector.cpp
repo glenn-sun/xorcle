@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <utility>
 
 namespace heuristics {
 
@@ -21,10 +22,10 @@ std::optional<ClauseSelection> ClauseSelector::next_with_hint() {
     return ClauseSelection{id.value(), std::nullopt};
 }
 
-void ClauseSelector::add_starting_clause(const Clause& clause) { add_clause(clause); }
+void ClauseSelector::add_starting_clause(Clause clause) { add_clause(std::move(clause)); }
 
-void ClauseSelector::add_asserting_clause(const Clause& clause, const Trail& /*trail*/, std::size_t /*jumpable_levels*/) {
-    add_clause(clause);
+void ClauseSelector::add_asserting_clause(Clause clause, const Trail& /*trail*/, std::size_t /*jumpable_levels*/) {
+    add_clause(std::move(clause));
 }
 
 void ClauseSelector::update_with_propagation(const Equation& reduced_eqn, const Trail& trail) {
@@ -60,8 +61,8 @@ std::optional<ClauseId> Cyclic::next() {
     return old_id;
 }
 
-void Cyclic::add_clause(const Clause& clause) {
-    clauses.push_back(clause);
+void Cyclic::add_clause(Clause clause) {
+    clauses.push_back(std::move(clause));
     id = clauses.size() - 1;
     count = 0;
 }
@@ -108,7 +109,7 @@ std::optional<ClauseId> LTWatchlist::next() {
     return get_pop();
 }
 
-void LTWatchlist::add_clause(const Clause& clause) {
+void LTWatchlist::add_clause(Clause clause) {
     if (clause.rows() > 1) {
         by_leading_term[clause.row(clause.watched0).first_set()].push_back(clauses.size());
         by_leading_term[clause.row(clause.watched1).first_set()].push_back(clauses.size());
@@ -118,11 +119,11 @@ void LTWatchlist::add_clause(const Clause& clause) {
         stack_set.push_back(true);
         stack.push_back(clauses.size());
     }
-    clauses.push_back(clause);
+    clauses.push_back(std::move(clause));
 }
 
-void LTWatchlist::add_asserting_clause(const Clause& clause, const Trail& /*unused*/, std::size_t /*unused*/) {
-    add_clause(clause);
+void LTWatchlist::add_asserting_clause(Clause clause, const Trail& /*unused*/, std::size_t /*unused*/) {
+    add_clause(std::move(clause));
 
     stack.clear();
     std::fill(stack_set.begin(), stack_set.end(), false);

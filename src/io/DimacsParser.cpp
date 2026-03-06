@@ -4,6 +4,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <cstdlib>
+#include <utility>
 
 #include "algebra/Equation.h"
 
@@ -31,6 +32,7 @@ ParsedDimacs parse_dimacs_file(const std::string& filename) {
 
     ParsedDimacs parsed;
     parsed.num_vars = num_vars;
+    parsed.clauses.reserve(tmp_num_clauses);
 
     // Read clause lines
     while (std::getline(file, line)) {
@@ -131,7 +133,7 @@ ParsedDimacs parse_dimacs_file(const std::string& filename) {
             clause.add_row(equation);
         }
 
-        parsed.clauses.push_back(clause);
+        parsed.clauses.push_back(std::move(clause));
     }
 
     file.close();

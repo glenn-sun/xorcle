@@ -44,7 +44,7 @@ Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::v
 
     for (ClauseId id : clause_perm) {
         const Clause& clause = clauses[id];
-        if (util::clause_satisfied_by_trail(trail_span, clause, num_vars)) {
+        if (util::clause_satisfied_by_trail(trail_span, clause, clause_sat_ws)) {
             continue;
         }
 
@@ -102,7 +102,7 @@ Equation BerkminDecision::make_decision(const RowSpace& trail_span, const std::v
             continue;
         }
         const Clause& clause = clauses[id];
-        if (util::clause_satisfied_by_trail(trail_span, clause, num_vars)) {
+        if (util::clause_satisfied_by_trail(trail_span, clause, clause_sat_ws)) {
             continue;
         }
         last_decision_clause = id;
@@ -295,7 +295,7 @@ Equation CBHDecision::make_decision(const RowSpace& trail_span, const std::vecto
             continue;
         }
         const Clause& clause = clauses[id];
-        if (util::clause_satisfied_by_trail(trail_span, clause, num_vars)) {
+        if (util::clause_satisfied_by_trail(trail_span, clause, clause_sat_ws)) {
             continue;
         }
         last_decision_clause = id;
@@ -374,7 +374,9 @@ void CVsidsState::reset_activity() {
 }
 
 CVsidsDecision::CVsidsDecision(std::size_t n, std::shared_ptr<CVsidsState> shared_state)
-    : DecisionProcedure(n), state(shared_state ? std::move(shared_state) : std::make_shared<CVsidsState>(n)) {
+    : DecisionProcedure(n),
+      state(shared_state ? std::move(shared_state) : std::make_shared<CVsidsState>(n)),
+      clause_sat_ws(n) {
     reinitialize();
 }
 
@@ -394,7 +396,7 @@ Equation CVsidsDecision::make_decision(const RowSpace& trail_span, const std::ve
             continue;
         }
         const Clause& clause = clauses[id];
-        if (util::clause_satisfied_by_trail(trail_span, clause, num_vars)) {
+        if (util::clause_satisfied_by_trail(trail_span, clause, clause_sat_ws)) {
             state->params.activity_heap.extract_max();
             continue;
         }

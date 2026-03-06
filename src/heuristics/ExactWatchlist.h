@@ -135,7 +135,7 @@ private:
     std::optional<ClauseSelection> process_one_deferred_task();
 
     // Selection semantics helpers.
-    void append_clause_rows(const Clause& clause, bool queue_unit_probe);
+    void append_clause_rows(Clause clause, bool queue_unit_probe);
     void apply_incremental_level_change(const Trail& trail);
     ReducedClauseState reduce_clause_watches_now(ClauseId id, const Trail* trail_or_null);
     bool trigger_is_zero(WatchType wt, const ReducedClauseState& state) const;
@@ -159,8 +159,8 @@ public:
 
     std::optional<ClauseId> next() override;
     std::optional<ClauseSelection> next_with_hint() override;
-    void add_starting_clause(const Clause& clause) override;
-    void add_asserting_clause(const Clause& clause, const Trail& trail, std::size_t jumpable_levels) override;
+    void add_starting_clause(Clause clause) override;
+    void add_asserting_clause(Clause clause, const Trail& trail, std::size_t jumpable_levels) override;
     void update_with_new_equation(const Equation& eqn, const Trail& trail) override;
     void update_with_decision(const Equation& reduced_eqn, const Trail& trail) override;
     void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail) override;

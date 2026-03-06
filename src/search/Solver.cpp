@@ -165,6 +165,7 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
             std::vector<heuristics::ClauseId> reason_ids;
             auto [asserting_clause, jumpable_levels] = find_asserting_clause(
                 trail, proof_logger ? &reason_ids : nullptr);
+            heuristics::ClauseId new_clause_id = clause_sel->get_num_clauses();
 
             dec_proc->update_with_asserting_clause(asserting_clause);
 
@@ -180,14 +181,12 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
                 // Jump back in the trail
                 trail.erase(trail.end() - jumpable_levels, trail.end());
             }
-            clause_sel->add_asserting_clause(asserting_clause, trail, levels_removed);
-
-            heuristics::ClauseId new_clause_id = clause_sel->get_num_clauses() - 1;
             dec_proc->update_with_new_clause(asserting_clause, new_clause_id);
             if (proof_logger) {
                 std::reverse(reason_ids.begin(), reason_ids.end());
                 proof_logger->log_learned_clause(new_clause_id, asserting_clause, reason_ids);
             }
+            clause_sel->add_asserting_clause(std::move(asserting_clause), trail, levels_removed);
         } else {
             // Check for satisfiability
             if (trail.span().rows() == num_vars) {
@@ -250,10 +249,10 @@ Solver Solver::from_DIMACS(const std::string& filename,
     Solver solver{parsed.num_vars, std::move(clause_sel), std::move(dec_proc), std::move(proof_logger),
                   restart_config};
 
-    for (const auto& clause : parsed.clauses) {
-        solver.clause_sel->add_starting_clause(clause);
-        heuristics::ClauseId new_clause_id = solver.clause_sel->get_num_clauses() - 1;
+    for (auto& clause : parsed.clauses) {
+        heuristics::ClauseId new_clause_id = solver.clause_sel->get_num_clauses();
         solver.dec_proc->update_with_new_clause(clause, new_clause_id);
+        solver.clause_sel->add_starting_clause(std::move(clause));
     }
 
     return solver;

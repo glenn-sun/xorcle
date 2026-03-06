@@ -11,6 +11,7 @@
 #include "algebra/Equation.h"
 #include "algebra/RowSpace.h"
 #include "heuristics/Types.h"
+#include "util/DecisionUtils.h"
 
 namespace heuristics {
 using Clause = algebra::Clause;
@@ -148,12 +149,16 @@ private:
     /// @brief Random permutation of clause ids for sampling.
     std::vector<ClauseId> clause_perm;
 
+    /// @brief Reused scratch state for clause satisfaction checks.
+    util::ClauseSatisfactionWorkspace clause_sat_ws;
+
     /// @brief RNG for shuffling and sampling.
     std::mt19937 rng;
 
 public:
     /// @brief Construct with a seeded RNG and initialize state.
-    explicit RandomClauseSum(std::size_t n) : DecisionProcedure(n), rng(std::random_device{}()) { reinitialize(); }
+    explicit RandomClauseSum(std::size_t n)
+        : DecisionProcedure(n), clause_sat_ws(n), rng(std::random_device{}()) { reinitialize(); }
 
     /// @brief Reset unit basis and counters.
     void reinitialize() override;
@@ -232,12 +237,15 @@ private:
     /// @brief Unit equations for fallback decisions.
     std::vector<Equation> unit_eqns;
 
+    /// @brief Reused scratch state for clause satisfaction checks.
+    util::ClauseSatisfactionWorkspace clause_sat_ws;
+
     /// @brief Last clause id used to make a decision.
     std::optional<ClauseId> last_decision_clause;
 
 public:
     /// @brief Construct and initialize state.
-    explicit BerkminDecision(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
+    explicit BerkminDecision(std::size_t n) : DecisionProcedure(n), clause_sat_ws(n) { reinitialize(); }
 
     /// @brief Reset state and counters.
     void reinitialize() override;
@@ -285,6 +293,9 @@ private:
     /// @brief Unit equations for fallback decisions.
     std::vector<Equation> unit_eqns;
 
+    /// @brief Reused scratch state for clause satisfaction checks.
+    util::ClauseSatisfactionWorkspace clause_sat_ws;
+
     /// @brief Last clause id used to make a decision.
     std::optional<ClauseId> last_decision_clause;
 
@@ -299,7 +310,7 @@ private:
 
 public:
     /// @brief Construct and initialize state.
-    explicit CBHDecision(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
+    explicit CBHDecision(std::size_t n) : DecisionProcedure(n), clause_sat_ws(n) { reinitialize(); }
 
     /// @brief Reset state and counters.
     void reinitialize() override;

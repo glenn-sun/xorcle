@@ -4,6 +4,7 @@
 #include <cassert>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 #include "bit/vector.h"
 
@@ -319,15 +320,16 @@ bool ExactWatchlist::row_ref_is_stale(const VersionedRowRef& ref) const {
     return row_version[ref.row_idx] != ref.version;
 }
 
-void ExactWatchlist::append_clause_rows(const Clause& clause, bool queue_unit_probe) {
+void ExactWatchlist::append_clause_rows(Clause clause, bool queue_unit_probe) {
     ClauseId id = clauses.size();
-    clauses.push_back(clause);
+    const bool is_unit = clause.rows() <= 1;
+    clauses.push_back(std::move(clause));
     ensure_row_storage_up_to(3 * id + 2);
 
     for (WatchType wt : {WatchType::Zero, WatchType::One, WatchType::Sum}) {
         WatchRowId row{id, wt};
         std::size_t idx = row_index(row);
-        row_is_unit_placeholder[idx] = static_cast<std::uint8_t>(clause.rows() <= 1);
+        row_is_unit_placeholder[idx] = static_cast<std::uint8_t>(is_unit);
         row_version[idx] = 0;
         cells_by_row[idx].clear();
         row_next_in_bucket[idx] = invalid_row_idx;
@@ -335,7 +337,7 @@ void ExactWatchlist::append_clause_rows(const Clause& clause, bool queue_unit_pr
         row_bucket[idx] = invalid_bucket;
     }
 
-    if (clause.rows() <= 1) {
+    if (is_unit) {
         unit_clauses.push_back(id);
         if (queue_unit_probe) {
             push_unit_task(id);
@@ -576,10 +578,12 @@ std::optional<ClauseSelection> ExactWatchlist::next_with_hint() {
     return std::nullopt;
 }
 
-void ExactWatchlist::add_starting_clause(const Clause& clause) {
-    append_clause_rows(clause, true);
+void ExactWatchlist::add_starting_clause(Clause clause) {
+    append_clause_rows(std::move(clause), true);
 
-    if (clause.rows() <= 1) {
+    const Clause& stored_clause = clauses.back();
+
+    if (stored_clause.rows() <= 1) {
         return;
     }
 
@@ -592,8 +596,8 @@ void ExactWatchlist::add_starting_clause(const Clause& clause) {
             cells_by_row[row][0].eqn.resize(num_vars + 1);
         }
         ReducedCell& cell = cells_by_row[row][0];
-        if (cell.eqn.size() != clause.cols()) {
-            cell.eqn.resize(clause.cols());
+        if (cell.eqn.size() != stored_clause.cols()) {
+            cell.eqn.resize(stored_clause.cols());
         }
         build_base_row_expression(row, cell.eqn);
         cell.valid = true;
@@ -605,11 +609,11 @@ void ExactWatchlist::add_starting_clause(const Clause& clause) {
     }
 }
 
-void ExactWatchlist::add_asserting_clause(const Clause& clause,
+void ExactWatchlist::add_asserting_clause(Clause clause,
                                           const Trail& trail,
                                           std::size_t /*jumpable_levels*/) {
     set_current_trail(trail);
-    append_clause_rows(clause, false);
+    append_clause_rows(std::move(clause), false);
     ClauseId asserting_id = clauses.size() - 1;
 
     work_stack.clear();

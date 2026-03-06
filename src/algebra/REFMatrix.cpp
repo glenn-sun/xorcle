@@ -27,7 +27,7 @@ std::optional<std::size_t> REFMatrix::add_row_get_index(const bit::vector<>& v) 
     // Reduce the vector up to the first irreducible column
     std::size_t row = 0;
     std::size_t col = 0;
-    for (; col < pivot_cols.size(); ++col) {
+    for (; col <= num_vars; ++col) {
         if (reduced.element(col)) {
             if (pivot_cols.element(col)) {
                 reduced ^= M.row(row); // Equal to col_to_row[col]
