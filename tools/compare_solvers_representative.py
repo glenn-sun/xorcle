@@ -9,6 +9,7 @@ def main() -> int:
     print("Use one of:")
     print("  python3 tools/benchmark_type1.py")
     print("  python3 tools/benchmark_type2_tseitin_powerlaw.py")
+    print("  python3 tools/benchmark_type4_ascon_cactus.py")
     return 2
 
 

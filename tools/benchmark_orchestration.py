@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import re
 import statistics
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Pattern, Sequence
@@ -215,6 +216,17 @@ def runtime_for_row(row: Dict[str, str]) -> Optional[float]:
         return None
 
 
+def decisions_for_row(row: Dict[str, str]) -> Optional[float]:
+    status = row.get("status", "")
+    if status not in {"SAT", "UNSAT"}:
+        return None
+    raw = row.get("parsed_solver_decisions", "")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def timeout_aware_median_runtime(rows: Sequence[Dict[str, str]]) -> Optional[float]:
     ranked: List[float] = []
     for row in rows:
@@ -223,6 +235,23 @@ def timeout_aware_median_runtime(rows: Sequence[Dict[str, str]]) -> Optional[flo
             ranked.append(math.inf)
         else:
             ranked.append(t)
+    if not ranked:
+        return None
+    ranked.sort()
+    median = ranked[len(ranked) // 2]
+    if math.isinf(median):
+        return None
+    return median
+
+
+def timeout_aware_median_decisions(rows: Sequence[Dict[str, str]]) -> Optional[float]:
+    ranked: List[float] = []
+    for row in rows:
+        d = decisions_for_row(row)
+        if d is None:
+            ranked.append(math.inf)
+        else:
+            ranked.append(d)
     if not ranked:
         return None
     ranked.sort()
@@ -249,6 +278,36 @@ def format_duration(seconds: float) -> str:
     m = (total % 3600) // 60
     s = total % 60
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def should_report_progress(done: int, total: int, every: int) -> bool:
+    if done <= 0:
+        return False
+    if total > 0 and done >= total:
+        return True
+    step = max(1, int(every))
+    return done % step == 0
+
+
+def format_progress_line(*, done: int, total: int, start_s: float, **context: object) -> str:
+    elapsed = time.perf_counter() - start_s
+    pct = 100.0 * done / total if total else 100.0
+    eta = 0.0
+    if done > 0 and total > done:
+        eta = (elapsed / done) * (total - done)
+
+    parts = [
+        f"[progress] {pct:5.1f}% ({done}/{total})",
+        f"elapsed={format_duration(elapsed)}",
+        f"eta={format_duration(eta)}",
+    ]
+    for key, value in context.items():
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            parts.append(f"{key}={text}")
+    return " ".join(parts)
 
 
 def power_fit(points: Sequence[tuple[int, float]], mode: str) -> Optional[tuple[float, float, float]]:

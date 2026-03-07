@@ -11,6 +11,7 @@ filtered/
 venv/
 docs/
 external/
+ascon-tests/
 proof.*
 out.*
 *.o

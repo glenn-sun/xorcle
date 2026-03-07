@@ -139,7 +139,16 @@ ExactWatchlist::ReducedCell* ExactWatchlist::get_or_build_cell(WatchRowId row,
     if (cell.eqn.size() != clause.cols()) {
         cell.eqn.resize(clause.cols());
     }
-    build_base_row_expression(row, cell.eqn);
+    if (level > 0) {
+        ReducedCell& prev_cell = cells_by_row[idx][level - 1];
+        if (prev_cell.valid) {
+            cell.eqn.unsafe_copy(prev_cell.eqn);
+        } else {
+            build_base_row_expression(row, cell.eqn);
+        }
+    } else {
+        build_base_row_expression(row, cell.eqn);
+    }
     (void)trail[level].span.partial_reduce(cell.eqn);
     cell.valid = true;
     return &cell;
@@ -662,7 +671,8 @@ void ExactWatchlist::update_with_new_equation(const Equation& eqn, const Trail& 
         throw_semantic_error("update_with_new_equation", msg.str());
     }
 
-    push_rows_as_tasks(detach_bucket_rows(src_bucket));
+    std::vector<VersionedRowRef> detached_rows = detach_bucket_rows(src_bucket);
+    push_rows_as_tasks(std::move(detached_rows));
 
 #ifndef NDEBUG
     if (work_stack.empty()) {

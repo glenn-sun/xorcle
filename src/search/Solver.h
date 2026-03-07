@@ -130,6 +130,7 @@ public:
                               heuristics::DecisionProcedureName dpn,
                               heuristics::ClauseSelectorName csn,
                               heuristics::DecisionPhase phase,
+                              const heuristics::CVsidsConfig& cvsids_config = {},
                               std::shared_ptr<io::ProofLogger> proof_logger = nullptr,
                               const RestartConfig& restart_config = {});
 

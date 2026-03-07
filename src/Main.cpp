@@ -80,6 +80,7 @@ stats::RunStats run_once(const std::string& filename,
                          heuristics::DecisionProcedureName dpn,
                          heuristics::ClauseSelectorName csn,
                          heuristics::DecisionPhase phase,
+                         const heuristics::CVsidsConfig& cvsids_config,
                          const search::RestartConfig& restart_config,
                          std::atomic<bool>& stop_flag,
                          const std::string& proof_path = {}) {
@@ -87,7 +88,8 @@ stats::RunStats run_once(const std::string& filename,
     if (!proof_path.empty()) {
         proof_logger = std::make_shared<io::ProofLogger>(proof_path);
     }
-    search::Solver solver = search::Solver::from_DIMACS(filename, dpn, csn, phase, proof_logger, restart_config);
+    search::Solver solver =
+        search::Solver::from_DIMACS(filename, dpn, csn, phase, cvsids_config, proof_logger, restart_config);
     std::size_t num_vars = solver.get_num_vars();
     std::size_t start_num_clauses = solver.get_num_clauses();
 
@@ -156,6 +158,7 @@ int main(int argc, char *argv[]) {
     bool help{false};
     bool verbose{false};
     heuristics::DecisionProcedureName dpn{heuristics::DecisionProcedureName::cvsids};
+    heuristics::CVsidsConfig cvsids_config{};
     heuristics::ClauseSelectorName csn{heuristics::ClauseSelectorName::cyclic};
     heuristics::DecisionPhase phase{heuristics::DecisionPhase::unsat};
     StatsMode stats_mode{StatsMode::console};
@@ -193,10 +196,43 @@ int main(int argc, char *argv[]) {
                     dpn = heuristics::DecisionProcedureName::vsids_clause;
                 } else if (optarg_str == "cvsids") {
                     dpn = heuristics::DecisionProcedureName::cvsids;
+                    cvsids_config = heuristics::CVsidsConfig{};
+                    if (optind < argc) {
+                        if (auto maybe_base = parse_double_token(argv[optind]); maybe_base.has_value()) {
+                            if (optind + 2 >= argc) {
+                                std::cerr << "Error: -d cvsids optional parameters require exactly 3 values: "
+                                             "[base decay bump]" << std::endl;
+                                return 1;
+                            }
+                            auto maybe_decay = parse_double_token(argv[optind + 1]);
+                            auto maybe_bump = parse_double_token(argv[optind + 2]);
+                            if (!maybe_decay.has_value() || !maybe_bump.has_value()) {
+                                std::cerr << "Error: -d cvsids optional parameters require exactly 3 numeric values: "
+                                             "[base decay bump]" << std::endl;
+                                return 1;
+                            }
+                            cvsids_config.learned_base = *maybe_base;
+                            cvsids_config.decay = *maybe_decay;
+                            cvsids_config.bump = *maybe_bump;
+                            optind += 3;
+                        }
+                    }
                 } else if (optarg_str == "berkmin") {
-                    dpn = heuristics::DecisionProcedureName::berkmin;
-                } else if (optarg_str == "cbh") {
-                    dpn = heuristics::DecisionProcedureName::cbh;
+                    dpn = heuristics::DecisionProcedureName::cvsids;
+                    cvsids_config = heuristics::CVsidsConfig{1.0, 0.5, 0.0};
+                    if (optind < argc && parse_double_token(argv[optind]).has_value()) {
+                        std::cerr << "Error: -d berkmin is a fixed alias and does not accept [base decay bump]"
+                                  << std::endl;
+                        return 1;
+                    }
+                } else if (optarg_str == "cmtf") {
+                    dpn = heuristics::DecisionProcedureName::cvsids;
+                    cvsids_config = heuristics::CVsidsConfig{1.0, 0.25, 1.0};
+                    if (optind < argc && parse_double_token(argv[optind]).has_value()) {
+                        std::cerr << "Error: -d cmtf is a fixed alias and does not accept [base decay bump]"
+                                  << std::endl;
+                        return 1;
+                    }
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a decision procedure" << std::endl;
                     return 1;
@@ -299,7 +335,11 @@ int main(int argc, char *argv[]) {
         std::cout << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
         std::cout << "Options:" << std::endl;
         std::cout << "  -d, --decision-proc <proc>   Decision procedure (default: cvsids)" << std::endl;
-        std::cout << "                               Options: fixed_unit, random_clause_sum, vsids_unit, vsids_clause, cvsids, berkmin, cbh" << std::endl;
+        std::cout << "                               Options: fixed_unit, random_clause_sum, vsids_unit, "
+                     "vsids_clause, cvsids, berkmin, cmtf" << std::endl;
+        std::cout << "                               Optional only for cvsids: [base decay bump]" << std::endl;
+        std::cout << "                               berkmin alias => cvsids 1 0.5 0" << std::endl;
+        std::cout << "                               cmtf alias => cvsids 1 0.25 1" << std::endl;
         std::cout << "  -p, --decision-phase <phase> Decision phase for clause-based decisions (default: unsat)" << std::endl;
         std::cout << "                               Options: unsat, sat, random" << std::endl;
         std::cout << "  -s, --stats-file <path>      CSV output path (implies CSV stats format)" << std::endl;
@@ -344,6 +384,21 @@ int main(int argc, char *argv[]) {
 
     stats_mode = stats_file.empty() ? StatsMode::console : StatsMode::csv;
 
+    if (dpn == heuristics::DecisionProcedureName::cvsids) {
+        if (!std::isfinite(cvsids_config.learned_base) || cvsids_config.learned_base < 0.0) {
+            std::cerr << "Error: cvsids base must be finite and >= 0" << std::endl;
+            return 1;
+        }
+        if (!std::isfinite(cvsids_config.bump) || cvsids_config.bump < 0.0) {
+            std::cerr << "Error: cvsids bump must be finite and >= 0" << std::endl;
+            return 1;
+        }
+        if (!std::isfinite(cvsids_config.decay) || cvsids_config.decay <= 0.0 || cvsids_config.decay >= 1.0) {
+            std::cerr << "Error: cvsids decay must be finite and satisfy 0 < decay < 1" << std::endl;
+            return 1;
+        }
+    }
+
     if (verbose && stats_mode == StatsMode::console) {
         std::cout << "Verbose mode enabled" << std::endl;
     }
@@ -363,7 +418,8 @@ int main(int argc, char *argv[]) {
     run_stats.reserve(1);
     try {
         std::atomic<bool> stop_flag(false);
-        run_stats.push_back(run_once(input_path, dpn, csn, phase, restart_config, stop_flag, proof_path));
+        run_stats.push_back(run_once(input_path, dpn, csn, phase, cvsids_config, restart_config, stop_flag,
+                                     proof_path));
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return 1;
@@ -380,6 +436,11 @@ int main(int argc, char *argv[]) {
     meta.timeout_s = 0;
     meta.deterministic = deterministic;
     meta.runs_requested = 1;
+    if (dpn == heuristics::DecisionProcedureName::cvsids) {
+        meta.cvsids_learned_base = cvsids_config.learned_base;
+        meta.cvsids_decay = cvsids_config.decay;
+        meta.cvsids_bump = cvsids_config.bump;
+    }
     sink->log(stats::aggregate_runs(meta, run_stats));
 
     return 0;

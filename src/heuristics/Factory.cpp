@@ -5,7 +5,8 @@
 namespace heuristics {
 std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureName name,
                                                              std::size_t num_vars,
-                                                             DecisionPhase phase) {
+                                                             DecisionPhase phase,
+                                                             const CVsidsConfig& cvsids_config) {
     std::shared_ptr<DecisionProcedure> proc;
     switch (name) {
         case DecisionProcedureName::fixed_unit:
@@ -21,13 +22,7 @@ std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureNa
             proc = std::make_shared<VsidsClause>(num_vars);
             break;
         case DecisionProcedureName::cvsids:
-            proc = std::make_shared<CVsidsDecision>(num_vars);
-            break;
-        case DecisionProcedureName::berkmin:
-            proc = std::make_shared<BerkminDecision>(num_vars);
-            break;
-        case DecisionProcedureName::cbh:
-            proc = std::make_shared<CBHDecision>(num_vars);
+            proc = std::make_shared<CVsidsDecision>(num_vars, cvsids_config);
             break;
     }
     if (proc) {

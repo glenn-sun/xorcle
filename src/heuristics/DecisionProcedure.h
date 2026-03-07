@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <deque>
-#include <list>
 #include <optional>
 #include <random>
 #include <vector>
@@ -24,9 +22,14 @@ enum class DecisionProcedureName {
     random_clause_sum, ///< Sample decisions from random clauses, fallback to unit basis.
     vsids_unit,        ///< VSIDS on unit equations.
     vsids_clause,      ///< VSIDS on clauses with sampling.
-    cvsids,            ///< Clause-VSIDS with shared state.
-    berkmin,           ///< Berkmin-like clause decision strategy.
-    cbh               ///< CBH clause ordering heuristic.
+    cvsids             ///< Clause-VSIDS with shared state.
+};
+
+/// @brief Tunable parameters for CVsids decision behavior.
+struct CVsidsConfig {
+    double learned_base = 1.0; ///< Learned-clause initial priority multiplier on current increment.
+    double decay = 0.95;       ///< Activity decay factor (0 < decay < 1).
+    double bump = 1.0;         ///< Initial activity increment amount.
 };
 
 /// @brief Phase selection for clause-based decisions.
@@ -223,111 +226,5 @@ public:
 
     /// @brief Choose a decision by sampling from clauses.
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
-};
-
-/// @brief Berkmin-like decision procedure.
-class BerkminDecision : public DecisionProcedure {
-private:
-    /// @brief Queue of recent conflict clauses.
-    std::deque<ClauseId> conflict_clauses;
-
-    /// @brief Whether the next learned clause should be enqueued.
-    bool pending_conflict_clause = false;
-
-    /// @brief Unit equations for fallback decisions.
-    std::vector<Equation> unit_eqns;
-
-    /// @brief Reused scratch state for clause satisfaction checks.
-    util::ClauseSatisfactionWorkspace clause_sat_ws;
-
-    /// @brief Last clause id used to make a decision.
-    std::optional<ClauseId> last_decision_clause;
-
-public:
-    /// @brief Construct and initialize state.
-    explicit BerkminDecision(std::size_t n) : DecisionProcedure(n), clause_sat_ws(n) { reinitialize(); }
-
-    /// @brief Reset state and counters.
-    void reinitialize() override;
-
-    /// @brief Choose a decision based on conflict clauses or unit fallback.
-    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
-
-    /// @brief Mark that the next learned clause should be queued.
-    void update_with_asserting_clause(const Clause& clause) override;
-
-    /// @brief Enqueue the learned clause if marked.
-    void update_with_new_clause(const Clause& clause, ClauseId id) override;
-
-    /// @brief Return the clause id used for the most recent decision.
-    std::optional<ClauseId> decision_clause_hint() const override;
-};
-
-/// @brief Clause-based heuristic (CBH) decision procedure.
-class CBHDecision : public DecisionProcedure {
-private:
-    /// @brief Ordered list of clause ids used for selection.
-    std::list<ClauseId> clause_list;
-
-    /// @brief Positions of clause ids in the list.
-    std::vector<std::list<ClauseId>::iterator> positions;
-
-    /// @brief Whether the initial list has been built.
-    bool list_built = false;
-
-    /// @brief Iterator to the current list position.
-    std::list<ClauseId>::iterator current;
-
-    /// @brief Clause ids responsible for pending reorder.
-    std::vector<ClauseId> pending_responsible;
-
-    /// @brief Marks for pending reorder processing.
-    std::vector<char> pending_mark;
-
-    /// @brief Whether a conflict clause is pending.
-    bool pending_conflict_clause = false;
-
-    /// @brief Clause id associated with a pending conflict.
-    std::optional<ClauseId> pending_conflict_clause_id;
-
-    /// @brief Unit equations for fallback decisions.
-    std::vector<Equation> unit_eqns;
-
-    /// @brief Reused scratch state for clause satisfaction checks.
-    util::ClauseSatisfactionWorkspace clause_sat_ws;
-
-    /// @brief Last clause id used to make a decision.
-    std::optional<ClauseId> last_decision_clause;
-
-    /// @brief Ensure unit equations are initialized.
-    void ensure_unit_eqns();
-
-    /// @brief Build the initial clause ordering list.
-    void build_initial_list(const std::vector<Clause>& clauses);
-
-    /// @brief Apply a pending reorder after a conflict.
-    void apply_pending_reorder(ClauseId conflict_id);
-
-public:
-    /// @brief Construct and initialize state.
-    explicit CBHDecision(std::size_t n) : DecisionProcedure(n), clause_sat_ws(n) { reinitialize(); }
-
-    /// @brief Reset state and counters.
-    void reinitialize() override;
-
-    /// @brief Choose a decision using the CBH ordering.
-    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
-
-    /// @brief Mark that the next learned clause should trigger reorder.
-    void update_with_asserting_clause(const Clause& clause) override;
-
-    /// @brief Update internal order when a clause is resolved.
-    void update_with_resolved_clause(ClauseId id) override;
-
-    /// @brief Update internal order when a new clause is learned.
-    void update_with_new_clause(const Clause& clause, ClauseId id) override;
-
-    /// @brief Return the clause id used for the most recent decision.
-    std::optional<ClauseId> decision_clause_hint() const override;
 };
 } // namespace heuristics

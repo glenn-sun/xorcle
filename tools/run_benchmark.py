@@ -25,6 +25,7 @@ from xnf_lib import write_cnf
 SAT_RE = re.compile(r"^s\s+(SATISFIABLE|UNSATISFIABLE)\s*$", re.MULTILINE)
 SOLVER_RESULT_RE = re.compile(r"^Result:\s*(SAT|UNSAT|TIMEOUT)\s*$", re.MULTILINE)
 SOLVER_TIME_RE = re.compile(r"^Time:\s*([0-9]+(?:\.[0-9]+)?)\s+s\s*$", re.MULTILINE)
+SOLVER_DECISIONS_RE = re.compile(r"(?im)^\s*(?:c\s+)?decisions?\s*:\s*([0-9]+)\b")
 
 RAW_CSV_FIELDS = [
     "file",
@@ -36,6 +37,7 @@ RAW_CSV_FIELDS = [
     "status",
     "elapsed_wall_s",
     "parsed_solver_time_s",
+    "parsed_solver_decisions",
     "timeout_s",
     "returncode",
     "used_lift",
@@ -259,27 +261,44 @@ def parse_solver_status_and_time_from_console(output: str) -> tuple[Optional[str
     return status, t_s
 
 
-def parse_xorcle_csv(csv_path: Path) -> tuple[Optional[str], Optional[float], str]:
+def parse_decisions_from_output(output: str) -> Optional[int]:
+    m = SOLVER_DECISIONS_RE.search(output)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def parse_xorcle_csv(csv_path: Path) -> tuple[Optional[str], Optional[float], Optional[int], str]:
     if not csv_path.exists():
-        return None, None, f"missing solver stats CSV: {csv_path}"
+        return None, None, None, f"missing solver stats CSV: {csv_path}"
     try:
         with csv_path.open("r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
     except Exception as exc:
-        return None, None, f"failed to read solver stats CSV: {exc}"
+        return None, None, None, f"failed to read solver stats CSV: {exc}"
     if not rows:
-        return None, None, "solver stats CSV was empty"
+        return None, None, None, "solver stats CSV was empty"
     row = rows[-1]
     status = row.get("result", "").strip().upper() or None
     t_s = None
+    decisions = None
     raw_time = (row.get("time_s") or "").strip()
     if raw_time:
         try:
             t_s = float(raw_time)
         except ValueError:
             pass
-    return status, t_s, ""
+    raw_decisions = (row.get("decisions") or "").strip()
+    if raw_decisions:
+        try:
+            decisions = int(raw_decisions)
+        except ValueError:
+            pass
+    return status, t_s, decisions, ""
 
 
 def evaluate_equation(eq: XnfEquation, assignment_map: Dict[int, int]) -> bool:
@@ -392,6 +411,9 @@ def run_kissat_or_cms(
         row["error_message"] = f"could not parse SAT status from output (rc={proc.returncode})"
         return row
     row["status"] = status
+    parsed_decisions = parse_decisions_from_output(proc.combined_output)
+    if parsed_decisions is not None:
+        row["parsed_solver_decisions"] = str(parsed_decisions)
     return row
 
 
@@ -444,7 +466,7 @@ def run_xorcle_solver(
         row["error_message"] = proc.error_message
         return row
 
-    status, parsed_t_s, csv_err = parse_xorcle_csv(stats_csv_path)
+    status, parsed_t_s, parsed_decisions, csv_err = parse_xorcle_csv(stats_csv_path)
     if status is None:
         fallback_status, fallback_t_s = parse_solver_status_and_time_from_console(proc.combined_output)
         if fallback_status is None:
@@ -454,10 +476,14 @@ def run_xorcle_solver(
             return row
         status = fallback_status
         parsed_t_s = fallback_t_s
+    if parsed_decisions is None:
+        parsed_decisions = parse_decisions_from_output(proc.combined_output)
 
     row["status"] = normalize_status(status)
     if parsed_t_s is not None:
         row["parsed_solver_time_s"] = f"{parsed_t_s:.6f}"
+    if parsed_decisions is not None:
+        row["parsed_solver_decisions"] = str(parsed_decisions)
     return row
 
 
@@ -486,6 +512,7 @@ def empty_raw_row(
         "status": "",
         "elapsed_wall_s": "",
         "parsed_solver_time_s": "",
+        "parsed_solver_decisions": "",
         "timeout_s": "",
         "returncode": "",
         "used_lift": "false",

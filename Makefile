@@ -10,7 +10,7 @@ profile:
 	find src -name '*.cpp' | while read -r src_file; do \
 		obj_file="build/obj-profile/$${src_file#src/}.o"; \
 		mkdir -p "$$(dirname "$$obj_file")"; \
-		/usr/bin/g++ -std=c++23 -pthread -O2 -g3 -Wall \
+		/usr/bin/g++ -std=c++23 -pthread -O2 -DNDEBUG -g3 -Wall \
 			-fdiagnostics-show-template-tree -fdiagnostics-color=auto \
 			-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer \
 			-fno-optimize-sibling-calls \

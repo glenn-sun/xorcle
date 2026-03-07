@@ -49,6 +49,9 @@ struct AggregateMeta {
     std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
     bool deterministic = true;                        ///< Whether the run is deterministic.
     std::size_t runs_requested = 1;                   ///< Number of runs requested.
+    std::optional<double> cvsids_learned_base;        ///< CVsids learned-clause base multiplier, when applicable.
+    std::optional<double> cvsids_decay;               ///< CVsids decay factor, when applicable.
+    std::optional<double> cvsids_bump;                ///< CVsids bump amount, when applicable.
 };
 
 /// @brief Aggregated statistics across multiple runs.
@@ -62,6 +65,9 @@ struct AggregateStats {
     std::size_t threads = 0;                          ///< Number of threads requested.
     std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
     bool deterministic = true;                        ///< Whether the run is deterministic.
+    std::optional<double> cvsids_learned_base;        ///< CVsids learned-clause base multiplier, when applicable.
+    std::optional<double> cvsids_decay;               ///< CVsids decay factor, when applicable.
+    std::optional<double> cvsids_bump;                ///< CVsids bump amount, when applicable.
 
     std::size_t runs_requested = 1;                   ///< Number of runs requested.
     std::size_t runs_completed = 0;                   ///< Number of non-timeout runs completed.

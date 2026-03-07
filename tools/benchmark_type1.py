@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconfig"))
 
@@ -22,10 +22,13 @@ from benchmark_orchestration import (
     ALL_SOLVER_LINES,
     SOLVER_COLORS,
     SOLVER_DISPLAY,
-    format_duration,
+    decisions_for_row,
+    format_progress_line,
     median_is_timeout,
     runtime_for_row,
+    should_report_progress,
     solver_line_key,
+    timeout_aware_median_decisions,
     timeout_aware_median_runtime,
 )
 
@@ -269,16 +272,63 @@ def plot_family(
     plt.close(fig)
 
 
-def progress_line(*, done: int, total: int, start_s: float, family: str, x: int) -> str:
-    elapsed = time.perf_counter() - start_s
-    pct = 100.0 * done / total if total else 100.0
-    eta = 0.0
-    if done > 0 and total > done:
-        eta = (elapsed / done) * (total - done)
-    return (
-        f"[progress] {pct:5.1f}% ({done}/{total}) elapsed={format_duration(elapsed)} "
-        f"eta={format_duration(eta)} family={family} x={x}"
-    )
+def plot_family_decisions(
+    *,
+    path: Path,
+    family: str,
+    x_values: Sequence[int],
+    x_label: str,
+    points_by_solver: Dict[str, List[tuple[int, float]]],
+    medians_by_solver: Dict[str, Dict[int, float | None]],
+) -> None:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(4.6, 3.1))
+
+    for solver in ALL_SOLVER_LINES:
+        color = SOLVER_COLORS[solver]
+        label = SOLVER_DISPLAY[solver]
+        # Log scale requires strictly positive values.
+        pts = sorted((x, y) for x, y in points_by_solver.get(solver, []) if y > 0.0)
+        if pts:
+            ax.scatter([x for x, _ in pts], [y for _, y in pts], s=12, alpha=0.70, color=color, label="_nolegend_")
+
+        current_x: List[int] = []
+        current_y: List[float] = []
+        drew_label = False
+        for x in x_values:
+            m = medians_by_solver.get(solver, {}).get(x)
+            if m is None or m <= 0.0:
+                if current_x:
+                    ax.plot(current_x, current_y, color=color, linewidth=1.2, label=(label if not drew_label else "_nolegend_"))
+                    drew_label = True
+                    current_x = []
+                    current_y = []
+                continue
+            current_x.append(x)
+            current_y.append(m)
+        if current_x:
+            ax.plot(current_x, current_y, color=color, linewidth=1.2, label=(label if not drew_label else "_nolegend_"))
+            drew_label = True
+        if not drew_label:
+            ax.plot([], [], color=color, linewidth=1.2, label=label)
+
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Decisions")
+    ax.set_title(f"{family} (Decisions)")
+    ax.set_yscale("log")
+    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.35)
+    ax.legend(frameon=False, fontsize=8)
+    fig.tight_layout(pad=0.5)
+    fig.savefig(path, dpi=300)
+    plt.close(fig)
 
 
 def run_size_task(
@@ -339,8 +389,11 @@ def main() -> int:
 
         family_raw_rows: List[Dict[str, str]] = []
         solver_x_rows: Dict[tuple[str, int], List[Dict[str, str]]] = defaultdict(list)
+        point_metrics_by_solver: Dict[str, List[tuple[int, Optional[float], Optional[float]]]] = defaultdict(list)
         points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
         medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
+        decision_points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
+        decision_medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
 
         active_solvers = list(ALL_SOLVER_LINES)
         timeout_streak = {s: 0 for s in ALL_SOLVER_LINES}
@@ -390,14 +443,20 @@ def main() -> int:
                     continue
                 solver_x_rows[(solver, x)].append(row)
                 t = runtime_for_row(row)
+                d = decisions_for_row(row)
+                if t is not None or d is not None:
+                    point_metrics_by_solver[solver].append((x, t, d))
                 if t is not None:
                     points_by_solver[solver].append((x, t))
+                if d is not None:
+                    decision_points_by_solver[solver].append((x, d))
 
             still_active: List[str] = []
             for solver in active_solvers:
                 rows_for_solver = solver_x_rows.get((solver, x), [])
                 med = timeout_aware_median_runtime(rows_for_solver)
                 medians_by_solver[solver][x] = med
+                decision_medians_by_solver[solver][x] = timeout_aware_median_decisions(rows_for_solver)
 
                 if median_is_timeout(rows_for_solver):
                     timeout_streak[solver] += 1
@@ -413,7 +472,16 @@ def main() -> int:
             active_solvers = still_active
 
             done_chunks += 1
-            print(progress_line(done=done_chunks, total=total_chunks, start_s=start_all, family=family, x=x))
+            if should_report_progress(done_chunks, total_chunks, every=1):
+                print(
+                    format_progress_line(
+                        done=done_chunks,
+                        total=total_chunks,
+                        start_s=start_all,
+                        family=family,
+                        x=x,
+                    )
+                )
 
         if not family_raw_rows:
             raise RuntimeError(f"{family}: no benchmark rows produced")
@@ -433,7 +501,10 @@ def main() -> int:
 
         agg_rows: List[Dict[str, str]] = []
         for solver in ALL_SOLVER_LINES:
-            for x, t in sorted(points_by_solver.get(solver, []), key=lambda p: (p[0], p[1])):
+            for x, t, d in sorted(
+                point_metrics_by_solver.get(solver, []),
+                key=lambda p: (p[0], float("inf") if p[1] is None else p[1]),
+            ):
                 agg_rows.append(
                     {
                         "family": family,
@@ -441,7 +512,8 @@ def main() -> int:
                         "x_value": str(x),
                         "solver": solver,
                         "series": "point",
-                        "time_s": f"{t:.6f}",
+                        "time_s": "" if t is None else f"{t:.6f}",
+                        "decisions": "" if d is None else str(int(d)),
                         "samples": "1",
                         "status": "",
                     }
@@ -449,6 +521,7 @@ def main() -> int:
             for x in spec.x_values:
                 rows_for_solver = solver_x_rows.get((solver, x), [])
                 med = medians_by_solver.get(solver, {}).get(x)
+                decisions_med = decision_medians_by_solver.get(solver, {}).get(x)
                 agg_rows.append(
                     {
                         "family": family,
@@ -457,6 +530,7 @@ def main() -> int:
                         "solver": solver,
                         "series": "median",
                         "time_s": "" if med is None else f"{med:.6f}",
+                        "decisions": "" if decisions_med is None else str(int(decisions_med)),
                         "samples": str(len(rows_for_solver)),
                         "status": "TIMEOUT" if med is None and rows_for_solver else "",
                     }
@@ -466,7 +540,7 @@ def main() -> int:
         write_csv(
             agg_csv_path,
             agg_rows,
-            ["family", "x_label", "x_value", "solver", "series", "time_s", "samples", "status"],
+            ["family", "x_label", "x_value", "solver", "series", "time_s", "decisions", "samples", "status"],
         )
 
         plot_path = plots_root / f"{family}.png"
@@ -478,10 +552,20 @@ def main() -> int:
             points_by_solver=points_by_solver,
             medians_by_solver=medians_by_solver,
         )
+        decision_plot_path = plots_root / f"{family}_decisions.png"
+        plot_family_decisions(
+            path=decision_plot_path,
+            family=family,
+            x_values=spec.x_values,
+            x_label=spec.x_label,
+            points_by_solver=decision_points_by_solver,
+            medians_by_solver=decision_medians_by_solver,
+        )
 
         print(f"[{family}] wrote: {raw_csv_path}")
         print(f"[{family}] wrote: {agg_csv_path}")
         print(f"[{family}] wrote: {plot_path}")
+        print(f"[{family}] wrote: {decision_plot_path}")
 
     return 0
 

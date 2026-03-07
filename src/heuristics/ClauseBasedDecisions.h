@@ -15,8 +15,9 @@ namespace heuristics {
 struct CVsidsParams {
     MaxHeap<ClauseId> activity_heap; ///< Heap keyed by clause activity.
 
-    double inc_amt = 1;  ///< Activity increment.
-    double decay = 0.95; ///< Activity decay factor.
+    double inc_amt = 1.0;       ///< Current activity increment used for bumps.
+    double learned_base = 1.0;  ///< Learned-clause initial activity multiplier on current increment.
+    double decay = 0.95;        ///< Activity decay factor.
 
     /// @brief Construct with an empty activity heap.
     CVsidsParams() : activity_heap() {}
@@ -32,12 +33,14 @@ struct CVsidsState {
     std::vector<Equation> unit_eqns; ///< Unit equations for fallback decisions.
 
     std::optional<ClauseId> last_decision_clause; ///< Last clause used to decide.
+    std::optional<double> pending_learned_priority; ///< Initial priority for the next learned asserting clause.
     ClauseId num_clauses = 0;   ///< Number of clauses tracked in the heap.
+    double initial_inc_amt = 1.0; ///< Configured initial increment (CLI bump parameter).
 
     std::size_t num_vars;       ///< Number of variables in the problem.
 
     /// @brief Construct state for a given number of variables.
-    explicit CVsidsState(std::size_t n);
+    explicit CVsidsState(std::size_t n, const CVsidsConfig& config = {});
 
     /// @brief Ensure unit equations are initialized.
     void ensure_unit_eqns();
@@ -54,7 +57,9 @@ protected:
 
 public:
     /// @brief Construct with optional shared state.
-    explicit CVsidsDecision(std::size_t n, std::shared_ptr<CVsidsState> shared_state = nullptr);
+    explicit CVsidsDecision(std::size_t n,
+                            const CVsidsConfig& config = {},
+                            std::shared_ptr<CVsidsState> shared_state = nullptr);
 
     /// @brief Reset activity and counters.
     void reinitialize() override;

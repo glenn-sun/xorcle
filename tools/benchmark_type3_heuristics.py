@@ -6,23 +6,25 @@ import csv
 import os
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List, Sequence, Tuple
+from typing import Callable, Dict, List, Sequence, Tuple
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconfig"))
 
 sys.path.append(str(Path(__file__).resolve().parent))
 import run_benchmark as rb
+from benchmark_orchestration import format_progress_line, should_report_progress
 
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-DECISION_PROCS = ("vsids_unit", "cvsids")
+DECISION_PROCS = ("vsids_unit", "cvsids", "berkmin", "cmtf")
 CLAUSE_SELECTORS = ("cyclic", "lt_watchlist", "exact_watchlist")
 DECISION_PHASES = ("sat", "unsat", "random")
 ALL_TEST_IDS = ("1a", "1b", "2a", "2b", "3a", "3b")
@@ -237,6 +239,7 @@ def run_variant(
     files: Sequence[Path],
     solver_passthrough: Sequence[str],
     converter_script: Path,
+    on_file_done: Callable[[], None] | None = None,
 ) -> List[Dict[str, str]]:
     def run_file(file_path: Path) -> List[Dict[str, str]]:
         input_format = sniff_input_format(file_path)
@@ -248,6 +251,8 @@ def run_variant(
         futures = [executor.submit(run_file, p) for p in files]
         for future in as_completed(futures):
             rows.extend(future.result())
+            if on_file_done is not None:
+                on_file_done()
 
     rows.sort(
         key=lambda row: (
@@ -306,6 +311,31 @@ def main() -> int:
 
     satcomp_files = collect_satcomp_files(sat_comp_root)
     test_sample_files, sample_manifest = collect_test_sample_files(tests_root, args.samples_per_family)
+    total_tasks = 0
+    for test_id in args.only_tests:
+        spec = TEST_SPECS[test_id]
+        file_count = len(satcomp_files) if spec.dataset == "satcomp" else len(test_sample_files)
+        total_tasks += file_count * len(spec.variants)
+    if total_tasks <= 0:
+        raise RuntimeError("No benchmark tasks selected")
+    progress_every = max(1, total_tasks // 40)
+    start_all = time.perf_counter()
+    progress_state = {"done": 0}
+
+    def mark_task_done(test_id: str, variant_label: str) -> None:
+        progress_state["done"] += 1
+        done = progress_state["done"]
+        if should_report_progress(done, total_tasks, progress_every):
+            print(
+                format_progress_line(
+                    done=done,
+                    total=total_tasks,
+                    start_s=start_all,
+                    test=test_id,
+                    variant=variant_label,
+                )
+            )
+
     manifest_path = csv_root / "selected_instances.csv"
     write_csv(
         manifest_path,
@@ -328,6 +358,7 @@ def main() -> int:
                 files=files,
                 solver_passthrough=list(variant.solver_passthrough),
                 converter_script=converter_script,
+                on_file_done=lambda tid=test_id, vlabel=variant.label: mark_task_done(tid, vlabel),
             )
             csv_path = test_csv_dir / f"{variant.label}.raw.csv"
             write_csv(csv_path, rows, rb.RAW_CSV_FIELDS)

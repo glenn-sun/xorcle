@@ -23,9 +23,10 @@ from benchmark_orchestration import (
     TSEITIN_FAMILIES,
     collect_files_by_x,
     eval_power_fit,
-    format_duration,
+    format_progress_line,
     power_fit,
     runtime_for_row,
+    should_report_progress,
     solver_line_key,
     timeout_aware_median_runtime,
 )
@@ -99,18 +100,6 @@ def write_csv(path: Path, rows: List[Dict[str, str]], fieldnames: List[str]) -> 
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         w.writerows(rows)
-
-
-def progress_line(*, done: int, total: int, start_s: float, family: str, x: int) -> str:
-    elapsed = time.perf_counter() - start_s
-    pct = 100.0 * done / total if total else 100.0
-    eta = 0.0
-    if done > 0 and total > done:
-        eta = (elapsed / done) * (total - done)
-    return (
-        f"[progress] {pct:5.1f}% ({done}/{total}) elapsed={format_duration(elapsed)} "
-        f"eta={format_duration(eta)} family={family} x={x}"
-    )
 
 
 def run_size_task(
@@ -243,7 +232,16 @@ def main() -> int:
                     points.append((x, t))
 
             done_chunks += 1
-            print(progress_line(done=done_chunks, total=total_chunks, start_s=start_all, family=family, x=x))
+            if should_report_progress(done_chunks, total_chunks, every=1):
+                print(
+                    format_progress_line(
+                        done=done_chunks,
+                        total=total_chunks,
+                        start_s=start_all,
+                        family=family,
+                        x=x,
+                    )
+                )
 
         raw_rows.sort(
             key=lambda row: (
