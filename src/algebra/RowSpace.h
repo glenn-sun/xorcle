@@ -18,7 +18,10 @@ public:
     using REFMatrix::REFMatrix;
 
     /// @brief Get the unique solution to the system of equations represented by this matrix.
-    /// @pre The matrix is full-rank and does not contain the false equation.
+    /// @return The unique satisfying assignment over the variable columns.
+    /// @pre The row space has exactly one solution; equivalently, every variable
+    /// column is pivoted and the constant column is not.
+    /// @throws std::runtime_error if the row space is not full-rank or contains the false equation.
     bit::vector<> get_unique_solution() const;
 };
 

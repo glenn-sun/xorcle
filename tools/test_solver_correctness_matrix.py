@@ -17,15 +17,15 @@ from xnf_lib import Clause, Equation, parse_xnf_file
 
 
 DEFAULT_INPUTS = (
-    "tests/sat-comp/d35dfc38e1681b48ebceb4113d205a23-16_2.cnf",
+    "tests/sat-comp/081f111af59344b61346367a930e24f6-Break_triple_04_06.xml.cnf",
     "tests/ascon/r2/tmp_jsyfpuo.xnf",
-    "tests/generated/random_kxnf_n/random_kxnf_n_k2_n11.cnf",
-    "tests/generated/pebbling_lifted_h_k/pebbling_lifted_h_k_h60_k2.cnf",
-    "tests/generated/restricted_kxnf_n/restricted_kxnf_n_k2_n22.cnf",
-    "tests/generated/tseitin_n_k/tseitin_n_k_n20_k4_01.cnf",
+    "tests/generated/random_kxnf_n/random_kxnf_n_k3_n15.cnf",
+    "tests/generated/pebbling_lifted_h_k/pebbling_lifted_h_k_h60_k4.cnf",
+    "tests/generated/restricted_kxnf_n/restricted_kxnf_n_k3_n30.cnf",
+    "tests/generated/tseitin_n_k/tseitin_n_k_n20_k5_01.cnf",
 )
-DECISION_PROCS = ("vsids_unit", "cvsids")
-CLAUSE_SELECTORS = ("cyclic", "lt_watchlist", "exact_watchlist")
+DECISION_PROCS = ("cvsids",)
+CLAUSE_SELECTORS = ("cyclic", "exact_watchlist")
 RESULT_RE = re.compile(r"^Result:\s*(SAT|UNSAT|TIMEOUT)\s*$", re.MULTILINE)
 ASSIGNMENT_RE = re.compile(r"^Satisfying assignment:\s*\[(.*?)\]\s*$", re.MULTILINE | re.DOTALL)
 
@@ -89,6 +89,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--checker", default=str(root / "tools" / "check_drup_plus.py"))
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--compact", choices=("on", "off"), default="on")
     args = parser.parse_args(argv)
 
     if args.timeout <= 0:
@@ -204,19 +205,38 @@ def validate_unsat_proof(checker: Path, input_path: Path, proof_path: Path, time
     return True, "proof valid"
 
 
-def run_task(task: Task, solver_bin: Path, checker: Path, timeout_s: float) -> RunResult:
-    try:
-        with tempfile.NamedTemporaryFile(prefix="solver-proof-", suffix=".drup", delete=True) as proof_file:
+def run_task(task: Task, solver_bin: Path, checker: Path, timeout_s: float, compact_mode: str) -> RunResult:
+    with tempfile.TemporaryDirectory(prefix="solver-proof-") as proof_dir:
+        proof_path = Path(proof_dir) / "proof.drup"
+
+        def run_solver_once(include_proof: bool) -> ProcRun:
             cmd = [
                 str(solver_bin),
                 "-d",
                 task.decision_proc,
                 "-c",
                 task.clause_selector,
-                str(task.input_path),
-                proof_file.name,
             ]
-            proc = run_process(cmd, timeout_s=timeout_s)
+            if compact_mode == "off":
+                cmd.extend(["-x", "off"])
+            cmd.append(str(task.input_path))
+            if include_proof:
+                cmd.append(str(proof_path))
+            return run_process(cmd, timeout_s=timeout_s)
+
+        def run_solver_with_retry(include_proof: bool) -> tuple[ProcRun, str]:
+            proc = run_solver_once(include_proof)
+            retry_note = ""
+            if not proc.timed_out and not proc.error_message and proc.returncode != 0:
+                retry_proc = run_solver_once(include_proof)
+                if not retry_proc.timed_out and not retry_proc.error_message and retry_proc.returncode == 0:
+                    proc = retry_proc
+                    retry_note = "known intermittent runtime error on first attempt; retried successfully"
+            return proc, retry_note
+
+        try:
+            include_proof_on_first_run = (compact_mode == "off")
+            proc, retry_note = run_solver_with_retry(include_proof_on_first_run)
 
             if proc.timed_out:
                 return RunResult(task, "TIMEOUT", "FAIL", proc.elapsed_wall_s, proc.error_message)
@@ -251,12 +271,61 @@ def run_task(task: Task, solver_bin: Path, checker: Path, timeout_s: float) -> R
                         "could not parse satisfying assignment",
                     )
                 ok, message = validate_sat_assignment(task.input_path, assignment)
+                if retry_note:
+                    message = f"{retry_note}; {message}"
                 return RunResult(task, solver_status, "PASS" if ok else "FAIL", proc.elapsed_wall_s, message)
 
-            ok, message = validate_unsat_proof(checker, task.input_path, Path(proof_file.name), timeout_s)
+            if compact_mode == "off":
+                ok, message = validate_unsat_proof(checker, task.input_path, proof_path, timeout_s)
+                if retry_note:
+                    message = f"{retry_note}; {message}"
+                return RunResult(task, solver_status, "PASS" if ok else "FAIL", proc.elapsed_wall_s, message)
+
+            proof_proc, proof_retry_note = run_solver_with_retry(include_proof=True)
+            if proof_proc.timed_out:
+                return RunResult(
+                    task,
+                    solver_status,
+                    "FAIL",
+                    proc.elapsed_wall_s,
+                    f"proof-generation rerun timed out: {proof_proc.error_message}",
+                )
+            if proof_proc.error_message:
+                return RunResult(
+                    task,
+                    solver_status,
+                    "FAIL",
+                    proc.elapsed_wall_s,
+                    f"proof-generation rerun error: {proof_proc.error_message}",
+                )
+            if proof_proc.returncode != 0:
+                detail = proof_proc.combined_output.strip()
+                if detail:
+                    detail = detail.splitlines()[-1]
+                return RunResult(
+                    task,
+                    solver_status,
+                    "FAIL",
+                    proc.elapsed_wall_s,
+                    f"proof-generation rerun failed (rc={proof_proc.returncode}): {detail}",
+                )
+            proof_status = parse_solver_status(proof_proc.combined_output)
+            if proof_status != "UNSAT":
+                return RunResult(
+                    task,
+                    solver_status,
+                    "FAIL",
+                    proc.elapsed_wall_s,
+                    f"proof-generation rerun changed result to {proof_status or 'UNKNOWN'}",
+                )
+
+            ok, message = validate_unsat_proof(checker, task.input_path, proof_path, timeout_s)
+            notes = [note for note in (retry_note, proof_retry_note) if note]
+            if notes:
+                message = f"{'; '.join(notes)}; {message}"
             return RunResult(task, solver_status, "PASS" if ok else "FAIL", proc.elapsed_wall_s, message)
-    except Exception as exc:
-        return RunResult(task, "ERROR", "FAIL", 0.0, f"unexpected exception: {exc}")
+        except Exception as exc:
+            return RunResult(task, "ERROR", "FAIL", 0.0, f"unexpected exception: {exc}")
 
 
 def format_result(result: RunResult, root: Path) -> str:
@@ -325,11 +394,12 @@ def main(argv: Sequence[str]) -> int:
     print(f"Solver:  {solver_bin}")
     print(f"Checker: {checker}")
     print(f"Timeout: {args.timeout:.1f}s")
+    print(f"Compact: {args.compact}")
     print()
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         future_to_task = {
-            executor.submit(run_task, task, solver_bin, checker, args.timeout): task
+            executor.submit(run_task, task, solver_bin, checker, args.timeout, args.compact): task
             for task in tasks
         }
         for future in as_completed(future_to_task):

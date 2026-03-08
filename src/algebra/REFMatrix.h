@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 #include "bit/matrix.h"
@@ -11,16 +12,27 @@ namespace algebra {
 
 /// @brief A matrix over GF(2) in row-echelon form.
 ///
-/// Used to represent equation spaces and to perform reductions.
+/// @note Representation invariants:
+/// - `pivot_cols.size() == num_vars + 1`
+/// - `col_to_row.size() == num_vars + 1`
+/// - if `rows() > 0`, every stored row has width `num_vars + 1`
+/// - stored rows are in row-echelon form with strictly increasing pivot columns
+/// - `pivot_cols` and `col_to_row` describe exactly the pivots of `M`
 class REFMatrix {
 private:
-    /// @brief Vector of size M.cols() that is set to 1 for each pivot column.
+    /// @brief Bitmap of pivot columns in the represented equation width.
     bit::vector<> pivot_cols;
 
-    /// @brief Convert from pivot column to row index (undefined if column is not pivot).
+    /// @brief Map from pivot column to row index.
     std::vector<std::size_t> col_to_row;
 
     std::size_t num_vars;
+
+    void validate_operand_width(const bit::vector<>& v, const char* where) const;
+
+#ifndef NDEBUG
+    void debug_assert_valid_representation() const;
+#endif
 
 protected:
     /// @brief Underlying matrix data in row-echelon form.
@@ -28,67 +40,84 @@ protected:
 
 public:
     /// @brief Construct an empty REFMatrix for a given variable count.
-    explicit REFMatrix(std::size_t num_vars) {
-        pivot_cols = bit::vector<>::zeros(num_vars + 1);
-        col_to_row = std::vector<std::size_t>(num_vars + 1);
-        this->num_vars = num_vars;
-    };
+    /// @param num_vars Number of variable columns. The constant column is added internally.
+    explicit REFMatrix(std::size_t num_vars)
+        : pivot_cols(bit::vector<>::zeros(num_vars + 1)),
+          col_to_row(num_vars + 1, 0),
+          num_vars(num_vars),
+          M() {}
 
     /// @brief Construct a REFMatrix from a matrix.
-    /// @pre M is non-empty.
+    /// @param M Input matrix whose columns represent variables plus the constant column.
+    /// @pre `M` is non-empty.
+    /// @throws std::invalid_argument if `M` is empty.
     explicit REFMatrix(bit::matrix<> M);
 
     /// @brief Return the pivot column bitmap.
     const bit::vector<>& get_pivot_cols() const { return pivot_cols; }
 
     /// @brief Return the row index for a pivot column.
-    /// @pre i is a pivot column.
-    const std::size_t get_col_to_row(std::size_t i) const { return col_to_row[i]; }
+    /// @param i Pivot-column index.
+    /// @return The row index whose leading term is column `i`.
+    /// @pre `i < cols()` and column `i` is a pivot column.
+    std::size_t get_col_to_row(std::size_t i) const;
 
     /// @brief Add a row into the matrix (copy semantics).
-    /// @note Does nothing if v already belongs to the span.
+    /// @param v Row to insert.
+    /// @pre `v.size() == cols()`.
+    /// @note Does nothing if `v` already belongs to the span.
     void add_row(const bit::vector<>& v);
 
     /// @brief Add a row and return its inserted index if it was new.
+    /// @param v Row to insert.
+    /// @return The inserted row index, or `std::nullopt` if `v` already belongs to the span.
+    /// @pre `v.size() == cols()`.
     std::optional<std::size_t> add_row_get_index(const bit::vector<>& v);
 
     /// @brief Reduce a vector in-place using this matrix.
-    ///
-    /// Interpret each row as a rule that replaces the leading term with the tail.
-    /// After this, the vector is 0 in all pivot columns.
     /// @param v The vector to reduce.
-    /// @param coeffs If present, v = result + coeffs * this, i.e. bits
-    /// corresponding to rows used in the reduction will be set.
+    /// @param coeffs If present, records which rows participated in the reduction.
+    /// @pre `v.size() == cols()`.
     void reduce(bit::vector<>& v, bit::vector<>* coeffs = nullptr) const;
 
     /// @brief Partially reduce a vector in lex order.
-    ///
-    /// Repeatedly eliminates the current leading term while it is pivoted. Stops as soon as the
-    /// leading term is not pivoted.
     /// @param v The vector to partially reduce in place.
-    /// @return v.first_set() after partial reduction.
-    ///         - bit::vector<>::npos means the equation is 0 = 0.
-    ///         - cols() - 1 means the equation is 0 = 1.
-    ///         - any smaller index means the equation is variable-leading and irreducible.
+    /// @return The leading set-bit position after partial reduction:
+    /// `bit::vector<>::npos` for `0 = 0`, `num_vars` for `0 = 1`, or a smaller
+    /// column index for a variable-leading irreducible row.
+    /// @pre `v.size() == cols()`.
     std::size_t partial_reduce(bit::vector<>& v) const;
 
     /// @brief Partially reduce a vector using this matrix augmented with an extra vector.
-    /// @pre extra is already partially reduced by this matrix (it may be 0 = 1).
-    /// @return v.first_set() after partial reduction (same conventions as partial_reduce()).
+    /// @param v The vector to partially reduce.
+    /// @param extra Extra row that is already partially reduced by this matrix.
+    /// @return The leading set-bit position after partial reduction, using the same
+    /// conventions as `partial_reduce()`.
+    /// @pre `v.size() == cols()`.
+    /// @pre `extra.size() == cols()`.
+    /// @pre `extra` is already partially reduced by this matrix.
     std::size_t partial_reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) const;
 
     /// @brief Reduce a vector using this matrix augmented with an extra vector.
-    /// @pre extra is already reduced by this matrix.
+    /// @param v The vector to reduce.
+    /// @param extra Extra row that is already reduced by this matrix.
+    /// @pre `v.size() == cols()`.
+    /// @pre `extra.size() == cols()`.
+    /// @pre `extra` is already reduced by this matrix.
     void reduce_with_extra(bit::vector<>& v, const bit::vector<>& extra) const;
 
     /// @brief Remove the first row from the matrix and return it.
+    /// @return The removed first row.
+    /// @pre `rows() > 0`.
+    /// @throws std::runtime_error if the matrix is empty.
+    /// @throws std::logic_error if the stored first row violates the row-echelon representation.
     bit::vector<> pop_first_row();
 
     /// @brief Number of rows in the matrix.
     std::size_t rows() const { return M.rows(); }
 
-    /// @brief Number of columns in the matrix.
-    std::size_t cols() const { return M.cols(); }
+    /// @brief Number of columns in the represented equation width.
+    std::size_t cols() const { return num_vars + 1; }
 
     /// @brief Return a row by index.
     const bit::vector<>& row(std::size_t i) const { return M.row(i); }
@@ -97,7 +126,10 @@ public:
     const bit::vector<> col(std::size_t i) const { return M.col(i); }
 
     /// @brief Remove the last row from the matrix.
-    void pop_last_row() { M.pop_row(); }
+    /// @pre `rows() > 0`.
+    /// @throws std::runtime_error if the matrix is empty.
+    /// @throws std::logic_error if the stored last row violates the row-echelon representation.
+    void pop_last_row();
 
     /// @brief Read-only iterator over rows.
     struct iterator {

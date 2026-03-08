@@ -11,11 +11,10 @@ namespace algebra {
 
 /// @brief An affine equation over GF(2).
 ///
-/// Represented as a bit::vector whose last component is the constant
-/// term. In other words, if there are 3 variables, the equation
-/// x1 + x3 = 1 is represented as [1, 0, 1, 1]. Note that the false
-/// equation 1 = 0 has a representation in this form: when there are
-/// 3 variables, it is [0, 0, 0, 1].
+/// @note The storage width is always `num_vars + 1`: indices `[0, num_vars)` are
+/// variable coefficients and index `num_vars` is the constant column. For
+/// example, with 3 variables the equation `x1 + x3 = 1` is represented as
+/// `[1, 0, 1, 1]`. The false equation `1 = 0` is therefore `[0, 0, 0, 1]`.
 class Equation : public bit::vector<> {
 public:
     /// @brief Construct an empty equation.
@@ -28,6 +27,8 @@ public:
     Equation(const bit::vector<>& v) : bit::vector<>(v) {}
 
     /// @brief Format the equation as a string using the given print mode.
+    /// @param mode Rendering mode for equation/clause formatting.
+    /// @return The formatted equation string.
     std::string to_string(PrintMode mode = PrintMode()) const;
 };
 } // namespace algebra
