@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +16,9 @@ os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconf
 
 sys.path.append(str(Path(__file__).resolve().parent))
 import run_benchmark as rb
+from benchmark_plot_style import UNIFIED_DPI, UNIFIED_FONT_SIZE, unified_figure_geometry
 from benchmark_orchestration import format_progress_line, should_report_progress
+from plot_cactus import InputSpec, build_series, parse_filter, plot_cactus
 
 
 def repo_root() -> Path:
@@ -100,6 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--samples-per-family", type=int, default=3)
     parser.add_argument("--saveconverted", action="store_true")
     parser.add_argument("--only-tests", nargs="*", choices=ALL_TEST_IDS, default=list(ALL_TEST_IDS))
+    parser.add_argument("--replot-only", action="store_true", help="Regenerate plots from existing CSV files only.")
     args = parser.parse_args()
 
     if args.timeout <= 0:
@@ -268,31 +270,69 @@ def run_variant(
 
 def generate_cactus_plot(
     *,
-    plot_script: Path,
     output_path: Path,
     title: str,
     inputs: Sequence[tuple[str, Path]],
 ) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, str(plot_script)]
-    for label, csv_path in inputs:
-        cmd.extend(["--input", f"{csv_path}::{label}"])
-    cmd.extend(
-        [
-            "--where",
-            "solver=xorcle_0_1",
-            "--aggregate-per-file",
-            "median",
-            "--title",
-            title,
-            "--output",
-            str(output_path),
-        ]
+    filters = [parse_filter("solver=xorcle_0_1")]
+    specs = [InputSpec(path=csv_path.resolve(), label=label) for label, csv_path in inputs]
+    series = build_series(specs, filters, "", False)
+    if not series:
+        raise RuntimeError(f"plot generation failed for {output_path.name}: no matching series")
+    plot_cactus(
+        series,
+        output_path.resolve(),
+        aggregate_per_file="median",
+        include_timeouts=False,
+        line_mode="line",
+        black_white=False,
+        title=title,
+        xlabel="Instances solved",
+        ylabel="Runtime (s)",
+        x_scale="linear",
+        y_scale="log",
+        x_ticks=[],
+        y_ticks=[],
+        font_size=UNIFIED_FONT_SIZE,
+        figsize=unified_figure_geometry()[0],
+        dpi=UNIFIED_DPI,
+        show_counts=True,
     )
-    cp = subprocess.run(cmd, capture_output=True, text=True)
-    if cp.returncode != 0:
-        tail = (cp.stderr or cp.stdout or "")[-800:]
-        raise RuntimeError(f"plot generation failed for {output_path.name}: {tail}")
+
+
+def replot_from_existing_csv(*, args: argparse.Namespace, output_root: Path) -> int:
+    csv_root = output_root / "csv"
+    plots_root = output_root / "plots"
+    plots_root.mkdir(parents=True, exist_ok=True)
+
+    plotted = 0
+    for test_id in args.only_tests:
+        test_spec = TEST_SPECS[test_id]
+        test_csv_dir = csv_root / test_id
+        plot_inputs: List[tuple[str, Path]] = []
+        for variant in test_spec.variants:
+            csv_path = test_csv_dir / f"{variant.label}.raw.csv"
+            if not csv_path.is_file():
+                print(f"[type3] skipping {test_id}/{variant.label}: missing CSV {csv_path}")
+                continue
+            plot_inputs.append((variant.label, csv_path))
+
+        if not plot_inputs:
+            print(f"[type3] skipping {test_id}: no CSV inputs found under {test_csv_dir}")
+            continue
+
+        plot_path = plots_root / f"{test_id}.png"
+        generate_cactus_plot(
+            output_path=plot_path,
+            title=test_spec.title,
+            inputs=plot_inputs,
+        )
+        plotted += 1
+        print(f"[type3] replot wrote plot {plot_path}")
+
+    if plotted == 0:
+        print(f"[type3] no plots regenerated from {csv_root}")
+    return 0
 
 
 def main() -> int:
@@ -304,10 +344,12 @@ def main() -> int:
     csv_root = output_root / "csv"
     plots_root = output_root / "plots"
     converter_script = root / "tools" / "xnf_convert.py"
-    plot_script = root / "tools" / "plot_cactus.py"
 
     csv_root.mkdir(parents=True, exist_ok=True)
     plots_root.mkdir(parents=True, exist_ok=True)
+
+    if args.replot_only:
+        return replot_from_existing_csv(args=args, output_root=output_root)
 
     satcomp_files = collect_satcomp_files(sat_comp_root)
     test_sample_files, sample_manifest = collect_test_sample_files(tests_root, args.samples_per_family)
@@ -367,7 +409,6 @@ def main() -> int:
 
         plot_path = plots_root / f"{test_id}.png"
         generate_cactus_plot(
-            plot_script=plot_script,
             output_path=plot_path,
             title=test_spec.title,
             inputs=plot_inputs,

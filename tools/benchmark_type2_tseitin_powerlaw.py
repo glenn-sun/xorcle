@@ -16,6 +16,13 @@ os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconf
 
 sys.path.append(str(Path(__file__).resolve().parent))
 import run_benchmark as bs
+from benchmark_plot_style import (
+    apply_common_axes_style,
+    create_unified_figure,
+    finalize_figure,
+    place_right_legend,
+    series_style,
+)
 from benchmark_orchestration import (
     FAMILY_SPECS,
     SOLVER_COLORS,
@@ -53,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--saveconverted", action="store_true")
     parser.add_argument("--full", action="store_true", help="Shorthand for --attempts 5 --timeout 60")
+    parser.add_argument("--replot-only", action="store_true", help="Regenerate plots from existing CSV files only.")
     parser.add_argument(
         "--families",
         nargs="*",
@@ -102,6 +110,11 @@ def write_csv(path: Path, rows: List[Dict[str, str]], fieldnames: List[str]) -> 
         w.writerows(rows)
 
 
+def read_csv_rows(path: Path) -> List[Dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
 def run_size_task(
     *,
     cli_args: argparse.Namespace,
@@ -132,17 +145,34 @@ def plot_family(
         raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(4.8, 3.2))
-    color = SOLVER_COLORS[SOLVER]
+    fig, ax = create_unified_figure(plt)
+    style = series_style(0, color_override=SOLVER_COLORS[SOLVER])
+    fit_style = series_style(1, color_override="#222222")
     label = SOLVER_DISPLAY[SOLVER]
 
     if points:
         pts = sorted(points, key=lambda p: (p[0], p[1]))
-        ax.scatter([x for x, _ in pts], [y for _, y in pts], s=14, alpha=0.7, color=color, label="All non-timeout runs")
+        ax.scatter(
+            [x for x, _ in pts],
+            [y for _, y in pts],
+            s=14,
+            alpha=0.7,
+            color=style.color,
+            marker=style.marker,
+            label="All non-timeout runs",
+        )
 
     if median_points:
         mp = sorted(median_points, key=lambda p: p[0])
-        ax.plot([x for x, _ in mp], [y for _, y in mp], color=color, linewidth=1.2, alpha=0.75, label="Median per size")
+        ax.plot(
+            [x for x, _ in mp],
+            [y for _, y in mp],
+            color=style.color,
+            linestyle=style.linestyle,
+            linewidth=1.3,
+            alpha=0.85,
+            label="Median per size",
+        )
 
         fit = power_fit(mp, fit_mode)
         if fit is not None:
@@ -159,20 +189,83 @@ def plot_family(
                 fit_label = f"Power fit: t ∝ (2^{x_label})^{p:.2f} (R^2={r2:.3f})"
             else:
                 fit_label = f"Power fit: t ∝ {x_label}^{p:.2f} (R^2={r2:.3f})"
-            ax.plot(fit_x, fit_y, color="black", linewidth=1.3, label=fit_label)
+            ax.plot(
+                fit_x,
+                fit_y,
+                color=fit_style.color,
+                linestyle=fit_style.linestyle,
+                linewidth=1.3,
+                label=fit_label,
+            )
 
-    ax.set_xlabel(x_label)
-    ax.set_ylabel("Time (s)")
-    ax.set_title(f"{family} ({label})")
     ax.set_yscale("log")
     if family == "tseitin_5_n":
         ax.set_xscale("log")
         ax.set_xticks(x_values)
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.35)
-    ax.legend(frameon=False, fontsize=8)
-    fig.tight_layout(pad=0.5)
-    fig.savefig(path, dpi=300)
+    apply_common_axes_style(ax, xlabel=x_label, ylabel="Time (s)", title=f"{family} ({label})")
+    place_right_legend(ax)
+    finalize_figure(fig, path)
     plt.close(fig)
+
+
+def load_plot_inputs_from_agg(path: Path) -> tuple[str, List[int], str, str, List[tuple[int, float]], List[tuple[int, float]]]:
+    rows = read_csv_rows(path)
+    if not rows:
+        raise RuntimeError(f"{path.name}: no rows found")
+
+    family = rows[0].get("family", "") or path.name.removesuffix(".agg.csv")
+    x_label = rows[0].get("x_label", "") or FAMILY_SPECS.get(family, FAMILY_SPECS[TSEITIN_FAMILIES[0]]).x_label
+    solver = rows[0].get("solver", "") or SOLVER
+    x_values = sorted({int(row["x_value"]) for row in rows if row.get("x_value", "").strip()})
+    points: List[tuple[int, float]] = []
+    median_points: List[tuple[int, float]] = []
+
+    for row in rows:
+        if row.get("solver", "").strip() != solver:
+            continue
+        x_raw = row.get("x_value", "").strip()
+        if not x_raw:
+            continue
+        x = int(x_raw)
+        time_raw = row.get("time_s", "").strip()
+        if not time_raw:
+            continue
+        if row.get("series", "").strip() == "point":
+            points.append((x, float(time_raw)))
+        elif row.get("series", "").strip() == "median":
+            median_points.append((x, float(time_raw)))
+
+    return family, x_values, x_label, solver, points, median_points
+
+
+def replot_from_existing_csv(*, cli_args: argparse.Namespace, output_root: Path) -> int:
+    csv_root = output_root / "csv"
+    plots_root = output_root / "plots"
+    plots_root.mkdir(parents=True, exist_ok=True)
+
+    plotted = 0
+    for family in cli_args.families:
+        agg_csv_path = csv_root / f"{family}.agg.csv"
+        if not agg_csv_path.is_file():
+            print(f"[type2] skipping {family}: missing CSV {agg_csv_path}")
+            continue
+        csv_family, x_values, x_label, _solver, points, median_points = load_plot_inputs_from_agg(agg_csv_path)
+        plot_path = plots_root / f"{csv_family}.png"
+        plot_family(
+            path=plot_path,
+            family=csv_family,
+            x_values=x_values,
+            x_label=x_label,
+            fit_mode=FAMILY_SPECS[csv_family].fit_mode,
+            points=points,
+            median_points=median_points,
+        )
+        plotted += 1
+        print(f"[type2] replot wrote: {plot_path}")
+
+    if plotted == 0:
+        print(f"[type2] no plots regenerated from {csv_root}")
+    return 0
 
 
 def main() -> int:
@@ -186,6 +279,9 @@ def main() -> int:
 
     csv_root.mkdir(parents=True, exist_ok=True)
     plots_root.mkdir(parents=True, exist_ok=True)
+
+    if args.replot_only:
+        return replot_from_existing_csv(cli_args=args, output_root=output_root)
 
     total_chunks = sum(len(FAMILY_SPECS[f].x_values) for f in args.families)
     done_chunks = 0

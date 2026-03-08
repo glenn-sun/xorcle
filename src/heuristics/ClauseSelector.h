@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -8,6 +9,7 @@
 #include "algebra/Equation.h"
 #include "algebra/RowSpace.h"
 #include "heuristics/Types.h"
+#include "search/Compaction.h"
 #include "search/Trail.h"
 
 namespace heuristics {
@@ -42,11 +44,17 @@ protected:
     /// @brief Stored clauses; clause ids are indices into this vector.
     std::vector<Clause> clauses;
 
+    /// @brief Per-clause active flag; inactive clauses are ignored by selection.
+    std::vector<std::uint8_t> clause_active;
+
     /// @brief Hook for subclasses when a new reduced equation is learned.
     virtual void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) {}
 
     /// @brief Add a clause to internal storage with no other side effects.
-    virtual void add_clause(Clause clause) { clauses.push_back(std::move(clause)); }
+    virtual void add_clause(Clause clause) {
+        clauses.push_back(std::move(clause));
+        clause_active.push_back(1);
+    }
 
 public:
     /// @brief Construct an empty selector.
@@ -63,6 +71,15 @@ public:
 
     /// @brief Return a mutable reference to a clause by id.
     Clause& get_clause(ClauseId id);
+
+    /// @brief Return true if the clause is currently active.
+    bool is_clause_active(ClauseId id) const;
+
+    /// @brief Mark a clause active/inactive.
+    void set_clause_active(ClauseId id, bool active);
+
+    /// @brief Read-only view of active flags in clause-id order.
+    const std::vector<std::uint8_t>& active_flags() const;
 
     /// @brief Return the next clause id to consider, or std::nullopt if none.
     virtual std::optional<ClauseId> next() = 0;
@@ -99,6 +116,9 @@ public:
     /// @param wt Which watch is being updated.
     /// @param trail Current trail.
     virtual void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail);
+
+    /// @brief Notify selector after clauses are rewritten during variable compaction.
+    virtual void update_with_compaction(const search::CompactionTransform& transform, const Trail& trail);
 };
 
 /// @brief Simple cyclic clause selector.
@@ -128,6 +148,8 @@ public:
 
     /// @brief Set a pending restart clause if the id is valid.
     void update_with_decision_clause(std::optional<ClauseId> clause_id) override;
+
+    void update_with_compaction(const search::CompactionTransform& transform, const Trail& trail) override;
 };
 
 /// @brief Watchlist selector keyed by leading terms.
@@ -172,5 +194,7 @@ public:
 
     /// @brief Update watchlists when a watched equation changes.
     void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail) override;
+
+    void update_with_compaction(const search::CompactionTransform& transform, const Trail& trail) override;
 };
 } // namespace heuristics

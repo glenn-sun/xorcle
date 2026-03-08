@@ -2,16 +2,16 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence
 
 sys.path.append(str(Path(__file__).resolve().parent))
 import run_benchmark as rb
+from benchmark_plot_style import UNIFIED_DPI, UNIFIED_FONT_SIZE, unified_figure_geometry
 from benchmark_orchestration import (
     ALL_SOLVER_LINES,
     SOLVER_DISPLAY,
@@ -20,6 +20,9 @@ from benchmark_orchestration import (
     should_report_progress,
     solver_line_key,
 )
+from plot_cactus import SeriesData, plot_cactus
+
+ASCON_BUCKETS = ("r2", "r3", "r4")
 
 
 def repo_root() -> Path:
@@ -39,6 +42,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--saveconverted", action="store_true")
+    parser.add_argument(
+        "--solvers",
+        nargs="*",
+        choices=list(ALL_SOLVER_LINES),
+        default=None,
+        help="Optional solver subset to benchmark/replot. Default: all type-1 solver lines.",
+    )
+    parser.add_argument(
+        "--folders",
+        nargs="*",
+        choices=list(ASCON_BUCKETS),
+        default=None,
+        help="Optional Ascon subfolders to benchmark/replot. Selecting any disables the aggregate 'all' plot.",
+    )
+    parser.add_argument("--replot-only", action="store_true", help="Regenerate plots from existing CSV files only.")
     args = parser.parse_args()
 
     if args.timeout <= 0:
@@ -46,20 +64,39 @@ def parse_args() -> argparse.Namespace:
     if args.jobs < 1:
         parser.error("--jobs must be >= 1")
 
-    ascon_root = Path(args.ascon_root).resolve()
-    if not ascon_root.is_dir():
-        raise FileNotFoundError(f"ascon root not found: {ascon_root}")
+    if not args.replot_only:
+        ascon_root = Path(args.ascon_root).resolve()
+        if not ascon_root.is_dir():
+            raise FileNotFoundError(f"ascon root not found: {ascon_root}")
     return args
 
 
-def collect_ascon_xnf_files(ascon_root: Path) -> List[Path]:
-    files = sorted(p.resolve() for p in ascon_root.rglob("*.xnf") if p.is_file())
+def selected_buckets(args: argparse.Namespace) -> tuple[str, ...]:
+    return tuple(args.folders) if args.folders else ASCON_BUCKETS
+
+
+def selected_solver_lines(args: argparse.Namespace) -> tuple[str, ...]:
+    return tuple(args.solvers) if args.solvers else tuple(ALL_SOLVER_LINES)
+
+
+def include_all_plot(args: argparse.Namespace) -> bool:
+    return not args.folders
+
+
+def collect_ascon_xnf_files(ascon_root: Path, buckets: Sequence[str]) -> List[Path]:
+    files: List[Path] = []
+    for bucket in buckets:
+        bucket_dir = ascon_root / bucket
+        if not bucket_dir.is_dir():
+            raise FileNotFoundError(f"ascon bucket not found: {bucket_dir}")
+        files.extend(sorted(p.resolve() for p in bucket_dir.rglob("*.xnf") if p.is_file()))
     if not files:
-        raise RuntimeError(f"No .xnf files found under: {ascon_root}")
-    return files
+        raise RuntimeError(f"No .xnf files found under selected buckets in: {ascon_root}")
+    return sorted(files)
 
 
 def make_runner_args(args: argparse.Namespace) -> SimpleNamespace:
+    solver_lines = selected_solver_lines(args)
     return SimpleNamespace(
         input_format="xnf",
         repeat=1,
@@ -74,7 +111,7 @@ def make_runner_args(args: argparse.Namespace) -> SimpleNamespace:
         exp_cnf=False,
         keep_going=True,
         jobs=1,
-        solvers=[SOLVER_TO_BENCH_ARG[s] for s in ALL_SOLVER_LINES],
+        solvers=[SOLVER_TO_BENCH_ARG[s] for s in solver_lines],
         saveconverted=bool(args.saveconverted),
     )
 
@@ -89,32 +126,133 @@ def write_csv(path: Path, rows: Sequence[Dict[str, str]], fieldnames: Sequence[s
         w.writerows(rows)
 
 
-def bucket_from_row_file(row_file: str, ascon_root: Path) -> str:
-    rel = Path(row_file).resolve().relative_to(ascon_root)
-    if not rel.parts:
-        raise RuntimeError(f"row file path has no relative parts under ascon root: {row_file}")
-    return rel.parts[0]
+def read_csv_rows(path: Path) -> List[Dict[str, str]]:
+    import csv
+
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
 
 
-def generate_cactus_plot(*, plot_script: Path, output_path: Path, title: str, inputs: Sequence[Tuple[str, Path]]) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, str(plot_script)]
-    for label, csv_path in inputs:
-        cmd.extend(["--input", f"{csv_path}::{label}"])
-    cmd.extend(
-        [
-            "--aggregate-per-file",
-            "median",
-            "--title",
-            title,
-            "--output",
-            str(output_path),
-        ]
+def bucket_from_row_file(row_file: str, ascon_root: Path | None) -> str:
+    path = Path(row_file).expanduser()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+
+    if ascon_root is not None:
+        try:
+            rel = resolved.relative_to(ascon_root)
+            if rel.parts:
+                return rel.parts[0]
+        except ValueError:
+            pass
+
+    for part in resolved.parts:
+        if part in {"r2", "r3", "r4"}:
+            return part
+    raise RuntimeError(f"could not determine Ascon bucket for row file: {row_file}")
+
+
+def render_cactus_plot(*, output_path: Path, title: str, series: Sequence[SeriesData]) -> None:
+    if not series:
+        raise RuntimeError(f"plot generation failed for {output_path.name}: no series provided")
+    plot_cactus(
+        series,
+        output_path.resolve(),
+        aggregate_per_file="median",
+        include_timeouts=False,
+        line_mode="line",
+        black_white=False,
+        title=title,
+        xlabel="Instances solved",
+        ylabel="Runtime (s)",
+        x_scale="linear",
+        y_scale="log",
+        x_ticks=[],
+        y_ticks=[],
+        font_size=UNIFIED_FONT_SIZE,
+        figsize=unified_figure_geometry()[0],
+        dpi=UNIFIED_DPI,
+        show_counts=True,
     )
-    cp = subprocess.run(cmd, capture_output=True, text=True)
-    if cp.returncode != 0:
-        tail = (cp.stderr or cp.stdout or "")[-800:]
-        raise RuntimeError(f"plot generation failed for {output_path.name}: {tail}")
+
+
+def build_bucket_rows(rows: Sequence[Dict[str, str]], ascon_root: Path | None, buckets: Sequence[str]) -> Dict[str, List[Dict[str, str]]]:
+    bucket_rows: Dict[str, List[Dict[str, str]]] = {bucket: [] for bucket in buckets}
+    for row in rows:
+        bucket = bucket_from_row_file(row.get("file", ""), ascon_root)
+        if bucket in bucket_rows:
+            bucket_rows[bucket].append(row)
+    return bucket_rows
+
+
+def series_for_bucket(rows: Sequence[Dict[str, str]], bucket: str, solver_lines: Sequence[str]) -> List[SeriesData]:
+    series: List[SeriesData] = []
+    unknown_rows = [row for row in rows if solver_line_key(row) is None]
+    if unknown_rows:
+        raise RuntimeError(
+            f"{bucket}: found {len(unknown_rows)} rows with unmapped solver/config, e.g. "
+            f"solver={unknown_rows[0].get('solver','')} config={unknown_rows[0].get('solver_config','')}"
+        )
+
+    for solver in solver_lines:
+        solver_rows = [row for row in rows if solver_line_key(row) == solver]
+        if not solver_rows:
+            continue
+        series.append(SeriesData(label=SOLVER_DISPLAY[solver], rows=solver_rows))
+    return series
+
+
+def replot_from_existing_csv(*, args: argparse.Namespace, output_root: Path, ascon_root: Path | None) -> int:
+    csv_root = output_root / "csv"
+    plots_root = output_root / "plots"
+    plots_root.mkdir(parents=True, exist_ok=True)
+    buckets = selected_buckets(args)
+    solver_lines = selected_solver_lines(args)
+    all_enabled = include_all_plot(args)
+
+    all_raw_csv = csv_root / "all.raw.csv"
+    if not all_raw_csv.is_file():
+        print(f"[type4] skipping replot: missing CSV {all_raw_csv}")
+        return 0
+
+    rows = read_csv_rows(all_raw_csv)
+    if not rows:
+        print(f"[type4] skipping replot: no rows in {all_raw_csv}")
+        return 0
+
+    bucket_rows = build_bucket_rows(rows, ascon_root, buckets)
+    plotted = 0
+    if all_enabled:
+        all_series = series_for_bucket(rows, "all", solver_lines)
+        if all_series:
+            all_plot_path = plots_root / "all.png"
+            render_cactus_plot(output_path=all_plot_path, title="Type 4 Ascon XNF Cactus (all)", series=all_series)
+            plotted += 1
+            print(f"[type4] replot wrote {all_plot_path}")
+        else:
+            print(f"[type4] skipping all: no mapped solver series")
+    else:
+        print(f"[type4] skipping all plot because --folders was provided: {', '.join(buckets)}")
+
+    for bucket in buckets:
+        current_rows = bucket_rows[bucket]
+        if not current_rows:
+            print(f"[type4] skipping {bucket}: no rows in {all_raw_csv}")
+            continue
+        series = series_for_bucket(current_rows, bucket, solver_lines)
+        if not series:
+            print(f"[type4] skipping {bucket}: no mapped solver series")
+            continue
+        plot_path = plots_root / f"{bucket}.png"
+        render_cactus_plot(output_path=plot_path, title=f"Type 4 Ascon XNF Cactus ({bucket})", series=series)
+        plotted += 1
+        print(f"[type4] replot wrote {plot_path}")
+
+    if plotted == 0:
+        print(f"[type4] no plots regenerated from {csv_root}")
+    return 0
 
 
 def main() -> int:
@@ -125,21 +263,24 @@ def main() -> int:
     csv_root = output_root / "csv"
     plots_root = output_root / "plots"
     converter_script = root / "tools" / "xnf_convert.py"
-    plot_script = root / "tools" / "plot_cactus.py"
+    buckets = selected_buckets(args)
+    solver_lines = selected_solver_lines(args)
+    all_enabled = include_all_plot(args)
+
+    if args.replot_only:
+        return replot_from_existing_csv(args=args, output_root=output_root, ascon_root=ascon_root if ascon_root.is_dir() else None)
 
     if not converter_script.is_file():
         raise FileNotFoundError(f"converter script not found: {converter_script}")
-    if not plot_script.is_file():
-        raise FileNotFoundError(f"plot script not found: {plot_script}")
 
-    files = collect_ascon_xnf_files(ascon_root)
+    files = collect_ascon_xnf_files(ascon_root, buckets)
     total_files = len(files)
     progress_every = max(1, total_files // 40)
     start_all = time.perf_counter()
     runner_args = make_runner_args(args)
 
     rows: List[Dict[str, str]] = []
-    print(f"[type4] benchmarking {total_files} .xnf files under {ascon_root}")
+    print(f"[type4] benchmarking {total_files} .xnf files under {ascon_root} for buckets: {', '.join(buckets)}")
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         future_to_file = {
             executor.submit(rb.benchmark_file, file_path, runner_args, [], converter_script): file_path
@@ -180,47 +321,33 @@ def main() -> int:
     write_csv(all_raw_csv, rows, rb.RAW_CSV_FIELDS)
     print(f"[type4] wrote {all_raw_csv}")
 
-    bucket_rows: Dict[str, List[Dict[str, str]]] = {
-        "all": list(rows),
-        "r2": [],
-        "r3": [],
-        "r4": [],
-    }
-    for row in rows:
-        bucket = bucket_from_row_file(row.get("file", ""), ascon_root)
-        if bucket in bucket_rows and bucket != "all":
-            bucket_rows[bucket].append(row)
+    bucket_rows = build_bucket_rows(rows, ascon_root, buckets)
 
-    for bucket in ("r2", "r3", "r4"):
+    for bucket in buckets:
         if not bucket_rows[bucket]:
             raise RuntimeError(f"No benchmark rows for bucket '{bucket}'")
 
-    for bucket in ("all", "r2", "r3", "r4"):
+    if all_enabled:
+        all_series = series_for_bucket(rows, "all", solver_lines)
+        all_plot_path = plots_root / "all.png"
+        render_cactus_plot(output_path=all_plot_path, title="Type 4 Ascon XNF Cactus (all)", series=all_series)
+        print(f"[type4] wrote {all_plot_path}")
+    else:
+        print(f"[type4] skipped all plot because --folders was provided: {', '.join(buckets)}")
+
+    for bucket in buckets:
         current_rows = bucket_rows[bucket]
         bucket_csv_dir = csv_root / bucket
-        plot_inputs: List[Tuple[str, Path]] = []
-        unknown_rows = [r for r in current_rows if solver_line_key(r) is None]
-        if unknown_rows:
-            raise RuntimeError(
-                f"{bucket}: found {len(unknown_rows)} rows with unmapped solver/config, e.g. "
-                f"solver={unknown_rows[0].get('solver','')} config={unknown_rows[0].get('solver_config','')}"
-            )
-
-        for solver in ALL_SOLVER_LINES:
+        series = series_for_bucket(current_rows, bucket, solver_lines)
+        for solver in solver_lines:
             solver_rows = [row for row in current_rows if solver_line_key(row) == solver]
             if not solver_rows:
                 raise RuntimeError(f"{bucket}: no rows for solver line '{solver}'")
             solver_csv = bucket_csv_dir / f"{solver}.raw.csv"
             write_csv(solver_csv, solver_rows, rb.RAW_CSV_FIELDS)
-            plot_inputs.append((SOLVER_DISPLAY[solver], solver_csv))
 
         plot_path = plots_root / f"{bucket}.png"
-        generate_cactus_plot(
-            plot_script=plot_script,
-            output_path=plot_path,
-            title=f"Type 4 Ascon XNF Cactus ({bucket})",
-            inputs=plot_inputs,
-        )
+        render_cactus_plot(output_path=plot_path, title=f"Type 4 Ascon XNF Cactus ({bucket})", series=series)
         print(f"[type4] wrote {plot_path}")
 
     return 0

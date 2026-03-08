@@ -35,6 +35,9 @@ public:
     /// @brief Construct a propagation engine for a given variable count.
     explicit PropagationEngine(std::size_t num_vars);
 
+    /// @brief Reconfigure internal scratch storage for a new active variable count.
+    void reconfigure(std::size_t num_vars);
+
     /// @brief Attempt one unit propagation step.
     /// @param clause_sel Clause selector providing clause storage and watch updates.
     /// @param trail Current trail state.

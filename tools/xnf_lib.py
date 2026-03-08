@@ -27,7 +27,7 @@ def _parse_header(lines: List[str]) -> Tuple[int, int, int]:
             continue
         if stripped.startswith("p"):
             parts = stripped.split()
-            if len(parts) < 4 or parts[1] != "cnf":
+            if len(parts) < 4 or parts[1] not in {"cnf", "xnf"}:
                 raise ValueError(f"Invalid header: {stripped}")
             nvars = int(parts[2])
             nclauses = int(parts[3])

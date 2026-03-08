@@ -18,6 +18,13 @@ os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconf
 
 sys.path.append(str(Path(__file__).resolve().parent))
 import run_benchmark as bs
+from benchmark_plot_style import (
+    apply_common_axes_style,
+    create_unified_figure,
+    finalize_figure,
+    place_right_legend,
+    series_style,
+)
 from benchmark_orchestration import (
     ALL_SOLVER_LINES,
     SOLVER_COLORS,
@@ -67,6 +74,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--saveconverted", action="store_true")
     parser.add_argument("--full", action="store_true", help="Shorthand for --attempts 5 --timeout 60")
     parser.add_argument("--families", nargs="*", default=None, help="Family folder names (or paths) to benchmark")
+    parser.add_argument(
+        "--solvers",
+        nargs="*",
+        choices=list(ALL_SOLVER_LINES),
+        default=None,
+        help="Optional solver subset to benchmark/replot. Default: all type-1 solver lines.",
+    )
+    parser.add_argument("--replot-only", action="store_true", help="Regenerate plots from existing CSV files only.")
     args = parser.parse_args()
 
     if args.full:
@@ -206,6 +221,10 @@ def make_runner_args(
     )
 
 
+def selected_solver_lines(cli_args: argparse.Namespace) -> List[str]:
+    return list(cli_args.solvers) if cli_args.solvers else list(ALL_SOLVER_LINES)
+
+
 def write_csv(path: Path, rows: Sequence[Dict[str, str]], fieldnames: Sequence[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
@@ -214,12 +233,140 @@ def write_csv(path: Path, rows: Sequence[Dict[str, str]], fieldnames: Sequence[s
         w.writerows(rows)
 
 
+def read_csv_rows(path: Path) -> List[Dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def family_name_from_arg(raw: str) -> str:
+    return Path(raw).name or Path(raw).resolve().name
+
+
+def agg_csv_family_name(path: Path) -> str:
+    suffix = ".agg.csv"
+    return path.name[: -len(suffix)] if path.name.endswith(suffix) else path.stem
+
+
+def solver_plot_style(solver: str, index: int):
+    return series_style(index, color_override=SOLVER_COLORS.get(solver))
+
+
+def draw_segmented_series(
+    ax,
+    *,
+    x_values: Sequence[int],
+    median_by_x: Dict[int, float | None],
+    label: str,
+    color: str,
+    linestyle,
+    linewidth: float = 1.3,
+) -> None:
+    current_x: List[int] = []
+    current_y: List[float] = []
+    drew_label = False
+    for x in x_values:
+        value = median_by_x.get(x)
+        if value is None:
+            if current_x:
+                ax.plot(
+                    current_x,
+                    current_y,
+                    color=color,
+                    linestyle=linestyle,
+                    linewidth=linewidth,
+                    label=(label if not drew_label else "_nolegend_"),
+                )
+                drew_label = True
+                current_x = []
+                current_y = []
+            continue
+        current_x.append(x)
+        current_y.append(value)
+    if current_x:
+        ax.plot(
+            current_x,
+            current_y,
+            color=color,
+            linestyle=linestyle,
+            linewidth=linewidth,
+            label=(label if not drew_label else "_nolegend_"),
+        )
+        drew_label = True
+    if not drew_label:
+        ax.plot([], [], color=color, linestyle=linestyle, linewidth=linewidth, label=label)
+
+
+def load_plot_inputs_from_agg(
+    path: Path,
+) -> tuple[
+    str,
+    List[int],
+    str,
+    Dict[str, List[tuple[int, float]]],
+    Dict[str, Dict[int, float | None]],
+    Dict[str, List[tuple[int, float]]],
+    Dict[str, Dict[int, float | None]],
+]:
+    rows = read_csv_rows(path)
+    if not rows:
+        raise RuntimeError(f"{path.name}: no rows found")
+
+    family = rows[0].get("family", "") or agg_csv_family_name(path)
+    x_label = rows[0].get("x_label", "") or infer_x_label(family)
+    x_values = sorted({int(row["x_value"]) for row in rows if row.get("x_value", "").strip()})
+
+    points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
+    medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
+    decision_points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
+    decision_medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
+
+    for row in rows:
+        solver = row.get("solver", "").strip()
+        if solver not in ALL_SOLVER_LINES:
+            continue
+        x_raw = row.get("x_value", "").strip()
+        if not x_raw:
+            continue
+        x = int(x_raw)
+        series = row.get("series", "").strip()
+        time_raw = row.get("time_s", "").strip()
+        decisions_raw = row.get("decisions", "").strip()
+
+        if series == "point":
+            if time_raw:
+                points_by_solver[solver].append((x, float(time_raw)))
+            if decisions_raw:
+                decisions = float(decisions_raw)
+                if decisions > 0.0:
+                    decision_points_by_solver[solver].append((x, decisions))
+            continue
+
+        if series == "median":
+            medians_by_solver[solver][x] = float(time_raw) if time_raw else None
+            if decisions_raw:
+                decisions = float(decisions_raw)
+                decision_medians_by_solver[solver][x] = decisions if decisions > 0.0 else None
+            else:
+                decision_medians_by_solver[solver][x] = None
+
+    return (
+        family,
+        x_values,
+        x_label,
+        points_by_solver,
+        medians_by_solver,
+        decision_points_by_solver,
+        decision_medians_by_solver,
+    )
+
+
 def plot_family(
     *,
     path: Path,
     family: str,
     x_values: Sequence[int],
     x_label: str,
+    solver_lines: Sequence[str],
     points_by_solver: Dict[str, List[tuple[int, float]]],
     medians_by_solver: Dict[str, Dict[int, float | None]],
 ) -> None:
@@ -232,43 +379,36 @@ def plot_family(
         raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(4.6, 3.1))
+    fig, ax = create_unified_figure(plt)
 
-    for solver in ALL_SOLVER_LINES:
-        color = SOLVER_COLORS[solver]
+    for idx, solver in enumerate(solver_lines):
+        style = solver_plot_style(solver, idx)
         label = SOLVER_DISPLAY[solver]
         pts = sorted(points_by_solver.get(solver, []), key=lambda p: (p[0], p[1]))
         if pts:
-            ax.scatter([x for x, _ in pts], [y for _, y in pts], s=12, alpha=0.70, color=color, label="_nolegend_")
+            ax.scatter(
+                [x for x, _ in pts],
+                [y for _, y in pts],
+                s=14,
+                alpha=0.70,
+                color=style.color,
+                marker=style.marker,
+                label="_nolegend_",
+            )
 
-        current_x: List[int] = []
-        current_y: List[float] = []
-        drew_label = False
-        for x in x_values:
-            m = medians_by_solver.get(solver, {}).get(x)
-            if m is None:
-                if current_x:
-                    ax.plot(current_x, current_y, color=color, linewidth=1.2, label=(label if not drew_label else "_nolegend_"))
-                    drew_label = True
-                    current_x = []
-                    current_y = []
-                continue
-            current_x.append(x)
-            current_y.append(m)
-        if current_x:
-            ax.plot(current_x, current_y, color=color, linewidth=1.2, label=(label if not drew_label else "_nolegend_"))
-            drew_label = True
-        if not drew_label:
-            ax.plot([], [], color=color, linewidth=1.2, label=label)
+        draw_segmented_series(
+            ax,
+            x_values=x_values,
+            median_by_x=medians_by_solver.get(solver, {}),
+            label=label,
+            color=style.color,
+            linestyle=style.linestyle,
+        )
 
-    ax.set_xlabel(x_label)
-    ax.set_ylabel("Time (s)")
-    ax.set_title(family)
     ax.set_yscale("log")
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.35)
-    ax.legend(frameon=False, fontsize=8)
-    fig.tight_layout(pad=0.5)
-    fig.savefig(path, dpi=300)
+    apply_common_axes_style(ax, xlabel=x_label, ylabel="Time (s)", title=family)
+    place_right_legend(ax)
+    finalize_figure(fig, path)
     plt.close(fig)
 
 
@@ -278,6 +418,7 @@ def plot_family_decisions(
     family: str,
     x_values: Sequence[int],
     x_label: str,
+    solver_lines: Sequence[str],
     points_by_solver: Dict[str, List[tuple[int, float]]],
     medians_by_solver: Dict[str, Dict[int, float | None]],
 ) -> None:
@@ -290,44 +431,37 @@ def plot_family_decisions(
         raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(4.6, 3.1))
+    fig, ax = create_unified_figure(plt)
 
-    for solver in ALL_SOLVER_LINES:
-        color = SOLVER_COLORS[solver]
+    for idx, solver in enumerate(solver_lines):
+        style = solver_plot_style(solver, idx)
         label = SOLVER_DISPLAY[solver]
         # Log scale requires strictly positive values.
         pts = sorted((x, y) for x, y in points_by_solver.get(solver, []) if y > 0.0)
         if pts:
-            ax.scatter([x for x, _ in pts], [y for _, y in pts], s=12, alpha=0.70, color=color, label="_nolegend_")
+            ax.scatter(
+                [x for x, _ in pts],
+                [y for _, y in pts],
+                s=14,
+                alpha=0.70,
+                color=style.color,
+                marker=style.marker,
+                label="_nolegend_",
+            )
 
-        current_x: List[int] = []
-        current_y: List[float] = []
-        drew_label = False
-        for x in x_values:
-            m = medians_by_solver.get(solver, {}).get(x)
-            if m is None or m <= 0.0:
-                if current_x:
-                    ax.plot(current_x, current_y, color=color, linewidth=1.2, label=(label if not drew_label else "_nolegend_"))
-                    drew_label = True
-                    current_x = []
-                    current_y = []
-                continue
-            current_x.append(x)
-            current_y.append(m)
-        if current_x:
-            ax.plot(current_x, current_y, color=color, linewidth=1.2, label=(label if not drew_label else "_nolegend_"))
-            drew_label = True
-        if not drew_label:
-            ax.plot([], [], color=color, linewidth=1.2, label=label)
+        draw_segmented_series(
+            ax,
+            x_values=x_values,
+            median_by_x={x: y for x, y in medians_by_solver.get(solver, {}).items() if y is not None and y > 0.0},
+            label=label,
+            color=style.color,
+            linestyle=style.linestyle,
+        )
 
-    ax.set_xlabel(x_label)
-    ax.set_ylabel("Decisions")
-    ax.set_title(f"{family} (Decisions)")
     ax.set_yscale("log")
-    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.35)
-    ax.legend(frameon=False, fontsize=8)
-    fig.tight_layout(pad=0.5)
-    fig.savefig(path, dpi=300)
+    apply_common_axes_style(ax, xlabel=x_label, ylabel="Decisions", title=f"{family} (Decisions)")
+    place_right_legend(ax)
+    finalize_figure(fig, path)
     plt.close(fig)
 
 
@@ -354,6 +488,69 @@ def run_size_task(
     return rows
 
 
+def replot_from_existing_csv(*, cli_args: argparse.Namespace, output_root: Path) -> int:
+    csv_root = output_root / "csv"
+    plots_root = output_root / "plots"
+    plots_root.mkdir(parents=True, exist_ok=True)
+    solver_lines = selected_solver_lines(cli_args)
+
+    if cli_args.families:
+        family_names = [family_name_from_arg(item) for item in cli_args.families]
+    else:
+        family_names = sorted(agg_csv_family_name(path) for path in csv_root.glob("*.agg.csv"))
+
+    if not family_names:
+        print(f"[type1] no aggregate CSV files found under {csv_root}; skipping")
+        return 0
+
+    plotted = 0
+    for family in family_names:
+        agg_csv_path = csv_root / f"{family}.agg.csv"
+        if not agg_csv_path.is_file():
+            print(f"[type1] skipping {family}: missing CSV {agg_csv_path}")
+            continue
+
+        (
+            csv_family,
+            x_values,
+            x_label,
+            points_by_solver,
+            medians_by_solver,
+            decision_points_by_solver,
+            decision_medians_by_solver,
+        ) = load_plot_inputs_from_agg(agg_csv_path)
+
+        plot_path = plots_root / f"{csv_family}.png"
+        plot_family(
+            path=plot_path,
+            family=csv_family,
+            x_values=x_values,
+            x_label=x_label,
+            solver_lines=solver_lines,
+            points_by_solver=points_by_solver,
+            medians_by_solver=medians_by_solver,
+        )
+
+        decision_plot_path = plots_root / f"{csv_family}_decisions.png"
+        plot_family_decisions(
+            path=decision_plot_path,
+            family=csv_family,
+            x_values=x_values,
+            x_label=x_label,
+            solver_lines=solver_lines,
+            points_by_solver=decision_points_by_solver,
+            medians_by_solver=decision_medians_by_solver,
+        )
+
+        plotted += 1
+        print(f"[type1] replot wrote: {plot_path}")
+        print(f"[type1] replot wrote: {decision_plot_path}")
+
+    if plotted == 0:
+        print(f"[type1] no plots regenerated from {csv_root}")
+    return 0
+
+
 def main() -> int:
     args = parse_args()
     root = repo_root()
@@ -365,6 +562,10 @@ def main() -> int:
 
     csv_root.mkdir(parents=True, exist_ok=True)
     plots_root.mkdir(parents=True, exist_ok=True)
+    solver_lines = selected_solver_lines(args)
+
+    if args.replot_only:
+        return replot_from_existing_csv(cli_args=args, output_root=output_root)
 
     family_dirs = resolve_family_dirs(tests_root=tests_root, family_args=args.families)
     family_specs = [discover_family_spec(d) for d in family_dirs]
@@ -395,8 +596,8 @@ def main() -> int:
         decision_points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
         decision_medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
 
-        active_solvers = list(ALL_SOLVER_LINES)
-        timeout_streak = {s: 0 for s in ALL_SOLVER_LINES}
+        active_solvers = list(solver_lines)
+        timeout_streak = {s: 0 for s in solver_lines}
 
         for x in spec.x_values:
             selected_files = files_by_x[x][: args.attempts] if spec.kind == "random" else [files_by_x[x][0]]
@@ -500,7 +701,7 @@ def main() -> int:
         write_csv(raw_csv_path, family_raw_rows, bs.RAW_CSV_FIELDS)
 
         agg_rows: List[Dict[str, str]] = []
-        for solver in ALL_SOLVER_LINES:
+        for solver in solver_lines:
             for x, t, d in sorted(
                 point_metrics_by_solver.get(solver, []),
                 key=lambda p: (p[0], float("inf") if p[1] is None else p[1]),
@@ -549,6 +750,7 @@ def main() -> int:
             family=family,
             x_values=spec.x_values,
             x_label=spec.x_label,
+            solver_lines=solver_lines,
             points_by_solver=points_by_solver,
             medians_by_solver=medians_by_solver,
         )
@@ -558,6 +760,7 @@ def main() -> int:
             family=family,
             x_values=spec.x_values,
             x_label=spec.x_label,
+            solver_lines=solver_lines,
             points_by_solver=decision_points_by_solver,
             medians_by_solver=decision_medians_by_solver,
         )

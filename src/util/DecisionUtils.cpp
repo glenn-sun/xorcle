@@ -15,6 +15,17 @@ ClauseSatisfactionWorkspace::ClauseSatisfactionWorkspace(std::size_t num_vars)
       basis_rows(),
       basis_size(0) {}
 
+void ClauseSatisfactionWorkspace::reconfigure(std::size_t next_num_vars) {
+    num_vars = next_num_vars;
+    eqn_false = algebra::Equation::unit(num_vars + 1, num_vars);
+    scratch_false.resize(num_vars + 1);
+    scratch_row.resize(num_vars + 1);
+    pivot_cols = bit::vector<>::zeros(num_vars + 1);
+    col_to_row.assign(num_vars + 1, 0);
+    basis_rows.clear();
+    basis_size = 0;
+}
+
 algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
                                     const algebra::RowSpace& trail_span,
                                     std::size_t num_vars) {

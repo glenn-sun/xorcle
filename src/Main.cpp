@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <chrono>
 #include <ctime>
@@ -62,6 +63,22 @@ std::optional<std::size_t> parse_size_t_token(const char* token) {
     }
 }
 
+std::optional<bool> parse_bool_token(const char* token) {
+    if (token == nullptr) {
+        return std::nullopt;
+    }
+    std::string s(token);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (s == "1" || s == "true" || s == "on" || s == "yes") {
+        return true;
+    }
+    if (s == "0" || s == "false" || s == "off" || s == "no") {
+        return false;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 /// @brief Output mode for statistics reporting.
@@ -82,6 +99,7 @@ stats::RunStats run_once(const std::string& filename,
                          heuristics::DecisionPhase phase,
                          const heuristics::CVsidsConfig& cvsids_config,
                          const search::RestartConfig& restart_config,
+                         bool enable_compaction,
                          std::atomic<bool>& stop_flag,
                          const std::string& proof_path = {}) {
     std::shared_ptr<io::ProofLogger> proof_logger;
@@ -89,7 +107,8 @@ stats::RunStats run_once(const std::string& filename,
         proof_logger = std::make_shared<io::ProofLogger>(proof_path);
     }
     search::Solver solver =
-        search::Solver::from_DIMACS(filename, dpn, csn, phase, cvsids_config, proof_logger, restart_config);
+        search::Solver::from_DIMACS(filename, dpn, csn, phase, cvsids_config, proof_logger, restart_config,
+                                    enable_compaction);
     std::size_t num_vars = solver.get_num_vars();
     std::size_t start_num_clauses = solver.get_num_clauses();
 
@@ -165,6 +184,7 @@ int main(int argc, char *argv[]) {
     std::string stats_file;
     std::string proof_path;
     search::RestartConfig restart_config{};
+    bool enable_compaction = true;
 
     static constexpr struct option long_options[] = {
         {"decision-proc", required_argument, 0, 'd'},
@@ -172,6 +192,7 @@ int main(int argc, char *argv[]) {
         {"stats-file", required_argument, 0, 's'},
         {"clause-selector", required_argument, 0, 'c'},
         {"restart", required_argument, 0, 'r'},
+        {"compact", required_argument, 0, 'x'},
         {"verbose", no_argument, 0, 'v'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
@@ -179,7 +200,7 @@ int main(int argc, char *argv[]) {
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "d:p:s:c:r:vh", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "d:p:s:c:r:x:vh", long_options, &option_index);
         if (option == -1) {
             break;
         }
@@ -322,6 +343,15 @@ int main(int argc, char *argv[]) {
             case 'v':
                 verbose = true;
                 break;
+            case 'x': {
+                auto maybe_bool = parse_bool_token(optarg);
+                if (!maybe_bool.has_value()) {
+                    std::cerr << "Error: --compact expects on|off" << std::endl;
+                    return 1;
+                }
+                enable_compaction = *maybe_bool;
+                break;
+            }
             case 'h':
                 help = true;
                 break;
@@ -350,6 +380,7 @@ int main(int argc, char *argv[]) {
         std::cout << "                               none" << std::endl;
         std::cout << "                               geometric [rate_increase>=1.0] [initial_conflicts>=1] (defaults: 1.5, 100)" << std::endl;
         std::cout << "                               luby [unit_conflicts>=1] (default: 100)" << std::endl;
+        std::cout << "  -x, --compact <on|off>      Compaction (default: on)" << std::endl;
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
         std::cout << "  -h, --help                   Show this help message" << std::endl;
         std::cout << "Notes:" << std::endl;
@@ -418,8 +449,8 @@ int main(int argc, char *argv[]) {
     run_stats.reserve(1);
     try {
         std::atomic<bool> stop_flag(false);
-        run_stats.push_back(run_once(input_path, dpn, csn, phase, cvsids_config, restart_config, stop_flag,
-                                     proof_path));
+        run_stats.push_back(run_once(input_path, dpn, csn, phase, cvsids_config, restart_config,
+                                     enable_compaction, stop_flag, proof_path));
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return 1;

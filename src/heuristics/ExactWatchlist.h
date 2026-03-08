@@ -48,6 +48,7 @@ private:
     struct VersionedRowRef {
         std::size_t row_idx;
         std::uint64_t version;
+        std::size_t level = std::numeric_limits<std::size_t>::max();
     };
 
     enum class DeferredTaskKind : std::uint8_t {
@@ -129,6 +130,7 @@ private:
     // Deferred-task helpers.
     void push_row_task(WatchRowId row);
     void push_row_task(VersionedRowRef ref);
+    void push_row_task_for_current_level(WatchRowId row);
     void push_rows_as_tasks(std::vector<VersionedRowRef>&& rows);
     void push_unit_task(ClauseId id);
     bool row_ref_is_stale(const VersionedRowRef& ref) const;
@@ -164,6 +166,7 @@ public:
     void update_with_new_equation(const Equation& eqn, const Trail& trail) override;
     void update_with_decision(const Equation& reduced_eqn, const Trail& trail) override;
     void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail) override;
+    void update_with_compaction(const search::CompactionTransform& transform, const Trail& trail) override;
 };
 
 } // namespace heuristics
