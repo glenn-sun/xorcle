@@ -640,6 +640,7 @@ Solver Solver::from_DIMACS(const std::string& filename,
                            const heuristics::DecisionPhase phase,
                            const heuristics::CVsidsConfig& cvsids_config,
                            std::shared_ptr<io::ProofLogger> proof_logger,
+                           util::Seed seed,
                            const RestartConfig& restart_config,
                            bool enable_compaction,
                            std::size_t compaction_conflict_interval) {
@@ -648,7 +649,8 @@ Solver Solver::from_DIMACS(const std::string& filename,
     std::shared_ptr<heuristics::DecisionProcedure> dec_proc;
     std::shared_ptr<heuristics::ClauseSelector> clause_sel;
 
-    dec_proc = heuristics::create_decision_procedure(dpn, parsed.num_vars, phase, cvsids_config);
+    dec_proc = heuristics::create_decision_procedure(dpn, parsed.num_vars, phase, seed,
+                                                     cvsids_config);
     clause_sel = heuristics::create_clause_selector(csn, parsed.num_vars);
 
     Solver solver{parsed.num_vars, std::move(clause_sel), std::move(dec_proc), std::move(proof_logger),

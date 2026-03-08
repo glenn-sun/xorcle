@@ -6,6 +6,7 @@
 #include "heuristics/ClauseBasedDecisions.h"
 #include "heuristics/ClauseSelector.h"
 #include "heuristics/DecisionProcedure.h"
+#include "util/RandomUtils.h"
 
 namespace heuristics {
 
@@ -13,6 +14,7 @@ namespace heuristics {
 std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureName name,
                                                              std::size_t num_vars,
                                                              DecisionPhase phase,
+                                                             util::Seed seed,
                                                              const CVsidsConfig& cvsids_config = {});
 
 /// @brief Create a clause selector instance by name.

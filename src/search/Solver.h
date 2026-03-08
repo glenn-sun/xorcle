@@ -19,6 +19,7 @@
 #include "search/Trail.h"
 #include "search/Compaction.h"
 #include "io/ProofLogger.h"
+#include "util/RandomUtils.h"
 
 namespace search {
 namespace ResultCase {
@@ -183,6 +184,7 @@ public:
     /// @param csn Clause selector to use.
     /// @param phase Decision phase selection for clause-based decisions.
     /// @param proof_logger Optional proof logger.
+    /// @param seed Base RNG seed used to derive deterministic solver sub-streams.
     /// @note The DIMACS format is extended as in Danner/Kreuzer to support XOR literals.
     static Solver from_DIMACS(const std::string& filename,
                               heuristics::DecisionProcedureName dpn,
@@ -190,6 +192,7 @@ public:
                               heuristics::DecisionPhase phase,
                               const heuristics::CVsidsConfig& cvsids_config = {},
                               std::shared_ptr<io::ProofLogger> proof_logger = nullptr,
+                              util::Seed seed = util::default_seed,
                               const RestartConfig& restart_config = {},
                               bool enable_compaction = true,
                               std::size_t compaction_conflict_interval = 16);

@@ -63,6 +63,29 @@ std::optional<std::size_t> parse_size_t_token(const char* token) {
     }
 }
 
+std::optional<std::uint64_t> parse_u64_token(const char* token) {
+    if (token == nullptr) {
+        return std::nullopt;
+    }
+    std::string s(token);
+    if (s.empty() || s[0] == '-') {
+        return std::nullopt;
+    }
+    try {
+        std::size_t pos = 0;
+        unsigned long long value = std::stoull(s, &pos);
+        if (pos != s.size()) {
+            return std::nullopt;
+        }
+        if (value > std::numeric_limits<std::uint64_t>::max()) {
+            return std::nullopt;
+        }
+        return static_cast<std::uint64_t>(value);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
 std::optional<bool> parse_bool_token(const char* token) {
     if (token == nullptr) {
         return std::nullopt;
@@ -91,12 +114,19 @@ enum class StatsMode {
 /// @param filename DIMACS file path.
 /// @param dpn Decision procedure to use.
 /// @param csn Clause selector to use.
+/// @param phase Decision phase to use.
+/// @param seed Base seed to use for deterministic solver RNG streams.
+/// @param cvsids_config CVsids tuning parameters when `dpn == cvsids`.
+/// @param restart_config Restart policy configuration.
+/// @param enable_compaction Whether to enable compaction.
+/// @param compaction_conflict_interval Compaction trigger interval when enabled.
 /// @param stop_flag External stop signal to interrupt solving.
 /// @param proof_path Optional proof output path.
 stats::RunStats run_once(const std::string& filename,
                          heuristics::DecisionProcedureName dpn,
                          heuristics::ClauseSelectorName csn,
                          heuristics::DecisionPhase phase,
+                         util::Seed seed,
                          const heuristics::CVsidsConfig& cvsids_config,
                          const search::RestartConfig& restart_config,
                          bool enable_compaction,
@@ -108,8 +138,8 @@ stats::RunStats run_once(const std::string& filename,
         proof_logger = std::make_shared<io::ProofLogger>(proof_path);
     }
     search::Solver solver =
-        search::Solver::from_DIMACS(filename, dpn, csn, phase, cvsids_config, proof_logger, restart_config,
-                                    enable_compaction, compaction_conflict_interval);
+        search::Solver::from_DIMACS(filename, dpn, csn, phase, cvsids_config, proof_logger, seed,
+                                    restart_config, enable_compaction, compaction_conflict_interval);
     std::size_t num_vars = solver.get_num_vars();
     std::size_t start_num_clauses = solver.get_num_clauses();
 
@@ -187,6 +217,7 @@ int main(int argc, char *argv[]) {
     search::RestartConfig restart_config{};
     bool enable_compaction = true;
     std::size_t compaction_conflict_interval = 16;
+    util::Seed seed = util::default_seed;
 
     static constexpr struct option long_options[] = {
         {"decision-proc", required_argument, 0, 'd'},
@@ -195,6 +226,7 @@ int main(int argc, char *argv[]) {
         {"clause-selector", required_argument, 0, 'c'},
         {"restart", required_argument, 0, 'r'},
         {"compact", required_argument, 0, 'x'},
+        {"seed", required_argument, 0, 'S'},
         {"verbose", no_argument, 0, 'v'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
@@ -202,7 +234,7 @@ int main(int argc, char *argv[]) {
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "d:p:s:c:r:x:vh", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "d:p:s:c:r:x:S:vh", long_options, &option_index);
         if (option == -1) {
             break;
         }
@@ -381,6 +413,15 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             }
+            case 'S': {
+                auto maybe_seed = parse_u64_token(optarg);
+                if (!maybe_seed.has_value()) {
+                    std::cerr << "Error: --seed expects an unsigned 64-bit integer" << std::endl;
+                    return 1;
+                }
+                seed = *maybe_seed;
+                break;
+            }
             case 'h':
                 help = true;
                 break;
@@ -411,6 +452,8 @@ int main(int argc, char *argv[]) {
         std::cout << "                               luby [unit_conflicts>=1] (default: 100)" << std::endl;
         std::cout << "  -x, --compact <on|off> [conflicts>=1]  Compaction (default: on, conflicts: 16)"
                   << std::endl;
+        std::cout << "  -S, --seed <uint64>         Base solver seed (default: "
+                  << util::default_seed << ")" << std::endl;
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
         std::cout << "  -h, --help                   Show this help message" << std::endl;
         std::cout << "Notes:" << std::endl;
@@ -474,12 +517,11 @@ int main(int argc, char *argv[]) {
     const std::string timestamp_utc = utc_timestamp();
     const std::string run_id = run_id_from_timestamp(timestamp_utc);
 
-    const bool deterministic = !stats::is_nondeterministic(dpn);
     std::vector<stats::RunStats> run_stats;
     run_stats.reserve(1);
     try {
         std::atomic<bool> stop_flag(false);
-        run_stats.push_back(run_once(input_path, dpn, csn, phase, cvsids_config, restart_config,
+        run_stats.push_back(run_once(input_path, dpn, csn, phase, seed, cvsids_config, restart_config,
                                      enable_compaction, compaction_conflict_interval, stop_flag, proof_path));
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
@@ -495,7 +537,8 @@ int main(int argc, char *argv[]) {
     meta.clause_selector = csn;
     meta.threads = 1;
     meta.timeout_s = 0;
-    meta.deterministic = deterministic;
+    meta.deterministic = true;
+    meta.seed = seed;
     meta.runs_requested = 1;
     if (dpn == heuristics::DecisionProcedureName::cvsids) {
         meta.cvsids_learned_base = cvsids_config.learned_base;

@@ -23,3 +23,5 @@ benchmarks/
 *.pyc
 *.csv
 *.png
+
+CODEX_WORKING_RULES.md

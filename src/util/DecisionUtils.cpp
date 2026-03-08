@@ -29,40 +29,42 @@ void ClauseSatisfactionWorkspace::reconfigure(std::size_t next_num_vars) {
 algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
                                     const algebra::RowSpace& trail_span,
                                     std::size_t num_vars) {
+    assert(basis.size() == num_vars);
     const std::size_t constant_col = num_vars;
-    algebra::Equation eqn{num_vars}, eqn_reduced{num_vars};
+    algebra::Equation candidate{num_vars}, reduced_candidate{num_vars};
     for (std::size_t i = 0; i < num_vars; ++i) {
-        assert(eqn.size() == basis[i].size());
-        eqn.unsafe_copy(basis[i]);
-        assert(eqn_reduced.size() == eqn.size());
-        eqn_reduced.unsafe_copy(eqn);
-        std::size_t f = trail_span.partial_reduce(eqn_reduced);
+        assert(candidate.size() == basis[i].size());
+        candidate.unsafe_copy(basis[i]);
+        assert(reduced_candidate.size() == candidate.size());
+        reduced_candidate.unsafe_copy(candidate);
+        std::size_t f = trail_span.partial_reduce(reduced_candidate);
         if ((f != bit::vector<>::npos) && (f != constant_col)) {
-            return eqn;
+            return candidate;
         }
     }
     assert(false);
-    return eqn;
+    return candidate;
 }
 
 algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
                                     const std::vector<algebra::Equation>& unit_eqns,
                                     std::size_t num_vars) {
+    assert(unit_eqns.size() == num_vars);
     const std::size_t constant_col = num_vars;
-    algebra::Equation eqn{num_vars}, eqn_reduced{num_vars};
+    algebra::Equation candidate{num_vars}, reduced_candidate{num_vars};
     for (std::size_t i = 0; i < num_vars; ++i) {
         assert(i < unit_eqns.size());
-        assert(eqn.size() == unit_eqns[i].size());
-        eqn.unsafe_copy(unit_eqns[i]);
-        assert(eqn_reduced.size() == eqn.size());
-        eqn_reduced.unsafe_copy(eqn);
-        std::size_t f = trail_span.partial_reduce(eqn_reduced);
+        assert(candidate.size() == unit_eqns[i].size());
+        candidate.unsafe_copy(unit_eqns[i]);
+        assert(reduced_candidate.size() == candidate.size());
+        reduced_candidate.unsafe_copy(candidate);
+        std::size_t f = trail_span.partial_reduce(reduced_candidate);
         if ((f != bit::vector<>::npos) && (f != constant_col)) {
-            return eqn;
+            return candidate;
         }
     }
     assert(false);
-    return eqn;
+    return candidate;
 }
 
 namespace {
@@ -130,19 +132,39 @@ bool clause_satisfied_by_trail(const algebra::RowSpace& trail_span,
 bool sample_equation_from_clause(const algebra::Clause& clause,
                                  const algebra::RowSpace& trail_span,
                                  std::size_t num_vars,
+                                 Rng& rng,
                                  algebra::Equation& out_candidate,
                                  algebra::Equation& out_reduced) {
     if (clause.rows() == 0) {
         return false;
     }
-    if (out_candidate.size() != num_vars) {
+    const std::size_t equation_width = num_vars + 1;
+    if (!out_candidate.empty()) {
+        assert(out_candidate.size() == equation_width);
+    }
+    if (!out_reduced.empty()) {
+        assert(out_reduced.size() == equation_width);
+    }
+    if (out_candidate.size() != equation_width) {
         out_candidate = algebra::Equation{num_vars};
     }
-    if (out_reduced.size() != num_vars) {
+    if (out_reduced.size() != equation_width) {
         out_reduced = algebra::Equation{num_vars};
     }
+#ifndef NDEBUG
+    algebra::RowSpace reduced_clause_space{num_vars};
+    for (std::size_t row_index = 0; row_index < clause.rows(); ++row_index) {
+        algebra::Equation reduced_row = clause.row(row_index);
+        assert(reduced_row.size() == equation_width);
+        trail_span.reduce(reduced_row);
+        if (reduced_row.any()) {
+            reduced_clause_space.add_row(reduced_row);
+        }
+    }
+    assert(reduced_clause_space.rows() > 0);
+#endif
     while (true) {
-        bit::vector<> coeffs = bit::vector<>::random(clause.rows());
+        bit::vector<> coeffs = random_nonzero_coefficients(clause.rows(), rng);
         out_candidate.reset();
         coeffs.if_set_call([&](std::size_t i) {
             out_candidate ^= clause.row(i);

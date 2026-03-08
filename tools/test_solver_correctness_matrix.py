@@ -26,6 +26,8 @@ DEFAULT_INPUTS = (
 )
 DECISION_PROCS = ("cvsids",)
 CLAUSE_SELECTORS = ("cyclic", "exact_watchlist")
+DECISION_PHASES = ("unsat",)
+DEFAULT_SEED = 0
 RESULT_RE = re.compile(r"^Result:\s*(SAT|UNSAT|TIMEOUT)\s*$", re.MULTILINE)
 ASSIGNMENT_RE = re.compile(r"^Satisfying assignment:\s*\[(.*?)\]\s*$", re.MULTILINE | re.DOTALL)
 
@@ -35,6 +37,7 @@ class Task:
     input_path: Path
     decision_proc: str
     clause_selector: str
+    decision_phase: str
 
 
 @dataclass
@@ -90,13 +93,31 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--compact", choices=("on", "off"), default="on")
+    parser.add_argument("--decision-procs", default=",".join(DECISION_PROCS))
+    parser.add_argument("--clause-selectors", default=",".join(CLAUSE_SELECTORS))
+    parser.add_argument("--decision-phases", default=",".join(DECISION_PHASES))
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args(argv)
 
     if args.timeout <= 0:
         parser.error("--timeout must be > 0")
     if args.jobs <= 0:
         parser.error("--jobs must be > 0")
+    if args.seed < 0:
+        parser.error("--seed must be >= 0")
     return args
+
+
+def parse_csv_choices(raw: str, valid: Sequence[str], label: str) -> List[str]:
+    selected = [item.strip() for item in raw.split(",") if item.strip()]
+    if not selected:
+        raise ValueError(f"{label} must not be empty")
+    unknown = [item for item in selected if item not in valid]
+    if unknown:
+        valid_str = ", ".join(valid)
+        unknown_str = ", ".join(unknown)
+        raise ValueError(f"unknown {label}: {unknown_str}; valid values: {valid_str}")
+    return selected
 
 
 def run_process(cmd: Sequence[str], timeout_s: Optional[float]) -> ProcRun:
@@ -205,7 +226,7 @@ def validate_unsat_proof(checker: Path, input_path: Path, proof_path: Path, time
     return True, "proof valid"
 
 
-def run_task(task: Task, solver_bin: Path, checker: Path, timeout_s: float, compact_mode: str) -> RunResult:
+def run_task(task: Task, solver_bin: Path, checker: Path, timeout_s: float, compact_mode: str, seed: int) -> RunResult:
     with tempfile.TemporaryDirectory(prefix="solver-proof-") as proof_dir:
         proof_path = Path(proof_dir) / "proof.drup"
 
@@ -214,8 +235,12 @@ def run_task(task: Task, solver_bin: Path, checker: Path, timeout_s: float, comp
                 str(solver_bin),
                 "-d",
                 task.decision_proc,
+                "-p",
+                task.decision_phase,
                 "-c",
                 task.clause_selector,
+                "--seed",
+                str(seed),
             ]
             if compact_mode == "off":
                 cmd.extend(["-x", "off"])
@@ -333,6 +358,7 @@ def format_result(result: RunResult, root: Path) -> str:
     return (
         f"{str(rel):68} "
         f"{result.task.decision_proc:10} "
+        f"{result.task.decision_phase:8} "
         f"{result.task.clause_selector:15} "
         f"{result.solver_status:7} "
         f"{result.validation_status:4} "
@@ -358,15 +384,20 @@ def check_consistency(results: Sequence[RunResult]) -> List[str]:
     return failures
 
 
-def build_tasks(root: Path) -> List[Task]:
+def build_tasks(root: Path, decision_procs: Sequence[str], clause_selectors: Sequence[str],
+                decision_phases: Sequence[str]) -> List[Task]:
     tasks: List[Task] = []
     for rel_input in DEFAULT_INPUTS:
         input_path = (root / rel_input).resolve()
         if not input_path.exists():
             raise FileNotFoundError(f"Missing input file: {input_path}")
-        for decision_proc in DECISION_PROCS:
-            for clause_selector in CLAUSE_SELECTORS:
-                tasks.append(Task(input_path=input_path, decision_proc=decision_proc, clause_selector=clause_selector))
+        for decision_proc in decision_procs:
+            for decision_phase in decision_phases:
+                for clause_selector in clause_selectors:
+                    tasks.append(Task(input_path=input_path,
+                                      decision_proc=decision_proc,
+                                      clause_selector=clause_selector,
+                                      decision_phase=decision_phase))
     return tasks
 
 
@@ -384,7 +415,22 @@ def main(argv: Sequence[str]) -> int:
         return 2
 
     try:
-        tasks = build_tasks(root)
+        decision_procs = parse_csv_choices(
+            args.decision_procs,
+            ("fixed_unit", "random_clause_sum", "vsids_unit", "vsids_clause", "cvsids"),
+            "decision procedures",
+        )
+        clause_selectors = parse_csv_choices(
+            args.clause_selectors,
+            ("cyclic", "lt_watchlist", "exact_watchlist"),
+            "clause selectors",
+        )
+        decision_phases = parse_csv_choices(
+            args.decision_phases,
+            ("unsat", "sat", "random"),
+            "decision phases",
+        )
+        tasks = build_tasks(root, decision_procs, clause_selectors, decision_phases)
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -395,11 +441,12 @@ def main(argv: Sequence[str]) -> int:
     print(f"Checker: {checker}")
     print(f"Timeout: {args.timeout:.1f}s")
     print(f"Compact: {args.compact}")
+    print(f"Seed:    {args.seed}")
     print()
 
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         future_to_task = {
-            executor.submit(run_task, task, solver_bin, checker, args.timeout, args.compact): task
+            executor.submit(run_task, task, solver_bin, checker, args.timeout, args.compact, args.seed): task
             for task in tasks
         }
         for future in as_completed(future_to_task):
@@ -407,7 +454,8 @@ def main(argv: Sequence[str]) -> int:
             results.append(result)
             print(format_result(result, root))
 
-    results.sort(key=lambda r: (str(r.task.input_path), r.task.decision_proc, r.task.clause_selector))
+    results.sort(key=lambda r: (str(r.task.input_path), r.task.decision_proc,
+                                r.task.decision_phase, r.task.clause_selector))
 
     pass_count = sum(1 for r in results if r.validation_status == "PASS")
     fail_count = len(results) - pass_count

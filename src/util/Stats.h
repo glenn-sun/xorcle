@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -48,6 +49,7 @@ struct AggregateMeta {
     std::size_t threads = 0;                          ///< Number of threads requested.
     std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
     bool deterministic = true;                        ///< Whether the run is deterministic.
+    std::uint64_t seed = 0;                           ///< Seed required to reproduce the run exactly.
     std::size_t runs_requested = 1;                   ///< Number of runs requested.
     std::optional<double> cvsids_learned_base;        ///< CVsids learned-clause base multiplier, when applicable.
     std::optional<double> cvsids_decay;               ///< CVsids decay factor, when applicable.
@@ -65,6 +67,7 @@ struct AggregateStats {
     std::size_t threads = 0;                          ///< Number of threads requested.
     std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
     bool deterministic = true;                        ///< Whether the run is deterministic.
+    std::uint64_t seed = 0;                           ///< Seed required to reproduce the run exactly.
     std::optional<double> cvsids_learned_base;        ///< CVsids learned-clause base multiplier, when applicable.
     std::optional<double> cvsids_decay;               ///< CVsids decay factor, when applicable.
     std::optional<double> cvsids_bump;                ///< CVsids bump amount, when applicable.
@@ -104,9 +107,6 @@ std::string to_string(heuristics::DecisionPhase phase);
 
 /// @brief Convert a clause selector enum to a stable string label.
 std::string to_string(heuristics::ClauseSelectorName name);
-
-/// @brief Return true if a decision procedure is inherently nondeterministic.
-bool is_nondeterministic(heuristics::DecisionProcedureName name);
 
 /// @brief Divide two doubles and return std::nullopt when denom is zero.
 std::optional<double> safe_div(double numer, double denom);

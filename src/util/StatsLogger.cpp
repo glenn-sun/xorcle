@@ -23,6 +23,7 @@ void ConsoleStatsSink::log_impl(const AggregateStats& stats) {
         ss << "CVsids bump: " << std::setprecision(6) << *stats.cvsids_bump << "\n";
     }
     ss << "Decision phase: " << to_string(stats.decision_phase) << "\n";
+    ss << "Seed: " << stats.seed << "\n";
     ss << "Clause selector: " << to_string(stats.clause_selector) << "\n";
     if (stats.runs_requested > 1) {
         ss << "Selected run: median time over " << stats.runs_requested << " runs\n";
@@ -79,7 +80,7 @@ void CsvStatsSink::ensure_header() {
 
     if (need_header) {
         file_ << "run_id,timestamp_utc,file,decision_procedure,cvsids_learned_base,cvsids_decay,cvsids_bump,"
-                 "decision_phase,clause_selector,threads,timeout_s,deterministic,"
+                 "decision_phase,clause_selector,threads,timeout_s,deterministic,seed,"
                  "runs_requested,runs_completed,timeout_count,sat_count,unsat_count,result,"
                  "num_vars,start_clauses,final_clauses,learned_clauses,"
                  "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,"
@@ -135,6 +136,7 @@ void CsvStatsSink::log_impl(const AggregateStats& stats) {
           << stats.threads << ','
           << stats.timeout_s << ','
           << (stats.deterministic ? "true" : "false") << ','
+          << stats.seed << ','
           << stats.runs_requested << ','
           << stats.runs_completed << ','
           << stats.timeout_count << ','

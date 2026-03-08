@@ -9,6 +9,7 @@
 #include "MaxHeap.h"
 #include "heuristics/DecisionProcedure.h"
 #include "heuristics/Types.h"
+#include "util/RandomUtils.h"
 
 namespace heuristics {
 
@@ -59,6 +60,7 @@ protected:
 public:
     /// @brief Construct with optional shared state.
     explicit CVsidsDecision(std::size_t n,
+                            util::Seed seed,
                             const CVsidsConfig& config = {},
                             std::shared_ptr<CVsidsState> shared_state = nullptr);
 
@@ -84,6 +86,9 @@ public:
                                 const RowSpace& trail_span,
                                 const std::vector<Clause>& clauses,
                                 const std::vector<std::uint8_t>& clause_active) override;
+
+private:
+    util::Rng clause_equation_rng; ///< RNG for sampling equations from decision clauses.
 };
 
 } // namespace heuristics

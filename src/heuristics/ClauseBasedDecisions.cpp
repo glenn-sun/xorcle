@@ -48,6 +48,9 @@ std::vector<Equation> project_basis_keep_order(const std::vector<Equation>& basi
 } // namespace
 
 void RandomClauseSum::reinitialize() {
+    reset_phase_rng();
+    clause_order_rng = util::make_rng(base_seed, util::RngComponent::random_clause_order);
+    clause_equation_rng = util::make_rng(base_seed, util::RngComponent::random_clause_equation);
     reset_stats();
     decision_basis.clear();
     for (std::size_t i = 0; i < num_vars; i++) {
@@ -66,7 +69,7 @@ Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::v
     Equation reduced{num_vars};
     clause_perm.resize(clauses.size());
     std::iota(clause_perm.begin(), clause_perm.end(), 0);
-    std::shuffle(clause_perm.begin(), clause_perm.end(), rng);
+    std::shuffle(clause_perm.begin(), clause_perm.end(), clause_order_rng);
 
     for (ClauseId id : clause_perm) {
         const Clause& clause = clauses[id];
@@ -74,7 +77,8 @@ Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::v
             continue;
         }
 
-        if (util::sample_equation_from_clause(clause, trail_span, num_vars, candidate, reduced)) {
+        if (util::sample_equation_from_clause(clause, trail_span, num_vars, clause_equation_rng,
+                                              candidate, reduced)) {
             record_decision(false);
             return apply_phase(candidate);
         }
@@ -103,17 +107,26 @@ void RandomClauseSum::update_with_compaction(const search::CompactionTransform& 
     clause_perm.swap(filtered);
 }
 
+void VsidsClause::reinitialize() {
+    VsidsUnit::reinitialize();
+    clause_start_rng = util::make_rng(base_seed, util::RngComponent::vsids_clause_start);
+}
+
 Equation VsidsClause::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
+    assert(!clauses.empty());
     while (true) {
         std::optional<Equation> maybe_eqn = vsids_params.activity_heap.extract_max();
         if (!maybe_eqn.has_value()) {
-            reinitialize();
+            reset_decision_heap();
             maybe_eqn = vsids_params.activity_heap.extract_max();
+            if (!maybe_eqn.has_value()) {
+                throw std::runtime_error("VsidsClause::make_decision: activity heap is empty");
+            }
         }
 
         std::size_t k = (*maybe_eqn).first_set();
 
-        std::size_t start = util::random_int(clauses.size());
+        std::size_t start = util::random_index(clause_start_rng, clauses.size());
         for (std::size_t i = 0; i < clauses.size(); ++i) {
             std::size_t j = (start + i) % clauses.size();
             if (clauses[j].get_pivot_cols()[k]) {
@@ -163,15 +176,19 @@ void CVsidsState::reset_activity() {
 }
 
 CVsidsDecision::CVsidsDecision(std::size_t n,
+                               util::Seed seed,
                                const CVsidsConfig& config,
                                std::shared_ptr<CVsidsState> shared_state)
-    : DecisionProcedure(n),
+    : DecisionProcedure(n, seed),
       state(shared_state ? std::move(shared_state) : std::make_shared<CVsidsState>(n, config)),
-      clause_sat_ws(n) {
+      clause_sat_ws(n),
+      clause_equation_rng(util::make_rng(seed, util::RngComponent::cvsids_clause_equation)) {
     reinitialize();
 }
 
 void CVsidsDecision::reinitialize() {
+    reset_phase_rng();
+    clause_equation_rng = util::make_rng(base_seed, util::RngComponent::cvsids_clause_equation);
     reset_stats();
     state->reset_activity();
 }
@@ -192,7 +209,8 @@ Equation CVsidsDecision::make_decision(const RowSpace& trail_span, const std::ve
             continue;
         }
         state->last_decision_clause = id;
-        if (util::sample_equation_from_clause(clause, trail_span, num_vars, candidate, reduced)) {
+        if (util::sample_equation_from_clause(clause, trail_span, num_vars, clause_equation_rng,
+                                              candidate, reduced)) {
             record_decision(false);
             return apply_phase(reduced);
         }

@@ -83,6 +83,10 @@ void remap_vsids_heap(MaxHeap<Equation>& heap, const search::CompactionTransform
 
 } // namespace
 
+void DecisionProcedure::reset_phase_rng() {
+    phase_rng = util::make_rng(base_seed, util::RngComponent::decision_phase);
+}
+
 Equation DecisionProcedure::apply_phase(Equation eqn) const {
     switch (decision_phase) {
         case DecisionPhase::unsat:
@@ -91,7 +95,7 @@ Equation DecisionProcedure::apply_phase(Equation eqn) const {
             eqn.flip(num_vars);
             return eqn;
         case DecisionPhase::random:
-            if (util::random_int(2) == 1) {
+            if (util::random_int(phase_rng, 2) == 1) {
                 eqn.flip(num_vars);
             }
             return eqn;
@@ -100,6 +104,7 @@ Equation DecisionProcedure::apply_phase(Equation eqn) const {
 }
 
 void FixedUnit::reinitialize() {
+    reset_phase_rng();
     reset_stats();
     decision_basis.clear();
     for (std::size_t i = 0; i < num_vars; i++) {
@@ -132,7 +137,12 @@ void VsidsParams::bump_activity(const Equation& eqn) {
 }
 
 void VsidsUnit::reinitialize() {
+    reset_phase_rng();
     reset_stats();
+    reset_decision_heap();
+}
+
+void VsidsUnit::reset_decision_heap() {
     vsids_params.activity_heap.reset();
     if (unit_eqns.size() != num_vars) {
         unit_eqns.clear();
@@ -153,8 +163,11 @@ Equation VsidsUnit::make_decision(const RowSpace& trail_span, const std::vector<
     while (true) {
         std::optional<Equation> maybe_eqn = vsids_params.activity_heap.extract_max();
         if (!maybe_eqn.has_value()) {
-            reinitialize();
+            reset_decision_heap();
             maybe_eqn = vsids_params.activity_heap.extract_max();
+            if (!maybe_eqn.has_value()) {
+                throw std::runtime_error("VsidsUnit::make_decision: activity heap is empty");
+            }
         }
         std::size_t f = trail_span.partial_reduce(*maybe_eqn);
         if ((f != bit::vector<>::npos) && (f != num_vars)) {

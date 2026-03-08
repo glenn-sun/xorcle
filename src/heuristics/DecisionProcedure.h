@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <random>
 #include <vector>
 
 #include "MaxHeap.h"
@@ -12,6 +11,7 @@
 #include "heuristics/Types.h"
 #include "search/Compaction.h"
 #include "util/DecisionUtils.h"
+#include "util/RandomUtils.h"
 
 namespace heuristics {
 using Clause = algebra::Clause;
@@ -47,8 +47,14 @@ protected:
     /// @brief Number of variables in the problem.
     std::size_t num_vars;
 
+    /// @brief Base seed used to derive all deterministic RNG streams owned by the procedure.
+    util::Seed base_seed;
+
     /// @brief Phase selection for clause-based decisions.
     DecisionPhase decision_phase = DecisionPhase::unsat;
+
+    /// @brief RNG stream used for seeded random phase selection.
+    mutable util::Rng phase_rng;
 
     /// @brief Count of decisions made so far.
     std::size_t decisions = 0;
@@ -73,9 +79,15 @@ protected:
     /// @brief Apply the configured decision phase to a clause-based decision.
     Equation apply_phase(Equation eqn) const;
 
+    /// @brief Reset the phase RNG for a fresh run.
+    void reset_phase_rng();
+
 public:
     /// @brief Construct a decision procedure for a given variable count.
-    explicit DecisionProcedure(std::size_t n) : num_vars(n) {}
+    explicit DecisionProcedure(std::size_t n, util::Seed seed)
+        : num_vars(n),
+          base_seed(seed),
+          phase_rng(util::make_rng(seed, util::RngComponent::decision_phase)) {}
 
     /// @brief Virtual destructor for interface use.
     virtual ~DecisionProcedure() = default;
@@ -147,7 +159,7 @@ private:
 
 public:
     /// @brief Construct with a fixed unit basis and initialize state.
-    explicit FixedUnit(std::size_t n) : DecisionProcedure(n) { reinitialize(); }
+    explicit FixedUnit(std::size_t n, util::Seed seed) : DecisionProcedure(n, seed) { reinitialize(); }
 
     /// @brief Reset unit basis and counters.
     void reinitialize() override;
@@ -173,13 +185,21 @@ private:
     /// @brief Reused scratch state for clause satisfaction checks.
     util::ClauseSatisfactionWorkspace clause_sat_ws;
 
-    /// @brief RNG for shuffling and sampling.
-    std::mt19937 rng;
+    /// @brief RNG for clause-order shuffles.
+    util::Rng clause_order_rng;
+
+    /// @brief RNG for equation sampling inside clauses.
+    util::Rng clause_equation_rng;
 
 public:
     /// @brief Construct with a seeded RNG and initialize state.
-    explicit RandomClauseSum(std::size_t n)
-        : DecisionProcedure(n), clause_sat_ws(n), rng(std::random_device{}()) { reinitialize(); }
+    explicit RandomClauseSum(std::size_t n, util::Seed seed)
+        : DecisionProcedure(n, seed),
+          clause_sat_ws(n),
+          clause_order_rng(util::make_rng(seed, util::RngComponent::random_clause_order)),
+          clause_equation_rng(util::make_rng(seed, util::RngComponent::random_clause_equation)) {
+        reinitialize();
+    }
 
     /// @brief Reset unit basis and counters.
     void reinitialize() override;
@@ -223,10 +243,15 @@ protected:
     /// @brief Unit equations for each variable.
     std::vector<Equation> unit_eqns;
 
+    void reset_decision_heap();
+
 public:
     /// @brief Construct and initialize VSIDS state.
-    explicit VsidsUnit(std::size_t n)
-        : DecisionProcedure(n) { reinitialize(); eqn_false = Equation::unit(num_vars + 1, num_vars); }
+    explicit VsidsUnit(std::size_t n, util::Seed seed)
+        : DecisionProcedure(n, seed) {
+        reinitialize();
+        eqn_false = Equation::unit(num_vars + 1, num_vars);
+    }
 
     /// @brief Reset VSIDS activity and counters.
     void reinitialize() override;
@@ -248,9 +273,18 @@ public:
 
 /// @brief VSIDS decision procedure that samples from clauses.
 class VsidsClause : public VsidsUnit {
+private:
+    /// @brief RNG for choosing clause scan start offsets.
+    util::Rng clause_start_rng;
+
 public:
     /// @brief Construct and initialize VSIDS clause procedure.
-    explicit VsidsClause(std::size_t n) : VsidsUnit(n) { }
+    explicit VsidsClause(std::size_t n, util::Seed seed)
+        : VsidsUnit(n, seed),
+          clause_start_rng(util::make_rng(seed, util::RngComponent::vsids_clause_start)) {}
+
+    /// @brief Choose a decision by sampling from clauses.
+    void reinitialize() override;
 
     /// @brief Choose a decision by sampling from clauses.
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;

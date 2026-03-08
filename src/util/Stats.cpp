@@ -53,13 +53,6 @@ std::string to_string(heuristics::ClauseSelectorName name) {
     return "unknown";
 }
 
-bool is_nondeterministic(heuristics::DecisionProcedureName name) {
-    using heuristics::DecisionProcedureName;
-    return name == DecisionProcedureName::random_clause_sum ||
-           name == DecisionProcedureName::vsids_clause ||
-           name == DecisionProcedureName::cvsids;
-}
-
 std::optional<double> safe_div(double numer, double denom) {
     if (denom == 0.0) {
         return std::nullopt;
@@ -78,6 +71,7 @@ AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunSt
     out.threads = meta.threads;
     out.timeout_s = meta.timeout_s;
     out.deterministic = meta.deterministic;
+    out.seed = meta.seed;
     out.cvsids_learned_base = meta.cvsids_learned_base;
     out.cvsids_decay = meta.cvsids_decay;
     out.cvsids_bump = meta.cvsids_bump;
