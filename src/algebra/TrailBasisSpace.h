@@ -34,7 +34,8 @@ private:
 
 public:
     /// @brief Construct a trail-basis space from a trail reference.
-    explicit TrailBasisSpace(const search::Trail& trail) : REFMatrix(trail.span().rows()), trail(trail) {}
+    explicit TrailBasisSpace(const search::Trail& trail)
+        : REFMatrix(trail.span().rows() > 0 ? trail.span().rows() - 1 : 0), trail(trail) {}
 
     /// @brief Construct a TrailBasisSpace from a RowSpace w.r.t. a Trail.
     ///

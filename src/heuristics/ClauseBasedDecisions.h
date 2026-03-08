@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -78,6 +79,11 @@ public:
 
     /// @brief Return a hint for the last decision clause.
     std::optional<ClauseId> decision_clause_hint() const override;
+
+    void update_with_compaction(const search::CompactionTransform& transform,
+                                const RowSpace& trail_span,
+                                const std::vector<Clause>& clauses,
+                                const std::vector<std::uint8_t>& clause_active) override;
 };
 
 } // namespace heuristics

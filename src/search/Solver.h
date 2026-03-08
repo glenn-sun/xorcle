@@ -17,6 +17,7 @@
 #include "search/PropagationEngine.h"
 #include "search/RestartPolicy.h"
 #include "search/Trail.h"
+#include "search/Compaction.h"
 #include "io/ProofLogger.h"
 
 namespace search {
@@ -55,7 +56,40 @@ using Result = std::variant<ResultCase::Timeout, ResultCase::Unsat, ResultCase::
 /// @brief Main solver class implementing propagation, decision, and learning.
 class Solver {
 private:
-    const std::size_t num_vars; ///< Number of variables in the problem.
+    /// @brief Enable variable compaction before decisions.
+    bool enable_compaction = true;
+
+    /// @brief Number of variables in the original input problem.
+    const std::size_t original_num_vars;
+
+    /// @brief Number of variables in the currently active compacted space.
+    std::size_t active_num_vars;
+
+    /// @brief Active variable index -> original variable index.
+    std::vector<std::size_t> active_to_original;
+
+    struct CompactedUnitProofEntry {
+        algebra::Equation eqn_original;
+        std::optional<heuristics::ClauseId> reason_id;
+    };
+
+    struct CompactionStep {
+        CompactionTransform transform;
+        std::vector<std::size_t> active_to_original_before;
+        std::vector<std::size_t> eliminated_original_vars;
+        std::vector<algebra::Equation> span_rows_old;
+        std::vector<algebra::Equation> lifted_span_rows_original;
+    };
+
+    /// @brief Historical compaction steps, oldest to newest.
+    std::vector<CompactionStep> compaction_history;
+
+    /// @brief Ordered compacted assumptions used for proof augmentation.
+    std::vector<CompactedUnitProofEntry> compacted_units_for_proof;
+
+    /// @brief Next proof clause id to allocate for lines not backed by solver clauses.
+    heuristics::ClauseId proof_clause_id_allocator = 0;
+
     Trail trail; ///< Trail of learned equations (decision levels).
     std::shared_ptr<heuristics::ClauseSelector> clause_sel; ///< Clause selector strategy.
     std::shared_ptr<heuristics::DecisionProcedure> dec_proc; ///< Decision procedure strategy.
@@ -65,22 +99,41 @@ private:
 
     algebra::Equation working_eqn; ///< Reusable buffer for conflict checks.
 
+    algebra::Equation eqn_false; ///< Constant false equation (1 = 0) in active space.
+
+    /// @brief Lift an active-space equation to original variable indexing.
+    algebra::Equation lift_active_equation_to_original(const algebra::Equation& eqn_active) const;
+
+    /// @brief Build a proof-logging clause in original variable indexing.
+    algebra::Clause build_proof_clause_from_active(const algebra::Clause& clause_active) const;
+
+    /// @brief Reconstruct a full original-width assignment from active-space assignment.
+    bit::vector<> reconstruct_original_assignment(const bit::vector<>& active_assignment) const;
+
+    /// @brief Perform level-0 variable compaction before decisions if threshold is met.
+    bool maybe_compact_level0_before_decision();
+
 public:
     /// @brief Construct a solver from variable count, clause selector, and decision procedure.
     Solver(std::size_t num_vars,
            std::shared_ptr<heuristics::ClauseSelector> clause_sel_in,
            std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
            std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr,
-           const RestartConfig& restart_config = {});
+           const RestartConfig& restart_config = {},
+           bool enable_compaction = true);
 
     /// @brief Construct a solver with a default cyclic clause selector.
     Solver(std::size_t num_vars,
            std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
            std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr,
-           const RestartConfig& restart_config = {});
+           const RestartConfig& restart_config = {},
+           bool enable_compaction = true);
 
     /// @brief Return the variable count for this solver instance.
     std::size_t get_num_vars() const;
+
+    /// @brief Return the variable count in the current compacted active space.
+    std::size_t get_active_num_vars() const;
 
     /// @brief Return the number of clauses currently stored.
     std::size_t get_num_clauses() const;
@@ -96,12 +149,6 @@ public:
 
     /// @brief Return a mutable clause reference by id.
     algebra::Clause& get_clause(heuristics::ClauseId id);
-
-    /// @brief Constant true equation (all zeros) for conflict checks.
-    const algebra::Equation eqn_true{algebra::Equation::zeros(num_vars + 1)};
-
-    /// @brief Constant false equation (1 = 0) for conflict checks.
-    const algebra::Equation eqn_false{algebra::Equation::unit(num_vars + 1, num_vars)};
 
     /// @brief Find an asserting clause for the current conflict.
     /// @pre trail ends with a contradiction equation.
@@ -132,7 +179,8 @@ public:
                               heuristics::DecisionPhase phase,
                               const heuristics::CVsidsConfig& cvsids_config = {},
                               std::shared_ptr<io::ProofLogger> proof_logger = nullptr,
-                              const RestartConfig& restart_config = {});
+                              const RestartConfig& restart_config = {},
+                              bool enable_compaction = true);
 
     /// @brief Total number of attempted propagations.
     std::size_t num_attempt_props = 0;

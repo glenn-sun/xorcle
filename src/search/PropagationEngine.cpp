@@ -10,6 +10,14 @@ PropagationEngine::PropagationEngine(std::size_t num_vars)
       working_eqn(bit::vector<>::zeros(num_vars + 1)),
       working_eqn2(bit::vector<>::zeros(num_vars + 1)) {}
 
+void PropagationEngine::reconfigure(std::size_t next_num_vars) {
+    num_vars = next_num_vars;
+    working_eqn.resize(num_vars + 1);
+    working_eqn2.resize(num_vars + 1);
+    working_eqn.reset();
+    working_eqn2.reset();
+}
+
 std::optional<algebra::Equation> PropagationEngine::unit_prop_one_clause(heuristics::ClauseSelector& clause_sel,
                                                                          const Trail& trail,
                                                                          const algebra::Equation& eqn_false,

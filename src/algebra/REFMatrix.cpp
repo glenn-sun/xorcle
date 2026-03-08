@@ -4,8 +4,10 @@
 
 namespace algebra {
 REFMatrix::REFMatrix(bit::matrix<> M) {
+    assert(M.cols() > 0);
+    num_vars = M.cols() - 1;
     this->M = M.to_echelon_form(&pivot_cols);
-    col_to_row = std::vector<std::size_t>(M.cols());
+    col_to_row = std::vector<std::size_t>(this->M.cols());
     std::size_t row = 0;
     pivot_cols.if_set_call([&](std::size_t col) {
         col_to_row[col] = row;

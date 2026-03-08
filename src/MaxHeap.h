@@ -232,6 +232,48 @@ public:
         popped_.clear();
     }
 
+    /// @brief Snapshot of internal state for remapping/rebuilding by callers.
+    struct StateSnapshot {
+        std::vector<T> heap;
+        std::vector<T> popped;
+        std::unordered_map<T, double, Hash, KeyEqual> activity;
+    };
+
+    /// @brief Return a copy of the current heap/activity state.
+    StateSnapshot snapshot() const {
+        StateSnapshot out;
+        out.heap = heap_;
+        out.popped = popped_;
+        out.activity = activity_map_;
+        return out;
+    }
+
+    /// @brief Replace heap/activity state; validates that heap keys have activities.
+    void load_snapshot(StateSnapshot state) {
+        heap_.clear();
+        popped_.clear();
+        pos_map_.clear();
+        activity_map_ = std::move(state.activity);
+        popped_ = std::move(state.popped);
+
+        heap_.reserve(state.heap.size());
+        for (const T& key : state.heap) {
+            if (activity_map_.find(key) == activity_map_.end()) {
+                continue;
+            }
+            if (pos_map_.find(key) != pos_map_.end()) {
+                continue;
+            }
+            pos_map_[key] = heap_.size();
+            heap_.push_back(key);
+        }
+        if (!heap_.empty()) {
+            for (std::size_t i = heap_.size() / 2; i-- > 0;) {
+                sift_down(i);
+            }
+        }
+    }
+
 private:
     std::vector<T> heap_; ///< Binary heap (0-based).
     std::unordered_map<T, std::size_t, Hash, KeyEqual> pos_map_; ///< Element -> index in heap_.

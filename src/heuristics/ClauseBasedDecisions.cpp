@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <numeric>
 
 #include "heuristics/ClauseBasedDecisions.h"
@@ -18,6 +19,31 @@ void ensure_unit_eqns_impl(std::vector<Equation>& unit_eqns, std::size_t num_var
             unit_eqns.emplace_back(Equation::unit(num_vars + 1, i));
         }
     }
+}
+
+std::vector<Equation> project_basis_keep_order(const std::vector<Equation>& basis,
+                                               const search::CompactionTransform& transform) {
+    std::vector<Equation> out;
+    out.reserve(transform.new_num_vars);
+    std::vector<std::uint8_t> seen(transform.new_num_vars, 0);
+    for (const Equation& eqn : basis) {
+        Equation projected = transform.project_equation(eqn);
+        std::size_t f = projected.first_set();
+        if (f >= transform.new_num_vars) {
+            continue;
+        }
+        if (seen[f]) {
+            continue;
+        }
+        seen[f] = 1;
+        out.push_back(std::move(projected));
+    }
+    for (std::size_t i = 0; i < transform.new_num_vars; ++i) {
+        if (!seen[i]) {
+            out.push_back(Equation::unit(transform.new_num_vars + 1, i));
+        }
+    }
+    return out;
 }
 } // namespace
 
@@ -56,6 +82,25 @@ Equation RandomClauseSum::make_decision(const RowSpace& trail_span, const std::v
 
     record_decision(true);
     return util::decide_from_basis(decision_basis, trail_span, num_vars);
+}
+
+void RandomClauseSum::update_with_compaction(const search::CompactionTransform& transform,
+                                             const RowSpace& trail_span,
+                                             const std::vector<Clause>& clauses,
+                                             const std::vector<std::uint8_t>& clause_active) {
+    (void)trail_span;
+    num_vars = transform.new_num_vars;
+    decision_basis = project_basis_keep_order(decision_basis, transform);
+    clause_sat_ws.reconfigure(num_vars);
+
+    std::vector<ClauseId> filtered;
+    filtered.reserve(clause_perm.size());
+    for (ClauseId id : clause_perm) {
+        if (id < clauses.size() && id < clause_active.size() && clause_active[id] != 0) {
+            filtered.push_back(id);
+        }
+    }
+    clause_perm.swap(filtered);
 }
 
 Equation VsidsClause::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
@@ -189,5 +234,26 @@ void CVsidsDecision::update_with_resolved_clause(ClauseId id) {
 
 std::optional<ClauseId> CVsidsDecision::decision_clause_hint() const {
     return state->last_decision_clause;
+}
+
+void CVsidsDecision::update_with_compaction(const search::CompactionTransform& transform,
+                                            const RowSpace& trail_span,
+                                            const std::vector<Clause>& clauses,
+                                            const std::vector<std::uint8_t>& clause_active) {
+    (void)trail_span;
+    num_vars = transform.new_num_vars;
+    clause_sat_ws.reconfigure(num_vars);
+
+    state->num_vars = num_vars;
+    state->eqn_false = Equation::unit(num_vars + 1, num_vars);
+    state->unit_eqns = project_basis_keep_order(state->unit_eqns, transform);
+    state->num_clauses = static_cast<ClauseId>(clauses.size());
+
+    if (state->last_decision_clause.has_value()) {
+        ClauseId id = *state->last_decision_clause;
+        if (id >= clause_active.size() || clause_active[id] == 0) {
+            state->last_decision_clause.reset();
+        }
+    }
 }
 } // namespace heuristics

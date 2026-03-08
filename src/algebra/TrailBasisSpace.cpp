@@ -4,6 +4,7 @@
 
 namespace algebra {
 TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const search::Trail& trail) {
+    assert(trail.span().rows() > 0);
     TrailBasisSpace tbs(trail);
     Coefficients coeffs;
     Equation eqn_copy{trail.span().cols() - 1};
@@ -25,7 +26,7 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const search:
 }
 
 RowSpace TrailBasisSpace::to_RowSpace() const {
-    RowSpace rs(trail.span().cols());
+    RowSpace rs(trail.span().cols() - 1);
     Equation eqn(trail.span().cols() - 1);
     for (const auto& tbs_row : *this) {
         eqn.reset();

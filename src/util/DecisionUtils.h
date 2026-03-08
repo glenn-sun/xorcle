@@ -23,6 +23,9 @@ struct ClauseSatisfactionWorkspace {
     std::size_t basis_size = 0;
 
     explicit ClauseSatisfactionWorkspace(std::size_t num_vars);
+
+    /// @brief Reconfigure workspace buffers for a new variable count.
+    void reconfigure(std::size_t next_num_vars);
 };
 
 /// @brief Choose a decision from a basis of equations that is not yet implied by the trail.

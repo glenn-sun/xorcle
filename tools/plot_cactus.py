@@ -7,7 +7,7 @@ import os
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 # Matplotlib needs a writable config/cache directory in this environment.
 os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconfig"))
@@ -17,6 +17,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FixedLocator, FuncFormatter
+from benchmark_plot_style import (
+    UNIFIED_DPI,
+    UNIFIED_FONT_SIZE,
+    apply_common_axes_style,
+    create_unified_figure,
+    finalize_figure,
+    place_right_legend,
+    series_style,
+    unified_figure_geometry,
+)
 
 
 @dataclass(frozen=True)
@@ -36,17 +46,6 @@ class FilterSpec:
 class SeriesData:
     label: str
     rows: List[Dict[str, str]]
-
-
-BLACK_WHITE_STYLES: List[Tuple[str, str]] = [
-    ("-", "o"),
-    ("--", "s"),
-    (":", "^"),
-    ("-.", "D"),
-    ((0, (3, 1, 1, 1)), "v"),
-    ((0, (5, 2)), "x"),
-    ((0, (1, 1)), "P"),
-]
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,14 +95,14 @@ def parse_args() -> argparse.Namespace:
         "--black-white",
         dest="black_white",
         action="store_true",
-        default=True,
-        help="Use grayscale-safe styles (default).",
+        default=False,
+        help="Render all series in black while keeping distinct line styles.",
     )
     parser.add_argument(
         "--color",
         dest="black_white",
         action="store_false",
-        help="Use color cycle instead of grayscale-safe styles.",
+        help="Use color plus distinct line styles (default).",
     )
     parser.add_argument(
         "--title",
@@ -149,21 +148,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--font-size",
         type=float,
-        default=8.0,
+        default=UNIFIED_FONT_SIZE,
         help="Uniform font size for title/axes/ticks/legend.",
     )
     parser.add_argument(
         "--figsize",
         nargs=2,
         type=float,
-        default=[3.0, 2.2],
+        default=list(unified_figure_geometry()[0]),
         metavar=("W", "H"),
         help="Figure size in inches.",
     )
     parser.add_argument(
         "--dpi",
         type=int,
-        default=300,
+        default=UNIFIED_DPI,
         help="Output DPI.",
     )
     parser.add_argument(
@@ -347,7 +346,7 @@ def plot_cactus(
     dpi: int,
     show_counts: bool,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(figsize[0], figsize[1]))
+    fig, ax = create_unified_figure(plt)
 
     color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["black"])
     for idx, s in enumerate(series):
@@ -356,20 +355,21 @@ def plot_cactus(
         suffix = f" ({len(values)}/{total})" if show_counts else ""
         label = f"{s.label}{suffix}"
 
+        style = series_style(idx)
         if black_white:
-            ls, marker = BLACK_WHITE_STYLES[idx % len(BLACK_WHITE_STYLES)]
             color = "black"
         else:
-            ls, marker = "-", "o"
-            color = color_cycle[idx % len(color_cycle)]
+            color = color_cycle[idx % len(color_cycle)] if color_cycle else style.color
+        ls = style.linestyle
+        linewidth = 1.3
 
         if values:
             if line_mode == "step":
-                ax.step(xs, values, where="post", label=label, color=color, linestyle=ls, marker=marker, linewidth=1.0, markersize=3)
+                ax.step(xs, values, where="post", label=label, color=color, linestyle=ls, linewidth=linewidth)
             else:
-                ax.plot(xs, values, label=label, color=color, linestyle=ls, marker=marker, linewidth=1.0, markersize=3)
+                ax.plot(xs, values, label=label, color=color, linestyle=ls, linewidth=linewidth)
         else:
-            ax.plot([], [], label=label, color=color, linestyle=ls, marker=marker, linewidth=1.0, markersize=3)
+            ax.plot([], [], label=label, color=color, linestyle=ls, linewidth=linewidth)
 
     ax.set_xscale(x_scale)
     ax.set_yscale(y_scale)
@@ -387,16 +387,11 @@ def plot_cactus(
     if y_scale == "log":
         ax.set_yticks([], minor=True)
 
-    ax.set_xlabel(xlabel, fontsize=font_size)
-    ax.set_ylabel(ylabel, fontsize=font_size)
-    ax.set_title(title, fontsize=font_size)
-    ax.tick_params(axis="both", which="major", labelsize=font_size)
-    ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.35)
-    ax.legend(fontsize=font_size, frameon=False, loc="best")
+    apply_common_axes_style(ax, xlabel=xlabel, ylabel=ylabel, title=title, font_size=font_size)
+    place_right_legend(ax, font_size=font_size)
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(pad=0.4)
-    fig.savefig(output, dpi=dpi)
+    finalize_figure(fig, output, dpi=dpi)
     plt.close(fig)
 
 

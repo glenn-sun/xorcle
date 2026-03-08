@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <random>
 #include <vector>
@@ -9,6 +10,7 @@
 #include "algebra/Equation.h"
 #include "algebra/RowSpace.h"
 #include "heuristics/Types.h"
+#include "search/Compaction.h"
 #include "util/DecisionUtils.h"
 
 namespace heuristics {
@@ -105,6 +107,17 @@ public:
     /// @brief Optional hint for which clause to prioritize next.
     virtual std::optional<ClauseId> decision_clause_hint() const { return std::nullopt; }
 
+    /// @brief Notify procedure after clauses/variable space were compacted.
+    virtual void update_with_compaction(const search::CompactionTransform& transform,
+                                        const RowSpace& trail_span,
+                                        const std::vector<Clause>& clauses,
+                                        const std::vector<std::uint8_t>& clause_active) {
+        (void)trail_span;
+        (void)clauses;
+        (void)clause_active;
+        num_vars = transform.new_num_vars;
+    }
+
     /// @brief Decision statistics snapshot.
     struct DecisionStats {
         /// @brief Number of decisions made.
@@ -141,6 +154,11 @@ public:
 
     /// @brief Choose a decision from the fixed unit basis.
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
+
+    void update_with_compaction(const search::CompactionTransform& transform,
+                                const RowSpace& trail_span,
+                                const std::vector<Clause>& clauses,
+                                const std::vector<std::uint8_t>& clause_active) override;
 };
 
 /// @brief Random clause-sum decision procedure.
@@ -168,6 +186,11 @@ public:
 
     /// @brief Sample a decision from clauses; fallback to unit basis.
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
+
+    void update_with_compaction(const search::CompactionTransform& transform,
+                                const RowSpace& trail_span,
+                                const std::vector<Clause>& clauses,
+                                const std::vector<std::uint8_t>& clause_active) override;
 };
 
 /// @brief Parameters for VSIDS-based decision procedures.
@@ -216,6 +239,11 @@ public:
 
     /// @brief Update activity after learning an asserting clause.
     void update_with_asserting_clause(const Clause& clause) override;
+
+    void update_with_compaction(const search::CompactionTransform& transform,
+                                const RowSpace& trail_span,
+                                const std::vector<Clause>& clauses,
+                                const std::vector<std::uint8_t>& clause_active) override;
 };
 
 /// @brief VSIDS decision procedure that samples from clauses.
