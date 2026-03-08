@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import csv
 import math
-import re
+import random
 import statistics
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Pattern, Sequence
+from typing import Dict, List, Optional, Sequence
 
 ALL_SOLVER_LINES = (
     "xorcle_0_1",
+    "kissat_default",
+    "kissat_plain",
+    "cryptominisat",
     "2xornado",
     "xorricane",
-    "kissat_plain",
-    "kissat_default",
-    "cryptominisat",
 )
+
+DEFAULT_SOLVER_LINES = tuple(s for s in ALL_SOLVER_LINES if s != "xorricane")
 
 SOLVER_TO_BENCH_ARG = {
     "xorcle_0_1": "xorcle_0_1",
@@ -29,11 +32,11 @@ SOLVER_TO_BENCH_ARG = {
 
 SOLVER_DISPLAY = {
     "xorcle_0_1": "Xorcle 0.1",
-    "2xornado": "2-Xornado",
+    "2xornado": "2-Xornado 1.0.2",
     "xorricane": "Xorricane",
-    "kissat_plain": "Kissat --plain",
-    "kissat_default": "Kissat",
-    "cryptominisat": "CryptoMiniSat",
+    "kissat_plain": "Kissat --plain 4.0.4",
+    "kissat_default": "Kissat 4.0.4",
+    "cryptominisat": "CryptoMiniSAT 5.13.0",
 }
 
 SOLVER_COLORS = {
@@ -45,141 +48,264 @@ SOLVER_COLORS = {
     "cryptominisat": "#d62728",
 }
 
+GENERATED_FAMILIES = (
+    "random_kxnf_n",
+    "restricted_kxnf_n",
+    "pebbling_lifted_h_k",
+    "tseitin_n_k",
+)
+
+PHYSICAL_FAMILIES = (
+    "generated/random_kxnf_n",
+    "generated/restricted_kxnf_n",
+    "generated/pebbling_lifted_h_k",
+    "generated/tseitin_n_k",
+    "ascon",
+    "sat-comp",
+)
+
+TYPE2_VIEWS = ("tseitin_k_20", "tseitin_4_n")
+
+MANIFEST_FIELDS = ("file", "family", "input_format", "attempt", "n", "k", "h", "lift_k")
+
 
 @dataclass(frozen=True)
-class FamilySpec:
-    name: str
+class InstanceRecord:
+    family: str
+    file: Path
     input_format: str
-    kind: str  # random or deterministic
-    x_values: Sequence[int]
+    attempt: int
+    n: Optional[int] = None
+    k: Optional[int] = None
+    h: Optional[int] = None
+    lift_k: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class PhysicalFamilySpec:
+    name: str
+    manifest_family: Optional[str] = None
+    recursive_glob: Optional[str] = None
+    input_format: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class Type2ViewSpec:
+    name: str
     x_label: str
-    filename_regex: Pattern[str]
-    fit_mode: str = "power_on_x"
+    x_field: str
+    x_values: Sequence[int]
+    fixed_filters: Dict[str, int]
+    fit_mode: str
 
 
-FAMILY_SPECS: Dict[str, FamilySpec] = {
-    "random_2xnf_n": FamilySpec(
-        name="random_2xnf_n",
-        input_format="xnf",
-        kind="random",
-        x_values=[17, 18, 19, 20, 21, 22, 23, 24, 25],
-        x_label="n",
-        filename_regex=re.compile(r"^random_2xnf_(\d+)_\d+\.cnf$"),
+PHYSICAL_FAMILY_SPECS: Dict[str, PhysicalFamilySpec] = {
+    "generated/random_kxnf_n": PhysicalFamilySpec(
+        name="generated/random_kxnf_n",
+        manifest_family="random_kxnf_n",
     ),
-    "random_3xnf_n": FamilySpec(
-        name="random_3xnf_n",
-        input_format="xnf",
-        kind="random",
-        x_values=[12, 13, 14, 15, 16, 17, 18, 19, 20],
-        x_label="n",
-        filename_regex=re.compile(r"^random_3xnf_(\d+)_\d+\.cnf$"),
+    "generated/restricted_kxnf_n": PhysicalFamilySpec(
+        name="generated/restricted_kxnf_n",
+        manifest_family="restricted_kxnf_n",
     ),
-    "random_kxnf_15": FamilySpec(
-        name="random_kxnf_15",
-        input_format="xnf",
-        kind="random",
-        x_values=[2, 3, 4, 5, 6, 7],
-        x_label="k",
-        filename_regex=re.compile(r"^random_kxnf_15_(\d+)_\d+\.cnf$"),
+    "generated/pebbling_lifted_h_k": PhysicalFamilySpec(
+        name="generated/pebbling_lifted_h_k",
+        manifest_family="pebbling_lifted_h_k",
     ),
-    "restricted_2xnf_n": FamilySpec(
-        name="restricted_2xnf_n",
-        input_format="xnf",
-        kind="random",
-        x_values=[30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50],
-        x_label="n",
-        filename_regex=re.compile(r"^restricted_2xnf_(\d+)_\d+\.cnf$"),
+    "generated/tseitin_n_k": PhysicalFamilySpec(
+        name="generated/tseitin_n_k",
+        manifest_family="tseitin_n_k",
     ),
-    "restricted_3xnf_n": FamilySpec(
-        name="restricted_3xnf_n",
+    "ascon": PhysicalFamilySpec(
+        name="ascon",
+        recursive_glob="*.xnf",
         input_format="xnf",
-        kind="random",
-        x_values=[20, 22, 24, 26, 28, 30, 32, 34, 36],
-        x_label="n",
-        filename_regex=re.compile(r"^restricted_3xnf_(\d+)_\d+\.cnf$"),
     ),
-    "restricted_kxnf_25": FamilySpec(
-        name="restricted_kxnf_25",
-        input_format="xnf",
-        kind="random",
-        x_values=[2, 3, 4, 5, 6, 7],
-        x_label="k",
-        filename_regex=re.compile(r"^restricted_kxnf_25_(\d+)_\d+\.cnf$"),
-    ),
-    "pebbling_2lift_h": FamilySpec(
-        name="pebbling_2lift_h",
-        input_format="xnf",
-        kind="deterministic",
-        x_values=[100, 150, 200, 250, 300, 350, 400],
-        x_label="h",
-        filename_regex=re.compile(r"^pebbling_2lift_(\d+)\.cnf$"),
-    ),
-    "pebbling_3lift_h": FamilySpec(
-        name="pebbling_3lift_h",
-        input_format="xnf",
-        kind="deterministic",
-        x_values=[50, 75, 100, 125, 150, 175, 200, 225, 250],
-        x_label="h",
-        filename_regex=re.compile(r"^pebbling_3lift_(\d+)\.cnf$"),
-    ),
-    "pebbling_klift_100": FamilySpec(
-        name="pebbling_klift_100",
-        input_format="xnf",
-        kind="deterministic",
-        x_values=[2, 3, 4, 5, 6, 7],
-        x_label="k",
-        filename_regex=re.compile(r"^pebbling_klift_100_(\d+)\.cnf$"),
-    ),
-    "bijphp_n_n+1": FamilySpec(
-        name="bijphp_n_n+1",
+    "sat-comp": PhysicalFamilySpec(
+        name="sat-comp",
+        recursive_glob="*.cnf",
         input_format="cnf",
-        kind="deterministic",
-        x_values=[4, 5, 6, 7, 8],
-        x_label="n",
-        filename_regex=re.compile(r"^bijphp_(\d+)\.cnf$"),
     ),
-    "tseitin_k_20": FamilySpec(
+}
+
+TYPE2_VIEW_SPECS: Dict[str, Type2ViewSpec] = {
+    "tseitin_k_20": Type2ViewSpec(
         name="tseitin_k_20",
-        input_format="cnf",
-        kind="random",
-        x_values=[3, 4, 5, 6, 7, 8, 9],
         x_label="k",
-        filename_regex=re.compile(r"^tseitin_k_20_(\d+)_\d+\.cnf$"),
+        x_field="k",
+        x_values=[3, 4, 5, 6, 7, 8, 9, 10],
+        fixed_filters={"n": 20},
         fit_mode="power_on_2powx",
     ),
-    "tseitin_5_n": FamilySpec(
-        name="tseitin_5_n",
-        input_format="cnf",
-        kind="random",
-        x_values=[10, 20, 40, 80, 160, 320],
+    "tseitin_4_n": Type2ViewSpec(
+        name="tseitin_4_n",
         x_label="n",
-        filename_regex=re.compile(r"^tseitin_5_n_(\d+)_\d+\.cnf$"),
+        x_field="n",
+        x_values=[10, 20, 40, 80, 160, 320, 640, 1280],
+        fixed_filters={"k": 4},
         fit_mode="power_on_x",
     ),
 }
 
-TSEITIN_FAMILIES = ("tseitin_k_20", "tseitin_5_n")
+
+def family_slug(name: str) -> str:
+    return name.replace("/", "__")
 
 
-def extract_x_from_name(spec: FamilySpec, filename: str) -> Optional[int]:
-    m = spec.filename_regex.match(filename)
-    if not m:
+def parse_optional_int(raw: str | None) -> Optional[int]:
+    text = (raw or "").strip()
+    if not text:
         return None
-    return int(m.group(1))
+    return int(text)
 
 
-def collect_files_by_x(tests_root: Path, spec: FamilySpec) -> Dict[int, List[Path]]:
-    family_dir = tests_root / spec.name
-    if not family_dir.is_dir():
-        raise FileNotFoundError(f"missing test family directory: {family_dir}")
+def read_csv_rows(path: Path) -> List[Dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
 
-    by_x: Dict[int, List[Path]] = {x: [] for x in spec.x_values}
-    for p in sorted(family_dir.glob("*.cnf")):
-        x = extract_x_from_name(spec, p.name)
-        if x is None or x not in by_x:
+
+def generated_manifest_path(tests_root: Path, generated_family: str) -> Path:
+    return tests_root / "generated" / generated_family / "manifest.csv"
+
+
+def load_generated_family_instances(tests_root: Path, generated_family: str, physical_name: str) -> List[InstanceRecord]:
+    manifest_path = generated_manifest_path(tests_root, generated_family)
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"missing generated family manifest: {manifest_path}")
+
+    rows = read_csv_rows(manifest_path)
+    out: List[InstanceRecord] = []
+    for row in rows:
+        file_rel = (row.get("file") or "").strip()
+        if not file_rel:
+            raise RuntimeError(f"{manifest_path}: manifest row missing file")
+        file_path = (tests_root / file_rel).resolve()
+        if not file_path.is_file():
+            raise FileNotFoundError(f"missing manifest file entry: {file_path}")
+        input_format = (row.get("input_format") or "").strip().lower()
+        if input_format not in {"cnf", "xnf"}:
+            raise RuntimeError(f"{manifest_path}: invalid input_format '{input_format}' for {file_rel}")
+        attempt = parse_optional_int(row.get("attempt")) or 1
+        out.append(
+            InstanceRecord(
+                family=physical_name,
+                file=file_path,
+                input_format=input_format,
+                attempt=attempt,
+                n=parse_optional_int(row.get("n")),
+                k=parse_optional_int(row.get("k")),
+                h=parse_optional_int(row.get("h")),
+                lift_k=parse_optional_int(row.get("lift_k")),
+            )
+        )
+    out.sort(key=lambda r: (str(r.file), r.attempt))
+    return out
+
+
+def load_physical_family_instances(tests_root: Path, family_name: str) -> List[InstanceRecord]:
+    if family_name not in PHYSICAL_FAMILY_SPECS:
+        raise KeyError(f"unknown physical family: {family_name}")
+    spec = PHYSICAL_FAMILY_SPECS[family_name]
+    if spec.manifest_family is not None:
+        return load_generated_family_instances(tests_root, spec.manifest_family, spec.name)
+
+    root_dir = tests_root / family_name
+    if not root_dir.is_dir():
+        raise FileNotFoundError(f"missing family directory: {root_dir}")
+    pattern = spec.recursive_glob or "*.cnf"
+    input_format = spec.input_format or "cnf"
+    files = sorted(p.resolve() for p in root_dir.rglob(pattern) if p.is_file())
+    if not files:
+        raise RuntimeError(f"no files matched {pattern} under {root_dir}")
+    return [
+        InstanceRecord(
+            family=family_name,
+            file=file_path,
+            input_format=input_format,
+            attempt=1,
+        )
+        for file_path in files
+    ]
+
+
+def load_physical_families(
+    tests_root: Path,
+    family_names: Sequence[str] | None = None,
+) -> Dict[str, List[InstanceRecord]]:
+    names = list(family_names) if family_names else list(PHYSICAL_FAMILIES)
+    return {name: load_physical_family_instances(tests_root, name) for name in names}
+
+
+def load_type2_view_instances(generated_root: Path, view_name: str) -> tuple[Type2ViewSpec, Dict[int, List[InstanceRecord]]]:
+    if view_name not in TYPE2_VIEW_SPECS:
+        raise KeyError(f"unknown type2 view: {view_name}")
+    view = TYPE2_VIEW_SPECS[view_name]
+    tests_root = generated_root.parent.resolve()
+    records = load_generated_family_instances(tests_root, "tseitin_n_k", "generated/tseitin_n_k")
+    grouped: Dict[int, List[InstanceRecord]] = {x: [] for x in view.x_values}
+
+    for record in records:
+        keep = True
+        for field, expected in view.fixed_filters.items():
+            value = getattr(record, field)
+            if value != expected:
+                keep = False
+                break
+        if not keep:
             continue
-        by_x[x].append(p)
-    return by_x
+        x_value = getattr(record, view.x_field)
+        if x_value in grouped:
+            grouped[int(x_value)].append(record)
+
+    for x in view.x_values:
+        grouped[x].sort(key=lambda r: (str(r.file), r.attempt))
+    return view, grouped
+
+
+def sample_instances(
+    records: Sequence[InstanceRecord],
+    *,
+    count: int,
+    rng: random.Random,
+    with_replacement: bool,
+) -> List[InstanceRecord]:
+    items = list(records)
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    if not items:
+        raise RuntimeError("cannot sample from an empty instance list")
+    if with_replacement:
+        return [rng.choice(items) for _ in range(count)]
+    if count >= len(items):
+        return items
+    return rng.sample(items, count)
+
+
+def sample_grouped_instances(
+    families: Dict[str, List[InstanceRecord]],
+    *,
+    count_per_family: int,
+    rng: random.Random,
+    with_replacement: bool,
+) -> Dict[str, List[InstanceRecord]]:
+    return {
+        family: sample_instances(records, count=count_per_family, rng=rng, with_replacement=with_replacement)
+        for family, records in families.items()
+    }
+
+
+def sample_key_for(*, family: str, index: int, file_path: Path) -> str:
+    return f"{family_slug(family)}:{index:04d}:{file_path.name}"
+
+
+def aggregation_key(row: Dict[str, str]) -> str:
+    sample_key = (row.get("sample_key") or "").strip()
+    if sample_key:
+        return sample_key
+    file_key = (row.get("file") or "").strip()
+    if file_key:
+        return file_key
+    return "<missing-file>"
 
 
 def solver_line_key(row: Dict[str, str]) -> Optional[str]:
@@ -222,54 +348,38 @@ def decisions_for_row(row: Dict[str, str]) -> Optional[float]:
         return None
     raw = row.get("parsed_solver_decisions", "")
     try:
-        return float(raw)
+        value = float(raw)
     except (TypeError, ValueError):
         return None
+    return value if value > 0.0 else None
 
 
 def timeout_aware_median_runtime(rows: Sequence[Dict[str, str]]) -> Optional[float]:
     ranked: List[float] = []
     for row in rows:
         t = runtime_for_row(row)
-        if t is None:
-            ranked.append(math.inf)
-        else:
-            ranked.append(t)
+        ranked.append(math.inf if t is None else t)
     if not ranked:
         return None
     ranked.sort()
     median = ranked[len(ranked) // 2]
-    if math.isinf(median):
-        return None
-    return median
+    return None if math.isinf(median) else median
 
 
 def timeout_aware_median_decisions(rows: Sequence[Dict[str, str]]) -> Optional[float]:
     ranked: List[float] = []
     for row in rows:
         d = decisions_for_row(row)
-        if d is None:
-            ranked.append(math.inf)
-        else:
-            ranked.append(d)
+        ranked.append(math.inf if d is None else d)
     if not ranked:
         return None
     ranked.sort()
     median = ranked[len(ranked) // 2]
-    if math.isinf(median):
-        return None
-    return median
+    return None if math.isinf(median) else median
 
 
-def median_is_timeout(rows: Sequence[Dict[str, str]]) -> bool:
-    ranked: List[float] = []
-    for row in rows:
-        t = runtime_for_row(row)
-        ranked.append(math.inf if t is None else t)
-    if not ranked:
-        return False
-    ranked.sort()
-    return math.isinf(ranked[len(ranked) // 2])
+def median(values: Sequence[float]) -> float:
+    return float(statistics.median(values))
 
 
 def format_duration(seconds: float) -> str:
@@ -313,8 +423,8 @@ def format_progress_line(*, done: int, total: int, start_s: float, **context: ob
 def power_fit(points: Sequence[tuple[int, float]], mode: str) -> Optional[tuple[float, float, float]]:
     if len(points) < 2:
         return None
-    xs = []
-    ys = []
+    xs: List[float] = []
+    ys: List[float] = []
     for x, y in points:
         if x <= 0 or y <= 0:
             continue
@@ -344,7 +454,3 @@ def power_fit(points: Sequence[tuple[int, float]], mode: str) -> Optional[tuple[
 def eval_power_fit(x: float, a: float, p: float, mode: str) -> float:
     fit_x = (2.0 ** x) if mode == "power_on_2powx" else x
     return math.exp(a) * (fit_x ** p)
-
-
-def median(values: Sequence[float]) -> float:
-    return float(statistics.median(values))

@@ -132,8 +132,10 @@ Solver::Solver(std::size_t num_vars,
                std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
                std::shared_ptr<io::ProofLogger> proof_logger_in,
                const RestartConfig& restart_config,
-               bool enable_compaction_in)
+               bool enable_compaction_in,
+               std::size_t compaction_conflict_interval_in)
     : enable_compaction(enable_compaction_in),
+      compaction_conflict_interval(compaction_conflict_interval_in),
       original_num_vars(num_vars),
       active_num_vars(num_vars),
       active_to_original(num_vars),
@@ -152,9 +154,11 @@ Solver::Solver(std::size_t num_vars,
                std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
                std::shared_ptr<io::ProofLogger> proof_logger_in,
                const RestartConfig& restart_config,
-               bool enable_compaction_in)
+               bool enable_compaction_in,
+               std::size_t compaction_conflict_interval_in)
     : Solver(num_vars, std::make_shared<heuristics::Cyclic>(num_vars), std::move(dec_proc),
-             std::move(proof_logger_in), restart_config, enable_compaction_in) {}
+             std::move(proof_logger_in), restart_config, enable_compaction_in,
+             compaction_conflict_interval_in) {}
 
 std::size_t Solver::get_num_vars() const { return original_num_vars; }
 
@@ -261,8 +265,14 @@ bool Solver::maybe_compact_level0_before_decision() {
     if (level() != 0) {
         return false;
     }
-    if (trail.span().rows() < bit::vector<>::bits_per_block) {
+    if (trail.span().rows() < 1) {
         return false;
+    }
+    if (has_compacted_once) {
+        const std::size_t conflicts_since_last = num_conflicts - conflicts_at_last_compaction;
+        if (conflicts_since_last < compaction_conflict_interval) {
+            return false;
+        }
     }
     if (active_num_vars == 0) {
         return false;
@@ -416,6 +426,8 @@ bool Solver::maybe_compact_level0_before_decision() {
     trail = Trail(active_num_vars);
     clause_sel->update_with_compaction(transform, trail);
     dec_proc->update_with_compaction(transform, trail.span(), clause_sel->get_clauses(), clause_sel->active_flags());
+    has_compacted_once = true;
+    conflicts_at_last_compaction = num_conflicts;
 
     return true;
 }
@@ -629,7 +641,8 @@ Solver Solver::from_DIMACS(const std::string& filename,
                            const heuristics::CVsidsConfig& cvsids_config,
                            std::shared_ptr<io::ProofLogger> proof_logger,
                            const RestartConfig& restart_config,
-                           bool enable_compaction) {
+                           bool enable_compaction,
+                           std::size_t compaction_conflict_interval) {
     io::ParsedDimacs parsed = io::parse_dimacs_file(filename);
 
     std::shared_ptr<heuristics::DecisionProcedure> dec_proc;
@@ -639,7 +652,7 @@ Solver Solver::from_DIMACS(const std::string& filename,
     clause_sel = heuristics::create_clause_selector(csn, parsed.num_vars);
 
     Solver solver{parsed.num_vars, std::move(clause_sel), std::move(dec_proc), std::move(proof_logger),
-                  restart_config, enable_compaction};
+                  restart_config, enable_compaction, compaction_conflict_interval};
 
     for (auto& clause : parsed.clauses) {
         heuristics::ClauseId new_clause_id = solver.clause_sel->get_num_clauses();

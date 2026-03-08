@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Convert DIMACS-plus (XNF) files to CNF, CNF-XOR, or 2-XNF.
+Convert DIMACS-plus (XNF) files to CNF, CNF-XOR, 2-XNF, or exponential CNF.
 
 CLI usage:
   python3 tools/xnf_convert.py <format> <input.xnf> <output>
-Where <format> is one of: cnf, cnf-xor, 2-xnf
+Where <format> is one of: cnf, cnf-exp, cnf-xor, 2-xnf
 
 Library usage:
   from tools.xnf_convert import parse_xnf_file, convert_xnf, write_cnf, write_cnf_xor
@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(__file__))
 from xnf_lib import (
     parse_xnf_file,
     convert_xnf_to_cnf,
+    convert_xnf_to_cnf_naive,
     convert_xnf_to_cnf_xor,
     convert_xnf_to_2xnf,
     write_cnf,
@@ -48,8 +49,8 @@ def write_cnf_xor(path: str, nvars: int, cnf_clauses: List[List[int]], xor_claus
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Convert XNF (DIMACS-plus) to CNF, CNF-XOR, or 2-XNF.")
-    parser.add_argument("format", choices=["cnf", "cnf-xor", "2-xnf"], help="Output format")
+    parser = argparse.ArgumentParser(description="Convert XNF (DIMACS-plus) to CNF, CNF-XOR, 2-XNF, or exponential CNF.")
+    parser.add_argument("format", choices=["cnf", "cnf-exp", "cnf-xor", "2-xnf"], help="Output format")
     parser.add_argument("input", help="Input XNF file")
     parser.add_argument("output", help="Output file")
     args = parser.parse_args()
@@ -58,6 +59,9 @@ def main() -> int:
     if args.format == "cnf":
         cnf, _, total_vars = convert_xnf_to_cnf(nvars, clauses)
         write_cnf(args.output, total_vars, cnf)
+    elif args.format == "cnf-exp":
+        cnf = convert_xnf_to_cnf_naive(nvars, clauses)
+        write_cnf(args.output, nvars, cnf)
     elif args.format == "cnf-xor":
         cnf, xor, _, total_vars = convert_xnf_to_cnf_xor(nvars, clauses)
         write_cnf_xor(args.output, total_vars, cnf, xor)

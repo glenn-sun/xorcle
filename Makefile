@@ -1,12 +1,8 @@
-.PHONY: all profile release new new-profile new-release test clean rebuild
+.PHONY: all profile release test clean rebuild
 
 all:
 	mkdir -p bin
 	/usr/bin/g++ -std=c++23 -pthread -Og -g -Wall -fdiagnostics-show-template-tree -fdiagnostics-color=auto -fno-omit-frame-pointer -I . -I src $(shell find src -name '*.cpp') -o bin/main
-
-new:
-	mkdir -p bin
-	/usr/bin/g++ -std=c++23 -pthread -Og -g -Wall -fdiagnostics-show-template-tree -fdiagnostics-color=auto -fno-omit-frame-pointer -I . -I src $(shell find src -name '*.cpp') -o bin/main-new
 
 profile:
 	mkdir -p bin build/obj-profile
@@ -25,33 +21,12 @@ profile:
 	/usr/bin/g++ -pthread $$(find build/obj-profile -name '*.o') -o bin/main-profile
 	dsymutil bin/main-profile
 
-new-profile:
-	mkdir -p bin build/obj-new-profile
-	# Compile each .cpp into a real .o file (not a temp file), so dsymutil can find it.
-	find src -name '*.cpp' | while read -r src_file; do \
-		obj_file="build/obj-new-profile/$${src_file#src/}.o"; \
-		mkdir -p "$$(dirname "$$obj_file")"; \
-		/usr/bin/g++ -std=c++23 -pthread -O2 -DNDEBUG -g3 -Wall \
-			-fdiagnostics-show-template-tree -fdiagnostics-color=auto \
-			-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer \
-			-fno-optimize-sibling-calls \
-			-fno-split-machine-functions \
-			-fdebug-info-for-profiling \
-			-I . -I src -c "$$src_file" -o "$$obj_file"; \
-	done
-	/usr/bin/g++ -pthread $$(find build/obj-new-profile -name '*.o') -o bin/main-new-profile
-	dsymutil bin/main-new-profile
-
 release:
 	mkdir -p bin
 	/usr/bin/g++ -std=c++23 -pthread -O3 -DNDEBUG -Wall -fdiagnostics-show-template-tree -fdiagnostics-color=auto -I . -I src $(shell find src -name '*.cpp') -o bin/main-release
 
-new-release:
-	mkdir -p bin
-	/usr/bin/g++ -std=c++23 -pthread -O3 -DNDEBUG -Wall -fdiagnostics-show-template-tree -fdiagnostics-color=auto -I . -I src $(shell find src -name '*.cpp') -o bin/main-new-release
-
 test: all
-	./bin/main tests/bijphp_n_n+1/bijphp_6.cnf
+	./bin/main tests/generated/random_kxnf_n/random_kxnf_n_k2_n11.cnf
 
 clean:
 	rm -rf bin build

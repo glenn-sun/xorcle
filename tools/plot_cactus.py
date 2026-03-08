@@ -7,7 +7,7 @@ import os
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # Matplotlib needs a writable config/cache directory in this environment.
 os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconfig"))
@@ -27,6 +27,7 @@ from benchmark_plot_style import (
     series_style,
     unified_figure_geometry,
 )
+from benchmark_orchestration import aggregation_key
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,12 @@ def parse_args() -> argparse.Namespace:
         "--include-timeouts",
         action="store_true",
         help="Include TIMEOUT rows as capped points in cactus data.",
+    )
+    parser.add_argument(
+        "--metric",
+        choices=["runtime", "decisions"],
+        default="runtime",
+        help="Metric to plot (default: runtime).",
     )
     parser.add_argument(
         "--line-mode",
@@ -253,6 +260,24 @@ def resolved_runtime_s(row: Dict[str, str], include_timeouts: bool) -> Optional[
     return v if v > 0.0 else None
 
 
+def resolved_decisions(row: Dict[str, str]) -> Optional[float]:
+    status = (row.get("status") or "").strip().upper()
+    if status not in {"SAT", "UNSAT"}:
+        return None
+    raw = (row.get("parsed_solver_decisions") or "").strip()
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if v < 0.0:
+        return None
+    return v
+
+
+def row_is_solved(row: Dict[str, str]) -> bool:
+    return (row.get("status") or "").strip().upper() in {"SAT", "UNSAT"}
+
+
 def reduce_values(values: Sequence[float], mode: str) -> float:
     if mode == "median":
         return float(statistics.median(values))
@@ -263,30 +288,51 @@ def reduce_values(values: Sequence[float], mode: str) -> float:
     raise ValueError(f"unknown reduce mode: {mode}")
 
 
-def series_values(rows: Sequence[Dict[str, str]], aggregate_per_file: str, include_timeouts: bool) -> Tuple[List[float], int]:
+def resolved_metric_value(row: Dict[str, str], metric: str, include_timeouts: bool) -> Optional[float]:
+    if metric == "runtime":
+        return resolved_runtime_s(row, include_timeouts)
+    if metric == "decisions":
+        return resolved_decisions(row)
+    raise ValueError(f"unknown metric: {metric}")
+
+
+def series_points(
+    rows: Sequence[Dict[str, str]],
+    aggregate_per_file: str,
+    include_timeouts: bool,
+    metric: str,
+) -> Tuple[List[Tuple[int, float]], int, int]:
     if aggregate_per_file == "none":
-        vals = [
+        vals = sorted(
             t
             for row in rows
-            if (t := resolved_runtime_s(row, include_timeouts)) is not None
-        ]
-        return sorted(vals), len(rows)
+            if (t := resolved_metric_value(row, metric, include_timeouts)) is not None
+        )
+        solved = sum(1 for row in rows if row_is_solved(row))
+        points = [(idx, value) for idx, value in enumerate(vals, start=1) if value > 0.0]
+        return points, solved, len(rows)
 
     by_file: Dict[str, List[float]] = {}
+    solved_total = 0
     file_total = 0
+    seen_solved = set()
     seen_files = set()
     for row in rows:
-        file_key = row.get("file", "") or "<missing-file>"
+        file_key = aggregation_key(row)
         if file_key not in seen_files:
             seen_files.add(file_key)
             file_total += 1
-        t = resolved_runtime_s(row, include_timeouts)
+        if row_is_solved(row) and file_key not in seen_solved:
+            seen_solved.add(file_key)
+            solved_total += 1
+        t = resolved_metric_value(row, metric, include_timeouts)
         if t is None:
             continue
         by_file.setdefault(file_key, []).append(t)
 
-    vals = [reduce_values(vs, aggregate_per_file) for vs in by_file.values() if vs]
-    return sorted(vals), file_total
+    vals = sorted(reduce_values(vs, aggregate_per_file) for vs in by_file.values() if vs)
+    points = [(idx, value) for idx, value in enumerate(vals, start=1) if value > 0.0]
+    return points, solved_total, file_total
 
 
 def build_series(
@@ -326,12 +372,13 @@ def plain_tick_label(v: float, _pos: int) -> str:
     return s if s else "0"
 
 
-def plot_cactus(
+def draw_cactus_axes(
+    ax,
     series: Sequence[SeriesData],
-    output: Path,
     *,
     aggregate_per_file: str,
     include_timeouts: bool,
+    metric: str,
     line_mode: str,
     black_white: bool,
     title: str,
@@ -342,17 +389,14 @@ def plot_cactus(
     x_ticks: Sequence[float],
     y_ticks: Sequence[float],
     font_size: float,
-    figsize: Sequence[float],
-    dpi: int,
     show_counts: bool,
 ) -> None:
-    fig, ax = create_unified_figure(plt)
-
     color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["black"])
     for idx, s in enumerate(series):
-        values, total = series_values(s.rows, aggregate_per_file, include_timeouts)
-        xs = list(range(1, len(values) + 1))
-        suffix = f" ({len(values)}/{total})" if show_counts else ""
+        points, solved, total = series_points(s.rows, aggregate_per_file, include_timeouts, metric)
+        xs = [point[0] for point in points]
+        values = [point[1] for point in points]
+        suffix = f" ({solved}/{total})" if show_counts else ""
         label = f"{s.label}{suffix}"
 
         style = series_style(idx)
@@ -384,10 +428,50 @@ def plot_cactus(
 
     if x_scale == "log":
         ax.set_xticks([], minor=True)
-    if y_scale == "log":
-        ax.set_yticks([], minor=True)
 
     apply_common_axes_style(ax, xlabel=xlabel, ylabel=ylabel, title=title, font_size=font_size)
+
+
+def plot_cactus(
+    series: Sequence[SeriesData],
+    output: Path,
+    *,
+    aggregate_per_file: str,
+    include_timeouts: bool,
+    metric: str,
+    line_mode: str,
+    black_white: bool,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    x_scale: str,
+    y_scale: str,
+    x_ticks: Sequence[float],
+    y_ticks: Sequence[float],
+    font_size: float,
+    figsize: Sequence[float],
+    dpi: int,
+    show_counts: bool,
+) -> None:
+    fig, ax = create_unified_figure(plt)
+    draw_cactus_axes(
+        ax,
+        series,
+        aggregate_per_file=aggregate_per_file,
+        include_timeouts=include_timeouts,
+        metric=metric,
+        line_mode=line_mode,
+        black_white=black_white,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        x_scale=x_scale,
+        y_scale=y_scale,
+        x_ticks=x_ticks,
+        y_ticks=y_ticks,
+        font_size=font_size,
+        show_counts=show_counts,
+    )
     place_right_legend(ax, font_size=font_size)
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -415,6 +499,7 @@ def main() -> int:
         output,
         aggregate_per_file=args.aggregate_per_file,
         include_timeouts=args.include_timeouts,
+        metric=args.metric,
         line_mode=args.line_mode,
         black_white=args.black_white,
         title=args.title,

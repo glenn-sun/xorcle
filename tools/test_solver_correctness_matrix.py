@@ -17,12 +17,12 @@ from xnf_lib import Clause, Equation, parse_xnf_file
 
 
 DEFAULT_INPUTS = (
-    "sat-comp-tests/3619135ee5865be0a107449fb31defd9-arles_thres20_p10_r7475.cnf",
-    "ascon-tests/r2/tmp_jsyfpuo.xnf",
-    "tests/bijphp_n_n+1/bijphp_6.cnf",
-    "tests/pebbling_3lift_h/pebbling_3lift_150.cnf",
-    "tests/random_3xnf_n/random_3xnf_15_01.cnf",
-    "tests/tseitin_5_n/tseitin_5_n_80_01.cnf",
+    "tests/sat-comp/d35dfc38e1681b48ebceb4113d205a23-16_2.cnf",
+    "tests/ascon/r2/tmp_jsyfpuo.xnf",
+    "tests/generated/random_kxnf_n/random_kxnf_n_k2_n11.cnf",
+    "tests/generated/pebbling_lifted_h_k/pebbling_lifted_h_k_h60_k2.cnf",
+    "tests/generated/restricted_kxnf_n/restricted_kxnf_n_k2_n22.cnf",
+    "tests/generated/tseitin_n_k/tseitin_n_k_n20_k4_01.cnf",
 )
 DECISION_PROCS = ("vsids_unit", "cvsids")
 CLAUSE_SELECTORS = ("cyclic", "lt_watchlist", "exact_watchlist")

@@ -100,6 +100,7 @@ stats::RunStats run_once(const std::string& filename,
                          const heuristics::CVsidsConfig& cvsids_config,
                          const search::RestartConfig& restart_config,
                          bool enable_compaction,
+                         std::size_t compaction_conflict_interval,
                          std::atomic<bool>& stop_flag,
                          const std::string& proof_path = {}) {
     std::shared_ptr<io::ProofLogger> proof_logger;
@@ -108,7 +109,7 @@ stats::RunStats run_once(const std::string& filename,
     }
     search::Solver solver =
         search::Solver::from_DIMACS(filename, dpn, csn, phase, cvsids_config, proof_logger, restart_config,
-                                    enable_compaction);
+                                    enable_compaction, compaction_conflict_interval);
     std::size_t num_vars = solver.get_num_vars();
     std::size_t start_num_clauses = solver.get_num_clauses();
 
@@ -185,6 +186,7 @@ int main(int argc, char *argv[]) {
     std::string proof_path;
     search::RestartConfig restart_config{};
     bool enable_compaction = true;
+    std::size_t compaction_conflict_interval = 16;
 
     static constexpr struct option long_options[] = {
         {"decision-proc", required_argument, 0, 'd'},
@@ -350,6 +352,33 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 enable_compaction = *maybe_bool;
+                if (optind < argc) {
+                    auto maybe_interval = parse_size_t_token(argv[optind]);
+                    if (maybe_interval.has_value()) {
+                        if (!enable_compaction) {
+                            std::cerr << "Error: --compact off does not accept a conflicts interval" << std::endl;
+                            return 1;
+                        }
+                        if (*maybe_interval < 1) {
+                            std::cerr << "Error: --compact conflicts interval must be >= 1" << std::endl;
+                            return 1;
+                        }
+                        compaction_conflict_interval = *maybe_interval;
+                        ++optind;
+                    } else if (enable_compaction) {
+                        const std::string next_token = argv[optind];
+                        if (!next_token.empty() && next_token[0] != '-') {
+                            const bool looks_like_path =
+                                (next_token.find('/') != std::string::npos)
+                                || (next_token.find('.') != std::string::npos)
+                                || fs::exists(next_token);
+                            if (!looks_like_path) {
+                                std::cerr << "Error: --compact conflicts interval must be an integer >= 1" << std::endl;
+                                return 1;
+                            }
+                        }
+                    }
+                }
                 break;
             }
             case 'h':
@@ -380,7 +409,8 @@ int main(int argc, char *argv[]) {
         std::cout << "                               none" << std::endl;
         std::cout << "                               geometric [rate_increase>=1.0] [initial_conflicts>=1] (defaults: 1.5, 100)" << std::endl;
         std::cout << "                               luby [unit_conflicts>=1] (default: 100)" << std::endl;
-        std::cout << "  -x, --compact <on|off>      Compaction (default: on)" << std::endl;
+        std::cout << "  -x, --compact <on|off> [conflicts>=1]  Compaction (default: on, conflicts: 16)"
+                  << std::endl;
         std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
         std::cout << "  -h, --help                   Show this help message" << std::endl;
         std::cout << "Notes:" << std::endl;
@@ -450,7 +480,7 @@ int main(int argc, char *argv[]) {
     try {
         std::atomic<bool> stop_flag(false);
         run_stats.push_back(run_once(input_path, dpn, csn, phase, cvsids_config, restart_config,
-                                     enable_compaction, stop_flag, proof_path));
+                                     enable_compaction, compaction_conflict_interval, stop_flag, proof_path));
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return 1;

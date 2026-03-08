@@ -5,8 +5,9 @@ Shared XNF parsing and encoding utilities.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -207,6 +208,39 @@ def convert_xnf_to_cnf(nvars: int, clauses: List[Clause]) -> Tuple[List[List[int
         cnf_clauses.append(f_vars)
 
     return cnf_clauses, eq_to_f, next_var - 1
+
+
+def evaluate_equation(eq: Equation, assignment_map: Dict[int, int]) -> bool:
+    parity = 0
+    for v in eq.vars:
+        parity ^= assignment_map.get(v, 0)
+    return parity == eq.rhs
+
+
+def clause_support_vars(clause: Clause) -> List[int]:
+    support = set()
+    for eq in clause.equations:
+        support.update(eq.vars)
+    return sorted(support)
+
+
+def encode_xnf_clause_to_cnf_naive(clause: Clause) -> List[List[int]]:
+    support = clause_support_vars(clause)
+    out: List[List[int]] = []
+    for bits in itertools.product((0, 1), repeat=len(support)):
+        assignment = {v: bit for v, bit in zip(support, bits)}
+        if any(evaluate_equation(eq, assignment) for eq in clause.equations):
+            continue
+        out.append([v if assignment[v] == 0 else -v for v in support])
+    return out
+
+
+def convert_xnf_to_cnf_naive(nvars: int, clauses: Sequence[Clause]) -> List[List[int]]:
+    del nvars  # Header var count is preserved by caller; conversion uses no fresh variables.
+    cnf_clauses: List[List[int]] = []
+    for clause in clauses:
+        cnf_clauses.extend(encode_xnf_clause_to_cnf_naive(clause))
+    return cnf_clauses
 
 
 def convert_xnf_to_cnf_xor(

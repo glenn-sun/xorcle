@@ -59,6 +59,15 @@ private:
     /// @brief Enable variable compaction before decisions.
     bool enable_compaction = true;
 
+    /// @brief Number of conflicts required between successful compactions.
+    std::size_t compaction_conflict_interval = 16;
+
+    /// @brief Whether at least one compaction has succeeded.
+    bool has_compacted_once = false;
+
+    /// @brief Conflict counter snapshot at the last successful compaction.
+    std::size_t conflicts_at_last_compaction = 0;
+
     /// @brief Number of variables in the original input problem.
     const std::size_t original_num_vars;
 
@@ -110,7 +119,7 @@ private:
     /// @brief Reconstruct a full original-width assignment from active-space assignment.
     bit::vector<> reconstruct_original_assignment(const bit::vector<>& active_assignment) const;
 
-    /// @brief Perform level-0 variable compaction before decisions if threshold is met.
+    /// @brief Perform level-0 variable compaction before decisions if trigger conditions are met.
     bool maybe_compact_level0_before_decision();
 
 public:
@@ -120,14 +129,16 @@ public:
            std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
            std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr,
            const RestartConfig& restart_config = {},
-           bool enable_compaction = true);
+           bool enable_compaction = true,
+           std::size_t compaction_conflict_interval = 16);
 
     /// @brief Construct a solver with a default cyclic clause selector.
     Solver(std::size_t num_vars,
            std::shared_ptr<heuristics::DecisionProcedure> dec_proc,
            std::shared_ptr<io::ProofLogger> proof_logger_in = nullptr,
            const RestartConfig& restart_config = {},
-           bool enable_compaction = true);
+           bool enable_compaction = true,
+           std::size_t compaction_conflict_interval = 16);
 
     /// @brief Return the variable count for this solver instance.
     std::size_t get_num_vars() const;
@@ -180,7 +191,8 @@ public:
                               const heuristics::CVsidsConfig& cvsids_config = {},
                               std::shared_ptr<io::ProofLogger> proof_logger = nullptr,
                               const RestartConfig& restart_config = {},
-                              bool enable_compaction = true);
+                              bool enable_compaction = true,
+                              std::size_t compaction_conflict_interval = 16);
 
     /// @brief Total number of attempted propagations.
     std::size_t num_attempt_props = 0;

@@ -4,51 +4,37 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import random
 from dataclasses import dataclass
 from math import log, log1p
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Iterable, List, Optional, Sequence
 
 try:
     import networkx as nx
-    from cnfgen import PebblingFormula, PigeonholePrinciple, TseitinFormula
+    from cnfgen import PebblingFormula, TseitinFormula
     from cnfgen.graphs import Graph, dag_pyramid
 except ModuleNotFoundError:
     nx = None  # type: ignore[assignment]
     PebblingFormula = None  # type: ignore[assignment]
-    PigeonholePrinciple = None  # type: ignore[assignment]
     TseitinFormula = None  # type: ignore[assignment]
     Graph = None  # type: ignore[assignment]
     dag_pyramid = None  # type: ignore[assignment]
 
+from benchmark_orchestration import GENERATED_FAMILIES, MANIFEST_FIELDS
+
 
 @dataclass(frozen=True)
-class FamilySpec:
-    name: str
+class GeneratedFile:
+    family: str
+    file: Path
     input_format: str
-    kind: str  # "random" or "deterministic"
-    x_label: str
-    x_values: Sequence[int]
-
-
-FAMILIES: dict[str, FamilySpec] = {
-    # "random_2xnf_n": FamilySpec("random_2xnf_n", "xnf", "random", "n", [17, 18, 19, 20, 21, 22, 23, 24, 25]),
-    "random_3xnf_n": FamilySpec("random_3xnf_n", "xnf", "random", "n", [12, 13, 14, 15, 16, 17, 18, 19, 20]),
-    "random_6xnf_n": FamilySpec("random_6xnf_n", "xnf", "random", "n", [8, 9, 10, 11, 12, 13, 14, 15, 16]),
-    # "random_kxnf_15": FamilySpec("random_kxnf_15", "xnf", "random", "k", [2, 3, 4, 5, 6, 7]),
-    # "restricted_2xnf_n": FamilySpec("restricted_2xnf_n", "xnf", "random", "n", [30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50]),
-    "restricted_3xnf_n": FamilySpec("restricted_3xnf_n", "xnf", "random", "n", [20, 22, 24, 26, 28, 30, 32, 34, 36]),
-    "restricted_6xnf_n": FamilySpec("restricted_6xnf_n", "xnf", "random", "n", [16, 18, 20, 22, 24, 26, 28, 30]),
-    # "restricted_kxnf_25": FamilySpec("restricted_kxnf_25", "xnf", "random", "k", [2, 3, 4, 5, 6, 7]),
-    # "pebbling_2lift_h": FamilySpec("pebbling_2lift_h", "xnf", "deterministic", "h", [100, 150, 200, 250, 300, 350, 400]),
-    "pebbling_3lift_h": FamilySpec("pebbling_3lift_h", "xnf", "deterministic", "h", [50, 75, 100, 125, 150, 175, 200, 225, 250]),
-    "pebbling_10lift_h": FamilySpec("pebbling_10lift_h", "xnf", "deterministic", "h", [40, 60, 80, 100, 120, 140, 160, 200]),
-    # "pebbling_klift_100": FamilySpec("pebbling_klift_100", "xnf", "deterministic", "k", [2, 3, 4, 5, 6, 7]),
-    "bijphp_n_n+1": FamilySpec("bijphp_n_n+1", "cnf", "deterministic", "n", [4, 5, 6, 7, 8]),
-    "tseitin_k_20": FamilySpec("tseitin_k_20", "cnf", "random", "k", [3, 4, 5, 6, 7, 8, 9]),
-    "tseitin_5_n": FamilySpec("tseitin_5_n", "cnf", "random", "n", [10, 20, 40, 80, 160, 320]),
-}
+    attempt: int
+    n: Optional[int] = None
+    k: Optional[int] = None
+    h: Optional[int] = None
+    lift_k: Optional[int] = None
 
 
 def _format_equation(vars_: Sequence[int], rhs_zero: bool) -> str:
@@ -72,7 +58,7 @@ def _expected_kxnf_clause_count(n: int, k: int, fixed_equations: int = 0) -> int
         raise ValueError("fixed_equations must be in [0, n]")
     p_unsat = 2.0 ** (-k)
     denom = -log1p(-p_unsat)
-    m = (n - fixed_equations + 1) * log(2.0) / denom
+    m = ((n - fixed_equations) * log(2.0) - log(log(2.0))) / denom
     return int(round(m))
 
 
@@ -205,18 +191,6 @@ def generate_pebbling_lifted(height: int, lift_k: int, out: Path) -> tuple[int, 
     return nvars, len(clauses)
 
 
-def generate_bphp(n: int, out: Path) -> tuple[int, int]:
-    if PigeonholePrinciple is None:
-        raise RuntimeError("Missing dependencies: install cnfgen and networkx to generate BPHP families.")
-    if n < 1:
-        raise ValueError("n must be >= 1")
-    formula = PigeonholePrinciple(n + 1, n, functional=True, onto=True)
-    text = formula.to_dimacs()
-    _write_dimacs_text(out, text)
-    nvars, clauses = _parse_dimacs_literal_cnf_text(text)
-    return nvars, len(clauses)
-
-
 def _random_odd_charges(n: int, rng: random.Random) -> List[bool]:
     charges = [bool(rng.getrandbits(1)) for _ in range(n)]
     if sum(1 for c in charges if c) % 2 == 0:
@@ -246,132 +220,174 @@ def generate_tseitin(n: int, d: int, out: Path, *, seed: int | None = None) -> t
     return nvars, len(clauses)
 
 
-def _seed_for(base_seed: int | None, *vals: int) -> int | None:
-    if base_seed is None:
-        return None
+def _seed_for(base_seed: int, *vals: int) -> int:
     h = base_seed
     for v in vals:
         h = ((h * 1_000_003) ^ v) & 0xFFFFFFFF
     return h
 
 
-def _random_filename(family: str, x: int, attempt: int) -> str:
-    if family.startswith("random_2xnf"):
-        return f"random_2xnf_{x}_{attempt:02d}.cnf"
-    if family.startswith("random_3xnf"):
-        return f"random_3xnf_{x}_{attempt:02d}.cnf"
-    if family.startswith("random_6xnf"):
-        return f"random_6xnf_{x}_{attempt:02d}.cnf"
-    if family == "random_kxnf_15":
-        return f"random_kxnf_15_{x}_{attempt:02d}.cnf"
-    if family.startswith("restricted_2xnf"):
-        return f"restricted_2xnf_{x}_{attempt:02d}.cnf"
-    if family.startswith("restricted_3xnf"):
-        return f"restricted_3xnf_{x}_{attempt:02d}.cnf"
-    if family.startswith("restricted_6xnf"):
-        return f"restricted_6xnf_{x}_{attempt:02d}.cnf"
-    if family == "restricted_kxnf_25":
-        return f"restricted_kxnf_25_{x}_{attempt:02d}.cnf"
-    if family == "tseitin_k_20":
-        return f"tseitin_k_20_{x}_{attempt:02d}.cnf"
-    if family == "tseitin_5_n":
-        return f"tseitin_5_n_{x}_{attempt:02d}.cnf"
-    raise ValueError(f"unknown random family: {family}")
+def _write_manifest(family_dir: Path, tests_root: Path, rows: Sequence[GeneratedFile]) -> None:
+    manifest_path = family_dir / "manifest.csv"
+    with manifest_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(MANIFEST_FIELDS))
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    "file": str(row.file.relative_to(tests_root)),
+                    "family": row.family,
+                    "input_format": row.input_format,
+                    "attempt": str(row.attempt),
+                    "n": "" if row.n is None else str(row.n),
+                    "k": "" if row.k is None else str(row.k),
+                    "h": "" if row.h is None else str(row.h),
+                    "lift_k": "" if row.lift_k is None else str(row.lift_k),
+                }
+            )
 
 
-def _deterministic_filename(family: str, x: int) -> str:
-    if family == "pebbling_2lift_h":
-        return f"pebbling_2lift_{x}.cnf"
-    if family == "pebbling_3lift_h":
-        return f"pebbling_3lift_{x}.cnf"
-    if family == "pebbling_10lift_h":
-        return f"pebbling_10lift_{x}.cnf"
-    if family == "pebbling_klift_100":
-        return f"pebbling_klift_100_{x}.cnf"
-    if family == "bijphp_n_n+1":
-        return f"bijphp_{x}.cnf"
-    raise ValueError(f"unknown deterministic family: {family}")
+def _clear_family_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    for old in path.glob("*"):
+        if old.is_file():
+            old.unlink()
 
 
-def _generate_instance(family: str, x: int, out: Path, seed: int | None) -> None:
-    if family == "random_2xnf_n":
-        generate_dense_kxnf(x, 2, out, seed=seed)
-    elif family == "random_3xnf_n":
-        generate_dense_kxnf(x, 3, out, seed=seed)
-    elif family == "random_6xnf_n":
-        generate_dense_kxnf(x, 6, out, seed=seed)
-    elif family == "random_kxnf_15":
-        generate_dense_kxnf(15, x, out, seed=seed)
-    elif family == "restricted_2xnf_n":
-        generate_restricted_kxnf(x, 2, out, seed=seed)
-    elif family == "restricted_3xnf_n":
-        generate_restricted_kxnf(x, 3, out, seed=seed)
-    elif family == "restricted_6xnf_n":
-        generate_restricted_kxnf(x, 6, out, seed=seed)
-    elif family == "restricted_kxnf_25":
-        generate_restricted_kxnf(25, x, out, seed=seed)
-    elif family == "pebbling_2lift_h":
-        generate_pebbling_lifted(x, 2, out)
-    elif family == "pebbling_3lift_h":
-        generate_pebbling_lifted(x, 3, out)
-    elif family == "pebbling_10lift_h":
-        generate_pebbling_lifted(x, 10, out)
-    elif family == "pebbling_klift_100":
-        generate_pebbling_lifted(100, x, out)
-    elif family == "bijphp_n_n+1":
-        generate_bphp(x, out)
-    elif family == "tseitin_k_20":
-        generate_tseitin(20, x, out, seed=seed)
-    elif family == "tseitin_5_n":
-        generate_tseitin(x, 5, out, seed=seed)
-    else:
-        raise ValueError(f"unknown family: {family}")
+def _make_out_path(out_root: Path, family: str, stem: str) -> Path:
+    return out_root / family / f"{stem}.cnf"
 
 
-def generate_family(out_root: Path, spec: FamilySpec, attempts: int, seed_base: int | None) -> None:
-    family_dir = out_root / spec.name
-    family_dir.mkdir(parents=True, exist_ok=True)
-    for old in family_dir.glob("*.cnf"):
-        old.unlink()
+def generate_random_kxnf_family(out_root: Path, tests_root: Path, seed_base: int) -> int:
+    family = "random_kxnf_n"
+    family_dir = out_root / family
+    _clear_family_dir(family_dir)
+    manifest_rows: List[GeneratedFile] = []
+    for k in range(2, 7):
+        for n in range(11, 31):
+            file_path = _make_out_path(out_root, family, f"{family}_k{k}_n{n}")
+            seed = _seed_for(seed_base, len(family), k, n, 1)
+            generate_dense_kxnf(n, k, file_path, seed=seed)
+            manifest_rows.append(
+                GeneratedFile(
+                    family=family,
+                    file=file_path,
+                    input_format="xnf",
+                    attempt=1,
+                    n=n,
+                    k=k,
+                )
+            )
+    _write_manifest(family_dir, tests_root, manifest_rows)
+    return len(manifest_rows)
 
-    for x in spec.x_values:
-        if spec.kind == "random":
-            for attempt in range(1, attempts + 1):
-                out = family_dir / _random_filename(spec.name, x, attempt)
-                seed = _seed_for(seed_base, len(spec.name), x, attempt)
-                _generate_instance(spec.name, x, out, seed)
-        else:
-            out = family_dir / _deterministic_filename(spec.name, x)
-            _generate_instance(spec.name, x, out, seed=None)
+
+def generate_restricted_kxnf_family(out_root: Path, tests_root: Path, seed_base: int) -> int:
+    family = "restricted_kxnf_n"
+    family_dir = out_root / family
+    _clear_family_dir(family_dir)
+    manifest_rows: List[GeneratedFile] = []
+    for k in range(2, 7):
+        for n in range(22, 61, 2):
+            file_path = _make_out_path(out_root, family, f"{family}_k{k}_n{n}")
+            seed = _seed_for(seed_base, len(family), k, n, 1)
+            generate_restricted_kxnf(n, k, file_path, seed=seed)
+            manifest_rows.append(
+                GeneratedFile(
+                    family=family,
+                    file=file_path,
+                    input_format="xnf",
+                    attempt=1,
+                    n=n,
+                    k=k,
+                )
+            )
+    _write_manifest(family_dir, tests_root, manifest_rows)
+    return len(manifest_rows)
+
+
+def generate_pebbling_family(out_root: Path, tests_root: Path) -> int:
+    family = "pebbling_lifted_h_k"
+    family_dir = out_root / family
+    _clear_family_dir(family_dir)
+    manifest_rows: List[GeneratedFile] = []
+    for lift_k in (2, 4, 6, 8, 10):
+        for h in range(60, 251, 10):
+            file_path = _make_out_path(out_root, family, f"{family}_h{h}_k{lift_k}")
+            generate_pebbling_lifted(h, lift_k, file_path)
+            manifest_rows.append(
+                GeneratedFile(
+                    family=family,
+                    file=file_path,
+                    input_format="xnf",
+                    attempt=1,
+                    h=h,
+                    k=lift_k,
+                    lift_k=lift_k,
+                )
+            )
+    _write_manifest(family_dir, tests_root, manifest_rows)
+    return len(manifest_rows)
+
+
+def generate_tseitin_family(out_root: Path, tests_root: Path, seed_base: int) -> int:
+    family = "tseitin_n_k"
+    family_dir = out_root / family
+    _clear_family_dir(family_dir)
+    manifest_rows: List[GeneratedFile] = []
+
+    param_pairs = {(20, k) for k in range(3, 11)}
+    param_pairs.update((n, 4) for n in (10, 20, 40, 80, 160, 320, 640, 1280))
+
+    for n, k in sorted(param_pairs):
+        for attempt in range(1, 6):
+            file_path = _make_out_path(out_root, family, f"{family}_n{n}_k{k}_{attempt:02d}")
+            seed = _seed_for(seed_base, len(family), n, k, attempt)
+            generate_tseitin(n, k, file_path, seed=seed)
+            manifest_rows.append(
+                GeneratedFile(
+                    family=family,
+                    file=file_path,
+                    input_format="cnf",
+                    attempt=attempt,
+                    n=n,
+                    k=k,
+                )
+            )
+    _write_manifest(family_dir, tests_root, manifest_rows)
+    return len(manifest_rows)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate benchmark families for type1/type2 benchmark scripts.")
-    parser.add_argument("--out-dir", default="tests", help="Root output directory (default: tests)")
-    parser.add_argument("--attempts", type=int, default=5, help="Instances per size for random families (default: 5)")
+    parser = argparse.ArgumentParser(description="Generate benchmark families for the benchmark scripts.")
+    parser.add_argument("--out-dir", default="tests/generated", help="Root output directory (default: tests/generated)")
     parser.add_argument("--seed-base", type=int, default=1, help="Base seed for random generators (default: 1)")
     parser.add_argument(
         "--families",
         nargs="*",
-        choices=sorted(FAMILIES.keys()),
-        default=sorted(FAMILIES.keys()),
+        choices=list(GENERATED_FAMILIES),
+        default=list(GENERATED_FAMILIES),
         help="Subset of families to generate",
     )
-    args = parser.parse_args()
-    if args.attempts < 1:
-        parser.error("--attempts must be >= 1")
-    return args
+    return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    out_root = Path(args.out_dir)
+    out_root = Path(args.out_dir).resolve()
     out_root.mkdir(parents=True, exist_ok=True)
+    tests_root = out_root.parent.resolve()
+
+    counts = {
+        "random_kxnf_n": lambda: generate_random_kxnf_family(out_root, tests_root, args.seed_base),
+        "restricted_kxnf_n": lambda: generate_restricted_kxnf_family(out_root, tests_root, args.seed_base),
+        "pebbling_lifted_h_k": lambda: generate_pebbling_family(out_root, tests_root),
+        "tseitin_n_k": lambda: generate_tseitin_family(out_root, tests_root, args.seed_base),
+    }
 
     for family in args.families:
-        spec = FAMILIES[family]
-        generate_family(out_root, spec, attempts=args.attempts, seed_base=args.seed_base)
-        print(f"[{family}] generated {len(spec.x_values)} sizes (kind={spec.kind}) -> {out_root / family}")
+        count = counts[family]()
+        print(f"[{family}] generated {count} files -> {out_root / family}")
 
     return 0
 

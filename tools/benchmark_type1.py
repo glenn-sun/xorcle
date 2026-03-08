@@ -2,56 +2,42 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
+import math
 import os
-import re
+import random
 import sys
 import time
-from collections import defaultdict
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Sequence
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconfig"))
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FixedLocator, LogFormatterMathtext, NullFormatter, NullLocator
+
 sys.path.append(str(Path(__file__).resolve().parent))
 import run_benchmark as bs
-from benchmark_plot_style import (
-    apply_common_axes_style,
-    create_unified_figure,
-    finalize_figure,
-    place_right_legend,
-    series_style,
-)
+from benchmark_plot_style import UNIFIED_DPI, UNIFIED_FONT_SIZE, unified_figure_geometry
 from benchmark_orchestration import (
     ALL_SOLVER_LINES,
-    SOLVER_COLORS,
+    DEFAULT_SOLVER_LINES,
+    PHYSICAL_FAMILIES,
     SOLVER_DISPLAY,
-    decisions_for_row,
+    family_slug,
     format_progress_line,
-    median_is_timeout,
-    runtime_for_row,
+    load_physical_families,
+    sample_grouped_instances,
+    sample_key_for,
     should_report_progress,
     solver_line_key,
-    timeout_aware_median_decisions,
-    timeout_aware_median_runtime,
 )
-
-
-RANDOM_NAME_RE = re.compile(r"^.+_(\d+)_(\d{2})$")
-DETERMINISTIC_NAME_RE = re.compile(r"^.+_(\d+)$")
-
-
-@dataclass(frozen=True)
-class FamilyRunSpec:
-    name: str
-    input_format: str  # cnf or xnf
-    kind: str  # random or deterministic
-    x_label: str
-    x_values: List[int]
-    files_by_x: Dict[int, List[Path]]
+from plot_cactus import SeriesData, draw_cactus_axes, series_points
 
 
 def repo_root() -> Path:
@@ -60,7 +46,7 @@ def repo_root() -> Path:
 
 def parse_args() -> argparse.Namespace:
     root = repo_root()
-    parser = argparse.ArgumentParser(description="Type 1 benchmark: all families, all solvers, timeout-aware median trendline.")
+    parser = argparse.ArgumentParser(description="Type 1 benchmark: cactus plots for all benchmark families.")
     parser.add_argument("--tests-root", default=str(root / "tests"))
     parser.add_argument("--output-root", default=str(root / "benchmarks" / "type1"))
     parser.add_argument("--solver-bin", default=str(root / "bin" / "main-release"))
@@ -68,25 +54,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--xorricane-bin", default=str(root / "external" / "xorricane"))
     parser.add_argument("--kissat-bin", default=str(root / "external" / "kissat"))
     parser.add_argument("--cms-bin", default=str(root / "external" / "cryptominisat5"))
-    parser.add_argument("--attempts", type=int, default=1)
+    parser.add_argument("--attempts", type=int, default=1, help="Solver reruns on the same sampled instance")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--samples-per-family", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--all", action="store_true", help="Benchmark every instance in each selected family")
     parser.add_argument("--saveconverted", action="store_true")
-    parser.add_argument("--full", action="store_true", help="Shorthand for --attempts 5 --timeout 60")
-    parser.add_argument("--families", nargs="*", default=None, help="Family folder names (or paths) to benchmark")
+    parser.add_argument(
+        "--families",
+        nargs="*",
+        choices=list(PHYSICAL_FAMILIES),
+        default=list(PHYSICAL_FAMILIES),
+        help="Physical family subset to benchmark",
+    )
     parser.add_argument(
         "--solvers",
         nargs="*",
         choices=list(ALL_SOLVER_LINES),
         default=None,
-        help="Optional solver subset to benchmark/replot. Default: all type-1 solver lines.",
+        help="Optional solver subset. Default excludes xorricane.",
     )
     parser.add_argument("--replot-only", action="store_true", help="Regenerate plots from existing CSV files only.")
     args = parser.parse_args()
-
-    if args.full:
-        args.attempts = 5
-        args.timeout = 60.0
 
     if args.attempts < 1:
         parser.error("--attempts must be >= 1")
@@ -94,135 +84,33 @@ def parse_args() -> argparse.Namespace:
         parser.error("--jobs must be >= 1")
     if args.timeout <= 0:
         parser.error("--timeout must be > 0")
+    if args.samples_per_family < 1:
+        parser.error("--samples-per-family must be >= 1")
     return args
 
 
-def infer_x_label(family_name: str) -> str:
-    if family_name.endswith("_n") or "_n_" in family_name:
-        return "n"
-    if family_name.endswith("_h") or "_h_" in family_name:
-        return "h"
-    if family_name.endswith("_k") or "_k_" in family_name or "kxnf" in family_name or "klift" in family_name:
-        return "k"
-    return "x"
+def selected_solver_lines(args: argparse.Namespace) -> List[str]:
+    return list(args.solvers) if args.solvers else list(DEFAULT_SOLVER_LINES)
 
 
-def sniff_input_format(sample_file: Path, family_name: str) -> str:
-    try:
-        with sample_file.open("r", encoding="utf-8", errors="replace") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line or line.startswith("c") or line.startswith("p"):
-                    continue
-                if "+" in line or line.startswith("x"):
-                    return "xnf"
-                break
-    except OSError:
-        pass
-    lower = family_name.lower()
-    if lower.startswith("tseitin") or lower.startswith("bijphp"):
-        return "cnf"
-    return "xnf"
-
-
-def discover_family_spec(family_dir: Path) -> FamilyRunSpec:
-    files = sorted(p for p in family_dir.glob("*.cnf") if p.is_file())
-    if not files:
-        raise RuntimeError(f"{family_dir.name}: no .cnf files found in family directory")
-
-    files_by_x: Dict[int, List[Path]] = defaultdict(list)
-    kinds_seen: set[str] = set()
-    for p in files:
-        stem = p.stem
-        m_random = RANDOM_NAME_RE.match(stem)
-        if m_random:
-            kinds_seen.add("random")
-            x = int(m_random.group(1))
-            files_by_x[x].append(p)
-            continue
-        m_det = DETERMINISTIC_NAME_RE.match(stem)
-        if m_det:
-            kinds_seen.add("deterministic")
-            x = int(m_det.group(1))
-            files_by_x[x].append(p)
-            continue
-
-    if not files_by_x:
-        raise RuntimeError(
-            f"{family_dir.name}: could not parse size parameter from filenames; expected '*_<x>.cnf' "
-            "or '*_<x>_<attempt:02d>.cnf'"
-        )
-    if len(kinds_seen) != 1:
-        raise RuntimeError(f"{family_dir.name}: mixed random/deterministic filename patterns in one family")
-
-    kind = next(iter(kinds_seen))
-    x_values = sorted(files_by_x.keys())
-    input_format = sniff_input_format(files[0], family_dir.name)
-    return FamilyRunSpec(
-        name=family_dir.name,
-        input_format=input_format,
-        kind=kind,
-        x_label=infer_x_label(family_dir.name),
-        x_values=x_values,
-        files_by_x={x: sorted(v) for x, v in files_by_x.items()},
-    )
-
-
-def resolve_family_dirs(*, tests_root: Path, family_args: Sequence[str] | None) -> List[Path]:
-    if not family_args:
-        dirs = []
-        for child in sorted(tests_root.iterdir()):
-            if not child.is_dir():
-                continue
-            if any(child.glob("*.cnf")):
-                dirs.append(child)
-        if not dirs:
-            raise RuntimeError(f"No benchmark family directories with .cnf files found under: {tests_root}")
-        return dirs
-
-    resolved: List[Path] = []
-    for item in family_args:
-        candidate = Path(item)
-        if candidate.is_absolute():
-            family_dir = candidate
-        else:
-            family_dir = tests_root / candidate
-            if not family_dir.is_dir():
-                family_dir = candidate
-        if not family_dir.is_dir():
-            raise FileNotFoundError(f"Missing family directory: {item}")
-        resolved.append(family_dir.resolve())
-    return resolved
-
-
-def make_runner_args(
-    *,
-    cli_args: argparse.Namespace,
-    input_format: str,
-    repeat: int,
-    solvers: Sequence[str],
-) -> SimpleNamespace:
+def make_runner_args(args: argparse.Namespace, *, input_format: str, solvers: Sequence[str]) -> SimpleNamespace:
     return SimpleNamespace(
         input_format=input_format,
-        repeat=repeat,
-        timeout=cli_args.timeout,
-        solver_bin=str(Path(cli_args.solver_bin).resolve()),
-        kissat_bin=str(Path(cli_args.kissat_bin).resolve()),
-        cms_bin=str(Path(cli_args.cms_bin).resolve()),
-        xornado_bin=str(Path(cli_args.xornado_bin).resolve()),
-        xorricane_bin=str(Path(cli_args.xorricane_bin).resolve()),
+        repeat=args.attempts,
+        timeout=args.timeout,
+        solver_bin=str(Path(args.solver_bin).resolve()),
+        kissat_bin=str(Path(args.kissat_bin).resolve()),
+        cms_bin=str(Path(args.cms_bin).resolve()),
+        xornado_bin=str(Path(args.xornado_bin).resolve()),
+        xorricane_bin=str(Path(args.xorricane_bin).resolve()),
         csv_path="",
         kissat_mode="both",
         exp_cnf=False,
         keep_going=True,
         jobs=1,
         solvers=list(solvers),
-        saveconverted=bool(cli_args.saveconverted),
+        saveconverted=bool(args.saveconverted),
     )
-
-
-def selected_solver_lines(cli_args: argparse.Namespace) -> List[str]:
-    return list(cli_args.solvers) if cli_args.solvers else list(ALL_SOLVER_LINES)
 
 
 def write_csv(path: Path, rows: Sequence[Dict[str, str]], fieldnames: Sequence[str]) -> None:
@@ -238,317 +126,324 @@ def read_csv_rows(path: Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-def family_name_from_arg(raw: str) -> str:
-    return Path(raw).name or Path(raw).resolve().name
+def raw_csv_path(csv_root: Path, family: str) -> Path:
+    return csv_root / f"{family_slug(family)}.raw.csv"
 
 
-def agg_csv_family_name(path: Path) -> str:
-    suffix = ".agg.csv"
-    return path.name[: -len(suffix)] if path.name.endswith(suffix) else path.stem
+def family_plot_path(plots_root: Path, family: str) -> Path:
+    return plots_root / f"{family_slug(family)}.png"
 
 
-def solver_plot_style(solver: str, index: int):
-    return series_style(index, color_override=SOLVER_COLORS.get(solver))
+def combined_plot_path(plots_root: Path) -> Path:
+    return plots_root / "all_except_satcomp.png"
 
 
-def draw_segmented_series(
-    ax,
-    *,
-    x_values: Sequence[int],
-    median_by_x: Dict[int, float | None],
-    label: str,
-    color: str,
-    linestyle,
-    linewidth: float = 1.3,
-) -> None:
-    current_x: List[int] = []
-    current_y: List[float] = []
-    drew_label = False
-    for x in x_values:
-        value = median_by_x.get(x)
-        if value is None:
-            if current_x:
-                ax.plot(
-                    current_x,
-                    current_y,
-                    color=color,
-                    linestyle=linestyle,
-                    linewidth=linewidth,
-                    label=(label if not drew_label else "_nolegend_"),
-                )
-                drew_label = True
-                current_x = []
-                current_y = []
-            continue
-        current_x.append(x)
-        current_y.append(value)
-    if current_x:
-        ax.plot(
-            current_x,
-            current_y,
-            color=color,
-            linestyle=linestyle,
-            linewidth=linewidth,
-            label=(label if not drew_label else "_nolegend_"),
-        )
-        drew_label = True
-    if not drew_label:
-        ax.plot([], [], color=color, linestyle=linestyle, linewidth=linewidth, label=label)
+def satcomp_ascon_plot_path(plots_root: Path) -> Path:
+    return plots_root / "satcomp_ascon.png"
 
 
-def load_plot_inputs_from_agg(
-    path: Path,
-) -> tuple[
-    str,
-    List[int],
-    str,
-    Dict[str, List[tuple[int, float]]],
-    Dict[str, Dict[int, float | None]],
-    Dict[str, List[tuple[int, float]]],
-    Dict[str, Dict[int, float | None]],
-]:
-    rows = read_csv_rows(path)
-    if not rows:
-        raise RuntimeError(f"{path.name}: no rows found")
+def build_series(rows: Sequence[Dict[str, str]], solver_lines: Sequence[str]) -> List[SeriesData]:
+    return [
+        SeriesData(label=SOLVER_DISPLAY[solver], rows=[row for row in rows if solver_line_key(row) == solver])
+        for solver in solver_lines
+    ]
 
-    family = rows[0].get("family", "") or agg_csv_family_name(path)
-    x_label = rows[0].get("x_label", "") or infer_x_label(family)
-    x_values = sorted({int(row["x_value"]) for row in rows if row.get("x_value", "").strip()})
 
-    points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
-    medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
-    decision_points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
-    decision_medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
-
-    for row in rows:
-        solver = row.get("solver", "").strip()
-        if solver not in ALL_SOLVER_LINES:
-            continue
-        x_raw = row.get("x_value", "").strip()
-        if not x_raw:
-            continue
-        x = int(x_raw)
-        series = row.get("series", "").strip()
-        time_raw = row.get("time_s", "").strip()
-        decisions_raw = row.get("decisions", "").strip()
-
-        if series == "point":
-            if time_raw:
-                points_by_solver[solver].append((x, float(time_raw)))
-            if decisions_raw:
-                decisions = float(decisions_raw)
-                if decisions > 0.0:
-                    decision_points_by_solver[solver].append((x, decisions))
-            continue
-
-        if series == "median":
-            medians_by_solver[solver][x] = float(time_raw) if time_raw else None
-            if decisions_raw:
-                decisions = float(decisions_raw)
-                decision_medians_by_solver[solver][x] = decisions if decisions > 0.0 else None
-            else:
-                decision_medians_by_solver[solver][x] = None
-
-    return (
-        family,
-        x_values,
-        x_label,
-        points_by_solver,
-        medians_by_solver,
-        decision_points_by_solver,
-        decision_medians_by_solver,
+def legend_label_for_series(series: SeriesData) -> str:
+    _, solved, total = series_points(
+        series.rows,
+        aggregate_per_file="median",
+        include_timeouts=False,
+        metric="runtime",
     )
+    return f"{series.label}\n({solved}/{total} solved)"
 
 
-def plot_family(
-    *,
-    path: Path,
-    family: str,
-    x_values: Sequence[int],
-    x_label: str,
-    solver_lines: Sequence[str],
-    points_by_solver: Dict[str, List[tuple[int, float]]],
-    medians_by_solver: Dict[str, Dict[int, float | None]],
-) -> None:
-    try:
-        import matplotlib
+def solved_total_for_series(series: SeriesData) -> tuple[int, int]:
+    _, solved, total = series_points(
+        series.rows,
+        aggregate_per_file="median",
+        include_timeouts=False,
+        metric="runtime",
+    )
+    return solved, total
 
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = create_unified_figure(plt)
+def satcomp_ascon_legend_labels(*, satcomp_series: Sequence[SeriesData], ascon_series: Sequence[SeriesData]) -> List[str]:
+    satcomp_by_label = {series.label: solved_total_for_series(series) for series in satcomp_series}
+    ascon_by_label = {series.label: solved_total_for_series(series) for series in ascon_series}
+    labels: List[str] = []
+    for series in satcomp_series:
+        sc_solved, sc_total = satcomp_by_label[series.label]
+        as_solved, as_total = ascon_by_label[series.label]
+        labels.append(f"{series.label}\n({sc_solved}/{sc_total} SC, {as_solved}/{as_total} Ascon)")
+    return labels
 
-    for idx, solver in enumerate(solver_lines):
-        style = solver_plot_style(solver, idx)
-        label = SOLVER_DISPLAY[solver]
-        pts = sorted(points_by_solver.get(solver, []), key=lambda p: (p[0], p[1]))
-        if pts:
-            ax.scatter(
-                [x for x, _ in pts],
-                [y for _, y in pts],
-                s=14,
-                alpha=0.70,
-                color=style.color,
-                marker=style.marker,
-                label="_nolegend_",
-            )
 
-        draw_segmented_series(
-            ax,
-            x_values=x_values,
-            median_by_x=medians_by_solver.get(solver, {}),
-            label=label,
-            color=style.color,
-            linestyle=style.linestyle,
-        )
+def configure_decisions_axis(ax) -> None:
+    ymin, ymax = ax.get_ylim()
+    if ymin <= 0.0 or ymax <= 0.0:
+        return
 
-    ax.set_yscale("log")
-    apply_common_axes_style(ax, xlabel=x_label, ylabel="Time (s)", title=family)
-    place_right_legend(ax)
-    finalize_figure(fig, path)
+    min_exp = math.floor(math.log10(ymin))
+    max_exp = math.ceil(math.log10(ymax))
+    major_start = min_exp if min_exp % 2 == 0 else min_exp + 1
+    major_exponents = list(range(major_start, max_exp + 1, 2))
+    major_ticks = [10.0 ** exp for exp in major_exponents if ymin <= 10.0 ** exp <= ymax]
+
+    ax.yaxis.set_major_locator(FixedLocator(major_ticks))
+    ax.yaxis.set_major_formatter(LogFormatterMathtext(base=10.0))
+    ax.yaxis.set_minor_locator(NullLocator())
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.xaxis.set_minor_locator(NullLocator())
+    ax.yaxis.set_ticks_position("left")
+    ax.tick_params(
+        axis="y",
+        which="major",
+        left=True,
+        right=False,
+        labelleft=True,
+        labelright=False,
+        direction="in",
+        length=5.0,
+        width=0.9,
+        colors="black",
+    )
+    ax.tick_params(
+        axis="y",
+        which="minor",
+        left=False,
+        right=False,
+        labelleft=False,
+        labelright=False,
+        length=0.0,
+    )
+    ax.tick_params(axis="x", which="minor", bottom=False, top=False)
+    ax.set_axisbelow(True)
+    ax.grid(True, which="major", axis="y", linestyle="--", linewidth=0.6, alpha=0.40, color="#666666")
+
+
+def render_cactus_pair(*, title: str, rows: Sequence[Dict[str, str]], solver_lines: Sequence[str], output_path: Path) -> None:
+    series = build_series(rows, solver_lines)
+    base_width, base_height = unified_figure_geometry()[0]
+    fig, axes = plt.subplots(1, 2, figsize=(base_width * 1.46, base_height * 0.98))
+
+    draw_cactus_axes(
+        axes[0],
+        series,
+        aggregate_per_file="median",
+        include_timeouts=False,
+        metric="runtime",
+        line_mode="line",
+        black_white=False,
+        title="Runtime",
+        xlabel="Instances solved",
+        ylabel="",
+        x_scale="linear",
+        y_scale="linear",
+        x_ticks=[],
+        y_ticks=[],
+        font_size=UNIFIED_FONT_SIZE,
+        show_counts=True,
+    )
+    draw_cactus_axes(
+        axes[1],
+        series,
+        aggregate_per_file="median",
+        include_timeouts=False,
+        metric="decisions",
+        line_mode="line",
+        black_white=False,
+        title="Decisions (log scale)",
+        xlabel="Instances solved",
+        ylabel="",
+        x_scale="linear",
+        y_scale="log",
+        x_ticks=[],
+        y_ticks=[],
+        font_size=UNIFIED_FONT_SIZE,
+        show_counts=True,
+    )
+    configure_decisions_axis(axes[1])
+
+    handles = list(axes[0].get_lines())
+    labels = [legend_label_for_series(s) for s in series]
+    for ax in axes:
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.remove()
+    legend = fig.legend(
+        handles,
+        labels,
+        fontsize=UNIFIED_FONT_SIZE,
+        frameon=False,
+        loc="center left",
+        bbox_to_anchor=(0.782, 0.5),
+        borderaxespad=0.0,
+        handleheight=1.4,
+        labelspacing=0.8,
+    )
+    for text in legend.get_texts():
+        text.set_multialignment("left")
+    fig.subplots_adjust(left=0.068, right=0.755, bottom=0.17, top=0.87, wspace=0.20)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=UNIFIED_DPI, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
 
 
-def plot_family_decisions(
-    *,
-    path: Path,
-    family: str,
-    x_values: Sequence[int],
-    x_label: str,
-    solver_lines: Sequence[str],
-    points_by_solver: Dict[str, List[tuple[int, float]]],
-    medians_by_solver: Dict[str, Dict[int, float | None]],
-) -> None:
-    try:
-        import matplotlib
+def render_family_plots(*, family: str, rows: Sequence[Dict[str, str]], solver_lines: Sequence[str], plots_root: Path) -> None:
+    render_cactus_pair(
+        title=f"Type 1 Cactus ({family})",
+        rows=rows,
+        solver_lines=solver_lines,
+        output_path=family_plot_path(plots_root, family),
+    )
 
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = create_unified_figure(plt)
+def should_render_combined_plot(families: Sequence[str]) -> bool:
+    return set(families) == set(PHYSICAL_FAMILIES)
 
-    for idx, solver in enumerate(solver_lines):
-        style = solver_plot_style(solver, idx)
-        label = SOLVER_DISPLAY[solver]
-        # Log scale requires strictly positive values.
-        pts = sorted((x, y) for x, y in points_by_solver.get(solver, []) if y > 0.0)
-        if pts:
-            ax.scatter(
-                [x for x, _ in pts],
-                [y for _, y in pts],
-                s=14,
-                alpha=0.70,
-                color=style.color,
-                marker=style.marker,
-                label="_nolegend_",
-            )
 
-        draw_segmented_series(
-            ax,
-            x_values=x_values,
-            median_by_x={x: y for x, y in medians_by_solver.get(solver, {}).items() if y is not None and y > 0.0},
-            label=label,
-            color=style.color,
-            linestyle=style.linestyle,
-        )
+def render_combined_plot(*, family_rows: Dict[str, Sequence[Dict[str, str]]], solver_lines: Sequence[str], plots_root: Path) -> None:
+    combined_rows: List[Dict[str, str]] = []
+    for family in PHYSICAL_FAMILIES:
+        if family == "sat-comp":
+            continue
+        combined_rows.extend(family_rows.get(family, []))
+    render_cactus_pair(
+        title="Type 1 Cactus (All Except sat-comp)",
+        rows=combined_rows,
+        solver_lines=solver_lines,
+        output_path=combined_plot_path(plots_root),
+    )
 
-    ax.set_yscale("log")
-    apply_common_axes_style(ax, xlabel=x_label, ylabel="Decisions", title=f"{family} (Decisions)")
-    place_right_legend(ax)
-    finalize_figure(fig, path)
+
+def render_satcomp_ascon_plot(*, family_rows: Dict[str, Sequence[Dict[str, str]]], solver_lines: Sequence[str], plots_root: Path) -> None:
+    satcomp_series = build_series(family_rows["sat-comp"], solver_lines)
+    ascon_series = build_series(family_rows["ascon"], solver_lines)
+    base_width, base_height = unified_figure_geometry()[0]
+    fig, axes = plt.subplots(1, 2, figsize=(base_width * 1.46, base_height * 0.98))
+
+    draw_cactus_axes(
+        axes[0],
+        satcomp_series,
+        aggregate_per_file="median",
+        include_timeouts=False,
+        metric="runtime",
+        line_mode="line",
+        black_white=False,
+        title="SAT Competition '24 and '25",
+        xlabel="Instances solved",
+        ylabel="Time (s)",
+        x_scale="linear",
+        y_scale="linear",
+        x_ticks=[],
+        y_ticks=[],
+        font_size=UNIFIED_FONT_SIZE,
+        show_counts=False,
+    )
+    draw_cactus_axes(
+        axes[1],
+        ascon_series,
+        aggregate_per_file="median",
+        include_timeouts=False,
+        metric="runtime",
+        line_mode="line",
+        black_white=False,
+        title="Ascon-128",
+        xlabel="Instances solved",
+        ylabel="Time(s)",
+        x_scale="linear",
+        y_scale="linear",
+        x_ticks=[],
+        y_ticks=[],
+        font_size=UNIFIED_FONT_SIZE,
+        show_counts=False,
+    )
+
+    handles = list(axes[0].get_lines())
+    labels = satcomp_ascon_legend_labels(satcomp_series=satcomp_series, ascon_series=ascon_series)
+    for ax in axes:
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.remove()
+    legend = fig.legend(
+        handles,
+        labels,
+        fontsize=UNIFIED_FONT_SIZE,
+        frameon=False,
+        loc="center left",
+        bbox_to_anchor=(0.782, 0.5),
+        borderaxespad=0.0,
+        handleheight=1.4,
+        labelspacing=0.8,
+    )
+    for text in legend.get_texts():
+        text.set_multialignment("left")
+    fig.subplots_adjust(left=0.085, right=0.755, bottom=0.17, top=0.87, wspace=0.24)
+    output_path = satcomp_ascon_plot_path(plots_root)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=UNIFIED_DPI, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
 
 
-def run_size_task(
-    *,
-    cli_args: argparse.Namespace,
-    input_format: str,
-    solver: str,
-    file_path: Path,
-    converter_script: Path,
-    run_index_override: int | None = None,
-) -> List[Dict[str, str]]:
-    runner_args = make_runner_args(
-        cli_args=cli_args,
-        input_format=input_format,
-        repeat=1,
-        solvers=[solver],
-    )
-    rows = bs.benchmark_file(file_path, runner_args, [], converter_script)
-    if run_index_override is not None:
-        run_idx_str = str(run_index_override)
-        for row in rows:
-            row["run_index"] = run_idx_str
-    return rows
-
-
-def replot_from_existing_csv(*, cli_args: argparse.Namespace, output_root: Path) -> int:
+def replot_from_existing_csv(*, args: argparse.Namespace, output_root: Path) -> int:
     csv_root = output_root / "csv"
     plots_root = output_root / "plots"
     plots_root.mkdir(parents=True, exist_ok=True)
-    solver_lines = selected_solver_lines(cli_args)
-
-    if cli_args.families:
-        family_names = [family_name_from_arg(item) for item in cli_args.families]
-    else:
-        family_names = sorted(agg_csv_family_name(path) for path in csv_root.glob("*.agg.csv"))
-
-    if not family_names:
-        print(f"[type1] no aggregate CSV files found under {csv_root}; skipping")
-        return 0
+    solver_lines = selected_solver_lines(args)
+    family_rows: Dict[str, List[Dict[str, str]]] = {}
 
     plotted = 0
-    for family in family_names:
-        agg_csv_path = csv_root / f"{family}.agg.csv"
-        if not agg_csv_path.is_file():
-            print(f"[type1] skipping {family}: missing CSV {agg_csv_path}")
+    for family in args.families:
+        csv_path = raw_csv_path(csv_root, family)
+        if not csv_path.is_file():
+            print(f"[type1] skipping {family}: missing CSV {csv_path}")
             continue
-
-        (
-            csv_family,
-            x_values,
-            x_label,
-            points_by_solver,
-            medians_by_solver,
-            decision_points_by_solver,
-            decision_medians_by_solver,
-        ) = load_plot_inputs_from_agg(agg_csv_path)
-
-        plot_path = plots_root / f"{csv_family}.png"
-        plot_family(
-            path=plot_path,
-            family=csv_family,
-            x_values=x_values,
-            x_label=x_label,
-            solver_lines=solver_lines,
-            points_by_solver=points_by_solver,
-            medians_by_solver=medians_by_solver,
-        )
-
-        decision_plot_path = plots_root / f"{csv_family}_decisions.png"
-        plot_family_decisions(
-            path=decision_plot_path,
-            family=csv_family,
-            x_values=x_values,
-            x_label=x_label,
-            solver_lines=solver_lines,
-            points_by_solver=decision_points_by_solver,
-            medians_by_solver=decision_medians_by_solver,
-        )
-
+        rows = read_csv_rows(csv_path)
+        family_rows[family] = rows
+        render_family_plots(family=family, rows=rows, solver_lines=solver_lines, plots_root=plots_root)
         plotted += 1
-        print(f"[type1] replot wrote: {plot_path}")
-        print(f"[type1] replot wrote: {decision_plot_path}")
+        print(f"[type1] replot wrote: {family_plot_path(plots_root, family)}")
+
+    if should_render_combined_plot(args.families):
+        missing = [family for family in PHYSICAL_FAMILIES if family != "sat-comp" and family not in family_rows]
+        if missing:
+            print(f"[type1] skipping combined plot: missing CSVs for {', '.join(missing)}")
+        else:
+            render_combined_plot(family_rows=family_rows, solver_lines=solver_lines, plots_root=plots_root)
+            print(f"[type1] replot wrote: {combined_plot_path(plots_root)}")
+        pair_missing = [family for family in ("sat-comp", "ascon") if family not in family_rows]
+        if pair_missing:
+            print(f"[type1] skipping satcomp+ascon plot: missing CSVs for {', '.join(pair_missing)}")
+        else:
+            render_satcomp_ascon_plot(family_rows=family_rows, solver_lines=solver_lines, plots_root=plots_root)
+            print(f"[type1] replot wrote: {satcomp_ascon_plot_path(plots_root)}")
 
     if plotted == 0:
         print(f"[type1] no plots regenerated from {csv_root}")
     return 0
+
+
+def sampled_manifest_rows(grouped_records: Dict[str, List[object]]) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    for family, records in grouped_records.items():
+        for idx, record in enumerate(records, start=1):
+            rows.append(
+                {
+                    "family": family,
+                    "sample_index": str(idx),
+                    "sample_key": sample_key_for(family=family, index=idx, file_path=record.file),
+                    "file": str(record.file),
+                    "input_format": record.input_format,
+                    "attempt": str(record.attempt),
+                    "n": "" if record.n is None else str(record.n),
+                    "k": "" if record.k is None else str(record.k),
+                    "h": "" if record.h is None else str(record.h),
+                    "lift_k": "" if record.lift_k is None else str(record.lift_k),
+                }
+            )
+    return rows
 
 
 def main() -> int:
@@ -559,137 +454,69 @@ def main() -> int:
     csv_root = output_root / "csv"
     plots_root = output_root / "plots"
     converter_script = root / "tools" / "xnf_convert.py"
+    solver_lines = selected_solver_lines(args)
 
     csv_root.mkdir(parents=True, exist_ok=True)
     plots_root.mkdir(parents=True, exist_ok=True)
-    solver_lines = selected_solver_lines(args)
 
     if args.replot_only:
-        return replot_from_existing_csv(cli_args=args, output_root=output_root)
+        return replot_from_existing_csv(args=args, output_root=output_root)
 
-    family_dirs = resolve_family_dirs(tests_root=tests_root, family_args=args.families)
-    family_specs = [discover_family_spec(d) for d in family_dirs]
-    total_chunks = sum(len(spec.x_values) for spec in family_specs)
-    done_chunks = 0
+    family_records = load_physical_families(tests_root, args.families)
+    rng = random.Random(args.seed)
+    if args.all:
+        sampled_records = family_records
+    else:
+        sampled_records = sample_grouped_instances(
+            family_records,
+            count_per_family=args.samples_per_family,
+            rng=rng,
+            with_replacement=True,
+        )
+
+    manifest_rows = sampled_manifest_rows(sampled_records)
+    manifest_path = csv_root / "selected_instances.csv"
+    write_csv(
+        manifest_path,
+        manifest_rows,
+        ["family", "sample_index", "sample_key", "file", "input_format", "attempt", "n", "k", "h", "lift_k"],
+    )
+    print(f"[type1] wrote sample manifest: {manifest_path}")
+
+    total_tasks = sum(len(records) for records in sampled_records.values())
+    progress_every = max(1, total_tasks // 40)
+    done = 0
     start_all = time.perf_counter()
+    family_rows_by_family: Dict[str, List[Dict[str, str]]] = {}
 
-    for spec in family_specs:
-        family = spec.name
-        files_by_x = spec.files_by_x
+    def run_sample(record, sample_key: str) -> List[Dict[str, str]]:
+        runner_args = make_runner_args(args, input_format=record.input_format, solvers=solver_lines)
+        rows = bs.benchmark_file(record.file, runner_args, [], converter_script)
+        for row in rows:
+            row["sample_key"] = sample_key
+        return rows
 
-        # Validate inventory against attempts semantics.
-        for x in spec.x_values:
-            count = len(files_by_x[x])
-            if spec.kind == "random" and count < args.attempts:
-                raise RuntimeError(
-                    f"{family}: need at least {args.attempts} random instances for x={x}, found {count}. "
-                    "Regenerate tests with tools/generate_xnf_tests.py --attempts ..."
-                )
-            if spec.kind == "deterministic" and count < 1:
-                raise RuntimeError(f"{family}: missing deterministic instance for x={x}")
+    for family in args.families:
+        records = sampled_records[family]
+        family_rows: List[Dict[str, str]] = []
+        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            futures = {
+                executor.submit(
+                    run_sample,
+                    record,
+                    sample_key_for(family=family, index=idx, file_path=record.file),
+                ): idx
+                for idx, record in enumerate(records, start=1)
+            }
+            for future in as_completed(futures):
+                family_rows.extend(future.result())
+                done += 1
+                if should_report_progress(done, total_tasks, progress_every):
+                    print(format_progress_line(done=done, total=total_tasks, start_s=start_all, family=family))
 
-        family_raw_rows: List[Dict[str, str]] = []
-        solver_x_rows: Dict[tuple[str, int], List[Dict[str, str]]] = defaultdict(list)
-        point_metrics_by_solver: Dict[str, List[tuple[int, Optional[float], Optional[float]]]] = defaultdict(list)
-        points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
-        medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
-        decision_points_by_solver: Dict[str, List[tuple[int, float]]] = defaultdict(list)
-        decision_medians_by_solver: Dict[str, Dict[int, float | None]] = defaultdict(dict)
-
-        active_solvers = list(solver_lines)
-        timeout_streak = {s: 0 for s in solver_lines}
-
-        for x in spec.x_values:
-            selected_files = files_by_x[x][: args.attempts] if spec.kind == "random" else [files_by_x[x][0]]
-
-            chunk_rows: List[Dict[str, str]] = []
-            if active_solvers:
-                with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-                    futures = []
-                    if spec.kind == "random":
-                        for file_path in selected_files:
-                            for solver in active_solvers:
-                                futures.append(
-                                    executor.submit(
-                                        run_size_task,
-                                        cli_args=args,
-                                        input_format=spec.input_format,
-                                        solver=solver,
-                                        file_path=file_path,
-                                        converter_script=converter_script,
-                                    )
-                                )
-                    else:
-                        file_path = selected_files[0]
-                        for run_idx in range(1, args.attempts + 1):
-                            for solver in active_solvers:
-                                futures.append(
-                                    executor.submit(
-                                        run_size_task,
-                                        cli_args=args,
-                                        input_format=spec.input_format,
-                                        solver=solver,
-                                        file_path=file_path,
-                                        converter_script=converter_script,
-                                        run_index_override=run_idx,
-                                    )
-                                )
-                    for future in as_completed(futures):
-                        chunk_rows.extend(future.result())
-
-            family_raw_rows.extend(chunk_rows)
-            for row in chunk_rows:
-                solver = solver_line_key(row)
-                if solver is None:
-                    continue
-                solver_x_rows[(solver, x)].append(row)
-                t = runtime_for_row(row)
-                d = decisions_for_row(row)
-                if t is not None or d is not None:
-                    point_metrics_by_solver[solver].append((x, t, d))
-                if t is not None:
-                    points_by_solver[solver].append((x, t))
-                if d is not None:
-                    decision_points_by_solver[solver].append((x, d))
-
-            still_active: List[str] = []
-            for solver in active_solvers:
-                rows_for_solver = solver_x_rows.get((solver, x), [])
-                med = timeout_aware_median_runtime(rows_for_solver)
-                medians_by_solver[solver][x] = med
-                decision_medians_by_solver[solver][x] = timeout_aware_median_decisions(rows_for_solver)
-
-                if median_is_timeout(rows_for_solver):
-                    timeout_streak[solver] += 1
-                else:
-                    timeout_streak[solver] = 0
-
-                if timeout_streak[solver] < 2:
-                    still_active.append(solver)
-
-            dropped = [s for s in active_solvers if s not in still_active]
-            if dropped:
-                print(f"[{family}] x={x}: stopping {dropped} after 2 consecutive median-timeout sizes")
-            active_solvers = still_active
-
-            done_chunks += 1
-            if should_report_progress(done_chunks, total_chunks, every=1):
-                print(
-                    format_progress_line(
-                        done=done_chunks,
-                        total=total_chunks,
-                        start_s=start_all,
-                        family=family,
-                        x=x,
-                    )
-                )
-
-        if not family_raw_rows:
-            raise RuntimeError(f"{family}: no benchmark rows produced")
-
-        family_raw_rows.sort(
+        family_rows.sort(
             key=lambda row: (
-                Path(row.get("file", "")).name,
+                row.get("sample_key", ""),
                 int(row.get("run_index", "0") or 0),
                 row.get("solver_config", ""),
                 row.get("backend_input_kind", ""),
@@ -697,78 +524,18 @@ def main() -> int:
             )
         )
 
-        raw_csv_path = csv_root / f"{family}.raw.csv"
-        write_csv(raw_csv_path, family_raw_rows, bs.RAW_CSV_FIELDS)
+        csv_path = raw_csv_path(csv_root, family)
+        write_csv(csv_path, family_rows, bs.RAW_CSV_FIELDS)
+        family_rows_by_family[family] = family_rows
+        render_family_plots(family=family, rows=family_rows, solver_lines=solver_lines, plots_root=plots_root)
+        print(f"[type1] wrote {csv_path}")
+        print(f"[type1] wrote {family_plot_path(plots_root, family)}")
 
-        agg_rows: List[Dict[str, str]] = []
-        for solver in solver_lines:
-            for x, t, d in sorted(
-                point_metrics_by_solver.get(solver, []),
-                key=lambda p: (p[0], float("inf") if p[1] is None else p[1]),
-            ):
-                agg_rows.append(
-                    {
-                        "family": family,
-                        "x_label": spec.x_label,
-                        "x_value": str(x),
-                        "solver": solver,
-                        "series": "point",
-                        "time_s": "" if t is None else f"{t:.6f}",
-                        "decisions": "" if d is None else str(int(d)),
-                        "samples": "1",
-                        "status": "",
-                    }
-                )
-            for x in spec.x_values:
-                rows_for_solver = solver_x_rows.get((solver, x), [])
-                med = medians_by_solver.get(solver, {}).get(x)
-                decisions_med = decision_medians_by_solver.get(solver, {}).get(x)
-                agg_rows.append(
-                    {
-                        "family": family,
-                        "x_label": spec.x_label,
-                        "x_value": str(x),
-                        "solver": solver,
-                        "series": "median",
-                        "time_s": "" if med is None else f"{med:.6f}",
-                        "decisions": "" if decisions_med is None else str(int(decisions_med)),
-                        "samples": str(len(rows_for_solver)),
-                        "status": "TIMEOUT" if med is None and rows_for_solver else "",
-                    }
-                )
-
-        agg_csv_path = csv_root / f"{family}.agg.csv"
-        write_csv(
-            agg_csv_path,
-            agg_rows,
-            ["family", "x_label", "x_value", "solver", "series", "time_s", "decisions", "samples", "status"],
-        )
-
-        plot_path = plots_root / f"{family}.png"
-        plot_family(
-            path=plot_path,
-            family=family,
-            x_values=spec.x_values,
-            x_label=spec.x_label,
-            solver_lines=solver_lines,
-            points_by_solver=points_by_solver,
-            medians_by_solver=medians_by_solver,
-        )
-        decision_plot_path = plots_root / f"{family}_decisions.png"
-        plot_family_decisions(
-            path=decision_plot_path,
-            family=family,
-            x_values=spec.x_values,
-            x_label=spec.x_label,
-            solver_lines=solver_lines,
-            points_by_solver=decision_points_by_solver,
-            medians_by_solver=decision_medians_by_solver,
-        )
-
-        print(f"[{family}] wrote: {raw_csv_path}")
-        print(f"[{family}] wrote: {agg_csv_path}")
-        print(f"[{family}] wrote: {plot_path}")
-        print(f"[{family}] wrote: {decision_plot_path}")
+    if should_render_combined_plot(args.families):
+        render_combined_plot(family_rows=family_rows_by_family, solver_lines=solver_lines, plots_root=plots_root)
+        print(f"[type1] wrote {combined_plot_path(plots_root)}")
+        render_satcomp_ascon_plot(family_rows=family_rows_by_family, solver_lines=solver_lines, plots_root=plots_root)
+        print(f"[type1] wrote {satcomp_ascon_plot_path(plots_root)}")
 
     return 0
 

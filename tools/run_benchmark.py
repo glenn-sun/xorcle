@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import itertools
 import re
 import statistics
 import subprocess
@@ -16,8 +15,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 sys.path.append(str(Path(__file__).resolve().parent))
-from xnf_lib import Clause as XnfClause
-from xnf_lib import Equation as XnfEquation
+from benchmark_orchestration import DEFAULT_SOLVER_LINES
+from xnf_lib import convert_xnf_to_cnf_naive
 from xnf_lib import parse_xnf_file
 from xnf_lib import write_cnf
 
@@ -29,6 +28,7 @@ SOLVER_DECISIONS_RE = re.compile(r"(?im)^\s*(?:c\s+)?decisions?\s*:\s*([0-9]+)\b
 
 RAW_CSV_FIELDS = [
     "file",
+    "sample_key",
     "input_format",
     "solver",
     "solver_config",
@@ -93,7 +93,7 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
     )
     parser.add_argument("input_path", help="Input file or directory")
     parser.add_argument("-i", "--input-format", required=True, metavar="{cnf,xnf}")
-    parser.add_argument("-r", "--repeat", type=int, default=1, help="Script-level repeats per solver per file")
+    parser.add_argument("-r", "--repeat", type=int, default=1, help="Solver reruns on the same file per solver")
     parser.add_argument(
         "-t",
         "--timeout",
@@ -136,7 +136,7 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
         "--solvers",
         nargs="+",
         choices=SOLVER_CHOICES,
-        default=list(SOLVER_CHOICES),
+        default=list(DEFAULT_SOLVER_LINES),
         help="Subset of solver routes to execute",
     )
     parser.add_argument(
@@ -299,39 +299,6 @@ def parse_xorcle_csv(csv_path: Path) -> tuple[Optional[str], Optional[float], Op
         except ValueError:
             pass
     return status, t_s, decisions, ""
-
-
-def evaluate_equation(eq: XnfEquation, assignment_map: Dict[int, int]) -> bool:
-    parity = 0
-    for v in eq.vars:
-        parity ^= assignment_map.get(v, 0)
-    return parity == eq.rhs
-
-
-def clause_support_vars(clause: XnfClause) -> List[int]:
-    support = set()
-    for eq in clause.equations:
-        support.update(eq.vars)
-    return sorted(support)
-
-
-def encode_xnf_clause_to_cnf_naive(clause: XnfClause) -> List[List[int]]:
-    support = clause_support_vars(clause)
-    out: List[List[int]] = []
-    for bits in itertools.product((0, 1), repeat=len(support)):
-        assignment = {v: bit for v, bit in zip(support, bits)}
-        if any(evaluate_equation(eq, assignment) for eq in clause.equations):
-            continue
-        out.append([v if assignment[v] == 0 else -v for v in support])
-    return out
-
-
-def convert_xnf_to_cnf_naive(nvars: int, clauses: Sequence[XnfClause]) -> List[List[int]]:
-    del nvars  # Header var count is preserved by caller; conversion uses no fresh variables.
-    cnf_clauses: List[List[int]] = []
-    for clause in clauses:
-        cnf_clauses.extend(encode_xnf_clause_to_cnf_naive(clause))
-    return cnf_clauses
 
 
 def convert_xnf(converter_script: Path, fmt: str, src: Path, dst: Path) -> Optional[str]:
@@ -504,6 +471,7 @@ def empty_raw_row(
 ) -> Dict[str, str]:
     return {
         "file": file_label,
+        "sample_key": "",
         "input_format": input_format,
         "solver": solver,
         "solver_config": solver_config,
