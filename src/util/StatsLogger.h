@@ -16,11 +16,11 @@ public:
     virtual ~StatsSink() = default;
 
     /// @brief Log stats through the sink with internal synchronization.
-    void log(const AggregateStats& stats);
+    void log(const RunStats& stats);
 
 protected:
     /// @brief Implementation hook for derived sinks.
-    virtual void log_impl(const AggregateStats& stats) = 0;
+    virtual void log_impl(const RunStats& stats) = 0;
 
 private:
     std::mutex mu_; ///< Guards log_impl to provide thread safety.
@@ -30,7 +30,7 @@ private:
 class ConsoleStatsSink : public StatsSink {
 protected:
     /// @brief Write a human-readable summary to stdout.
-    void log_impl(const AggregateStats& stats) override;
+    void log_impl(const RunStats& stats) override;
 };
 
 /// @brief Log solver statistics to a CSV file.
@@ -42,7 +42,7 @@ public:
 
 protected:
     /// @brief Write a CSV row for the stats.
-    void log_impl(const AggregateStats& stats) override;
+    void log_impl(const RunStats& stats) override;
 
 private:
     std::string path_;     ///< CSV output path.

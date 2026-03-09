@@ -5,8 +5,6 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
-#include <sstream>
-#include <vector>
 
 namespace stats {
 
@@ -14,42 +12,47 @@ namespace {
 
 constexpr std::size_t kAssignmentLiteralsPerLine = 20;
 
-std::vector<int> parse_assignment_bits(const std::string& assignment_text) {
-    std::istringstream input{assignment_text};
-    std::vector<int> bits;
-    char ch = '\0';
-    while (input >> ch) {
-        if (ch == '[' || ch == ']') {
-            continue;
-        }
-        input.putback(ch);
-        int bit = -1;
-        if (!(input >> bit)) {
-            break;
-        }
-        if (bit != 0 && bit != 1) {
-            throw std::logic_error("ConsoleStatsSink: satisfying assignment contained a non-binary value");
-        }
-        bits.push_back(bit);
-    }
-    return bits;
+std::size_t learned_clause_count(const RunStats& stats) {
+    return stats.final_clauses >= stats.start_clauses ? stats.final_clauses - stats.start_clauses : 0;
 }
 
-void append_dimacs_assignment(std::ostringstream& output, const std::string& assignment_text) {
-    const std::vector<int> bits = parse_assignment_bits(assignment_text);
-    if (bits.empty()) {
+std::optional<double> divide_or_nullopt(const double numer, const double denom) {
+    if (denom == 0.0) {
+        return std::nullopt;
+    }
+    return numer / denom;
+}
+
+std::optional<double> fallback_pct(const RunStats& stats) {
+    return divide_or_nullopt(100.0 * static_cast<double>(stats.fallback_decisions),
+                             static_cast<double>(stats.decisions));
+}
+
+std::optional<double> propagations_per_conflict(const RunStats& stats) {
+    return divide_or_nullopt(static_cast<double>(stats.num_propagations),
+                             static_cast<double>(stats.num_conflicts));
+}
+
+std::optional<double> attempts_per_event(const RunStats& stats) {
+    return divide_or_nullopt(static_cast<double>(stats.num_attempt_props),
+                             static_cast<double>(stats.num_propagations + stats.num_watch_updates +
+                                                 stats.num_conflicts));
+}
+
+void append_dimacs_assignment(std::ostringstream& output, const bit::vector<>& assignment) {
+    if (assignment.size() == 0) {
         output << "v 0\n";
         return;
     }
 
     std::size_t line_literal_count = 0;
     output << "v";
-    for (std::size_t variable_index = 0; variable_index < bits.size(); ++variable_index) {
+    for (std::size_t variable_index = 0; variable_index < assignment.size(); ++variable_index) {
         if (line_literal_count == kAssignmentLiteralsPerLine) {
             output << "\nv";
             line_literal_count = 0;
         }
-        const int literal = bits[variable_index] == 1
+        const int literal = assignment.element(variable_index)
                                 ? static_cast<int>(variable_index + 1)
                                 : -static_cast<int>(variable_index + 1);
         output << " " << literal;
@@ -60,50 +63,52 @@ void append_dimacs_assignment(std::ostringstream& output, const std::string& ass
 
 } // namespace
 
-void StatsSink::log(const AggregateStats& stats) {
+void StatsSink::log(const RunStats& stats) {
     std::lock_guard<std::mutex> lock(mu_);
     log_impl(stats);
 }
 
-void ConsoleStatsSink::log_impl(const AggregateStats& stats) {
-    std::ostringstream ss;
-    ss << "c File: " << stats.file << "\n";
-    ss << "c Variables: " << stats.num_vars << "\n";
-    ss << "c Start clauses: " << stats.start_clauses << "\n";
-    ss << "c Final clauses: " << stats.final_clauses << "\n";
-    ss << "c Learned clauses: " << stats.learned_clauses << "\n";
-    ss << "c Decision procedure: " << to_string(stats.decision_procedure) << "\n";
-    ss << "c Clause selector: " << to_string(stats.clause_selector) << "\n";
-    ss << "c Decision phase: " << to_string(stats.decision_phase) << "\n";
-    ss << "c Seed: " << stats.seed << "\n";
-    if (stats.cvsids_learned_base.has_value() && stats.cvsids_decay.has_value() && stats.cvsids_bump.has_value()) {
-        ss << "c Clause VSIDS learned base: " << std::setprecision(6) << *stats.cvsids_learned_base << "\n";
-        ss << "c Clause VSIDS decay: " << std::setprecision(6) << *stats.cvsids_decay << "\n";
-        ss << "c Clause VSIDS bump: " << std::setprecision(6) << *stats.cvsids_bump << "\n";
+void ConsoleStatsSink::log_impl(const RunStats& stats) {
+    std::ostringstream output;
+    output << "c File: " << stats.file << "\n";
+    output << "c Variables: " << stats.num_vars << "\n";
+    output << "c Start clauses: " << stats.start_clauses << "\n";
+    output << "c Final clauses: " << stats.final_clauses << "\n";
+    output << "c Learned clauses: " << learned_clause_count(stats) << "\n";
+    output << "c Decision procedure: " << to_string(stats.decision_procedure) << "\n";
+    output << "c Clause selector: " << to_string(stats.clause_selector) << "\n";
+    output << "c Decision phase: " << to_string(stats.decision_phase) << "\n";
+    output << "c Seed: " << stats.seed << "\n";
+    if (stats.cvsids_learned_base.has_value() && stats.cvsids_decay.has_value() &&
+        stats.cvsids_bump.has_value()) {
+        output << "c Clause VSIDS learned base: " << std::setprecision(6) << *stats.cvsids_learned_base << "\n";
+        output << "c Clause VSIDS decay: " << std::setprecision(6) << *stats.cvsids_decay << "\n";
+        output << "c Clause VSIDS bump: " << std::setprecision(6) << *stats.cvsids_bump << "\n";
     }
-    ss << "c Conflicts: " << stats.conflicts << "\n";
-    ss << "c Propagations: " << stats.propagations << "\n";
-    ss << "c Watch updates: " << stats.watch_updates << "\n";
-    ss << "c Restarts: " << stats.restarts << "\n";
-    ss << "c Decisions: " << stats.decisions << "\n";
-    if (stats.prop_per_conflict) {
-        ss << "c Propagations per conflict: " << std::fixed << std::setprecision(3)
-           << *stats.prop_per_conflict << "\n";
+    output << "c Conflicts: " << stats.num_conflicts << "\n";
+    output << "c Propagations: " << stats.num_propagations << "\n";
+    output << "c Attempted propagations: " << stats.num_attempt_props << "\n";
+    output << "c Watch updates: " << stats.num_watch_updates << "\n";
+    output << "c Restarts: " << stats.num_restarts << "\n";
+    output << "c Decisions: " << stats.decisions << "\n";
+    output << "c Fallback decisions: " << stats.fallback_decisions << "\n";
+    if (const auto ratio = propagations_per_conflict(stats); ratio.has_value()) {
+        output << "c Propagations per conflict: " << std::fixed << std::setprecision(3) << *ratio << "\n";
     }
-    if (stats.attempts_per_prop_watch_conflict) {
-        ss << "c Attempts per (propagations + watch updates + conflicts): "
-           << std::fixed << std::setprecision(3) << *stats.attempts_per_prop_watch_conflict << "\n";
+    if (const auto ratio = attempts_per_event(stats); ratio.has_value()) {
+        output << "c Attempts per (propagations + watch updates + conflicts): "
+               << std::fixed << std::setprecision(3) << *ratio << "\n";
     }
-    if (stats.fallback_pct) {
-        ss << "c Decision fallback: " << std::fixed << std::setprecision(2) << *stats.fallback_pct << "%\n";
+    if (const auto ratio = fallback_pct(stats); ratio.has_value()) {
+        output << "c Fallback decision rate: " << std::fixed << std::setprecision(2) << *ratio << "%\n";
     }
-    ss << "c Time: " << std::fixed << std::setprecision(3) << stats.time_s << " s\n";
-    ss << "s " << (stats.result == "SAT" ? "SATISFIABLE" : "UNSATISFIABLE") << "\n";
+    output << "c Time: " << std::fixed << std::setprecision(3) << stats.time_s << " s\n";
+    output << "s " << (stats.result == SolveResult::Sat ? "SATISFIABLE" : "UNSATISFIABLE") << "\n";
     if (stats.sat_assignment.has_value()) {
-        append_dimacs_assignment(ss, stats.sat_assignment.value());
+        append_dimacs_assignment(output, *stats.sat_assignment);
     }
 
-    std::cout << ss.str() << std::flush;
+    std::cout << output.str() << std::flush;
 }
 
 CsvStatsSink::CsvStatsSink(std::string path) : path_(std::move(path)) {
@@ -121,7 +126,7 @@ void CsvStatsSink::ensure_header() {
     bool need_header = true;
     std::error_code ec;
     if (std::filesystem::exists(path_, ec)) {
-        auto size = std::filesystem::file_size(path_, ec);
+        const auto size = std::filesystem::file_size(path_, ec);
         if (!ec && size > 0) {
             need_header = false;
         }
@@ -129,7 +134,7 @@ void CsvStatsSink::ensure_header() {
 
     if (need_header) {
         file_ << "run_id,timestamp_utc,file,decision_procedure,cvsids_learned_base,cvsids_decay,cvsids_bump,"
-                 "decision_phase,clause_selector,seed,sat_count,unsat_count,result,"
+                 "decision_phase,clause_selector,seed,result,"
                  "num_vars,start_clauses,final_clauses,learned_clauses,"
                  "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,"
                  "decisions,fallback_decisions,fallback_pct,"
@@ -143,14 +148,14 @@ void CsvStatsSink::ensure_header() {
 }
 
 std::string CsvStatsSink::csv_escape(const std::string& value) {
-    bool needs_quotes = value.find_first_of(",\"\n\r") != std::string::npos;
+    const bool needs_quotes = value.find_first_of(",\"\n\r") != std::string::npos;
     if (!needs_quotes) {
         return value;
     }
     std::string out;
     out.reserve(value.size() + 2);
     out.push_back('"');
-    for (char c : value) {
+    for (const char c : value) {
         if (c == '"') {
             out.push_back('"');
         }
@@ -164,15 +169,12 @@ std::string CsvStatsSink::fmt_opt_double(const std::optional<double>& value) {
     if (!value.has_value()) {
         return "";
     }
-    std::ostringstream ss;
-    ss << std::setprecision(10) << *value;
-    return ss.str();
+    std::ostringstream output;
+    output << std::setprecision(10) << *value;
+    return output.str();
 }
 
-void CsvStatsSink::log_impl(const AggregateStats& stats) {
-    if (!file_.is_open()) {
-        return;
-    }
+void CsvStatsSink::log_impl(const RunStats& stats) {
     ensure_header();
 
     file_ << csv_escape(stats.run_id) << ','
@@ -185,24 +187,22 @@ void CsvStatsSink::log_impl(const AggregateStats& stats) {
           << csv_escape(to_string(stats.decision_phase)) << ','
           << csv_escape(to_string(stats.clause_selector)) << ','
           << stats.seed << ','
-          << stats.sat_count << ','
-          << stats.unsat_count << ','
-          << stats.result << ','
+          << to_string(stats.result) << ','
           << stats.num_vars << ','
           << stats.start_clauses << ','
           << stats.final_clauses << ','
-          << stats.learned_clauses << ','
+          << learned_clause_count(stats) << ','
           << std::setprecision(10) << stats.time_s << ','
-          << stats.conflicts << ','
-          << stats.propagations << ','
-          << stats.attempt_props << ','
-          << stats.watch_updates << ','
-          << stats.restarts << ','
+          << stats.num_conflicts << ','
+          << stats.num_propagations << ','
+          << stats.num_attempt_props << ','
+          << stats.num_watch_updates << ','
+          << stats.num_restarts << ','
           << stats.decisions << ','
           << stats.fallback_decisions << ','
-          << fmt_opt_double(stats.fallback_pct) << ','
-          << fmt_opt_double(stats.prop_per_conflict) << ','
-          << fmt_opt_double(stats.attempts_per_prop_watch_conflict) << "\n";
+          << fmt_opt_double(fallback_pct(stats)) << ','
+          << fmt_opt_double(propagations_per_conflict(stats)) << ','
+          << fmt_opt_double(attempts_per_event(stats)) << "\n";
     file_.flush();
 }
 

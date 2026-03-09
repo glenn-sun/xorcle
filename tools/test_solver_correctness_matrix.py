@@ -175,14 +175,29 @@ def parse_assignment(output: str) -> Optional[List[int]]:
     if not assignment_lines:
         return None
 
-    literals: List[int] = []
+    assignment_by_var: Dict[int, int] = {}
     try:
         for line in assignment_lines:
             for token in line.split():
                 literal = int(token)
                 if literal == 0:
-                    return [1 if value > 0 else 0 for value in literals]
-                literals.append(literal)
+                    if not assignment_by_var:
+                        return []
+                    max_var = max(assignment_by_var)
+                    assignment: List[int] = []
+                    for variable_index in range(1, max_var + 1):
+                        if variable_index not in assignment_by_var:
+                            return None
+                        assignment.append(assignment_by_var[variable_index])
+                    return assignment
+                variable_index = abs(literal)
+                if variable_index == 0:
+                    return None
+                bit = 1 if literal > 0 else 0
+                existing_bit = assignment_by_var.get(variable_index)
+                if existing_bit is not None and existing_bit != bit:
+                    return None
+                assignment_by_var[variable_index] = bit
     except ValueError:
         return None
     return None

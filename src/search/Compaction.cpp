@@ -224,23 +224,11 @@ CompactionPlan build_compaction_plan(const CompactionInputs& inputs,
 
     compaction_plan.history_entry.transform = transform;
     compaction_plan.history_entry.active_var_to_original_before = inputs.active_var_to_original;
-    compaction_plan.history_entry.eliminated_original_vars.reserve(inputs.active_num_vars - transform.new_num_vars);
     compaction_plan.history_entry.trail_rows_before.reserve(inputs.trail.span().rows());
-    compaction_plan.history_entry.trail_rows_original.reserve(inputs.trail.span().rows());
-
-    for (std::size_t active_var = 0; active_var < inputs.active_num_vars; ++active_var) {
-        if (transform.is_pivot_old(active_var)) {
-            compaction_plan.history_entry.eliminated_original_vars.push_back(
-                inputs.active_var_to_original[active_var]);
-        }
-    }
 
     for (std::size_t row_index = 0; row_index < inputs.trail.span().rows(); ++row_index) {
         const algebra::Equation& active_eqn = inputs.trail.span().row(row_index);
         compaction_plan.history_entry.trail_rows_before.push_back(active_eqn);
-        compaction_plan.history_entry.trail_rows_original.push_back(
-            lift_with_variable_map(active_eqn, compaction_plan.history_entry.active_var_to_original_before,
-                                   inputs.original_num_vars));
     }
 
     compaction_plan.proof_assumptions =

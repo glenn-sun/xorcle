@@ -8,7 +8,7 @@ std::string Equation::to_string(PrintMode mode) const {
     if_set_call([&](std::size_t i) {
         if (i != size() - 1) {
             if (oss.tellp() > 0) oss << " + ";
-            oss << "x" << i;
+            oss << "x" << (i + 1);
         }
     });
 

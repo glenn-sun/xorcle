@@ -2,7 +2,6 @@
 
 /// @file MaxHeap.h
 /// @brief Max-heap with activity scores for arbitrary keys.
-/// @note This file was generated with the assistance of AI.
 
 #include <algorithm>
 #include <cstddef>

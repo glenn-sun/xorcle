@@ -18,19 +18,15 @@
 
 namespace search {
 
-bool ResultCase::is_timeout(const std::variant<Timeout, Unsat, Sat>& result) {
-    return std::holds_alternative<Timeout>(result);
-}
-
-bool ResultCase::is_unsat(const std::variant<Timeout, Unsat, Sat>& result) {
+bool ResultCase::is_unsat(const std::variant<Unsat, Sat>& result) {
     return std::holds_alternative<Unsat>(result);
 }
 
-bool ResultCase::is_sat(const std::variant<Timeout, Unsat, Sat>& result) {
+bool ResultCase::is_sat(const std::variant<Unsat, Sat>& result) {
     return std::holds_alternative<Sat>(result);
 }
 
-const bit::vector<>& ResultCase::unwrap_sat(const std::variant<Timeout, Unsat, Sat>& result) {
+const bit::vector<>& ResultCase::unwrap_sat(const std::variant<Unsat, Sat>& result) {
     if (const Sat* sat = std::get_if<Sat>(&result)) {
         return sat->values;
     }
@@ -92,39 +88,6 @@ const std::vector<algebra::Clause>& Solver::get_clauses() const {
 
 algebra::Clause& Solver::get_clause(heuristics::ClauseId id) {
     return clause_sel->get_clause(id);
-}
-
-std::vector<ProofAssumption> Solver::collect_proof_assumptions_from_trail(
-    const CompactionHistoryEntry& history_entry) const {
-    std::vector<ProofAssumption> new_assumptions;
-    new_assumptions.reserve(trail.reasons().size());
-
-    auto already_recorded = [&](const algebra::Equation& original_eqn) {
-        for (const ProofAssumption& existing_assumption : proof_assumptions) {
-            if (existing_assumption.original_eqn == original_eqn) {
-                return true;
-            }
-        }
-        for (const ProofAssumption& new_assumption : new_assumptions) {
-            if (new_assumption.original_eqn == original_eqn) {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    for (std::size_t learned_index = 0; learned_index < trail.reasons().size(); ++learned_index) {
-        const std::size_t trail_row_index = trail.order_map()[learned_index];
-        const algebra::Equation& active_eqn = trail.span().row(trail_row_index);
-        algebra::Equation original_eqn =
-            lift_with_variable_map(active_eqn, history_entry.active_var_to_original_before, original_num_vars);
-        if (already_recorded(original_eqn)) {
-            continue;
-        }
-        new_assumptions.push_back(ProofAssumption{original_eqn, trail.reasons()[learned_index]});
-    }
-
-    return new_assumptions;
 }
 
 void Solver::apply_compaction(CompactionPlan compaction_plan) {
@@ -401,12 +364,11 @@ void Solver::make_decision_step() {
     clause_sel->update_with_decision_clause(dec_proc->decision_clause_hint());
 }
 
-Result Solver::solve(std::atomic<bool>& stop_flag) {
+Result Solver::solve() {
     next_proof_clause_id = std::max(next_proof_clause_id, clause_sel->get_num_clauses());
 
-    while (stop_flag.load() == false) {
-        const bool found_conflict = propagate_until_conflict();
-        if (found_conflict) {
+    while (true) {
+        if (propagate_until_conflict()) {
             ++num_conflicts;
             if (level() == 0) {
                 return handle_root_conflict_unsat();
@@ -428,7 +390,6 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
 
         make_decision_step();
     }
-    return ResultCase::Timeout {};
 }
 
 void Solver::print_clauses(const PrintMode mode) const {

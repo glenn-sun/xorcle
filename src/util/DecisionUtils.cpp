@@ -1,6 +1,7 @@
 #include "util/DecisionUtils.h"
 
 #include <cassert>
+#include <stdexcept>
 
 #include "bit/vector.h"
 
@@ -42,8 +43,7 @@ algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
             return candidate;
         }
     }
-    assert(false);
-    return candidate;
+    throw std::logic_error("decide_from_basis: no legal decision remained");
 }
 
 algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
@@ -63,8 +63,7 @@ algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
             return candidate;
         }
     }
-    assert(false);
-    return candidate;
+    throw std::logic_error("decide_from_units: no legal decision remained");
 }
 
 namespace {

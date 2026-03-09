@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <chrono>
@@ -151,7 +150,6 @@ enum class StatsMode {
 /// @param restart_config Restart policy configuration.
 /// @param enable_compaction Whether to enable compaction.
 /// @param compaction_conflict_interval Compaction trigger interval when enabled.
-/// @param stop_flag External stop signal to interrupt solving.
 /// @param proof_path Optional proof output path.
 stats::RunStats run_once(const std::string& filename,
                          heuristics::DecisionProcedureName dpn,
@@ -162,7 +160,6 @@ stats::RunStats run_once(const std::string& filename,
                          const search::RestartConfig& restart_config,
                          bool enable_compaction,
                          std::size_t compaction_conflict_interval,
-                         std::atomic<bool>& stop_flag,
                          const std::string& proof_path = {}) {
     std::shared_ptr<io::ProofLogger> proof_logger;
     if (!proof_path.empty()) {
@@ -175,7 +172,7 @@ stats::RunStats run_once(const std::string& filename,
     std::size_t start_num_clauses = solver.get_num_clauses();
 
     auto start = std::chrono::high_resolution_clock::now();
-    auto result = solver.solve(stop_flag);
+    auto result = solver.solve();
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
     if (proof_logger) {
@@ -195,16 +192,11 @@ stats::RunStats run_once(const std::string& filename,
     auto dec_stats = solver.decision_stats();
     out.decisions = dec_stats.decisions;
     out.fallback_decisions = dec_stats.fallback_decisions;
-
-    if (search::ResultCase::is_timeout(result)) {
-        out.result = stats::SolveResult::Timeout;
-    } else if (search::ResultCase::is_unsat(result)) {
+    if (search::ResultCase::is_unsat(result)) {
         out.result = stats::SolveResult::Unsat;
     } else if (search::ResultCase::is_sat(result)) {
         out.result = stats::SolveResult::Sat;
-        std::ostringstream assign;
-        assign << search::ResultCase::unwrap_sat(result);
-        out.sat_assignment = assign.str();
+        out.sat_assignment = search::ResultCase::unwrap_sat(result);
     }
 
     return out;
@@ -505,31 +497,28 @@ int main(int argc, char *argv[]) {
     const std::string timestamp_utc = utc_timestamp();
     const std::string run_id = run_id_from_timestamp(timestamp_utc);
 
-    std::vector<stats::RunStats> run_stats;
-    run_stats.reserve(1);
+    stats::RunStats run_stats;
     try {
-        std::atomic<bool> stop_flag(false);
-        run_stats.push_back(run_once(input_path, dpn, csn, phase, seed, cvsids_config, restart_config,
-                                     enable_compaction, compaction_conflict_interval, stop_flag, proof_path));
+        run_stats = run_once(input_path, dpn, csn, phase, seed, cvsids_config, restart_config,
+                             enable_compaction, compaction_conflict_interval, proof_path);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return 1;
     }
 
-    stats::AggregateMeta meta;
-    meta.run_id = run_id;
-    meta.timestamp_utc = timestamp_utc;
-    meta.file = input_path;
-    meta.decision_procedure = dpn;
-    meta.decision_phase = phase;
-    meta.clause_selector = csn;
-    meta.seed = seed;
+    run_stats.run_id = run_id;
+    run_stats.timestamp_utc = timestamp_utc;
+    run_stats.file = input_path;
+    run_stats.decision_procedure = dpn;
+    run_stats.decision_phase = phase;
+    run_stats.clause_selector = csn;
+    run_stats.seed = seed;
     if (dpn == heuristics::DecisionProcedureName::clause_vsids) {
-        meta.cvsids_learned_base = cvsids_config.learned_base;
-        meta.cvsids_decay = cvsids_config.decay;
-        meta.cvsids_bump = cvsids_config.bump;
+        run_stats.cvsids_learned_base = cvsids_config.learned_base;
+        run_stats.cvsids_decay = cvsids_config.decay;
+        run_stats.cvsids_bump = cvsids_config.bump;
     }
-    sink->log(stats::aggregate_runs(meta, run_stats));
+    sink->log(run_stats);
 
     return 0;
 }

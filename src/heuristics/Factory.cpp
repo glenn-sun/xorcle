@@ -1,5 +1,7 @@
 #include "heuristics/Factory.h"
 
+#include <stdexcept>
+
 #include "heuristics/ExactWatchlist.h"
 
 namespace heuristics {
@@ -22,8 +24,9 @@ std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureNa
     }
     if (proc) {
         proc->set_decision_phase(phase);
+        return proc;
     }
-    return proc;
+    throw std::logic_error("create_decision_procedure: unsupported decision procedure enum");
 }
 
 std::shared_ptr<ClauseSelector> create_clause_selector(ClauseSelectorName name, std::size_t num_vars) {
@@ -35,6 +38,6 @@ std::shared_ptr<ClauseSelector> create_clause_selector(ClauseSelectorName name, 
         case ClauseSelectorName::exact_watchlist:
             return std::make_shared<ExactWatchlist>(num_vars);
     }
-    return nullptr;
+    throw std::logic_error("create_clause_selector: unsupported clause selector enum");
 }
 } // namespace heuristics

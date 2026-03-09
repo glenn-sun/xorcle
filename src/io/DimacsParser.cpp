@@ -132,12 +132,18 @@ algebra::Clause parse_clause_line(const std::string& line, std::size_t num_vars)
     algebra::Clause clause(num_vars);
     std::istringstream line_stream{line};
     std::string token;
+    bool found_terminator = false;
 
     while (line_stream >> token) {
         if (token == "0") {
-            return clause;
+            found_terminator = true;
+            break;
         }
         clause.add_row(parse_clause_token(token, num_vars));
+    }
+
+    if (!found_terminator) {
+        throw std::runtime_error("Clause line missing terminating 0: " + line);
     }
 
     return clause;

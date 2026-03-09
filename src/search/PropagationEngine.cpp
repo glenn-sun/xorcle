@@ -1,5 +1,6 @@
 #include "search/PropagationEngine.h"
 
+#include <array>
 #include <cassert>
 #include <sstream>
 #include <stdexcept>

@@ -37,6 +37,7 @@ struct ClauseSatisfactionWorkspace {
 /// @pre `basis.size() == num_vars`.
 /// @pre Every equation in `basis` has width `num_vars + 1`.
 /// @post The returned equation has width `num_vars + 1` and is not implied by `trail_span`.
+/// @throws std::logic_error If the caller violated the precondition that some legal decision still exists.
 algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
                                     const algebra::RowSpace& trail_span,
                                     std::size_t num_vars);
@@ -48,6 +49,7 @@ algebra::Equation decide_from_basis(const std::vector<algebra::Equation>& basis,
 /// @pre `unit_eqns.size() == num_vars`.
 /// @pre Every equation in `unit_eqns` has width `num_vars + 1`.
 /// @post The returned equation has width `num_vars + 1` and is not implied by `trail_span`.
+/// @throws std::logic_error If the caller violated the precondition that some legal decision still exists.
 algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
                                     const std::vector<algebra::Equation>& unit_eqns,
                                     std::size_t num_vars);

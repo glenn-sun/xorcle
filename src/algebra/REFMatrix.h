@@ -28,8 +28,6 @@ private:
 
     std::size_t num_vars;
 
-    void validate_operand_width(const bit::vector<>& v, const char* where) const;
-
 #ifndef NDEBUG
     void debug_assert_valid_representation() const;
 #endif

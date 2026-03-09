@@ -52,7 +52,8 @@ bit::vector<> reconstruct_original_assignment(const bit::vector<>& active_assign
             const algebra::Equation& trail_row_before = *row_it;
             const std::size_t pivot_var = trail_row_before.first_set();
             if (pivot_var == bit::vector<>::npos || pivot_var >= history_entry.transform.old_num_vars) {
-                continue;
+                throw std::runtime_error(
+                    "reconstruct_original_assignment: compaction history contains an invalid trail pivot");
             }
 
             bool pivot_value = trail_row_before.element(history_entry.transform.old_num_vars);

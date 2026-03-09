@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -24,9 +23,6 @@
 
 namespace search {
 namespace ResultCase {
-    /// @brief Tag for timeout results.
-    struct Timeout {};
-
     /// @brief Tag for unsatisfiable results.
     struct Unsat {};
 
@@ -38,22 +34,19 @@ namespace ResultCase {
         explicit Sat(bit::vector<> v) : values(std::move(v)) {}
     };
 
-    /// @brief Return true if the result is a timeout.
-    bool is_timeout(const std::variant<Timeout, Unsat, Sat>& result);
-
     /// @brief Return true if the result is unsatisfiable.
-    bool is_unsat(const std::variant<Timeout, Unsat, Sat>& result);
+    bool is_unsat(const std::variant<Unsat, Sat>& result);
 
     /// @brief Return true if the result is satisfiable.
-    bool is_sat(const std::variant<Timeout, Unsat, Sat>& result);
+    bool is_sat(const std::variant<Unsat, Sat>& result);
 
     /// @brief Return the assignment from a SAT result or throw.
     /// @pre result holds ResultCase::Sat.
-    const bit::vector<>& unwrap_sat(const std::variant<Timeout, Unsat, Sat>& result);
+    const bit::vector<>& unwrap_sat(const std::variant<Unsat, Sat>& result);
 }
 
 /// @brief Solver result variant.
-using Result = std::variant<ResultCase::Timeout, ResultCase::Unsat, ResultCase::Sat>;
+using Result = std::variant<ResultCase::Unsat, ResultCase::Sat>;
 
 /// @brief Main solver class implementing propagation, decision, and learning.
 /// @note `trail`, `clause_sel`, `dec_proc`, `propagation`, `conflict_check_eqn`, and
@@ -113,12 +106,6 @@ private:
     /// @return True if compaction succeeded and replaced the active solver state.
     /// @note Returning false is normal only when compaction is not currently applicable.
     bool maybe_compact_before_decision();
-
-    /// @brief Collect original-space proof units implied by the current trail before compaction.
-    /// @param history_entry Compaction history entry being recorded.
-    /// @return Ordered unique proof-unit rows in original variable indexing.
-    std::vector<ProofAssumption> collect_proof_assumptions_from_trail(
-        const CompactionHistoryEntry& history_entry) const;
 
     /// @brief Propagate until quiescence or conflict.
     /// @return True if propagation learned a contradiction equation.
@@ -197,8 +184,7 @@ public:
         std::vector<heuristics::ClauseId>* reason_ids = nullptr);
 
     /// @brief Determine if the set of clauses is satisfiable.
-    /// @param stop_flag External stop signal; set to true to stop early.
-    Result solve(std::atomic<bool>& stop_flag);
+    Result solve();
 
     /// @brief Print all clauses using the given print mode.
     void print_clauses(PrintMode mode = PrintMode{}) const;

@@ -141,9 +141,7 @@ struct ProofAssumption {
 struct CompactionHistoryEntry {
     CompactionTransform transform;
     std::vector<std::size_t> active_var_to_original_before;
-    std::vector<std::size_t> eliminated_original_vars;
     std::vector<algebra::Equation> trail_rows_before;
-    std::vector<algebra::Equation> trail_rows_original;
 };
 
 /// @brief Fully prepared replacement state for one compaction.

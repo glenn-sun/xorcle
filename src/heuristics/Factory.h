@@ -11,6 +11,7 @@
 namespace heuristics {
 
 /// @brief Create a decision procedure instance by name.
+/// @throws std::logic_error If `name` is not a supported decision-procedure enum value.
 std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureName name,
                                                              std::size_t num_vars,
                                                              DecisionPhase phase,
@@ -18,6 +19,7 @@ std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureNa
                                                              const CVsidsConfig& cvsids_config = {});
 
 /// @brief Create a clause selector instance by name.
+/// @throws std::logic_error If `name` is not a supported clause-selector enum value.
 std::shared_ptr<ClauseSelector> create_clause_selector(ClauseSelectorName name, std::size_t num_vars);
 
 } // namespace heuristics
