@@ -6,6 +6,7 @@
 #include "algebra/Equation.h"
 #include "algebra/RowSpace.h"
 #include "bit/vector.h"
+#include "search/Compaction.h"
 #include "util/RandomUtils.h"
 
 namespace util {
@@ -59,6 +60,15 @@ algebra::Equation decide_from_units(const algebra::RowSpace& trail_span,
 bool clause_satisfied_by_trail(const algebra::RowSpace& trail_span,
                                const algebra::Clause& clause,
                                ClauseSatisfactionWorkspace& ws);
+
+/// @brief Project a literal basis through a compaction transform while preserving basis order.
+/// @param basis Candidate literal basis in old active-variable order.
+/// @param transform Compaction transform into the new active-variable space.
+/// @return A complete literal basis in the new active-variable space.
+/// @pre Every equation in `basis` has width `transform.old_num_vars + 1`.
+/// @post The returned basis has size `transform.new_num_vars`.
+std::vector<algebra::Equation> project_basis_keep_order(const std::vector<algebra::Equation>& basis,
+                                                        const search::CompactionTransform& transform);
 
 /// @brief Sample a non-zero equation from a clause with respect to the trail.
 /// @param clause Clause to sample from.

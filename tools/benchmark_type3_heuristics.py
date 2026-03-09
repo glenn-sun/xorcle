@@ -38,7 +38,7 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-DECISION_PROCS = ("vsids_unit", "cvsids", "berkmin", "cmtf")
+DECISION_PROCS = ("variable_vsids", "clause_vsids", "berkmin", "cmtf")
 CLAUSE_SELECTORS = ("cyclic", "lt_watchlist", "exact_watchlist")
 DECISION_PHASES = ("sat", "unsat", "random")
 COMPACTION_MODES = (
@@ -77,8 +77,8 @@ TEST_SPECS: Dict[str, TestSpec] = {
         title="Type 3: Decision Procedures",
         subplot_title="Decision Procedure",
         variants=(
-            VariantSpec(label="vsids_unit", display_name="Variable VSIDS", solver_passthrough=("-d", "vsids_unit")),
-            VariantSpec(label="cvsids", display_name="Clause VSIDS", solver_passthrough=("-d", "cvsids")),
+            VariantSpec(label="variable_vsids", display_name="Variable VSIDS", solver_passthrough=("-d", "variable_vsids")),
+            VariantSpec(label="clause_vsids", display_name="Clause VSIDS", solver_passthrough=("-d", "clause_vsids")),
             VariantSpec(label="berkmin", display_name="BerkMin-like", solver_passthrough=("-d", "berkmin")),
             VariantSpec(label="cmtf", display_name="CMTF-like", solver_passthrough=("-d", "cmtf")),
         ),

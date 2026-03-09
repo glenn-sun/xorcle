@@ -13,16 +13,12 @@ namespace stats {
 std::string to_string(heuristics::DecisionProcedureName name) {
     using heuristics::DecisionProcedureName;
     switch (name) {
-        case DecisionProcedureName::fixed_unit:
-            return "fixed_unit";
-        case DecisionProcedureName::random_clause_sum:
-            return "random_clause_sum";
-        case DecisionProcedureName::vsids_unit:
-            return "vsids_unit";
-        case DecisionProcedureName::vsids_clause:
-            return "vsids_clause";
-        case DecisionProcedureName::cvsids:
-            return "cvsids";
+        case DecisionProcedureName::fixed_literals:
+            return "fixed_literals";
+        case DecisionProcedureName::variable_vsids:
+            return "variable_vsids";
+        case DecisionProcedureName::clause_vsids:
+            return "clause_vsids";
     }
     return "unknown";
 }

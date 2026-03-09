@@ -129,6 +129,36 @@ bool clause_satisfied_by_trail(const algebra::RowSpace& trail_span,
     return false;
 }
 
+std::vector<algebra::Equation> project_basis_keep_order(const std::vector<algebra::Equation>& basis,
+                                                        const search::CompactionTransform& transform) {
+#ifndef NDEBUG
+    for (const algebra::Equation& eqn : basis) {
+        assert(eqn.size() == transform.old_num_vars + 1);
+    }
+#endif
+    std::vector<algebra::Equation> projected_basis;
+    projected_basis.reserve(transform.new_num_vars);
+    std::vector<std::uint8_t> seen_literal(transform.new_num_vars, 0);
+    for (const algebra::Equation& basis_eqn : basis) {
+        algebra::Equation projected_eqn = transform.project_equation(basis_eqn);
+        std::size_t leading_col = projected_eqn.first_set();
+        if (leading_col >= transform.new_num_vars) {
+            continue;
+        }
+        if (seen_literal[leading_col]) {
+            continue;
+        }
+        seen_literal[leading_col] = 1;
+        projected_basis.push_back(std::move(projected_eqn));
+    }
+    for (std::size_t var = 0; var < transform.new_num_vars; ++var) {
+        if (!seen_literal[var]) {
+            projected_basis.push_back(algebra::Equation::unit(transform.new_num_vars + 1, var));
+        }
+    }
+    return projected_basis;
+}
+
 bool sample_equation_from_clause(const algebra::Clause& clause,
                                  const algebra::RowSpace& trail_span,
                                  std::size_t num_vars,

@@ -10,20 +10,14 @@ std::shared_ptr<DecisionProcedure> create_decision_procedure(DecisionProcedureNa
                                                              const CVsidsConfig& cvsids_config) {
     std::shared_ptr<DecisionProcedure> proc;
     switch (name) {
-        case DecisionProcedureName::fixed_unit:
-            proc = std::make_shared<FixedUnit>(num_vars, seed);
+        case DecisionProcedureName::fixed_literals:
+            proc = std::make_shared<FixedLiterals>(num_vars, seed);
             break;
-        case DecisionProcedureName::random_clause_sum:
-            proc = std::make_shared<RandomClauseSum>(num_vars, seed);
+        case DecisionProcedureName::variable_vsids:
+            proc = std::make_shared<VariableVsids>(num_vars, seed);
             break;
-        case DecisionProcedureName::vsids_unit:
-            proc = std::make_shared<VsidsUnit>(num_vars, seed);
-            break;
-        case DecisionProcedureName::vsids_clause:
-            proc = std::make_shared<VsidsClause>(num_vars, seed);
-            break;
-        case DecisionProcedureName::cvsids:
-            proc = std::make_shared<CVsidsDecision>(num_vars, seed, cvsids_config);
+        case DecisionProcedureName::clause_vsids:
+            proc = std::make_shared<ClauseVsids>(num_vars, seed, cvsids_config);
             break;
     }
     if (proc) {

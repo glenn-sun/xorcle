@@ -18,9 +18,9 @@ void ConsoleStatsSink::log_impl(const AggregateStats& stats) {
     ss << "File: " << stats.file << "\n";
     ss << "Decision procedure: " << to_string(stats.decision_procedure) << "\n";
     if (stats.cvsids_learned_base.has_value() && stats.cvsids_decay.has_value() && stats.cvsids_bump.has_value()) {
-        ss << "CVsids learned base: " << std::setprecision(6) << *stats.cvsids_learned_base << "\n";
-        ss << "CVsids decay: " << std::setprecision(6) << *stats.cvsids_decay << "\n";
-        ss << "CVsids bump: " << std::setprecision(6) << *stats.cvsids_bump << "\n";
+        ss << "Clause VSIDS learned base: " << std::setprecision(6) << *stats.cvsids_learned_base << "\n";
+        ss << "Clause VSIDS decay: " << std::setprecision(6) << *stats.cvsids_decay << "\n";
+        ss << "Clause VSIDS bump: " << std::setprecision(6) << *stats.cvsids_bump << "\n";
     }
     ss << "Decision phase: " << to_string(stats.decision_phase) << "\n";
     ss << "Seed: " << stats.seed << "\n";

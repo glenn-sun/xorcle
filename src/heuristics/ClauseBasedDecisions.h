@@ -13,67 +13,64 @@
 
 namespace heuristics {
 
-/// @brief CVsids activity parameters for clauses.
+/// @brief Clause-activity parameters for Clause VSIDS.
 struct CVsidsParams {
     MaxHeap<ClauseId> activity_heap; ///< Heap keyed by clause activity.
-
-    double inc_amt = 1.0;       ///< Current activity increment used for bumps.
-    double learned_base = 1.0;  ///< Learned-clause initial activity multiplier on current increment.
-    double decay = 0.95;        ///< Activity decay factor.
-
-    /// @brief Construct with an empty activity heap.
-    CVsidsParams() : activity_heap() {}
+    double inc_amt = 1.0;            ///< Current activity increment used for bumps.
+    double learned_base = 1.0;       ///< Learned-clause initial activity multiplier on current increment.
+    double decay = 0.95;             ///< Activity decay factor.
 
     /// @brief Increase activity for a clause id and rescale if needed.
     void bump_activity(ClauseId id);
 };
 
-/// @brief Shared CVsids state used across decision and selection.
+/// @brief Shared Clause VSIDS state used by the decision procedure.
+/// @note `num_clauses`, `activity_heap`, `last_decision_clause`, and
+/// `pending_learned_priority` must describe the same clause-id domain.
 struct CVsidsState {
-    CVsidsParams params;        ///< Activity parameters and heap.
-    Equation eqn_false;         ///< Cached false equation (1 = 0).
-    std::vector<Equation> unit_eqns; ///< Unit equations for fallback decisions.
+    CVsidsParams params;                   ///< Activity parameters and heap.
+    std::vector<Equation> unit_eqns;       ///< Unit equations used by literal fallback.
 
-    std::optional<ClauseId> last_decision_clause; ///< Last clause used to decide.
-    std::optional<double> pending_learned_priority; ///< Initial priority for the next learned asserting clause.
-    ClauseId num_clauses = 0;   ///< Number of clauses tracked in the heap.
-    double initial_inc_amt = 1.0; ///< Configured initial increment (CLI bump parameter).
+    std::optional<ClauseId> last_decision_clause;     ///< Last clause used for a decision.
+    std::optional<double> pending_learned_priority;   ///< Initial priority for the next learned clause.
+    ClauseId num_clauses = 0;                          ///< Number of tracked clause ids.
+    double initial_inc_amt = 1.0;                     ///< Configured initial increment.
+    std::size_t num_vars;                             ///< Number of active variables.
 
-    std::size_t num_vars;       ///< Number of variables in the problem.
-
-    /// @brief Construct state for a given number of variables.
     explicit CVsidsState(std::size_t n, const CVsidsConfig& config = {});
 
-    /// @brief Ensure unit equations are initialized.
+    /// @brief Ensure unit equations are initialized for the current active width.
     void ensure_unit_eqns();
 
-    /// @brief Reset activity heap to a clean state.
+    /// @brief Reset clause activity for a fresh run.
     void reset_activity();
 };
 
-/// @brief Decision procedure using CVsids clause activity.
-class CVsidsDecision : public DecisionProcedure {
+/// @brief Decision procedure using Clause VSIDS clause activity.
+class ClauseVsids : public DecisionProcedure {
 protected:
-    std::shared_ptr<CVsidsState> state; ///< Shared CVsids state.
-    util::ClauseSatisfactionWorkspace clause_sat_ws; ///< Reused clause-satisfaction scratch state.
+    /// @brief Shared Clause VSIDS state.
+    std::shared_ptr<CVsidsState> state;
+
+    /// @brief Reused clause-satisfaction scratch state.
+    util::ClauseSatisfactionWorkspace clause_sat_ws;
 
 public:
-    /// @brief Construct with optional shared state.
-    explicit CVsidsDecision(std::size_t n,
-                            util::Seed seed,
-                            const CVsidsConfig& config = {},
-                            std::shared_ptr<CVsidsState> shared_state = nullptr);
+    explicit ClauseVsids(std::size_t n,
+                         util::Seed seed,
+                         const CVsidsConfig& config = {},
+                         std::shared_ptr<CVsidsState> shared_state = nullptr);
 
-    /// @brief Reset activity and counters.
+    /// @brief Reset activity, RNG state, and counters for a fresh run.
     void reinitialize() override;
 
-    /// @brief Choose a decision based on clause activity.
+    /// @brief Choose a decision from the highest-priority unsatisfied clause.
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
 
     /// @brief Decay activity after learning an asserting clause.
     void update_with_asserting_clause(const Clause& clause) override;
 
-    /// @brief Register a new clause in the activity heap.
+    /// @brief Register a new clause in the shared activity heap.
     void update_with_new_clause(const Clause& clause, ClauseId id) override;
 
     /// @brief Bump activity for a resolved clause.
@@ -88,7 +85,8 @@ public:
                                 const std::vector<std::uint8_t>& clause_active) override;
 
 private:
-    util::Rng clause_equation_rng; ///< RNG for sampling equations from decision clauses.
+    /// @brief RNG for sampling equations from decision clauses.
+    util::Rng clause_equation_rng;
 };
 
 } // namespace heuristics

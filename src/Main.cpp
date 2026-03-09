@@ -116,7 +116,7 @@ enum class StatsMode {
 /// @param csn Clause selector to use.
 /// @param phase Decision phase to use.
 /// @param seed Base seed to use for deterministic solver RNG streams.
-/// @param cvsids_config CVsids tuning parameters when `dpn == cvsids`.
+/// @param cvsids_config Clause VSIDS tuning parameters when `dpn == clause_vsids`.
 /// @param restart_config Restart policy configuration.
 /// @param enable_compaction Whether to enable compaction.
 /// @param compaction_conflict_interval Compaction trigger interval when enabled.
@@ -207,7 +207,7 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
 int main(int argc, char *argv[]) {
     bool help{false};
     bool verbose{false};
-    heuristics::DecisionProcedureName dpn{heuristics::DecisionProcedureName::cvsids};
+    heuristics::DecisionProcedureName dpn{heuristics::DecisionProcedureName::clause_vsids};
     heuristics::CVsidsConfig cvsids_config{};
     heuristics::ClauseSelectorName csn{heuristics::ClauseSelectorName::cyclic};
     heuristics::DecisionPhase phase{heuristics::DecisionPhase::unsat};
@@ -241,28 +241,24 @@ int main(int argc, char *argv[]) {
         switch (option) {
             case 'd': {
                 std::string optarg_str{optarg};
-                if (optarg_str == "fixed_unit") {
-                    dpn = heuristics::DecisionProcedureName::fixed_unit;
-                } else if (optarg_str == "random_clause_sum") {
-                    dpn = heuristics::DecisionProcedureName::random_clause_sum;
-                } else if (optarg_str == "vsids_unit") {
-                    dpn = heuristics::DecisionProcedureName::vsids_unit; 
-                } else if (optarg_str == "vsids_clause") {
-                    dpn = heuristics::DecisionProcedureName::vsids_clause;
-                } else if (optarg_str == "cvsids") {
-                    dpn = heuristics::DecisionProcedureName::cvsids;
+                if (optarg_str == "fixed_literals") {
+                    dpn = heuristics::DecisionProcedureName::fixed_literals;
+                } else if (optarg_str == "variable_vsids") {
+                    dpn = heuristics::DecisionProcedureName::variable_vsids;
+                } else if (optarg_str == "clause_vsids") {
+                    dpn = heuristics::DecisionProcedureName::clause_vsids;
                     cvsids_config = heuristics::CVsidsConfig{};
                     if (optind < argc) {
                         if (auto maybe_base = parse_double_token(argv[optind]); maybe_base.has_value()) {
                             if (optind + 2 >= argc) {
-                                std::cerr << "Error: -d cvsids optional parameters require exactly 3 values: "
+                                std::cerr << "Error: -d clause_vsids optional parameters require exactly 3 values: "
                                              "[base decay bump]" << std::endl;
                                 return 1;
                             }
                             auto maybe_decay = parse_double_token(argv[optind + 1]);
                             auto maybe_bump = parse_double_token(argv[optind + 2]);
                             if (!maybe_decay.has_value() || !maybe_bump.has_value()) {
-                                std::cerr << "Error: -d cvsids optional parameters require exactly 3 numeric values: "
+                                std::cerr << "Error: -d clause_vsids optional parameters require exactly 3 numeric values: "
                                              "[base decay bump]" << std::endl;
                                 return 1;
                             }
@@ -273,7 +269,7 @@ int main(int argc, char *argv[]) {
                         }
                     }
                 } else if (optarg_str == "berkmin") {
-                    dpn = heuristics::DecisionProcedureName::cvsids;
+                    dpn = heuristics::DecisionProcedureName::clause_vsids;
                     cvsids_config = heuristics::CVsidsConfig{1.0, 0.5, 0.0};
                     if (optind < argc && parse_double_token(argv[optind]).has_value()) {
                         std::cerr << "Error: -d berkmin is a fixed alias and does not accept [base decay bump]"
@@ -281,7 +277,7 @@ int main(int argc, char *argv[]) {
                         return 1;
                     }
                 } else if (optarg_str == "cmtf") {
-                    dpn = heuristics::DecisionProcedureName::cvsids;
+                    dpn = heuristics::DecisionProcedureName::clause_vsids;
                     cvsids_config = heuristics::CVsidsConfig{1.0, 0.25, 1.0};
                     if (optind < argc && parse_double_token(argv[optind]).has_value()) {
                         std::cerr << "Error: -d cmtf is a fixed alias and does not accept [base decay bump]"
@@ -434,12 +430,11 @@ int main(int argc, char *argv[]) {
     if (help) {
         std::cout << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
         std::cout << "Options:" << std::endl;
-        std::cout << "  -d, --decision-proc <proc>   Decision procedure (default: cvsids)" << std::endl;
-        std::cout << "                               Options: fixed_unit, random_clause_sum, vsids_unit, "
-                     "vsids_clause, cvsids, berkmin, cmtf" << std::endl;
-        std::cout << "                               Optional only for cvsids: [base decay bump]" << std::endl;
-        std::cout << "                               berkmin alias => cvsids 1 0.5 0" << std::endl;
-        std::cout << "                               cmtf alias => cvsids 1 0.25 1" << std::endl;
+        std::cout << "  -d, --decision-proc <proc>   Decision procedure (default: clause_vsids)" << std::endl;
+        std::cout << "                               Options: fixed_literals, variable_vsids, clause_vsids, berkmin, cmtf" << std::endl;
+        std::cout << "                               Optional only for clause_vsids: [base decay bump]" << std::endl;
+        std::cout << "                               berkmin alias => clause_vsids 1 0.5 0" << std::endl;
+        std::cout << "                               cmtf alias => clause_vsids 1 0.25 1" << std::endl;
         std::cout << "  -p, --decision-phase <phase> Decision phase for clause-based decisions (default: unsat)" << std::endl;
         std::cout << "                               Options: unsat, sat, random" << std::endl;
         std::cout << "  -s, --stats-file <path>      CSV output path (implies CSV stats format)" << std::endl;
@@ -488,17 +483,17 @@ int main(int argc, char *argv[]) {
 
     stats_mode = stats_file.empty() ? StatsMode::console : StatsMode::csv;
 
-    if (dpn == heuristics::DecisionProcedureName::cvsids) {
+    if (dpn == heuristics::DecisionProcedureName::clause_vsids) {
         if (!std::isfinite(cvsids_config.learned_base) || cvsids_config.learned_base < 0.0) {
-            std::cerr << "Error: cvsids base must be finite and >= 0" << std::endl;
+            std::cerr << "Error: clause_vsids base must be finite and >= 0" << std::endl;
             return 1;
         }
         if (!std::isfinite(cvsids_config.bump) || cvsids_config.bump < 0.0) {
-            std::cerr << "Error: cvsids bump must be finite and >= 0" << std::endl;
+            std::cerr << "Error: clause_vsids bump must be finite and >= 0" << std::endl;
             return 1;
         }
         if (!std::isfinite(cvsids_config.decay) || cvsids_config.decay <= 0.0 || cvsids_config.decay >= 1.0) {
-            std::cerr << "Error: cvsids decay must be finite and satisfy 0 < decay < 1" << std::endl;
+            std::cerr << "Error: clause_vsids decay must be finite and satisfy 0 < decay < 1" << std::endl;
             return 1;
         }
     }
@@ -540,7 +535,7 @@ int main(int argc, char *argv[]) {
     meta.deterministic = true;
     meta.seed = seed;
     meta.runs_requested = 1;
-    if (dpn == heuristics::DecisionProcedureName::cvsids) {
+    if (dpn == heuristics::DecisionProcedureName::clause_vsids) {
         meta.cvsids_learned_base = cvsids_config.learned_base;
         meta.cvsids_decay = cvsids_config.decay;
         meta.cvsids_bump = cvsids_config.bump;

@@ -14,18 +14,12 @@ inline constexpr Seed default_seed = 0;
 
 /// @brief Stable RNG stream identifiers derived from the CLI seed.
 ///
-/// @note These constants are not arbitrary. They are borrowed from standard
-/// fixed bit-mixing / initialization constants:
-/// - the first three values are SHA-512 initial hash words
-/// - the last two values are additional SHA-512 initial hash words
-/// They are used only as distinct, fixed component tags when deriving
-/// independent deterministic sub-seeds.
+/// @note These constants are not arbitrary. They are borrowed from SHA-512
+/// initial hash words and are used only as distinct, fixed component tags when
+/// deriving independent deterministic sub-seeds.
 enum class RngComponent : std::uint64_t {
     decision_phase = 0x6a09e667f3bcc909ULL,
-    random_clause_order = 0xbb67ae8584caa73bULL,
-    random_clause_equation = 0x3c6ef372fe94f82bULL,
-    vsids_clause_start = 0xa54ff53a5f1d36f1ULL,
-    cvsids_clause_equation = 0x510e527fade682d1ULL
+    clause_vsids_equation = 0xbb67ae8584caa73bULL
 };
 
 /// @brief Derive a stable sub-seed from a base solver seed.

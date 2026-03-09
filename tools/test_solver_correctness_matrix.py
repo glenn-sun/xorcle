@@ -24,7 +24,7 @@ DEFAULT_INPUTS = (
     "tests/generated/restricted_kxnf_n/restricted_kxnf_n_k3_n30.cnf",
     "tests/generated/tseitin_n_k/tseitin_n_k_n20_k5_01.cnf",
 )
-DECISION_PROCS = ("cvsids",)
+DECISION_PROCS = ("clause_vsids",)
 CLAUSE_SELECTORS = ("cyclic", "exact_watchlist")
 DECISION_PHASES = ("unsat",)
 DEFAULT_SEED = 0
@@ -417,7 +417,7 @@ def main(argv: Sequence[str]) -> int:
     try:
         decision_procs = parse_csv_choices(
             args.decision_procs,
-            ("fixed_unit", "random_clause_sum", "vsids_unit", "vsids_clause", "cvsids"),
+            ("fixed_literals", "variable_vsids", "clause_vsids"),
             "decision procedures",
         )
         clause_selectors = parse_csv_choices(
