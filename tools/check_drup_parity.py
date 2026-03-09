@@ -3,7 +3,7 @@
 DRUP(⊕) proof checker for the DIMACS-plus (XNF) format.
 
 Usage:
-  python3 tools/check_drup_plus.py <input.xnf> <proof.drup>
+  python3 tools/check_drup_parity.py <input.xnf> <proof.drup>
 """
 
 import argparse

@@ -37,6 +37,14 @@ The benchmark scripts assume these binaries exist if you benchmark them:
 - `external/cryptominisat5`
 - `external/2xornado`
 
+If you want to use the benchmarking scripts, download those external solvers yourself and place the resulting executables at those paths. The tools do not install solver binaries for you.
+
+Upstream sources:
+
+- Kissat: [github.com/arminbiere/kissat](https://github.com/arminbiere/kissat)
+- CryptoMiniSAT: [github.com/msoos/cryptominisat](https://github.com/msoos/cryptominisat)
+- 2-Xornado: [github.com/j-danner/2xnf_sat_solving](https://github.com/j-danner/2xnf_sat_solving)
+
 The paper-facing benchmark scripts are specialized and only use the solver set they are designed for.
 
 ### Test generation
@@ -94,7 +102,7 @@ Representative-set benchmarks use deterministic sampling, so increasing the samp
   - Runs selected Xorcle configurations, checks SAT assignments, and checks UNSAT proofs.
   - This is the main solver-validation script, not a paper benchmark.
 
-- [`check_drup_plus.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/check_drup_plus.py)
+- [`check_drup_parity.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/check_drup_parity.py)
   - Local DRUP(+) proof checker used by the repo’s proof-validation flow.
 
 ### 3. XNF generation and conversion

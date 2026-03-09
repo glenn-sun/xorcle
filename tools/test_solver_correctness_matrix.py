@@ -61,7 +61,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     except FileNotFoundError:
         default_solver = ""
     parser.add_argument("--solver-bin", default=default_solver, help="Path to the Xorcle solver binary to test.")
-    parser.add_argument("--checker", default=str(root / "tools" / "check_drup_plus.py"), help="Path to the DRUP checker used for UNSAT validation.")
+    parser.add_argument("--checker", default=str(root / "tools" / "check_drup_parity.py"), help="Path to the DRUP(⊕) checker used for UNSAT validation.")
     parser.add_argument("--timeout", type=float, default=5.0, help="External timeout per solver invocation in seconds.")
     parser.add_argument("--jobs", type=int, default=4, help="Number of matrix tasks to execute concurrently.")
     parser.add_argument("--compact", choices=("on", "off"), default="on", help="Whether to run the solver with compaction enabled.")
