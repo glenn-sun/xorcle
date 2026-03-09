@@ -24,6 +24,37 @@ namespace fs = std::filesystem;
 
 namespace {
 
+void print_usage(std::ostream& out, const char* program_name) {
+    out << "Usage: " << program_name << " [options] <input> [proof_path]" << std::endl;
+}
+
+void print_help(const char* program_name) {
+    print_usage(std::cout, program_name);
+    std::cout << "Options:" << std::endl;
+    std::cout << "  -d, --decision-proc <proc>   Decision procedure (default: clause_vsids)" << std::endl;
+    std::cout << "                               Options: fixed_literals, variable_vsids, clause_vsids, berkmin, cmtf" << std::endl;
+    std::cout << "                               Optional only for clause_vsids: [base decay bump]" << std::endl;
+    std::cout << "                               berkmin alias => clause_vsids 1 0.5 0" << std::endl;
+    std::cout << "                               cmtf alias => clause_vsids 1 0.25 1" << std::endl;
+    std::cout << "  -p, --decision-phase <phase> Decision phase for clause-based decisions (default: unsat)" << std::endl;
+    std::cout << "                               Options: unsat, sat, random" << std::endl;
+    std::cout << "  -s, --stats-file <path>      CSV output path (implies CSV stats format)" << std::endl;
+    std::cout << "  -c, --clause-selector <sel>  Clause selector (default: cyclic)" << std::endl;
+    std::cout << "                               Options: cyclic, lt_watchlist, exact_watchlist" << std::endl;
+    std::cout << "      --restart <method> [rate] [arg2]" << std::endl;
+    std::cout << "                               Experimental restart policy (default: none)" << std::endl;
+    std::cout << "                               none" << std::endl;
+    std::cout << "                               geometric [rate_increase>=1.0] [initial_conflicts>=1] (defaults: 1.5, 100)" << std::endl;
+    std::cout << "                               luby [unit_conflicts>=1] (default: 100)" << std::endl;
+    std::cout << "  -x, --compact <on|off> [conflicts>=1]  Compaction (default: on, conflicts: 16)"
+              << std::endl;
+    std::cout << "      --seed <uint64>          Base solver seed (default: "
+              << util::default_seed << ")" << std::endl;
+    std::cout << "  -h, --help                   Show this help message" << std::endl;
+    std::cout << "Notes:" << std::endl;
+    std::cout << "  proof_path is an optional second positional argument for DRUP(⊕) output." << std::endl;
+}
+
 std::optional<double> parse_double_token(const char* token) {
     if (token == nullptr) {
         return std::nullopt;
@@ -104,7 +135,7 @@ std::optional<bool> parse_bool_token(const char* token) {
 
 } // namespace
 
-/// @brief Output mode for statistics reporting.
+/// @brief Output mode for solver statistics reporting.
 enum class StatsMode {
     console, ///< Print stats to stdout.
     csv      ///< Append stats to a CSV file.
@@ -206,7 +237,6 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
 /// @brief Entry point for the solver CLI.
 int main(int argc, char *argv[]) {
     bool help{false};
-    bool verbose{false};
     heuristics::DecisionProcedureName dpn{heuristics::DecisionProcedureName::clause_vsids};
     heuristics::CVsidsConfig cvsids_config{};
     heuristics::ClauseSelectorName csn{heuristics::ClauseSelectorName::cyclic};
@@ -224,17 +254,16 @@ int main(int argc, char *argv[]) {
         {"decision-phase", required_argument, 0, 'p'},
         {"stats-file", required_argument, 0, 's'},
         {"clause-selector", required_argument, 0, 'c'},
-        {"restart", required_argument, 0, 'r'},
+        {"restart", required_argument, 0, 1000},
         {"compact", required_argument, 0, 'x'},
-        {"seed", required_argument, 0, 'S'},
-        {"verbose", no_argument, 0, 'v'},
+        {"seed", required_argument, 0, 1001},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
 
     int option_index{0};
     while (true) {
-        const int option = getopt_long(argc, argv, "d:p:s:c:r:x:S:vh", long_options, &option_index);
+        const int option = getopt_long(argc, argv, "d:p:s:c:x:h", long_options, &option_index);
         if (option == -1) {
             break;
         }
@@ -315,16 +344,13 @@ int main(int argc, char *argv[]) {
                     csn = heuristics::ClauseSelectorName::lt_watchlist;
                 } else if (optarg_str == "exact_watchlist") {
                     csn = heuristics::ClauseSelectorName::exact_watchlist;
-                } else if (optarg_str == "exact_watchlist2") {
-                    // Backward-compatible alias: EW2 was renamed to exact_watchlist.
-                    csn = heuristics::ClauseSelectorName::exact_watchlist;
                 } else {
                     std::cerr << "Error: '" << optarg << "' is not a clause selector" << std::endl;
                     return 1;
                 }
                 break;
             }
-            case 'r': {
+            case 1000: {
                 restart_config = search::RestartConfig{};
                 std::string method{optarg};
                 if (method == "none") {
@@ -370,9 +396,6 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             }
-            case 'v':
-                verbose = true;
-                break;
             case 'x': {
                 auto maybe_bool = parse_bool_token(optarg);
                 if (!maybe_bool.has_value()) {
@@ -409,7 +432,7 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             }
-            case 'S': {
+            case 1001: {
                 auto maybe_seed = parse_u64_token(optarg);
                 if (!maybe_seed.has_value()) {
                     std::cerr << "Error: --seed expects an unsigned 64-bit integer" << std::endl;
@@ -422,38 +445,13 @@ int main(int argc, char *argv[]) {
                 help = true;
                 break;
             default:
-                std::cerr << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
+                print_usage(std::cerr, argv[0]);
                 return 1;
         }
     }
 
     if (help) {
-        std::cout << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
-        std::cout << "Options:" << std::endl;
-        std::cout << "  -d, --decision-proc <proc>   Decision procedure (default: clause_vsids)" << std::endl;
-        std::cout << "                               Options: fixed_literals, variable_vsids, clause_vsids, berkmin, cmtf" << std::endl;
-        std::cout << "                               Optional only for clause_vsids: [base decay bump]" << std::endl;
-        std::cout << "                               berkmin alias => clause_vsids 1 0.5 0" << std::endl;
-        std::cout << "                               cmtf alias => clause_vsids 1 0.25 1" << std::endl;
-        std::cout << "  -p, --decision-phase <phase> Decision phase for clause-based decisions (default: unsat)" << std::endl;
-        std::cout << "                               Options: unsat, sat, random" << std::endl;
-        std::cout << "  -s, --stats-file <path>      CSV output path (implies CSV stats format)" << std::endl;
-        std::cout << "  -c, --clause-selector <sel>  Clause selector (default: cyclic)" << std::endl;
-        std::cout << "                               Options: cyclic, lt_watchlist, exact_watchlist" << std::endl;
-        std::cout << "  -r, --restart <method> [rate] [arg2]" << std::endl;
-        std::cout << "                               Restart policy (default: none)" << std::endl;
-        std::cout << "                               none" << std::endl;
-        std::cout << "                               geometric [rate_increase>=1.0] [initial_conflicts>=1] (defaults: 1.5, 100)" << std::endl;
-        std::cout << "                               luby [unit_conflicts>=1] (default: 100)" << std::endl;
-        std::cout << "  -x, --compact <on|off> [conflicts>=1]  Compaction (default: on, conflicts: 16)"
-                  << std::endl;
-        std::cout << "  -S, --seed <uint64>         Base solver seed (default: "
-                  << util::default_seed << ")" << std::endl;
-        std::cout << "  -v, --verbose                Verbose mode (default: false)" << std::endl;
-        std::cout << "  -h, --help                   Show this help message" << std::endl;
-        std::cout << "Notes:" << std::endl;
-        std::cout << "  proof_path is an optional second positional argument for DRUP(⊕) output." << std::endl;
-        
+        print_help(argv[0]);
         return 0;
     }
 
@@ -462,7 +460,7 @@ int main(int argc, char *argv[]) {
         positional_args.emplace_back(argv[i]);
     }
     if (positional_args.empty() || positional_args.size() > 2) {
-        std::cerr << "Usage: " << argv[0] << " [options] <input> [proof_path]" << std::endl;
+        print_usage(std::cerr, argv[0]);
         return 1;
     }
 
@@ -482,7 +480,6 @@ int main(int argc, char *argv[]) {
     }
 
     stats_mode = stats_file.empty() ? StatsMode::console : StatsMode::csv;
-
     if (dpn == heuristics::DecisionProcedureName::clause_vsids) {
         if (!std::isfinite(cvsids_config.learned_base) || cvsids_config.learned_base < 0.0) {
             std::cerr << "Error: clause_vsids base must be finite and >= 0" << std::endl;
@@ -496,10 +493,6 @@ int main(int argc, char *argv[]) {
             std::cerr << "Error: clause_vsids decay must be finite and satisfy 0 < decay < 1" << std::endl;
             return 1;
         }
-    }
-
-    if (verbose && stats_mode == StatsMode::console) {
-        std::cout << "Verbose mode enabled" << std::endl;
     }
 
     std::shared_ptr<stats::StatsSink> sink;
@@ -530,11 +523,7 @@ int main(int argc, char *argv[]) {
     meta.decision_procedure = dpn;
     meta.decision_phase = phase;
     meta.clause_selector = csn;
-    meta.threads = 1;
-    meta.timeout_s = 0;
-    meta.deterministic = true;
     meta.seed = seed;
-    meta.runs_requested = 1;
     if (dpn == heuristics::DecisionProcedureName::clause_vsids) {
         meta.cvsids_learned_base = cvsids_config.learned_base;
         meta.cvsids_decay = cvsids_config.decay;

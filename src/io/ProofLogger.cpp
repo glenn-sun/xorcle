@@ -7,8 +7,10 @@
 namespace io {
 
 namespace {
-constexpr char kCommentPrefix = 'c';
+std::string make_stream_error_message(const char* function_name) {
+    return std::string{"ProofLogger::"} + function_name;
 }
+} // namespace
 
 ProofLogger::ProofLogger(const std::string& final_path)
     : final_path_(final_path),
@@ -16,6 +18,17 @@ ProofLogger::ProofLogger(const std::string& final_path)
       out_(temp_path_) {
     if (!out_.is_open()) {
         throw std::runtime_error("Unable to open proof temp file: " + temp_path_.string());
+    }
+}
+
+void ProofLogger::ensure_writable(const char* function_name) const {
+    if (finalized_) {
+        throw std::logic_error(make_stream_error_message(function_name) +
+                               ": cannot write after finalize()");
+    }
+    if (!out_.is_open()) {
+        throw std::logic_error(make_stream_error_message(function_name) +
+                               ": proof temp stream is not open");
     }
 }
 
@@ -30,12 +43,10 @@ ProofLogger::~ProofLogger() {
     }
 }
 
-void ProofLogger::log_comment(const std::string& comment) {
-    if (!out_.is_open()) return;
-    out_ << kCommentPrefix << " " << comment << "\n";
-}
-
 std::string ProofLogger::equation_to_token(const bit::vector<>& row) {
+    if (row.size() == 0) {
+        throw std::logic_error("ProofLogger::equation_to_token: proof rows must be non-empty");
+    }
     const std::size_t constant_idx = row.size() - 1;
     const bool rhs_is_one = !row.back();
 
@@ -61,7 +72,7 @@ std::string ProofLogger::equation_to_token(const bit::vector<>& row) {
 void ProofLogger::log_learned_clause(heuristics::ClauseId new_id,
                                      const algebra::Clause& clause,
                                      const std::vector<heuristics::ClauseId>& reason_ids) {
-    if (!out_.is_open()) return;
+    ensure_writable("log_learned_clause");
 
     out_ << (new_id + 1);
     for (const auto& row : clause) {
@@ -76,7 +87,7 @@ void ProofLogger::log_learned_clause(heuristics::ClauseId new_id,
 
 void ProofLogger::log_empty_clause(heuristics::ClauseId new_id,
                                    const std::vector<heuristics::ClauseId>& reason_ids) {
-    if (!out_.is_open()) return;
+    ensure_writable("log_empty_clause");
 
     out_ << (new_id + 1) << " 0";
     for (heuristics::ClauseId id : reason_ids) {
@@ -85,19 +96,10 @@ void ProofLogger::log_empty_clause(heuristics::ClauseId new_id,
     out_ << " 0\n";
 }
 
-void ProofLogger::log_delete_clauses(const std::vector<heuristics::ClauseId>& clause_ids) {
-    if (!out_.is_open() || clause_ids.empty()) return;
-    bool first = true;
-    for (heuristics::ClauseId id : clause_ids) {
-        if (!first) out_ << " ";
-        out_ << (id + 1);
-        first = false;
-    }
-    out_ << " 0\n";
-}
-
 void ProofLogger::finalize(bool keep) {
-    if (finalized_) return;
+    if (finalized_) {
+        return;
+    }
     finalized_ = true;
     out_.flush();
     out_.close();
@@ -110,6 +112,11 @@ void ProofLogger::finalize(bool keep) {
         if (ec) {
             std::filesystem::copy_file(temp_path_, final_path_,
                                        std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                throw std::runtime_error("ProofLogger::finalize: failed to write final proof file: " +
+                                         final_path_.string());
+            }
+            ec.clear();
             std::filesystem::remove(temp_path_, ec);
         }
     } else {

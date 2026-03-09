@@ -9,7 +9,7 @@
 
 namespace stats {
 
-/// @brief Thread-safe sink for aggregated statistics.
+/// @brief Thread-safe sink for solver statistics.
 class StatsSink {
 public:
     /// @brief Virtual destructor for interface use.
@@ -26,17 +26,18 @@ private:
     std::mutex mu_; ///< Guards log_impl to provide thread safety.
 };
 
-/// @brief Log aggregated statistics to stdout in a human-readable form.
+/// @brief Log solver statistics to stdout in a human-readable form.
 class ConsoleStatsSink : public StatsSink {
 protected:
     /// @brief Write a human-readable summary to stdout.
     void log_impl(const AggregateStats& stats) override;
 };
 
-/// @brief Log aggregated statistics to a CSV file.
+/// @brief Log solver statistics to a CSV file.
 class CsvStatsSink : public StatsSink {
 public:
     /// @brief Construct a CSV sink writing to the given file path.
+    /// @throws std::runtime_error If the output file cannot be opened.
     explicit CsvStatsSink(std::string path);
 
 protected:

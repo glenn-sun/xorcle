@@ -10,6 +10,34 @@
 
 namespace stats {
 
+namespace {
+
+std::optional<double> divide_or_nullopt(double numer, double denom) {
+    if (denom == 0.0) {
+        return std::nullopt;
+    }
+    return numer / denom;
+}
+
+void validate_run_shape(const std::vector<RunStats>& runs) {
+    if (runs.empty()) {
+        return;
+    }
+
+    const std::size_t expected_num_vars = runs.front().num_vars;
+    const std::size_t expected_start_clauses = runs.front().start_clauses;
+    for (const RunStats& run : runs) {
+        if (run.num_vars != expected_num_vars) {
+            throw std::invalid_argument("aggregate_runs: run set mixes different variable counts");
+        }
+        if (run.start_clauses != expected_start_clauses) {
+            throw std::invalid_argument("aggregate_runs: run set mixes different starting clause counts");
+        }
+    }
+}
+
+} // namespace
+
 std::string to_string(heuristics::DecisionProcedureName name) {
     using heuristics::DecisionProcedureName;
     switch (name) {
@@ -49,13 +77,6 @@ std::string to_string(heuristics::ClauseSelectorName name) {
     return "unknown";
 }
 
-std::optional<double> safe_div(double numer, double denom) {
-    if (denom == 0.0) {
-        return std::nullopt;
-    }
-    return numer / denom;
-}
-
 AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunStats>& runs) {
     AggregateStats out;
     out.run_id = meta.run_id;
@@ -64,33 +85,26 @@ AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunSt
     out.decision_procedure = meta.decision_procedure;
     out.decision_phase = meta.decision_phase;
     out.clause_selector = meta.clause_selector;
-    out.threads = meta.threads;
-    out.timeout_s = meta.timeout_s;
-    out.deterministic = meta.deterministic;
     out.seed = meta.seed;
     out.cvsids_learned_base = meta.cvsids_learned_base;
     out.cvsids_decay = meta.cvsids_decay;
     out.cvsids_bump = meta.cvsids_bump;
-    out.runs_requested = meta.runs_requested;
 
     if (runs.empty()) {
         return out;
     }
 
+    validate_run_shape(runs);
     out.num_vars = runs.front().num_vars;
     out.start_clauses = runs.front().start_clauses;
 
-    std::size_t completed = 0;
-    std::size_t timeouts = 0;
     std::size_t sat_count = 0;
     std::size_t unsat_count = 0;
 
     for (const auto& run : runs) {
         if (run.result == SolveResult::Timeout) {
-            ++timeouts;
             continue;
         }
-        ++completed;
         if (run.result == SolveResult::Sat) {
             ++sat_count;
         } else if (run.result == SolveResult::Unsat) {
@@ -115,8 +129,6 @@ AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunSt
     std::size_t selected_index = order[order.size() / 2];
     const RunStats& selected = runs[selected_index];
 
-    out.runs_completed = completed;
-    out.timeout_count = timeouts;
     out.sat_count = sat_count;
     out.unsat_count = unsat_count;
 
@@ -144,13 +156,14 @@ AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunSt
     out.restarts = selected.num_restarts;
     out.decisions = selected.decisions;
     out.fallback_decisions = selected.fallback_decisions;
-    out.fallback_pct = safe_div(100.0 * static_cast<double>(selected.fallback_decisions),
-                                static_cast<double>(selected.decisions));
-    out.prop_per_conflict = safe_div(static_cast<double>(selected.num_propagations),
-                                     static_cast<double>(selected.num_conflicts));
+    out.fallback_pct = divide_or_nullopt(100.0 * static_cast<double>(selected.fallback_decisions),
+                                         static_cast<double>(selected.decisions));
+    out.prop_per_conflict = divide_or_nullopt(static_cast<double>(selected.num_propagations),
+                                              static_cast<double>(selected.num_conflicts));
     out.attempts_per_prop_watch_conflict =
-        safe_div(static_cast<double>(selected.num_attempt_props),
-                 static_cast<double>(selected.num_propagations + selected.num_watch_updates + selected.num_conflicts));
+        divide_or_nullopt(static_cast<double>(selected.num_attempt_props),
+                          static_cast<double>(selected.num_propagations + selected.num_watch_updates +
+                                              selected.num_conflicts));
 
     if (selected.result == SolveResult::Sat && selected.sat_assignment.has_value()) {
         out.sat_assignment = selected.sat_assignment;

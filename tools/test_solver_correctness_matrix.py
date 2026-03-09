@@ -28,8 +28,8 @@ DECISION_PROCS = ("clause_vsids",)
 CLAUSE_SELECTORS = ("cyclic", "exact_watchlist")
 DECISION_PHASES = ("unsat",)
 DEFAULT_SEED = 0
-RESULT_RE = re.compile(r"^Result:\s*(SAT|UNSAT|TIMEOUT)\s*$", re.MULTILINE)
-ASSIGNMENT_RE = re.compile(r"^Satisfying assignment:\s*\[(.*?)\]\s*$", re.MULTILINE | re.DOTALL)
+RESULT_RE = re.compile(r"^s\s+(SATISFIABLE|UNSATISFIABLE)\s*$", re.MULTILINE)
+ASSIGNMENT_RE = re.compile(r"^v\s+(.*?)$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -167,20 +167,25 @@ def parse_solver_status(output: str) -> Optional[str]:
     match = RESULT_RE.search(output)
     if match is None:
         return None
-    return match.group(1)
+    return "SAT" if match.group(1) == "SATISFIABLE" else "UNSAT"
 
 
 def parse_assignment(output: str) -> Optional[List[int]]:
-    match = ASSIGNMENT_RE.search(output)
-    if match is None:
+    assignment_lines = ASSIGNMENT_RE.findall(output)
+    if not assignment_lines:
         return None
-    raw = match.group(1).strip()
-    if not raw:
-        return []
+
+    literals: List[int] = []
     try:
-        return [int(tok) for tok in raw.split()]
+        for line in assignment_lines:
+            for token in line.split():
+                literal = int(token)
+                if literal == 0:
+                    return [1 if value > 0 else 0 for value in literals]
+                literals.append(literal)
     except ValueError:
         return None
+    return None
 
 
 def evaluate_equation(eq: Equation, assignment: Sequence[int]) -> bool:

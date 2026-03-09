@@ -17,6 +17,8 @@ struct ParsedDimacs {
 /// @brief Parse a DIMACS file into clause structures.
 /// @param filename Path to the DIMACS file.
 /// @return ParsedDimacs containing variables and clauses.
+/// @note Accepts both `p cnf ...` and `p xnf ...` headers. Clause lines use the
+/// repository's extended DIMACS/XNF token syntax for XOR rows.
 /// @throws std::runtime_error on malformed input.
 ParsedDimacs parse_dimacs_file(const std::string& filename);
 

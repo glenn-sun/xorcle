@@ -46,11 +46,7 @@ struct AggregateMeta {
     heuristics::DecisionProcedureName decision_procedure; ///< Decision procedure used.
     heuristics::DecisionPhase decision_phase = heuristics::DecisionPhase::unsat; ///< Decision phase used.
     heuristics::ClauseSelectorName clause_selector;   ///< Clause selector used.
-    std::size_t threads = 0;                          ///< Number of threads requested.
-    std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
-    bool deterministic = true;                        ///< Whether the run is deterministic.
     std::uint64_t seed = 0;                           ///< Seed required to reproduce the run exactly.
-    std::size_t runs_requested = 1;                   ///< Number of runs requested.
     std::optional<double> cvsids_learned_base;        ///< CVsids learned-clause base multiplier, when applicable.
     std::optional<double> cvsids_decay;               ///< CVsids decay factor, when applicable.
     std::optional<double> cvsids_bump;                ///< CVsids bump amount, when applicable.
@@ -64,17 +60,11 @@ struct AggregateStats {
     heuristics::DecisionProcedureName decision_procedure; ///< Decision procedure used.
     heuristics::DecisionPhase decision_phase = heuristics::DecisionPhase::unsat; ///< Decision phase used.
     heuristics::ClauseSelectorName clause_selector;   ///< Clause selector used.
-    std::size_t threads = 0;                          ///< Number of threads requested.
-    std::size_t timeout_s = 0;                        ///< Timeout per run in seconds.
-    bool deterministic = true;                        ///< Whether the run is deterministic.
     std::uint64_t seed = 0;                           ///< Seed required to reproduce the run exactly.
     std::optional<double> cvsids_learned_base;        ///< CVsids learned-clause base multiplier, when applicable.
     std::optional<double> cvsids_decay;               ///< CVsids decay factor, when applicable.
     std::optional<double> cvsids_bump;                ///< CVsids bump amount, when applicable.
 
-    std::size_t runs_requested = 1;                   ///< Number of runs requested.
-    std::size_t runs_completed = 0;                   ///< Number of non-timeout runs completed.
-    std::size_t timeout_count = 0;                    ///< Number of timed-out runs.
     std::size_t sat_count = 0;                        ///< Number of SAT runs.
     std::size_t unsat_count = 0;                      ///< Number of UNSAT runs.
     std::string result;                               ///< Selected run classification.
@@ -107,9 +97,6 @@ std::string to_string(heuristics::DecisionPhase phase);
 
 /// @brief Convert a clause selector enum to a stable string label.
 std::string to_string(heuristics::ClauseSelectorName name);
-
-/// @brief Divide two doubles and return std::nullopt when denom is zero.
-std::optional<double> safe_div(double numer, double denom);
 
 /// @brief Aggregate multiple RunStats into a summary record.
 AggregateStats aggregate_runs(const AggregateMeta& meta, const std::vector<RunStats>& runs);

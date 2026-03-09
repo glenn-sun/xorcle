@@ -24,9 +24,6 @@ public:
     ProofLogger(const ProofLogger&) = delete;
     ProofLogger& operator=(const ProofLogger&) = delete;
 
-    /// @brief Log a comment line.
-    void log_comment(const std::string& comment);
-
     /// @brief Log a learned clause line.
     /// @param new_id Clause id (0-based).
     /// @param clause Learned clause.
@@ -43,11 +40,9 @@ public:
     void log_empty_clause(heuristics::ClauseId new_id,
                           const std::vector<heuristics::ClauseId>& reason_ids);
 
-    /// @brief Log clause deletions (not used by the solver yet).
-    void log_delete_clauses(const std::vector<heuristics::ClauseId>& clause_ids);
-
     /// @brief Finalize the proof file.
     /// @param keep If true, move temp file to final path; otherwise delete it.
+    /// @throws std::runtime_error If the final proof file cannot be materialized.
     void finalize(bool keep);
 
 private:
@@ -55,6 +50,11 @@ private:
     std::filesystem::path temp_path_;
     std::ofstream out_;
     bool finalized_{false};
+
+    /// @brief Require the temp proof file to still be open for writes.
+    /// @param function_name Name of the logging function using the stream.
+    /// @throws std::logic_error If the logger has already been finalized or its stream is closed.
+    void ensure_writable(const char* function_name) const;
 
     /// @brief Construct a temp-file path adjacent to the final proof path.
     std::filesystem::path make_temp_path(const std::filesystem::path& final_path) const;

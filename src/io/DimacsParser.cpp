@@ -1,14 +1,150 @@
 #include "io/DimacsParser.h"
 
+#include <cstddef>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
-#include <cstdlib>
+#include <string>
 #include <utility>
 
 #include "algebra/Equation.h"
 
 namespace io {
+
+namespace {
+
+struct ParsedHeader {
+    std::size_t num_vars = 0;
+    std::size_t num_clauses = 0;
+};
+
+void trim_trailing_cr(std::string& line) {
+    if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+    }
+}
+
+bool is_comment_or_empty(const std::string& line) {
+    return line.empty() || line[0] == 'c';
+}
+
+ParsedHeader parse_header_line(const std::string& header_line) {
+    std::istringstream header_stream{header_line};
+    std::string p_token;
+    std::string format_token;
+    ParsedHeader header;
+    std::string trailing_token;
+
+    if (!(header_stream >> p_token >> format_token >> header.num_vars >> header.num_clauses) ||
+        (header_stream >> trailing_token)) {
+        throw std::runtime_error("Invalid DIMACS/XNF header: " + header_line);
+    }
+    if (p_token != "p") {
+        throw std::runtime_error("Invalid DIMACS/XNF header prefix: " + header_line);
+    }
+    if (format_token != "cnf" && format_token != "xnf") {
+        throw std::runtime_error("Unsupported DIMACS/XNF format token: " + format_token);
+    }
+    return header;
+}
+
+algebra::Equation parse_clause_token(const std::string& token, std::size_t num_vars) {
+    algebra::Equation equation{algebra::Equation::zeros(num_vars + 1)};
+
+    if (token.find('+') == std::string::npos) {
+        int literal = 0;
+        try {
+            literal = std::stoi(token);
+        } catch (...) {
+            throw std::runtime_error("Invalid literal token: " + token);
+        }
+
+        if (literal == 0) {
+            throw std::runtime_error("Clause terminator must not be parsed as a literal token");
+        }
+        if (literal < 0) {
+            literal = std::abs(literal);
+            equation.set(num_vars);
+        }
+        if (literal <= 0 || static_cast<std::size_t>(literal) > num_vars) {
+            throw std::runtime_error("Variable out of range: " + token);
+        }
+
+        equation.set(static_cast<std::size_t>(literal - 1));
+        return equation;
+    }
+
+    bool leading_negation = false;
+    std::size_t token_pos = 0;
+    if (!token.empty() && token[0] == '-') {
+        leading_negation = true;
+        token_pos = 1;
+    }
+
+    if (token.find('-', token_pos) != std::string::npos) {
+        throw std::runtime_error("Illegal '-' inside XOR expression: " + token);
+    }
+
+    const std::string xor_body = token.substr(token_pos);
+    if (xor_body.empty()) {
+        throw std::runtime_error("Empty XOR expression after '-' in token: " + token);
+    }
+
+    std::size_t term_start = 0;
+    while (term_start < xor_body.size()) {
+        const std::size_t plus_pos = xor_body.find('+', term_start);
+        const std::string variable_token =
+            (plus_pos == std::string::npos)
+                ? xor_body.substr(term_start)
+                : xor_body.substr(term_start, plus_pos - term_start);
+
+        if (variable_token.empty()) {
+            throw std::runtime_error("Empty variable in XOR expression: " + token);
+        }
+
+        int variable = 0;
+        try {
+            variable = std::stoi(variable_token);
+        } catch (...) {
+            throw std::runtime_error("Invalid integer in XOR expression: " + variable_token);
+        }
+        if (variable <= 0 || static_cast<std::size_t>(variable) > num_vars) {
+            throw std::runtime_error("Variable out of range: " + variable_token);
+        }
+
+        equation.set(static_cast<std::size_t>(variable - 1));
+
+        if (plus_pos == std::string::npos) {
+            break;
+        }
+        term_start = plus_pos + 1;
+    }
+
+    if (leading_negation) {
+        equation.set(num_vars);
+    }
+
+    return equation;
+}
+
+algebra::Clause parse_clause_line(const std::string& line, std::size_t num_vars) {
+    algebra::Clause clause(num_vars);
+    std::istringstream line_stream{line};
+    std::string token;
+
+    while (line_stream >> token) {
+        if (token == "0") {
+            return clause;
+        }
+        clause.add_row(parse_clause_token(token, num_vars));
+    }
+
+    return clause;
+}
+
+} // namespace
+
 ParsedDimacs parse_dimacs_file(const std::string& filename) {
     std::ifstream file{filename};
     std::string line;
@@ -17,126 +153,37 @@ ParsedDimacs parse_dimacs_file(const std::string& filename) {
         throw std::runtime_error("Unable to open file: " + filename);
     }
 
-    // Skip comments and empty lines until header
-    while (std::getline(file, line) && (line.empty() || line[0] == 'c')) {}
-
-    if (line.empty() || line[0] != 'p') {
-        throw std::runtime_error("Invalid DIMACS header: " + line);
+    while (std::getline(file, line)) {
+        trim_trailing_cr(line);
+        if (!is_comment_or_empty(line)) {
+            break;
+        }
     }
 
-    std::istringstream header_ss{line};
-    std::string p_tok, cnf_tok;
-    std::size_t num_vars;
-    std::size_t tmp_num_clauses;
-    header_ss >> p_tok >> cnf_tok >> num_vars >> tmp_num_clauses;
+    if (line.empty()) {
+        throw std::runtime_error("Missing DIMACS/XNF header in file: " + filename);
+    }
+
+    const ParsedHeader header = parse_header_line(line);
 
     ParsedDimacs parsed;
-    parsed.num_vars = num_vars;
-    parsed.clauses.reserve(tmp_num_clauses);
+    parsed.num_vars = header.num_vars;
+    parsed.clauses.reserve(header.num_clauses);
 
-    // Read clause lines
     while (std::getline(file, line)) {
-        if (line.empty() || line[0] == 'c') continue;
-
-        // remove any trailing CR (windows files)
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-
-        algebra::Clause clause(num_vars);
-        std::istringstream iss{line};
-        std::string token;
-
-        while (iss >> token) {
-            if (token == "0") break;
-
-            algebra::Equation equation{algebra::Equation::zeros(num_vars + 1)};
-
-            // If token contains '+' it's a plus-expression (equation)
-            if (token.find('+') != std::string::npos) {
-                bool leading_neg = false;
-                size_t pos = 0;
-
-                // allow a leading '-' only; disallow '-' elsewhere
-                if (!token.empty() && token[0] == '-') {
-                    leading_neg = true;
-                    pos = 1; // skip the leading '-'
-                }
-
-                // ensure there is no '-' anywhere else in the token
-                if (token.find('-', pos) != std::string::npos) {
-                    throw std::runtime_error("Illegal '-' inside XOR expression: " + token);
-                }
-
-                // substring to split
-                std::string body = token.substr(pos);
-                if (body.empty()) {
-                    throw std::runtime_error("Empty XOR expression after '-' in token: " + token);
-                }
-
-                // split on '+'
-                size_t start = 0;
-                while (start < body.size()) {
-                    size_t plus_pos = body.find('+', start);
-                    std::string var_str = (plus_pos == std::string::npos)
-                                          ? body.substr(start)
-                                          : body.substr(start, plus_pos - start);
-
-                    if (var_str.empty()) {
-                        throw std::runtime_error("Empty variable in XOR expression: " + token);
-                    }
-
-                    int var;
-                    try {
-                        var = std::stoi(var_str);
-                    } catch (...) {
-                        throw std::runtime_error("Invalid integer in XOR expression: " + var_str);
-                    }
-
-                    if (var <= 0 || static_cast<std::size_t>(var) > num_vars) {
-                        throw std::runtime_error("Variable out of range: " + var_str);
-                    }
-
-                    equation.set(var - 1);
-
-                    if (plus_pos == std::string::npos) break;
-                    start = plus_pos + 1;
-                }
-
-                if (leading_neg) {
-                    // leading negative toggles parity / RHS -> same as other format
-                    equation.set(num_vars);
-                }
-
-            } else { // legacy single literal (possibly negative)
-                int literal;
-                try {
-                    literal = std::stoi(token);
-                } catch (...) {
-                    throw std::runtime_error("Invalid literal token: " + token);
-                }
-
-                if (literal == 0) {
-                    break; // defensive: if someone wrote "0" without whitespace
-                }
-
-                if (literal < 0) {
-                    literal = std::abs(literal);
-                    equation.set(num_vars); // toggle parity for negative single-literal token
-                }
-
-                if (literal <= 0 || static_cast<std::size_t>(literal) > num_vars) {
-                    throw std::runtime_error("Variable out of range: " + token);
-                }
-
-                equation.set(literal - 1);
-            }
-
-            clause.add_row(equation);
+        trim_trailing_cr(line);
+        if (is_comment_or_empty(line)) {
+            continue;
         }
-
-        parsed.clauses.push_back(std::move(clause));
+        parsed.clauses.push_back(parse_clause_line(line, header.num_vars));
     }
 
-    file.close();
+    if (parsed.clauses.size() != header.num_clauses) {
+        throw std::runtime_error("Clause count mismatch: header declares " +
+                                 std::to_string(header.num_clauses) + ", parsed " +
+                                 std::to_string(parsed.clauses.size()));
+    }
+
     return parsed;
 }
 } // namespace io

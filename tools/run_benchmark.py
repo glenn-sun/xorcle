@@ -22,9 +22,9 @@ from xnf_lib import write_cnf
 
 
 SAT_RE = re.compile(r"^s\s+(SATISFIABLE|UNSATISFIABLE)\s*$", re.MULTILINE)
-SOLVER_RESULT_RE = re.compile(r"^Result:\s*(SAT|UNSAT|TIMEOUT)\s*$", re.MULTILINE)
-SOLVER_TIME_RE = re.compile(r"^Time:\s*([0-9]+(?:\.[0-9]+)?)\s+s\s*$", re.MULTILINE)
-SOLVER_DECISIONS_RE = re.compile(r"(?im)^\s*(?:c\s+)?decisions?\s*:\s*([0-9]+)\b")
+SOLVER_RESULT_RE = re.compile(r"^s\s+(SATISFIABLE|UNSATISFIABLE)\s*$", re.MULTILINE)
+SOLVER_TIME_RE = re.compile(r"^c\s+Time:\s*([0-9]+(?:\.[0-9]+)?)\s+s\s*$", re.MULTILINE)
+SOLVER_DECISIONS_RE = re.compile(r"(?im)^c\s+Decisions:\s*([0-9]+)\b")
 
 RAW_CSV_FIELDS = [
     "file",
@@ -251,7 +251,7 @@ def parse_solver_status_and_time_from_console(output: str) -> tuple[Optional[str
     t_s = None
     m_status = SOLVER_RESULT_RE.search(output)
     if m_status:
-        status = m_status.group(1)
+        status = "SAT" if m_status.group(1) == "SATISFIABLE" else "UNSAT"
     m_time = SOLVER_TIME_RE.search(output)
     if m_time:
         try:
