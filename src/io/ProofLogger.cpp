@@ -35,7 +35,7 @@ void ProofLogger::log_comment(const std::string& comment) {
     out_ << kCommentPrefix << " " << comment << "\n";
 }
 
-bool ProofLogger::equation_to_token(const bit::vector<>& row, std::string& out_token) {
+std::string ProofLogger::equation_to_token(const bit::vector<>& row) {
     const std::size_t constant_idx = row.size() - 1;
     const bool rhs_is_one = !row.back();
 
@@ -49,15 +49,13 @@ bool ProofLogger::equation_to_token(const bit::vector<>& row, std::string& out_t
     });
 
     if (!any_var) {
-        return false;
+        throw std::logic_error("ProofLogger::equation_to_token: constant-only rows cannot be emitted as learned-clause tokens");
     }
 
     if (!rhs_is_one) {
-        out_token = "-" + oss.str();
-    } else {
-        out_token = oss.str();
+        return "-" + oss.str();
     }
-    return true;
+    return oss.str();
 }
 
 void ProofLogger::log_learned_clause(heuristics::ClauseId new_id,
@@ -67,12 +65,7 @@ void ProofLogger::log_learned_clause(heuristics::ClauseId new_id,
 
     out_ << (new_id + 1);
     for (const auto& row : clause) {
-        std::string token;
-        if (!equation_to_token(row, token)) {
-            log_comment("Skipping constant-only equation in clause id " + std::to_string(new_id + 1));
-            return;
-        }
-        out_ << " " << token;
+        out_ << " " << equation_to_token(row);
     }
     out_ << " 0";
     for (heuristics::ClauseId id : reason_ids) {

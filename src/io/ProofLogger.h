@@ -31,6 +31,8 @@ public:
     /// @param new_id Clause id (0-based).
     /// @param clause Learned clause.
     /// @param reason_ids Clause ids (0-based) in unit-propagation order.
+    /// @throws std::logic_error If `clause` contains a constant-only row, which is not a
+    /// valid learned-clause token in the emitted proof format.
     void log_learned_clause(heuristics::ClauseId new_id,
                             const algebra::Clause& clause,
                             const std::vector<heuristics::ClauseId>& reason_ids);
@@ -54,8 +56,14 @@ private:
     std::ofstream out_;
     bool finalized_{false};
 
+    /// @brief Construct a temp-file path adjacent to the final proof path.
     std::filesystem::path make_temp_path(const std::filesystem::path& final_path) const;
-    static bool equation_to_token(const bit::vector<>& row, std::string& out_token);
+
+    /// @brief Convert one proof row into the emitted token syntax.
+    /// @param row Equation row to encode.
+    /// @return Encoded proof token.
+    /// @throws std::logic_error If `row` is constant-only.
+    static std::string equation_to_token(const bit::vector<>& row);
 };
 
 } // namespace io

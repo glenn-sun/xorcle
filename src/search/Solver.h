@@ -11,6 +11,7 @@
 #include "PrintMode.h"
 #include "algebra/Equation.h"
 #include "algebra/RowSpace.h"
+#include "algebra/TrailBasisSpace.h"
 #include "bit/vector.h"
 #include "heuristics/ClauseSelector.h"
 #include "heuristics/DecisionProcedure.h"
@@ -55,6 +56,12 @@ namespace ResultCase {
 using Result = std::variant<ResultCase::Timeout, ResultCase::Unsat, ResultCase::Sat>;
 
 /// @brief Main solver class implementing propagation, decision, and learning.
+/// @note `trail`, `clause_sel`, `dec_proc`, `propagation`, `conflict_check_eqn`, and
+/// `false_eqn_active` always live in the current active variable space.
+/// `original_num_vars` never changes, `active_var_to_original` maps only the
+/// current active space back to original variable indices, and
+/// `compaction_history` records the eliminated active spaces needed to recover
+/// original assignments and lift proof rows.
 class Solver {
 private:
     /// @brief Enable variable compaction before decisions.
@@ -76,29 +83,16 @@ private:
     std::size_t active_num_vars;
 
     /// @brief Active variable index -> original variable index.
-    std::vector<std::size_t> active_to_original;
-
-    struct CompactedUnitProofEntry {
-        algebra::Equation eqn_original;
-        std::optional<heuristics::ClauseId> reason_id;
-    };
-
-    struct CompactionStep {
-        CompactionTransform transform;
-        std::vector<std::size_t> active_to_original_before;
-        std::vector<std::size_t> eliminated_original_vars;
-        std::vector<algebra::Equation> span_rows_old;
-        std::vector<algebra::Equation> lifted_span_rows_original;
-    };
+    std::vector<std::size_t> active_var_to_original;
 
     /// @brief Historical compaction steps, oldest to newest.
-    std::vector<CompactionStep> compaction_history;
+    std::vector<CompactionHistoryEntry> compaction_history;
 
-    /// @brief Ordered compacted assumptions used for proof augmentation.
-    std::vector<CompactedUnitProofEntry> compacted_units_for_proof;
+    /// @brief Ordered original-space assumptions carried forward for proof augmentation.
+    std::vector<ProofAssumption> proof_assumptions;
 
     /// @brief Next proof clause id to allocate for lines not backed by solver clauses.
-    heuristics::ClauseId proof_clause_id_allocator = 0;
+    heuristics::ClauseId next_proof_clause_id = 0;
 
     Trail trail; ///< Trail of learned equations (decision levels).
     std::shared_ptr<heuristics::ClauseSelector> clause_sel; ///< Clause selector strategy.
@@ -107,21 +101,50 @@ private:
     RestartPolicy restart_policy; ///< Conflict-driven restart scheduler.
     std::shared_ptr<io::ProofLogger> proof_logger; ///< Optional proof logger.
 
-    algebra::Equation working_eqn; ///< Reusable buffer for conflict checks.
+    algebra::Equation conflict_check_eqn; ///< Reusable buffer for contradiction checks.
 
-    algebra::Equation eqn_false; ///< Constant false equation (1 = 0) in active space.
+    algebra::Equation false_eqn_active; ///< Constant false equation (1 = 0) in active space.
 
-    /// @brief Lift an active-space equation to original variable indexing.
-    algebra::Equation lift_active_equation_to_original(const algebra::Equation& eqn_active) const;
+    /// @brief Replace the live active-space state with a staged compaction result.
+    /// @param compaction_plan Fully prepared compaction result in the new active space.
+    void apply_compaction(CompactionPlan compaction_plan);
 
-    /// @brief Build a proof-logging clause in original variable indexing.
-    algebra::Clause build_proof_clause_from_active(const algebra::Clause& clause_active) const;
+    /// @brief Perform compaction before a decision if trigger conditions are met.
+    /// @return True if compaction succeeded and replaced the active solver state.
+    /// @note Returning false is normal only when compaction is not currently applicable.
+    bool maybe_compact_before_decision();
 
-    /// @brief Reconstruct a full original-width assignment from active-space assignment.
-    bit::vector<> reconstruct_original_assignment(const bit::vector<>& active_assignment) const;
+    /// @brief Collect original-space proof units implied by the current trail before compaction.
+    /// @param history_entry Compaction history entry being recorded.
+    /// @return Ordered unique proof-unit rows in original variable indexing.
+    std::vector<ProofAssumption> collect_proof_assumptions_from_trail(
+        const CompactionHistoryEntry& history_entry) const;
 
-    /// @brief Perform level-0 variable compaction before decisions if trigger conditions are met.
-    bool maybe_compact_level0_before_decision();
+    /// @brief Propagate until quiescence or conflict.
+    /// @return True if propagation learned a contradiction equation.
+    bool propagate_until_conflict();
+
+    /// @brief Handle a level-0 conflict and emit the final UNSAT proof lines if enabled.
+    Result handle_root_conflict_unsat();
+
+    /// @brief Emit the final UNSAT proof once the root trail already contains a contradiction.
+    void write_root_unsat_proof();
+
+    /// @brief Analyze a non-root conflict, optionally restart, and learn the asserting clause.
+    void handle_non_root_conflict();
+
+    /// @brief Make the next decision and apply it to trail and clause selector state.
+    void make_decision_step();
+
+    /// @brief Resolve one trail-basis step while building an asserting clause.
+    /// @param asserting_basis Current asserting clause in trail coordinates.
+    /// @param pivot_basis_col First non-zero trail-basis column being eliminated.
+    /// @param trail Current conflicting trail.
+    /// @param reason_ids Optional output buffer for derivation-order reasons.
+    void resolve_asserting_basis_with_reason(algebra::TrailBasisSpace& asserting_basis,
+                                            std::size_t pivot_basis_col,
+                                            const Trail& trail,
+                                            std::vector<heuristics::ClauseId>* reason_ids);
 
 public:
     /// @brief Construct a solver from variable count, clause selector, and decision procedure.
@@ -163,7 +186,12 @@ public:
     algebra::Clause& get_clause(heuristics::ClauseId id);
 
     /// @brief Find an asserting clause for the current conflict.
-    /// @pre trail ends with a contradiction equation.
+    /// @param trail Current conflicting trail.
+    /// @param reason_ids Optional output buffer for clause ids in derivation order.
+    /// @return Asserting clause and the number of trailing decision levels it can remove.
+    /// @pre `trail` ends with a contradiction equation whose learned row has a reason.
+    /// @post The returned clause has width `active_num_vars + 1`.
+    /// @post Reversing `reason_ids` once yields proof order for the learned clause.
     std::pair<algebra::Clause, std::size_t> find_asserting_clause(
         const Trail& trail,
         std::vector<heuristics::ClauseId>* reason_ids = nullptr);

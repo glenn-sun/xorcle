@@ -29,9 +29,13 @@ public:
     bool enabled() const;
 
     /// @brief Record one non-root conflict and report whether to restart now.
+    /// @return True exactly when the current conflict exhausts the active restart budget.
+    /// @note This consumes a conflict from the current budget, but does not advance to
+    /// the next budget. Call `note_restart()` only after an actual restart happens.
     bool should_restart_after_conflict();
 
     /// @brief Advance to the next restart budget after an actual restart.
+    /// @note This must be called only after the solver has really restarted.
     void note_restart();
 
     /// @brief Return the 1-indexed Luby sequence value.
