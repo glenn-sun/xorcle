@@ -18,10 +18,12 @@ from benchmark_orchestration import manifest_rows_for_grouped_instances
 from benchmark_orchestration import sample_key_for
 from benchmark_orchestration import should_report_progress
 from benchmark_orchestration import solver_line_key
-from benchmark_plot_style import PanelBlockLayout, UNIFIED_DPI, UNIFIED_FONT_SIZE
+from benchmark_plot_style import UNIFIED_DPI, UNIFIED_FONT_SIZE
 from benchmark_plot_style import block_layout_axes_rect
 from benchmark_plot_style import block_layout_figure_size
 from benchmark_plot_style import block_layout_legend_anchor
+from benchmark_plot_style import paper_legend_style
+from benchmark_plot_style import xorcle_heuristics_layout
 from plot_cactus import SeriesData, draw_cactus_axes, series_points
 from tool_common import repo_root
 
@@ -78,8 +80,8 @@ TEST_SPECS: Dict[str, TestSpec] = {
         test_id="decision_proc",
         subplot_title="Decision Procedure",
         variants=(
-            VariantSpec(label="variable_vsids", display_name="Variable VSIDS", solver_passthrough=("-d", "variable_vsids")),
             VariantSpec(label="clause_vsids", display_name="Clause VSIDS", solver_passthrough=("-d", "clause_vsids")),
+            VariantSpec(label="variable_vsids", display_name="Variable VSIDS", solver_passthrough=("-d", "variable_vsids")),
             VariantSpec(label="berkmin", display_name="BerkMin-like", solver_passthrough=("-d", "berkmin")),
             VariantSpec(label="cmtf", display_name="CMTF-like", solver_passthrough=("-d", "cmtf")),
         ),
@@ -88,8 +90,8 @@ TEST_SPECS: Dict[str, TestSpec] = {
         test_id="decision_phase",
         subplot_title="Phase Selection",
         variants=(
-            VariantSpec(label="sat", display_name="Satisfy", solver_passthrough=("-p", "sat")),
             VariantSpec(label="unsat", display_name="Falsify", solver_passthrough=("-p", "unsat")),
+            VariantSpec(label="sat", display_name="Satisfy", solver_passthrough=("-p", "sat")),
             VariantSpec(label="random", display_name="Random", solver_passthrough=("-p", "random")),
         ),
     ),
@@ -180,7 +182,8 @@ def legend_label_for_series(series: SeriesData) -> str:
     return f"{series.label}\n({solved}/{total} solved)"
 
 
-def render_panel(fig, layout: PanelBlockLayout, *, row: int, col: int, title: str, series: Sequence[SeriesData]) -> None:
+def render_panel(fig, layout, *, row: int, col: int, title: str, series: Sequence[SeriesData]) -> None:
+    legend_style = paper_legend_style()
     ax = fig.add_axes(block_layout_axes_rect(layout, row=row, col=col))
     draw_cactus_axes(
         ax,
@@ -207,15 +210,16 @@ def render_panel(fig, layout: PanelBlockLayout, *, row: int, col: int, title: st
         frameon=False,
         loc="center left",
         bbox_to_anchor=block_layout_legend_anchor(layout, row=row, col=col),
-        borderaxespad=0.0,
-        handleheight=1.4,
-        labelspacing=0.8,
+        bbox_transform=fig.transFigure,
+        borderaxespad=legend_style.borderaxespad,
+        handleheight=legend_style.handleheight,
+        labelspacing=legend_style.labelspacing,
     )
 
 
 def render_plot(per_test_variant_rows: Dict[str, Sequence[tuple[VariantSpec, Sequence[Dict[str, str]]]]], output_path: Path) -> None:
     plt = import_matplotlib_pyplot()
-    layout = PanelBlockLayout(rows=2, cols=2, panel_height=1.45, per_panel_legend_width=0.95)
+    layout = xorcle_heuristics_layout()
     fig = plt.figure(figsize=block_layout_figure_size(layout))
     for index, test_id in enumerate(TEST_ORDER):
         render_panel(

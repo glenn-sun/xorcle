@@ -17,6 +17,7 @@ from benchmark_plot_style import (
     UNIFIED_DPI,
     UNIFIED_FONT_SIZE,
     apply_common_axes_style,
+    apply_log_tick_format,
     create_unified_figure,
     finalize_figure,
     place_right_legend,
@@ -32,10 +33,10 @@ def import_matplotlib():
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from matplotlib.ticker import FixedLocator, FuncFormatter
+        from matplotlib.ticker import FixedLocator
     except ModuleNotFoundError as exc:  # pragma: no cover
         raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
-    return plt, FixedLocator, FuncFormatter
+    return plt, FixedLocator
 
 
 @dataclass(frozen=True)
@@ -252,9 +253,7 @@ def row_matches_filters(row: Dict[str, str], source_label: str, filters: Sequenc
 def resolved_runtime_s(row: Dict[str, str], include_timeouts: bool) -> Optional[float]:
     status = (row.get("status") or "").strip().upper()
     if status in {"SAT", "UNSAT"}:
-        raw = (row.get("parsed_solver_time_s") or "").strip()
-        if not raw:
-            raw = (row.get("elapsed_wall_s") or "").strip()
+        raw = (row.get("elapsed_wall_s") or "").strip()
     elif include_timeouts and status in {"TIMEOUT", "MEMORY"}:
         raw = (row.get("timeout_s") or "").strip()
         if not raw:
@@ -369,17 +368,6 @@ def build_series(
     return [SeriesData(label=k, rows=v) for k, v in sorted(grouped.items(), key=lambda kv: kv[0])]
 
 
-def plain_tick_label(v: float, _pos: int) -> str:
-    if v <= 0:
-        return ""
-    if v < 1:
-        s = f"{v:.6f}"
-    else:
-        s = f"{v:.2f}"
-    s = s.rstrip("0").rstrip(".")
-    return s if s else "0"
-
-
 def draw_cactus_axes(
     ax,
     series: Sequence[SeriesData],
@@ -399,7 +387,7 @@ def draw_cactus_axes(
     font_size: float,
     show_counts: bool,
 ) -> None:
-    plt, FixedLocator, FuncFormatter = import_matplotlib()
+    plt, FixedLocator = import_matplotlib()
     color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["black"])
     for idx, s in enumerate(series):
         points, solved, total = series_points(s.rows, aggregate_per_file, include_timeouts, metric)
@@ -432,8 +420,7 @@ def draw_cactus_axes(
     if y_ticks:
         ax.yaxis.set_major_locator(FixedLocator(list(y_ticks)))
 
-    ax.xaxis.set_major_formatter(FuncFormatter(plain_tick_label))
-    ax.yaxis.set_major_formatter(FuncFormatter(plain_tick_label))
+    apply_log_tick_format(ax, x_scale=x_scale, y_scale=y_scale)
 
     if x_scale == "log":
         ax.set_xticks([], minor=True)
@@ -462,7 +449,7 @@ def plot_cactus(
     dpi: int,
     show_counts: bool,
 ) -> None:
-    plt, _, _ = import_matplotlib()
+    plt, _ = import_matplotlib()
     fig, ax = create_unified_figure(plt)
     draw_cactus_axes(
         ax,

@@ -21,11 +21,14 @@ from benchmark_orchestration import sample_instances
 from benchmark_orchestration import should_report_progress
 from benchmark_plot_style import PAPER_LINE_WIDTH, PAPER_MARKER_SIZE, UNIFIED_DPI, UNIFIED_FONT_SIZE
 from benchmark_plot_style import apply_common_axes_style
+from benchmark_plot_style import apply_log_tick_format
+from benchmark_plot_style import paper_legend_style
 from benchmark_plot_style import paper_layout_axes_rect
 from benchmark_plot_style import paper_layout_figure_size
 from benchmark_plot_style import paper_layout_legend_anchor
 from benchmark_plot_style import series_style
-from benchmark_plot_style import two_panel_layout
+from benchmark_plot_style import tseitin_regression_layout
+from benchmark_plot_style import tseitin_visual_style
 from tool_common import repo_root
 
 BENCHMARK_KIND = "tseitin_regression"
@@ -121,6 +124,12 @@ def read_points_csv(path: Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(csv_file))
 
 
+def fit_legend_label(*, x_label: str, fit_mode: str, a: float, p: float) -> str:
+    if fit_mode == "power_on_2powx":
+        return f"T ∝ (2^{x_label})^{p:.2f}"
+    return f"T ∝ {x_label}^{p:.2f}"
+
+
 def build_plot_data(point_rows: Sequence[Dict[str, str]]) -> Dict[str, Dict[str, object]]:
     plot_data: Dict[str, Dict[str, object]] = {}
     for view_name in VIEW_ORDER:
@@ -136,7 +145,11 @@ def build_plot_data(point_rows: Sequence[Dict[str, str]]) -> Dict[str, Dict[str,
 
 def render_plot(point_rows: Sequence[Dict[str, str]], output_path: Path) -> None:
     plt = import_matplotlib_pyplot()
-    layout = two_panel_layout(panel_height=1.8, legend_width=1.95)
+    from matplotlib.ticker import NullLocator
+
+    layout = tseitin_regression_layout()
+    legend_style = paper_legend_style()
+    visual_style = tseitin_visual_style()
     figure = plt.figure(figsize=paper_layout_figure_size(layout))
     axes = {
         view_name: figure.add_axes(paper_layout_axes_rect(layout, row=0, col=index))
@@ -145,8 +158,12 @@ def render_plot(point_rows: Sequence[Dict[str, str]], output_path: Path) -> None
     plot_data = build_plot_data(point_rows)
     point_style = series_style(0, color_override=SOLVER_COLORS[SOLVER])
     fit_styles = {
-        "tseitin_4_n": series_style(1, color_override="#222222"),
-        "tseitin_k_20": series_style(2, color_override="#222222"),
+        "tseitin_4_n": visual_style.vertex_fit,
+        "tseitin_k_20": visual_style.degree_fit,
+    }
+    fit_labels = {
+        "tseitin_4_n": "Fit (vary vertices)",
+        "tseitin_k_20": "Fit (vary degree)",
     }
 
     for view_name in VIEW_ORDER:
@@ -158,13 +175,19 @@ def render_plot(point_rows: Sequence[Dict[str, str]], output_path: Path) -> None
                 [x for x, _ in points],
                 [y for _, y in points],
                 s=PAPER_MARKER_SIZE,
-                alpha=0.75,
+                alpha=visual_style.scatter_alpha,
                 color=point_style.color,
                 marker=point_style.marker,
             )
             fit = power_fit(points, view_spec.fit_mode)
             if fit is not None:
                 a, p, _r2 = fit
+                fit_labels[view_name] = fit_legend_label(
+                    x_label=view_spec.x_label,
+                    fit_mode=view_spec.fit_mode,
+                    a=a,
+                    p=p,
+                )
                 x_lo = min(x for x, _ in points)
                 x_hi = max(x for x, _ in points)
                 fit_x = [float(x_lo)] if x_lo == x_hi else [x_lo + ((x_hi - x_lo) / 199.0) * i for i in range(200)]
@@ -181,18 +204,30 @@ def render_plot(point_rows: Sequence[Dict[str, str]], output_path: Path) -> None
         if view_name == "tseitin_4_n":
             axis.set_xscale("log")
             axis.set_xticks(list(view_spec.x_values))
+            axis.set_xticklabels([str(value) for value in view_spec.x_values])
+        else:
+            axis.set_xticks(list(view_spec.x_values))
         apply_common_axes_style(
             axis,
             xlabel=view_spec.x_label,
             ylabel="Time (s)",
-            title="Vary vertices" if view_name == "tseitin_4_n" else "Vary degree",
+            title="Tseitin on n-vertex 4-regular graphs" if view_name == "tseitin_4_n" else "Tseitin on 20-vertex k-regular graphs",
             font_size=UNIFIED_FONT_SIZE,
         )
+        apply_log_tick_format(
+            axis,
+            x_scale="linear" if view_name == "tseitin_4_n" else "linear",
+            y_scale="log",
+        )
+        axis.minorticks_off()
+        axis.xaxis.set_minor_locator(NullLocator())
+        axis.yaxis.set_minor_locator(NullLocator())
+        axis.grid(False, which="minor")
 
     legend_handles = [
-        plt.Line2D([], [], linestyle="none", marker=point_style.marker, color=point_style.color, label="Per-file median"),
-        plt.Line2D([], [], linestyle=fit_styles["tseitin_4_n"].linestyle, color=fit_styles["tseitin_4_n"].color, linewidth=PAPER_LINE_WIDTH, label="Fit (vary vertices)"),
-        plt.Line2D([], [], linestyle=fit_styles["tseitin_k_20"].linestyle, color=fit_styles["tseitin_k_20"].color, linewidth=PAPER_LINE_WIDTH, label="Fit (vary degree)"),
+        plt.Line2D([], [], linestyle="none", marker=point_style.marker, color=point_style.color, label="One test file"),
+        plt.Line2D([], [], linestyle=fit_styles["tseitin_4_n"].linestyle, color=fit_styles["tseitin_4_n"].color, linewidth=PAPER_LINE_WIDTH, label=fit_labels["tseitin_4_n"]),
+        plt.Line2D([], [], linestyle=fit_styles["tseitin_k_20"].linestyle, color=fit_styles["tseitin_k_20"].color, linewidth=PAPER_LINE_WIDTH, label=fit_labels["tseitin_k_20"]),
     ]
     figure.legend(
         legend_handles,
@@ -201,9 +236,9 @@ def render_plot(point_rows: Sequence[Dict[str, str]], output_path: Path) -> None
         frameon=False,
         loc="center left",
         bbox_to_anchor=paper_layout_legend_anchor(layout),
-        borderaxespad=0.0,
-        handleheight=1.4,
-        labelspacing=0.8,
+        borderaxespad=legend_style.borderaxespad,
+        handleheight=legend_style.handleheight,
+        labelspacing=legend_style.labelspacing,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -281,10 +316,18 @@ def execute_benchmark(args: argparse.Namespace, *, generated_root: Path, run_dir
                 first_row = record_rows[0]
                 if (first_row.get("status") or "").strip().upper() not in {"SAT", "UNSAT"}:
                     continue
-                try:
-                    runtime_seconds = float(first_row.get("elapsed_wall_s", ""))
-                except (TypeError, ValueError):
-                    continue
+                runtime_seconds: Optional[float] = None
+                raw_reported_time = (first_row.get("parsed_solver_time_s") or "").strip()
+                if raw_reported_time:
+                    try:
+                        runtime_seconds = float(raw_reported_time)
+                    except (TypeError, ValueError):
+                        runtime_seconds = None
+                if runtime_seconds is None:
+                    try:
+                        runtime_seconds = float(first_row.get("elapsed_wall_s", ""))
+                    except (TypeError, ValueError):
+                        continue
                 if runtime_seconds > 0.0:
                     point_rows.append(
                         {

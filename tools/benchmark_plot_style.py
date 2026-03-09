@@ -6,17 +6,21 @@ from typing import Any
 
 UNIFIED_FONT_SIZE = 8.0
 UNIFIED_DPI = 300
-PAPER_FIGURE_WIDTH = 7.2
-PAPER_MARGIN_LEFT = 0.55
-PAPER_MARGIN_RIGHT = 0.18
-PAPER_MARGIN_BOTTOM = 0.45
-PAPER_MARGIN_TOP = 0.35
-PAPER_GUTTER_X = 0.42
-PAPER_GUTTER_Y = 0.55
-PAPER_LEGEND_GAP = 0.22
-PAPER_LEGEND_WIDTH = 1.85
-PAPER_LINE_WIDTH = 1.3
+PAPER_FIGURE_WIDTH = 8
+PAPER_MARGIN_LEFT = 0.5
+PAPER_MARGIN_RIGHT = 0.25
+PAPER_MARGIN_BOTTOM = 0.5
+PAPER_MARGIN_TOP = 0.25
+PAPER_GUTTER_X = 0.75
+PAPER_GUTTER_Y = 0
+PAPER_LEGEND_GAP = 0.2
+PAPER_LEGEND_WIDTH = 1.5
+PAPER_LINE_WIDTH = 1.5
 PAPER_MARKER_SIZE = 14.0
+PAPER_SCATTER_ALPHA = 0.75
+PAPER_LEGEND_LABELSPACING = 0.8
+PAPER_LEGEND_HANDLEHEIGHT = 1.4
+PAPER_LEGEND_BORDERAXESPAD = 0.0
 
 SERIES_COLORS = (
     "#1f77b4",
@@ -76,6 +80,26 @@ class PanelBlockLayout:
     gutter_y: float = PAPER_GUTTER_Y
 
 
+@dataclass(frozen=True)
+class LegendStyle:
+    labelspacing: float = PAPER_LEGEND_LABELSPACING
+    handleheight: float = PAPER_LEGEND_HANDLEHEIGHT
+    borderaxespad: float = PAPER_LEGEND_BORDERAXESPAD
+
+
+@dataclass(frozen=True)
+class TseitinFitStyle:
+    color: str
+    linestyle: Any
+
+
+@dataclass(frozen=True)
+class TseitinVisualStyle:
+    scatter_alpha: float = PAPER_SCATTER_ALPHA
+    vertex_fit: TseitinFitStyle = TseitinFitStyle(color="#222222", linestyle="--")
+    degree_fit: TseitinFitStyle = TseitinFitStyle(color="#222222", linestyle=":")
+
+
 def series_style(index: int, *, color_override: str | None = None) -> PlotSeriesStyle:
     return PlotSeriesStyle(
         color=color_override or SERIES_COLORS[index % len(SERIES_COLORS)],
@@ -90,6 +114,18 @@ def apply_common_axes_style(ax: Any, *, xlabel: str, ylabel: str, title: str, fo
     ax.set_title(title, fontsize=font_size)
     ax.tick_params(axis="both", which="major", labelsize=font_size)
     ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.35)
+
+
+def apply_log_tick_format(ax: Any, *, x_scale: str, y_scale: str) -> None:
+    try:
+        from matplotlib.ticker import LogFormatterMathtext
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
+
+    if x_scale == "log":
+        ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10))
+    if y_scale == "log":
+        ax.yaxis.set_major_formatter(LogFormatterMathtext(base=10))
 
 
 def place_right_legend(ax: Any, *, font_size: float = UNIFIED_FONT_SIZE) -> Any:
@@ -156,12 +192,44 @@ def paper_layout_legend_anchor(layout: PaperFigureLayout) -> tuple[float, float]
     return legend_left_in / figure_width, 0.5
 
 
-def two_panel_layout(*, panel_height: float = 1.7, legend_width: float = PAPER_LEGEND_WIDTH) -> PaperFigureLayout:
-    return PaperFigureLayout(rows=1, cols=2, panel_height=panel_height, legend_width=legend_width)
+def two_panel_layout(*, panel_height: float = 1.7, legend_width: float = PAPER_LEGEND_WIDTH, margin_left: float = PAPER_MARGIN_LEFT) -> PaperFigureLayout:
+    return PaperFigureLayout(rows=1, cols=2, panel_height=panel_height, legend_width=legend_width, margin_left=margin_left)
 
 
 def four_panel_layout(*, panel_height: float = 1.55, legend_width: float = PAPER_LEGEND_WIDTH) -> PaperFigureLayout:
     return PaperFigureLayout(rows=2, cols=2, panel_height=panel_height, legend_width=legend_width)
+
+
+def paper_legend_style() -> LegendStyle:
+    return LegendStyle()
+
+
+def representative_cactus_layout() -> PaperFigureLayout:
+    return two_panel_layout(panel_height=1.75, legend_width=1.5)
+
+
+def satcomp_ascon_cactus_layout() -> PaperFigureLayout:
+    return two_panel_layout(panel_height=1.75, legend_width=1.5)
+
+
+def tseitin_regression_layout() -> PaperFigureLayout:
+    return two_panel_layout(panel_height=1.75, legend_width=1.25, margin_left=0.75)
+
+
+def xorcle_heuristics_layout() -> PanelBlockLayout:
+    return PanelBlockLayout(
+        rows=2,
+        cols=2,
+        panel_height=1.75,
+        per_panel_legend_width=1.2,
+        per_panel_legend_gap=0.2,
+        gutter_x=0.6,
+        gutter_y=0.8,
+    )
+
+
+def tseitin_visual_style() -> TseitinVisualStyle:
+    return TseitinVisualStyle()
 
 
 def block_layout_figure_size(layout: PanelBlockLayout) -> tuple[float, float]:

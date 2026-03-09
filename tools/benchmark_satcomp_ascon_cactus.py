@@ -20,10 +20,11 @@ from benchmark_orchestration import sample_key_for
 from benchmark_orchestration import should_report_progress
 from benchmark_orchestration import solver_line_key
 from benchmark_plot_style import UNIFIED_DPI, UNIFIED_FONT_SIZE
+from benchmark_plot_style import paper_legend_style
 from benchmark_plot_style import paper_layout_axes_rect
 from benchmark_plot_style import paper_layout_figure_size
 from benchmark_plot_style import paper_layout_legend_anchor
-from benchmark_plot_style import two_panel_layout
+from benchmark_plot_style import satcomp_ascon_cactus_layout
 from plot_cactus import SeriesData, draw_cactus_axes, series_points
 from tool_common import repo_root
 
@@ -168,7 +169,8 @@ def legend_labels_for_pair(satcomp_rows: Sequence[Dict[str, str]], ascon_rows: S
 
 def render_plot(satcomp_rows: Sequence[Dict[str, str]], ascon_rows: Sequence[Dict[str, str]], output_path: Path) -> None:
     plt = import_matplotlib_pyplot()
-    layout = two_panel_layout(panel_height=1.75, legend_width=1.95)
+    layout = satcomp_ascon_cactus_layout()
+    legend_style = paper_legend_style()
     fig = plt.figure(figsize=paper_layout_figure_size(layout))
     axes = [
         fig.add_axes(paper_layout_axes_rect(layout, row=0, col=0)),
@@ -185,7 +187,7 @@ def render_plot(satcomp_rows: Sequence[Dict[str, str]], ascon_rows: Sequence[Dic
         metric="runtime",
         line_mode="line",
         black_white=False,
-        title="SAT Competition",
+        title="SAT Competition '25",
         xlabel="Instances solved",
         ylabel="Time (s)",
         x_scale="linear",
@@ -203,7 +205,7 @@ def render_plot(satcomp_rows: Sequence[Dict[str, str]], ascon_rows: Sequence[Dic
         metric="runtime",
         line_mode="line",
         black_white=False,
-        title="Ascon",
+        title="Ascon-128",
         xlabel="Instances solved",
         ylabel="Time (s)",
         x_scale="linear",
@@ -221,9 +223,9 @@ def render_plot(satcomp_rows: Sequence[Dict[str, str]], ascon_rows: Sequence[Dic
         frameon=False,
         loc="center left",
         bbox_to_anchor=paper_layout_legend_anchor(layout),
-        borderaxespad=0.0,
-        handleheight=1.4,
-        labelspacing=0.8,
+        borderaxespad=legend_style.borderaxespad,
+        handleheight=legend_style.handleheight,
+        labelspacing=legend_style.labelspacing,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
