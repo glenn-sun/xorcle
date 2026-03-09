@@ -28,7 +28,7 @@ enum class DecisionProcedureName {
 /// @brief Tunable parameters for Clause VSIDS decision behavior.
 struct CVsidsConfig {
     double learned_base = 1.0; ///< Learned-clause initial priority multiplier on current increment.
-    double decay = 0.95;       ///< Activity decay factor (0 < decay < 1).
+    double decay = 0.98;       ///< Activity decay factor (0 < decay < 1).
     double bump = 1.0;         ///< Initial activity increment amount.
 };
 
@@ -181,7 +181,7 @@ public:
 struct VsidsParams {
     MaxHeap<Equation> activity_heap; ///< Heap keyed by equation activity.
     double inc_amt = 1.0;            ///< Activity increment amount.
-    double decay = 0.95;             ///< Activity decay factor (0 < decay < 1).
+    double decay = 0.98;             ///< Activity decay factor (0 < decay < 1).
 
     /// @brief Increase activity for an equation and rescale if needed.
     void bump_activity(const Equation& eqn);

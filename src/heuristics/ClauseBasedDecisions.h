@@ -18,7 +18,7 @@ struct CVsidsParams {
     MaxHeap<ClauseId> activity_heap; ///< Heap keyed by clause activity.
     double inc_amt = 1.0;            ///< Current activity increment used for bumps.
     double learned_base = 1.0;       ///< Learned-clause initial activity multiplier on current increment.
-    double decay = 0.95;             ///< Activity decay factor.
+    double decay = 0.98;             ///< Activity decay factor.
 
     /// @brief Increase activity for a clause id and rescale if needed.
     void bump_activity(ClauseId id);

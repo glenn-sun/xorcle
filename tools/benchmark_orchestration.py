@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import math
-import random
 import statistics
 import time
 from dataclasses import dataclass
@@ -11,38 +11,34 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 ALL_SOLVER_LINES = (
-    "xorcle_0_1",
+    "xorcle",
     "kissat_default",
     "kissat_plain",
     "cryptominisat",
     "2xornado",
-    "xorricane",
 )
 
-DEFAULT_SOLVER_LINES = tuple(s for s in ALL_SOLVER_LINES if s != "xorricane")
+DEFAULT_SOLVER_LINES = ALL_SOLVER_LINES
 
 SOLVER_TO_BENCH_ARG = {
-    "xorcle_0_1": "xorcle_0_1",
+    "xorcle": "xorcle",
     "2xornado": "2xornado",
-    "xorricane": "xorricane",
     "kissat_plain": "kissat_plain",
     "kissat_default": "kissat_default",
     "cryptominisat": "cryptominisat",
 }
 
 SOLVER_DISPLAY = {
-    "xorcle_0_1": "Xorcle 0.1",
+    "xorcle": "Xorcle",
     "2xornado": "2-Xornado 1.0.2",
-    "xorricane": "Xorricane",
     "kissat_plain": "Kissat --plain 4.0.4",
     "kissat_default": "Kissat 4.0.4",
     "cryptominisat": "CryptoMiniSAT 5.13.0",
 }
 
 SOLVER_COLORS = {
-    "xorcle_0_1": "#1f77b4",
+    "xorcle": "#1f77b4",
     "2xornado": "#9467bd",
-    "xorricane": "#8c564b",
     "kissat_plain": "#ff7f0e",
     "kissat_default": "#2ca02c",
     "cryptominisat": "#d62728",
@@ -62,6 +58,14 @@ PHYSICAL_FAMILIES = (
     "generated/tseitin_n_k",
     "ascon",
     "sat-comp",
+)
+
+REPRESENTATIVE_FAMILIES = (
+    "generated/random_kxnf_n",
+    "generated/restricted_kxnf_n",
+    "generated/pebbling_lifted_h_k",
+    "generated/tseitin_n_k",
+    "ascon",
 )
 
 TYPE2_VIEWS = ("tseitin_k_20", "tseitin_4_n")
@@ -236,6 +240,20 @@ def load_physical_families(
     return {name: load_physical_family_instances(tests_root, name) for name in names}
 
 
+def load_representative_sample(
+    tests_root: Path,
+    *,
+    count_per_family: int,
+    seed: int,
+) -> Dict[str, List[InstanceRecord]]:
+    return sample_grouped_instances(
+        load_physical_families(tests_root, REPRESENTATIVE_FAMILIES),
+        count_per_family=count_per_family,
+        seed=seed,
+        cohort_prefix="family",
+    )
+
+
 def load_type2_view_instances(generated_root: Path, view_name: str) -> tuple[Type2ViewSpec, Dict[int, List[InstanceRecord]]]:
     if view_name not in TYPE2_VIEW_SPECS:
         raise KeyError(f"unknown type2 view: {view_name}")
@@ -266,36 +284,79 @@ def sample_instances(
     records: Sequence[InstanceRecord],
     *,
     count: int,
-    rng: random.Random,
-    with_replacement: bool,
+    seed: int,
+    cohort_id: str,
 ) -> List[InstanceRecord]:
-    items = list(records)
+    items = ordered_instances(records, seed=seed, cohort_id=cohort_id)
     if count < 1:
         raise ValueError("count must be >= 1")
     if not items:
         raise RuntimeError("cannot sample from an empty instance list")
-    if with_replacement:
-        return [rng.choice(items) for _ in range(count)]
     if count >= len(items):
         return items
-    return rng.sample(items, count)
+    return items[:count]
 
 
 def sample_grouped_instances(
     families: Dict[str, List[InstanceRecord]],
     *,
     count_per_family: int,
-    rng: random.Random,
-    with_replacement: bool,
+    seed: int,
+    cohort_prefix: str,
 ) -> Dict[str, List[InstanceRecord]]:
     return {
-        family: sample_instances(records, count=count_per_family, rng=rng, with_replacement=with_replacement)
+        family: sample_instances(
+            records,
+            count=count_per_family,
+            seed=seed,
+            cohort_id=f"{cohort_prefix}:{family}",
+        )
         for family, records in families.items()
     }
 
 
+def instance_sort_key(record: InstanceRecord) -> tuple[str, int, str]:
+    return (str(record.file), record.attempt, record.input_format)
+
+
+def ordered_instances(
+    records: Sequence[InstanceRecord],
+    *,
+    seed: int,
+    cohort_id: str,
+) -> List[InstanceRecord]:
+    ordered_records = sorted(records, key=instance_sort_key)
+
+    def stable_rank(record: InstanceRecord) -> str:
+        token = f"{seed}:{cohort_id}:{record.file}:{record.attempt}:{record.input_format}"
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    return sorted(ordered_records, key=lambda record: (stable_rank(record), instance_sort_key(record)))
+
+
 def sample_key_for(*, family: str, index: int, file_path: Path) -> str:
     return f"{family_slug(family)}:{index:04d}:{file_path.name}"
+
+
+def manifest_rows_for_grouped_instances(grouped_records: Dict[str, List[InstanceRecord]]) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    for family, records in grouped_records.items():
+        for index, record in enumerate(records, start=1):
+            rows.append(
+                {
+                    "family": family,
+                    "sample_index": str(index),
+                    "sample_key": sample_key_for(family=family, index=index, file_path=record.file),
+                    "file": str(record.file),
+                    "input_format": record.input_format,
+                    "attempt": str(record.attempt),
+                    "n": "" if record.n is None else str(record.n),
+                    "k": "" if record.k is None else str(record.k),
+                    "h": "" if record.h is None else str(record.h),
+                    "lift_k": "" if record.lift_k is None else str(record.lift_k),
+                }
+            )
+    return rows
 
 
 def aggregation_key(row: Dict[str, str]) -> str:
@@ -311,12 +372,10 @@ def aggregation_key(row: Dict[str, str]) -> str:
 def solver_line_key(row: Dict[str, str]) -> Optional[str]:
     solver = row.get("solver", "")
     config = row.get("solver_config", "")
-    if solver == "xorcle_0_1":
-        return "xorcle_0_1"
+    if solver == "xorcle":
+        return "xorcle"
     if solver == "2xornado":
         return "2xornado"
-    if solver == "xorricane":
-        return "xorricane"
     if solver == "kissat":
         if config.startswith("kissat_plain_") or config == "kissat_cnf":
             return "kissat_plain"
@@ -332,10 +391,7 @@ def runtime_for_row(row: Dict[str, str]) -> Optional[float]:
     status = row.get("status", "")
     if status not in {"SAT", "UNSAT"}:
         return None
-    if row.get("solver") == "xorcle_0_1":
-        raw = row.get("parsed_solver_time_s", "") or row.get("elapsed_wall_s", "")
-    else:
-        raw = row.get("elapsed_wall_s", "")
+    raw = row.get("elapsed_wall_s", "")
     try:
         return float(raw)
     except (TypeError, ValueError):

@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Shared XNF parsing and encoding utilities.
-"""
+"""Shared XNF parsing, formatting, and conversion helpers."""
 
 from __future__ import annotations
 
@@ -81,8 +79,7 @@ def parse_xnf_file(path: str) -> Tuple[int, List[Clause]]:
         else:
             current.append(tok)
     if current:
-        eqs = [_parse_token(t, nvars) for t in current]
-        clauses.append(Clause(equations=eqs))
+        raise ValueError("Last clause missing trailing 0")
     return nvars, clauses
 
 
@@ -91,7 +88,7 @@ def negate_equation(eq: Equation) -> Equation:
 
 
 def xor_compose_equations(lhs: Equation, rhs: Equation) -> Equation:
-    # XOR linerals by parity over variable multiplicities and affine-constant adjustment.
+    # XOR literals by parity over variable multiplicities and affine-constant adjustment.
     parity: Dict[int, int] = {}
     for v in lhs.vars:
         parity[v] = parity.get(v, 0) ^ 1

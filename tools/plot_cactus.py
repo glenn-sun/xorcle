@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Shared cactus-plot helpers plus a generic raw-CSV plotting CLI."""
+
 from __future__ import annotations
 
 import argparse
@@ -11,12 +13,6 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 # Matplotlib needs a writable config/cache directory in this environment.
 os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "parity-sat-cpp-mplconfig"))
-
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.ticker import FixedLocator, FuncFormatter
 from benchmark_plot_style import (
     UNIFIED_DPI,
     UNIFIED_FONT_SIZE,
@@ -28,6 +24,18 @@ from benchmark_plot_style import (
     unified_figure_geometry,
 )
 from benchmark_orchestration import aggregation_key
+
+
+def import_matplotlib():
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import FixedLocator, FuncFormatter
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        raise SystemExit(f"Error: missing dependency '{exc.name}'. Install matplotlib to run plotting.")
+    return plt, FixedLocator, FuncFormatter
 
 
 @dataclass(frozen=True)
@@ -84,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-timeouts",
         action="store_true",
-        help="Include TIMEOUT rows as capped points in cactus data.",
+        help="Include TIMEOUT and MEMORY rows as capped points in cactus data.",
     )
     parser.add_argument(
         "--metric",
@@ -247,7 +255,7 @@ def resolved_runtime_s(row: Dict[str, str], include_timeouts: bool) -> Optional[
         raw = (row.get("parsed_solver_time_s") or "").strip()
         if not raw:
             raw = (row.get("elapsed_wall_s") or "").strip()
-    elif include_timeouts and status == "TIMEOUT":
+    elif include_timeouts and status in {"TIMEOUT", "MEMORY"}:
         raw = (row.get("timeout_s") or "").strip()
         if not raw:
             raw = (row.get("elapsed_wall_s") or "").strip()
@@ -391,6 +399,7 @@ def draw_cactus_axes(
     font_size: float,
     show_counts: bool,
 ) -> None:
+    plt, FixedLocator, FuncFormatter = import_matplotlib()
     color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["black"])
     for idx, s in enumerate(series):
         points, solved, total = series_points(s.rows, aggregate_per_file, include_timeouts, metric)
@@ -453,6 +462,7 @@ def plot_cactus(
     dpi: int,
     show_counts: bool,
 ) -> None:
+    plt, _, _ = import_matplotlib()
     fig, ax = create_unified_figure(plt)
     draw_cactus_axes(
         ax,

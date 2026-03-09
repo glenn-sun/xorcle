@@ -263,8 +263,8 @@ def generate_random_kxnf_family(out_root: Path, tests_root: Path, seed_base: int
     family_dir = out_root / family
     _clear_family_dir(family_dir)
     manifest_rows: List[GeneratedFile] = []
-    for k in range(2, 7):
-        for n in range(11, 31):
+    for k in range(2, 6):
+        for n in range(11, 21):
             file_path = _make_out_path(out_root, family, f"{family}_k{k}_n{n}")
             seed = _seed_for(seed_base, len(family), k, n, 1)
             generate_dense_kxnf(n, k, file_path, seed=seed)
@@ -287,8 +287,8 @@ def generate_restricted_kxnf_family(out_root: Path, tests_root: Path, seed_base:
     family_dir = out_root / family
     _clear_family_dir(family_dir)
     manifest_rows: List[GeneratedFile] = []
-    for k in range(2, 7):
-        for n in range(22, 61, 2):
+    for k in range(2, 6):
+        for n in range(22, 41, 2):
             file_path = _make_out_path(out_root, family, f"{family}_k{k}_n{n}")
             seed = _seed_for(seed_base, len(family), k, n, 1)
             generate_restricted_kxnf(n, k, file_path, seed=seed)
@@ -311,8 +311,8 @@ def generate_pebbling_family(out_root: Path, tests_root: Path) -> int:
     family_dir = out_root / family
     _clear_family_dir(family_dir)
     manifest_rows: List[GeneratedFile] = []
-    for lift_k in (2, 4, 6, 8, 10):
-        for h in range(60, 251, 10):
+    for lift_k in (2, 4, 6, 8):
+        for h in range(60, 151, 10):
             file_path = _make_out_path(out_root, family, f"{family}_h{h}_k{lift_k}")
             generate_pebbling_lifted(h, lift_k, file_path)
             manifest_rows.append(

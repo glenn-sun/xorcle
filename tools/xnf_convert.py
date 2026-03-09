@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """
-Convert DIMACS-plus (XNF) files to CNF, CNF-XOR, 2-XNF, or exponential CNF.
-
-CLI usage:
-  python3 tools/xnf_convert.py <format> <input.xnf> <output>
-Where <format> is one of: cnf, cnf-exp, cnf-xor, 2-xnf
-
-Library usage:
-  from tools.xnf_convert import parse_xnf_file, convert_xnf, write_cnf, write_cnf_xor
+Command-line wrapper for converting XNF files into solver-facing formats.
 """
 
 from __future__ import annotations
@@ -15,17 +8,12 @@ from __future__ import annotations
 import argparse
 from typing import List
 
-import os
-import sys
-
-sys.path.append(os.path.dirname(__file__))
-
 from xnf_lib import (
-    parse_xnf_file,
     convert_xnf_to_cnf,
     convert_xnf_to_cnf_naive,
     convert_xnf_to_cnf_xor,
     convert_xnf_to_2xnf,
+    parse_xnf_file,
     write_cnf,
     write_xnf,
 )

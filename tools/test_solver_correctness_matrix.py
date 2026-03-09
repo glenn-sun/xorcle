@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
 import tempfile
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-sys.path.append(str(Path(__file__).resolve().parent))
+from tool_common import default_solver_bin
+from tool_common import parse_csv_choices
+from tool_common import repo_root
+from tool_process import ProcRun
+from tool_process import parse_solver_status
+from tool_process import run_process
 from xnf_lib import Clause, Equation, parse_xnf_file
 
 
@@ -39,23 +42,6 @@ class Task:
     clause_selector: str
     decision_phase: str
 
-
-@dataclass
-class ProcRun:
-    returncode: Optional[int]
-    stdout: str
-    stderr: str
-    elapsed_wall_s: float
-    timed_out: bool
-    error_message: str = ""
-
-    @property
-    def combined_output(self) -> str:
-        if self.stdout and self.stderr:
-            return self.stdout + "\n" + self.stderr
-        return self.stdout or self.stderr
-
-
 @dataclass
 class RunResult:
     task: Task
@@ -63,20 +49,6 @@ class RunResult:
     validation_status: str
     elapsed_wall_s: float
     message: str = ""
-
-
-def repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
-def default_solver_bin(root: Path) -> Path:
-    release = root / "bin" / "main-release"
-    if release.exists():
-        return release
-    debug = root / "bin" / "main"
-    if debug.exists():
-        return debug
-    raise FileNotFoundError("No default solver binary found at bin/main-release or bin/main")
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -88,15 +60,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default_solver = str(default_solver_bin(root))
     except FileNotFoundError:
         default_solver = ""
-    parser.add_argument("--solver-bin", default=default_solver)
-    parser.add_argument("--checker", default=str(root / "tools" / "check_drup_plus.py"))
-    parser.add_argument("--timeout", type=float, default=5.0)
-    parser.add_argument("--jobs", type=int, default=4)
-    parser.add_argument("--compact", choices=("on", "off"), default="on")
-    parser.add_argument("--decision-procs", default=",".join(DECISION_PROCS))
-    parser.add_argument("--clause-selectors", default=",".join(CLAUSE_SELECTORS))
-    parser.add_argument("--decision-phases", default=",".join(DECISION_PHASES))
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--solver-bin", default=default_solver, help="Path to the Xorcle solver binary to test.")
+    parser.add_argument("--checker", default=str(root / "tools" / "check_drup_plus.py"), help="Path to the DRUP checker used for UNSAT validation.")
+    parser.add_argument("--timeout", type=float, default=5.0, help="External timeout per solver invocation in seconds.")
+    parser.add_argument("--jobs", type=int, default=4, help="Number of matrix tasks to execute concurrently.")
+    parser.add_argument("--compact", choices=("on", "off"), default="on", help="Whether to run the solver with compaction enabled.")
+    parser.add_argument("--decision-procs", default=",".join(DECISION_PROCS), help="Comma-separated decision procedures to test.")
+    parser.add_argument("--clause-selectors", default=",".join(CLAUSE_SELECTORS), help="Comma-separated clause selectors to test.")
+    parser.add_argument("--decision-phases", default=",".join(DECISION_PHASES), help="Comma-separated decision phases to test.")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Deterministic solver seed for all matrix runs.")
     args = parser.parse_args(argv)
 
     if args.timeout <= 0:
@@ -106,69 +78,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     if args.seed < 0:
         parser.error("--seed must be >= 0")
     return args
-
-
-def parse_csv_choices(raw: str, valid: Sequence[str], label: str) -> List[str]:
-    selected = [item.strip() for item in raw.split(",") if item.strip()]
-    if not selected:
-        raise ValueError(f"{label} must not be empty")
-    unknown = [item for item in selected if item not in valid]
-    if unknown:
-        valid_str = ", ".join(valid)
-        unknown_str = ", ".join(unknown)
-        raise ValueError(f"unknown {label}: {unknown_str}; valid values: {valid_str}")
-    return selected
-
-
-def run_process(cmd: Sequence[str], timeout_s: Optional[float]) -> ProcRun:
-    start = time.perf_counter()
-    try:
-        cp = subprocess.run(
-            list(cmd),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            shell=False,
-        )
-        return ProcRun(
-            returncode=cp.returncode,
-            stdout=cp.stdout or "",
-            stderr=cp.stderr or "",
-            elapsed_wall_s=time.perf_counter() - start,
-            timed_out=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode(errors="replace")
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode(errors="replace")
-        return ProcRun(
-            returncode=None,
-            stdout=stdout,
-            stderr=stderr,
-            elapsed_wall_s=time.perf_counter() - start,
-            timed_out=True,
-            error_message=f"timeout after {timeout_s:.1f}s",
-        )
-    except OSError as exc:
-        return ProcRun(
-            returncode=None,
-            stdout="",
-            stderr="",
-            elapsed_wall_s=time.perf_counter() - start,
-            timed_out=False,
-            error_message=str(exc),
-        )
-
-
-def parse_solver_status(output: str) -> Optional[str]:
-    match = RESULT_RE.search(output)
-    if match is None:
-        return None
-    return "SAT" if match.group(1) == "SATISFIABLE" else "UNSAT"
-
 
 def parse_assignment(output: str) -> Optional[List[int]]:
     assignment_lines = ASSIGNMENT_RE.findall(output)
