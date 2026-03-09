@@ -73,10 +73,17 @@ void ExactWatchlist::ensure_row_storage_up_to(std::size_t max_idx) {
             cells_by_row[i].reserve(8);
         }
     }
+
+#ifndef NDEBUG
+    debug_assert_row_storage_domains();
+#endif
 }
 
 bool ExactWatchlist::row_is_placeholder(WatchRowId row) const {
     std::size_t idx = row_index(row);
+#ifndef NDEBUG
+    debug_assert_row_storage_domains();
+#endif
     assert(idx < row_is_unit_placeholder.size());
     return row_is_unit_placeholder[idx] != 0;
 }
@@ -93,8 +100,16 @@ bool ExactWatchlist::cell_is_valid(WatchRowId row, std::size_t level) const {
 }
 
 void ExactWatchlist::build_base_row_expression(WatchRowId row, Equation& out) const {
+#ifndef NDEBUG
+    debug_assert_row_storage_domains();
+#endif
     const Clause& clause = clauses[row.clause_id()];
+    assert(!row_is_placeholder(row));
     assert(clause.rows() > 1);
+    assert(clause.cols() == num_vars + 1);
+    assert(clause.watched0 < clause.rows());
+    assert(clause.watched1 < clause.rows());
+    assert(clause.watched0 != clause.watched1);
 
     switch (row.watch_type()) {
         case WatchType::Zero:
@@ -138,6 +153,7 @@ ExactWatchlist::ReducedCell* ExactWatchlist::get_or_build_cell(WatchRowId row,
 
     assert(level < trail.size());
     const Clause& clause = clauses[row.clause_id()];
+    assert(clause.cols() == num_vars + 1);
     if (cell.eqn.size() != clause.cols()) {
         cell.eqn.resize(clause.cols());
     }
@@ -170,10 +186,21 @@ std::size_t ExactWatchlist::recompute_watched_row_now(WatchRowId row, const Trai
     ++row_version[row_index(row)];
     ReducedCell* cell = get_or_build_cell(row, trail.size() - 1, trail);
     if (cell == nullptr) {
+        if (!row_is_placeholder(row) && row.clause_id() < clauses.size() && is_clause_active(row.clause_id())) {
+            std::ostringstream msg;
+            msg << "active non-placeholder row " << row_index(row)
+                << " could not be rebuilt at level " << (trail.size() - 1);
+            throw_semantic_error("recompute_watched_row_now", msg.str());
+        }
         return invalid_bucket;
     }
     std::size_t bucket = classify_bucket(cell->eqn);
     insert_row_into_active_bucket(row, bucket);
+#ifndef NDEBUG
+    if (!row_is_placeholder(row) && is_clause_active(row.clause_id())) {
+        assert(bucket != invalid_bucket);
+    }
+#endif
     return bucket;
 }
 
@@ -201,10 +228,23 @@ void ExactWatchlist::clear_active_buckets() {
 
 void ExactWatchlist::remove_row_from_active_bucket(WatchRowId row) {
     std::size_t idx = row_index(row);
-    if (idx >= row_bucket.size() || row_bucket[idx] == invalid_bucket) {
+#ifndef NDEBUG
+    debug_assert_row_storage_domains();
+#endif
+    if (idx >= row_bucket.size()) {
+        std::ostringstream msg;
+        msg << "row index " << idx << " out of row-bucket domain " << row_bucket.size();
+        throw_semantic_error("remove_row_from_active_bucket", msg.str());
+    }
+    if (row_bucket[idx] == invalid_bucket) {
         return;
     }
     std::size_t bucket = row_bucket[idx];
+    if (bucket >= bucket_count()) {
+        std::ostringstream msg;
+        msg << "row " << idx << " stored invalid bucket " << bucket;
+        throw_semantic_error("remove_row_from_active_bucket", msg.str());
+    }
 
     if (row_prev_in_bucket[idx] != invalid_row_idx) {
         row_next_in_bucket[row_prev_in_bucket[idx]] = row_next_in_bucket[idx];
@@ -223,6 +263,9 @@ void ExactWatchlist::remove_row_from_active_bucket(WatchRowId row) {
 
 void ExactWatchlist::insert_row_into_active_bucket(WatchRowId row, std::size_t bucket) {
     std::size_t idx = row_index(row);
+#ifndef NDEBUG
+    debug_assert_row_storage_domains();
+#endif
     assert(idx < row_bucket.size());
     assert(bucket < bucket_count());
 
@@ -265,6 +308,10 @@ void ExactWatchlist::rebuild_active_buckets_from_valid_cells(const Trail& trail)
         const ReducedCell& cell = cells_by_row[i][current_level];
         insert_row_into_active_bucket(row, classify_bucket(cell.eqn));
     }
+
+#ifndef NDEBUG
+    debug_assert_bucket_links();
+#endif
 }
 
 std::vector<ExactWatchlist::VersionedRowRef> ExactWatchlist::detach_bucket_rows(std::size_t bucket) {
@@ -349,8 +396,7 @@ bool ExactWatchlist::row_ref_is_stale(const VersionedRowRef& ref) const {
 void ExactWatchlist::append_clause_rows(Clause clause, bool queue_unit_probe) {
     ClauseId id = clauses.size();
     const bool is_unit = clause.rows() <= 1;
-    clauses.push_back(std::move(clause));
-    clause_active.push_back(1);
+    ClauseSelector::add_clause(std::move(clause));
     ensure_row_storage_up_to(3 * id + 2);
 
     for (WatchType wt : {WatchType::Zero, WatchType::One, WatchType::Sum}) {
@@ -370,6 +416,11 @@ void ExactWatchlist::append_clause_rows(Clause clause, bool queue_unit_probe) {
             push_unit_task(id);
         }
     }
+
+#ifndef NDEBUG
+    debug_assert_row_storage_domains();
+    debug_assert_storage_synchronized();
+#endif
 }
 
 void ExactWatchlist::apply_incremental_level_change(const Trail& trail) {
@@ -396,6 +447,10 @@ ExactWatchlist::ReducedClauseState ExactWatchlist::reduce_clause_watches_now(Cla
         return inactive;
     }
     const Clause& clause = clauses[id];
+    assert(clause.cols() == num_vars + 1);
+    assert(scratch0.size() == num_vars + 1);
+    assert(scratch1.size() == num_vars + 1);
+    assert(scratch2.size() == num_vars + 1);
     ReducedClauseState state;
     state.unit = (clause.rows() <= 1);
     if (state.unit) {
@@ -408,6 +463,9 @@ ExactWatchlist::ReducedClauseState ExactWatchlist::reduce_clause_watches_now(Cla
         return state;
     }
 
+    assert(clause.watched0 < clause.rows());
+    assert(clause.watched1 < clause.rows());
+    assert(clause.watched0 != clause.watched1);
     scratch0.unsafe_copy(clause.row(clause.watched0));
     scratch1.unsafe_copy(clause.row(clause.watched1));
     if (trail_or_null != nullptr) {
@@ -579,6 +637,14 @@ std::optional<ClauseSelection> ExactWatchlist::process_one_deferred_task() {
                 throw_semantic_error("process_one_deferred_task", "missing trail during row reclassification");
             }
             WatchRowId row = row_from_index(task.row_ref.row_idx);
+#ifndef NDEBUG
+            debug_assert_row_storage_domains();
+#endif
+            if (task.row_ref.row_idx >= cells_by_row.size()) {
+                std::ostringstream msg;
+                msg << "queued row " << task.row_ref.row_idx << " out of row-cache domain " << cells_by_row.size();
+                throw_semantic_error("process_one_deferred_task", msg.str());
+            }
             if (row.clause_id() >= clauses.size() || !is_clause_active(row.clause_id())) {
                 return std::nullopt;
             }
@@ -703,7 +769,7 @@ void ExactWatchlist::update_with_new_equation(const Equation& eqn, const Trail& 
 
     std::size_t first_set = eqn.first_set();
     if (first_set == bit::vector<>::npos) {
-        return;
+        throw_semantic_error("update_with_new_equation", "learned zero equation cannot drive ExactWatchlist updates");
     }
     std::size_t src_bucket = (first_set == num_vars) ? const_bucket() : first_set;
     if (src_bucket >= bucket_count()) {
@@ -733,14 +799,31 @@ void ExactWatchlist::update_with_decision(const Equation& reduced_eqn, const Tra
 }
 
 void ExactWatchlist::update_with_new_watch(ClauseId id,
-                                           EquationId /*old_watch*/,
+                                           EquationId old_watch,
                                            WatchType wt,
                                            const Trail& trail) {
+    if (id >= clauses.size()) {
+        std::ostringstream msg;
+        msg << "clause id " << id << " out of range";
+        throw_semantic_error("update_with_new_watch", msg.str());
+    }
     if (!is_clause_active(id)) {
-        return;
+        std::ostringstream msg;
+        msg << "inactive clause " << id << " received a watch update";
+        throw_semantic_error("update_with_new_watch", msg.str());
     }
     set_current_trail(trail);
     apply_incremental_level_change(trail);
+    if (old_watch >= clauses[id].rows()) {
+        std::ostringstream msg;
+        msg << "old watch " << old_watch << " out of range for clause " << id;
+        throw_semantic_error("update_with_new_watch", msg.str());
+    }
+    if (clauses[id].rows() <= 1) {
+        std::ostringstream msg;
+        msg << "unit clause " << id << " received a watched-row update";
+        throw_semantic_error("update_with_new_watch", msg.str());
+    }
 
     switch (wt) {
         case WatchType::Zero:
@@ -764,6 +847,7 @@ void ExactWatchlist::update_with_new_watch(ClauseId id,
 
 #ifndef NDEBUG
     if (work_stack.empty()) {
+        debug_assert_bucket_links();
         debug_assert_active_buckets_match_cells(trail);
     }
 #endif
@@ -837,14 +921,71 @@ void ExactWatchlist::update_with_compaction(const search::CompactionTransform& t
 
 #ifndef NDEBUG
     if (work_stack.empty()) {
+        debug_assert_bucket_links();
         debug_assert_active_buckets_match_cells(trail);
     }
 #endif
 }
 
 #ifndef NDEBUG
+void ExactWatchlist::debug_assert_row_storage_domains() const {
+    const std::size_t row_count = cells_by_row.size();
+    assert(row_is_unit_placeholder.size() == row_count);
+    assert(row_version.size() == row_count);
+    assert(row_next_in_bucket.size() == row_count);
+    assert(row_prev_in_bucket.size() == row_count);
+    assert(row_bucket.size() == row_count);
+    assert(bucket_head_row.size() == bucket_count());
+}
+
+void ExactWatchlist::debug_assert_active_non_unit_clause_valid(ClauseId id) const {
+    assert(id < clauses.size());
+    const Clause& clause = clauses[id];
+    if (!is_clause_active(id) || clause.rows() <= 1) {
+        return;
+    }
+    assert(clause.cols() == num_vars + 1);
+    assert(clause.watched0 < clause.rows());
+    assert(clause.watched1 < clause.rows());
+    assert(clause.watched0 != clause.watched1);
+}
+
+void ExactWatchlist::debug_assert_bucket_links() const {
+    debug_assert_row_storage_domains();
+
+    std::vector<std::uint8_t> seen_row(cells_by_row.size(), 0);
+    for (std::size_t bucket = 0; bucket < bucket_head_row.size(); ++bucket) {
+        std::size_t prev = invalid_row_idx;
+        for (std::size_t idx = bucket_head_row[bucket]; idx != invalid_row_idx; idx = row_next_in_bucket[idx]) {
+            assert(idx < cells_by_row.size());
+            assert(!seen_row[idx]);
+            seen_row[idx] = 1;
+            assert(row_bucket[idx] == bucket);
+            assert(row_prev_in_bucket[idx] == prev);
+            if (row_next_in_bucket[idx] != invalid_row_idx) {
+                assert(row_next_in_bucket[idx] < cells_by_row.size());
+                assert(row_prev_in_bucket[row_next_in_bucket[idx]] == idx);
+            }
+
+            WatchRowId row = row_from_index(idx);
+            assert(!row_is_placeholder(row));
+            assert(row.clause_id() < clauses.size());
+            assert(is_clause_active(row.clause_id()));
+            prev = idx;
+        }
+    }
+
+    for (std::size_t idx = 0; idx < row_bucket.size(); ++idx) {
+        if (!seen_row[idx]) {
+            assert(row_bucket[idx] == invalid_bucket);
+        }
+    }
+}
+
 void ExactWatchlist::debug_assert_active_buckets_match_cells(const Trail& trail) const {
+    debug_assert_bucket_links();
     std::size_t level = trail.size() - 1;
+    std::vector<std::uint8_t> unit_seen(clauses.size(), 0);
     for (std::size_t i = 0; i < cells_by_row.size(); ++i) {
         WatchRowId row{i};
         if (row.clause_id() >= clauses.size() || !is_clause_active(row.clause_id())) {
@@ -852,8 +993,12 @@ void ExactWatchlist::debug_assert_active_buckets_match_cells(const Trail& trail)
         }
         if (row_is_unit_placeholder[i]) {
             assert(row_bucket[i] == invalid_bucket);
+            if (clauses[row.clause_id()].rows() <= 1) {
+                unit_seen[row.clause_id()] = 1;
+            }
             continue;
         }
+        debug_assert_active_non_unit_clause_valid(row.clause_id());
         if (!cell_is_valid(row, level)) {
             continue;
         }
@@ -861,9 +1006,24 @@ void ExactWatchlist::debug_assert_active_buckets_match_cells(const Trail& trail)
         std::size_t expected_bucket = classify_bucket(cell.eqn);
         assert(row_bucket[i] == expected_bucket);
     }
+
+    std::vector<std::uint8_t> unit_list_seen(clauses.size(), 0);
+    for (ClauseId id : unit_clauses) {
+        assert(id < clauses.size());
+        assert(is_clause_active(id));
+        assert(clauses[id].rows() <= 1);
+        assert(!unit_list_seen[id]);
+        unit_list_seen[id] = 1;
+    }
+    for (ClauseId id = 0; id < clauses.size(); ++id) {
+        if (is_clause_active(id) && clauses[id].rows() <= 1) {
+            assert(unit_list_seen[id]);
+        }
+    }
 }
 
 void ExactWatchlist::debug_assert_no_actionable_clause_when_idle(const Trail& trail) {
+    assert(work_stack.empty());
     std::vector<std::uint8_t> seen_clause(clauses.size(), 0);
     for (std::size_t idx = bucket_head_row[zero_bucket()]; idx != invalid_row_idx; idx = row_next_in_bucket[idx]) {
         WatchRowId row = row_from_index(idx);
@@ -876,6 +1036,7 @@ void ExactWatchlist::debug_assert_no_actionable_clause_when_idle(const Trail& tr
         seen_clause[row.clause_id()] = 1;
 
         ReducedClauseState state = reduce_clause_watches_now(row.clause_id(), &trail);
+        assert(state.watch0_zero || state.watch1_zero || state.sum_zero);
         const bool actionable = trigger_allows_action(row.clause_id(), WatchType::Zero, state)
             || trigger_allows_action(row.clause_id(), WatchType::One, state)
             || trigger_allows_action(row.clause_id(), WatchType::Sum, state);

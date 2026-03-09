@@ -2,30 +2,106 @@
 
 #include <algorithm>
 #include <cassert>
+#include <sstream>
+#include <stdexcept>
 #include <utility>
 
 namespace heuristics {
 
+namespace {
+
+void throw_clause_selector_error(const char* where, const std::string& message) {
+    std::ostringstream out;
+    out << "ClauseSelector invariant failure in " << where << ": " << message;
+    throw std::logic_error(out.str());
+}
+
+std::size_t leading_term_bucket_or_throw(const Clause& clause,
+                                         EquationId row_id,
+                                         std::size_t bucket_count,
+                                         const char* where) {
+    if (row_id >= clause.rows()) {
+        std::ostringstream msg;
+        msg << "row index " << row_id << " out of range for clause with " << clause.rows() << " rows";
+        throw_clause_selector_error(where, msg.str());
+    }
+
+    std::size_t leading_col = clause.row(row_id).first_set();
+    if (leading_col >= bucket_count) {
+        std::ostringstream msg;
+        msg << "row " << row_id << " has invalid leading column " << leading_col
+            << " for bucket count " << bucket_count;
+        throw_clause_selector_error(where, msg.str());
+    }
+    return leading_col;
+}
+
+void validate_non_unit_watch_indices_or_throw(const Clause& clause, const char* where) {
+    if (clause.rows() <= 1) {
+        return;
+    }
+    if (clause.watched0 >= clause.rows() || clause.watched1 >= clause.rows()) {
+        std::ostringstream msg;
+        msg << "watched indices (" << clause.watched0 << ", " << clause.watched1
+            << ") out of range for clause with " << clause.rows() << " rows";
+        throw_clause_selector_error(where, msg.str());
+    }
+    if (clause.watched0 == clause.watched1) {
+        std::ostringstream msg;
+        msg << "non-unit clause reuses watched row " << clause.watched0;
+        throw_clause_selector_error(where, msg.str());
+    }
+}
+
+} // namespace
+
 ClauseSelector::ClauseSelector() : clauses(), clause_active() {}
+
+#ifndef NDEBUG
+void ClauseSelector::debug_assert_storage_synchronized() const {
+    assert(clauses.size() == clause_active.size());
+}
+#endif
 
 std::size_t ClauseSelector::get_num_clauses() const { return clauses.size(); }
 
 const std::vector<Clause>& ClauseSelector::get_clauses() const { return clauses; }
 
-Clause& ClauseSelector::get_clause(ClauseId id) { return clauses[id]; }
+Clause& ClauseSelector::get_clause(ClauseId id) {
+#ifndef NDEBUG
+    debug_assert_storage_synchronized();
+    assert(id < clauses.size());
+#endif
+    return clauses[id];
+}
 
 bool ClauseSelector::is_clause_active(ClauseId id) const {
-    return id < clause_active.size() && clause_active[id] != 0;
+#ifndef NDEBUG
+    debug_assert_storage_synchronized();
+    assert(id < clauses.size());
+#endif
+    return clause_active[id] != 0;
 }
 
 void ClauseSelector::set_clause_active(ClauseId id, bool active) {
-    if (id >= clause_active.size()) {
-        clause_active.resize(id + 1, 1);
+    if (clauses.size() != clause_active.size()) {
+        throw_clause_selector_error("set_clause_active", "clause storage and activity flags are desynchronized");
     }
+    if (id >= clauses.size()) {
+        std::ostringstream msg;
+        msg << "clause id " << id << " out of range for " << clauses.size() << " clauses";
+        throw std::out_of_range(msg.str());
+    }
+
     clause_active[id] = active ? 1 : 0;
 }
 
-const std::vector<std::uint8_t>& ClauseSelector::active_flags() const { return clause_active; }
+const std::vector<std::uint8_t>& ClauseSelector::active_flags() const {
+#ifndef NDEBUG
+    debug_assert_storage_synchronized();
+#endif
+    return clause_active;
+}
 
 std::optional<ClauseSelection> ClauseSelector::next_with_hint() {
     auto id = next();
@@ -137,6 +213,11 @@ LTWatchlist::LTWatchlist(std::size_t num_vars)
     : ClauseSelector(), by_leading_term(num_vars + 1) {}
 
 void LTWatchlist::push(ClauseId id) {
+#ifndef NDEBUG
+    debug_assert_storage_synchronized();
+    assert(id < clauses.size());
+    assert(id < stack_set.size());
+#endif
     if (!stack_set[id]) {
         stack.push_back(id);
         stack_set[id] = true;
@@ -150,6 +231,9 @@ void LTWatchlist::append(const std::vector<ClauseId>& ids) {
 }
 
 ClauseId LTWatchlist::get_pop() {
+#ifndef NDEBUG
+    assert(!stack.empty());
+#endif
     ClauseId id = stack.back();
     stack.pop_back();
     stack_set[id] = false;
@@ -167,20 +251,33 @@ std::optional<ClauseId> LTWatchlist::next() {
 }
 
 void LTWatchlist::add_clause(Clause clause) {
+    if (stack_set.size() != clauses.size()) {
+        throw_clause_selector_error("LTWatchlist::add_clause", "stack_set is not synchronized with clause storage");
+    }
+
     ClauseId new_id = clauses.size();
-    const bool active = new_id < clause_active.size() ? (clause_active[new_id] != 0) : true;
-    if (clause.rows() > 1) {
-        by_leading_term[clause.row(clause.watched0).first_set()].push_back(new_id);
-        by_leading_term[clause.row(clause.watched1).first_set()].push_back(new_id);
-        stack_set.push_back(false);
+    validate_non_unit_watch_indices_or_throw(clause, "LTWatchlist::add_clause");
+    ClauseSelector::add_clause(std::move(clause));
+    const Clause& stored_clause = clauses.back();
+
+    stack_set.push_back(false);
+    if (stored_clause.rows() > 1) {
+        std::size_t watch0_bucket =
+            leading_term_bucket_or_throw(stored_clause, stored_clause.watched0, by_leading_term.size(),
+                                         "LTWatchlist::add_clause");
+        std::size_t watch1_bucket =
+            leading_term_bucket_or_throw(stored_clause, stored_clause.watched1, by_leading_term.size(),
+                                         "LTWatchlist::add_clause");
+        by_leading_term[watch0_bucket].push_back(new_id);
+        by_leading_term[watch1_bucket].push_back(new_id);
     } else {
         unit_clauses.push_back(new_id);
-        stack_set.push_back(active);
-        if (active) {
-            stack.push_back(new_id);
-        }
+        push(new_id);
     }
-    ClauseSelector::add_clause(std::move(clause));
+
+#ifndef NDEBUG
+    debug_assert_storage_synchronized();
+#endif
 }
 
 void LTWatchlist::add_asserting_clause(Clause clause, const Trail& /*unused*/, std::size_t /*unused*/) {
@@ -195,38 +292,55 @@ void LTWatchlist::add_asserting_clause(Clause clause, const Trail& /*unused*/, s
 void LTWatchlist::update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) {
     // Because of linear combinations, need to check all lists corresponding
     // to reducible leading terms in position at most reduced.first_set()
+    const std::size_t leading_col = reduced_eqn.first_set();
+#ifndef NDEBUG
+    assert(leading_col < by_leading_term.size());
+#endif
 
-    for (std::size_t i = 0; i < reduced_eqn.first_set(); ++i) {
+    for (std::size_t i = 0; i < leading_col; ++i) {
         if (trail.span().get_pivot_cols()[i]) {
             append(by_leading_term[i]);
         }
     }
-    append(by_leading_term[reduced_eqn.first_set()]);
+    append(by_leading_term[leading_col]);
 }
 
 void LTWatchlist::update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& /*unused*/) {
-    if (!is_clause_active(id)) {
-        return;
-    }
-    auto& v = by_leading_term[clauses[id].row(old_watch).first_set()];
-    std::erase(v, id);
+#ifndef NDEBUG
+    debug_assert_storage_synchronized();
+    assert(id < clauses.size());
+    assert(id < stack_set.size());
+    assert(is_clause_active(id));
+#endif
+    const Clause& clause = clauses[id];
+    validate_non_unit_watch_indices_or_throw(clause, "LTWatchlist::update_with_new_watch");
+    std::size_t old_bucket =
+        leading_term_bucket_or_throw(clause, old_watch, by_leading_term.size(), "LTWatchlist::update_with_new_watch");
+    auto& old_bucket_rows = by_leading_term[old_bucket];
+    std::erase(old_bucket_rows, id);
     EquationId new_watch = 0;
     switch (wt) {
         case WatchType::Zero:
-            new_watch = clauses[id].watched0;
+            new_watch = clause.watched0;
             break;
         case WatchType::One:
-            new_watch = clauses[id].watched1;
+            new_watch = clause.watched1;
             break;
         case WatchType::Sum:
-            // Should never happen
             assert(false && "WatchType::Sum not expected in LTWatchlist");
             return;
     }
-    by_leading_term[clauses[id].row(new_watch).first_set()].push_back(id);
+    std::size_t new_bucket =
+        leading_term_bucket_or_throw(clause, new_watch, by_leading_term.size(), "LTWatchlist::update_with_new_watch");
+    by_leading_term[new_bucket].push_back(id);
 }
 
 void LTWatchlist::update_with_compaction(const search::CompactionTransform& /*transform*/, const Trail& /*trail*/) {
+    if (stack_set.size() != clauses.size()) {
+        throw_clause_selector_error("LTWatchlist::update_with_compaction",
+                                    "stack_set is not synchronized with clause storage");
+    }
+
     for (auto& bucket : by_leading_term) {
         bucket.clear();
     }
@@ -236,18 +350,21 @@ void LTWatchlist::update_with_compaction(const search::CompactionTransform& /*tr
     stack.clear();
     std::fill(stack_set.begin(), stack_set.end(), false);
 
-    if (stack_set.size() < clauses.size()) {
-        stack_set.resize(clauses.size(), false);
-    }
-
     for (ClauseId id = 0; id < clauses.size(); ++id) {
         if (!is_clause_active(id)) {
             continue;
         }
         const Clause& clause = clauses[id];
         if (clause.rows() > 1) {
-            by_leading_term[clause.row(clause.watched0).first_set()].push_back(id);
-            by_leading_term[clause.row(clause.watched1).first_set()].push_back(id);
+            validate_non_unit_watch_indices_or_throw(clause, "LTWatchlist::update_with_compaction");
+            std::size_t watch0_bucket =
+                leading_term_bucket_or_throw(clause, clause.watched0, by_leading_term.size(),
+                                             "LTWatchlist::update_with_compaction");
+            std::size_t watch1_bucket =
+                leading_term_bucket_or_throw(clause, clause.watched1, by_leading_term.size(),
+                                             "LTWatchlist::update_with_compaction");
+            by_leading_term[watch0_bucket].push_back(id);
+            by_leading_term[watch1_bucket].push_back(id);
         } else {
             unit_clauses.push_back(id);
         }
@@ -261,6 +378,10 @@ void LTWatchlist::update_with_compaction(const search::CompactionTransform& /*tr
     for (ClauseId id : unit_clauses) {
         push(id);
     }
+
+#ifndef NDEBUG
+    debug_assert_storage_synchronized();
+#endif
 }
 
 } // namespace heuristics

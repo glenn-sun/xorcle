@@ -20,13 +20,17 @@ private:
     /// @brief Attempt to propagate from a single clause.
     /// @param clause_sel Clause selector providing clause storage and watch updates.
     /// @param trail Current trail state.
-    /// @param eqn_false Constant false equation (1 = 0).
     /// @param id Clause id to attempt.
+    /// @param zero_watch_hint Optional zero-trigger returned by the selector.
     /// @param num_watch_updates Incremented when a watch is updated.
     /// @return A propagated equation or conflict equation if implied; nullopt otherwise.
+    /// @pre `id < clause_sel.get_num_clauses()`.
+    /// @pre If the clause is unit then `zero_watch_hint` is empty.
+    /// @pre If the clause is non-unit and `zero_watch_hint` is present, it names
+    /// a reduced zero trigger that currently permits propagation or watch motion.
+    /// @note `WatchType::Sum` hints are normalized to updating `watched1`.
     std::optional<algebra::Equation> unit_prop_one_clause(heuristics::ClauseSelector& clause_sel,
                                                          const Trail& trail,
-                                                         const algebra::Equation& eqn_false,
                                                          heuristics::ClauseId id,
                                                          std::optional<heuristics::WatchType> zero_watch_hint,
                                                          std::size_t& num_watch_updates);
@@ -41,14 +45,13 @@ public:
     /// @brief Attempt one unit propagation step.
     /// @param clause_sel Clause selector providing clause storage and watch updates.
     /// @param trail Current trail state.
-    /// @param eqn_false Constant false equation (1 = 0).
     /// @param num_attempt_props Incremented for each attempted clause.
     /// @param num_watch_updates Incremented when a watch is updated.
     /// @return The propagated equation and reason clause id if propagation occurs.
+    /// @throws std::logic_error if the selector returns an invalid or inactive clause id.
     std::optional<std::pair<algebra::Equation, heuristics::ClauseId>> unit_propagate_once(
         heuristics::ClauseSelector& clause_sel,
         const Trail& trail,
-        const algebra::Equation& eqn_false,
         std::size_t& num_attempt_props,
         std::size_t& num_watch_updates);
 

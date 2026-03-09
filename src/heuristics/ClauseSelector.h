@@ -25,7 +25,9 @@ enum class WatchType {
 };
 
 /// @brief A clause selected for propagation, optionally with a zero-watch hint.
-/// For non-unit clauses, selectors may return `Zero`, `One`, or `Sum`.
+/// @note Unit clauses must return no hint. Non-unit clauses may return
+/// `Zero`, `One`, or `Sum` to identify a reduced zero trigger that currently
+/// permits propagation or watch movement.
 struct ClauseSelection {
     ClauseId id;
     std::optional<WatchType> zero_watch_hint;
@@ -39,6 +41,9 @@ enum class ClauseSelectorName {
 };
 
 /// @brief Base interface for selecting clauses to attempt propagation.
+/// @note `clauses` and `clause_active` must stay synchronized in size and
+/// clause-id order. Derived selectors may add auxiliary state, but that state
+/// is expected to be an exact view of the authoritative clause storage.
 class ClauseSelector {
 protected:
     /// @brief Stored clauses; clause ids are indices into this vector.
@@ -56,6 +61,11 @@ protected:
         clause_active.push_back(1);
     }
 
+#ifndef NDEBUG
+    /// @brief Assert the base clause storage invariant in debug builds.
+    void debug_assert_storage_synchronized() const;
+#endif
+
 public:
     /// @brief Construct an empty selector.
     ClauseSelector();
@@ -70,22 +80,28 @@ public:
     const std::vector<Clause>& get_clauses() const;
 
     /// @brief Return a mutable reference to a clause by id.
+    /// @pre `id < get_num_clauses()`.
     Clause& get_clause(ClauseId id);
 
     /// @brief Return true if the clause is currently active.
+    /// @pre `id < get_num_clauses()`.
     bool is_clause_active(ClauseId id) const;
 
     /// @brief Mark a clause active/inactive.
+    /// @param id Clause id to update.
+    /// @param active Whether the clause remains active.
+    /// @throws std::out_of_range if `id >= get_num_clauses()`.
     void set_clause_active(ClauseId id, bool active);
 
     /// @brief Read-only view of active flags in clause-id order.
+    /// @post The returned vector has size `get_num_clauses()`.
     const std::vector<std::uint8_t>& active_flags() const;
 
     /// @brief Return the next clause id to consider, or std::nullopt if none.
     virtual std::optional<ClauseId> next() = 0;
 
     /// @brief Return the next clause to consider, optionally carrying a zero-watch hint.
-    /// Default implementation drops hints and delegates to next().
+    /// @note The default implementation drops hints and delegates to `next()`.
     virtual std::optional<ClauseSelection> next_with_hint();
 
     /// @brief Add an initial clause before any propagation or decisions.
@@ -95,16 +111,19 @@ public:
     /// @param clause The asserting clause to add.
     /// @param trail Trail after backjumping.
     /// @param jumpable_levels Number of decision levels removed.
+    /// @pre `trail` already reflects the backjumped state.
     virtual void add_asserting_clause(Clause clause, const Trail& trail, std::size_t jumpable_levels);
 
     /// @brief Notify selector that a propagation occurred.
     /// @param reduced_eqn The reduced equation that was learned.
     /// @param trail Current trail after learning.
+    /// @pre `reduced_eqn` is already reduced by `trail.span()` before insertion.
     virtual void update_with_propagation(const Equation& reduced_eqn, const Trail& trail);
 
     /// @brief Notify selector that a decision occurred.
     /// @param reduced_eqn The reduced equation for the decision.
     /// @param trail Current trail after learning.
+    /// @pre `reduced_eqn` is already reduced by `trail.span()` before insertion.
     virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail);
 
     /// @brief Provide an optional clause id hint that should be prioritized.
@@ -115,6 +134,8 @@ public:
     /// @param old_watch The previously watched equation index.
     /// @param wt Which watch is being updated.
     /// @param trail Current trail.
+    /// @pre `id < get_num_clauses()` and `old_watch` names the watched row
+    /// that was replaced in the current clause state.
     virtual void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType wt, const Trail& trail);
 
     /// @brief Notify selector after clauses are rewritten during variable compaction.
@@ -153,6 +174,8 @@ public:
 };
 
 /// @brief Watchlist selector keyed by leading terms.
+/// @note `by_leading_term`, `stack`, `stack_set`, and `unit_clauses` must stay
+/// synchronized with the active non-unit and unit clauses stored in the base class.
 class LTWatchlist : public ClauseSelector {
 private:
     /// @brief Map from leading term index to clauses watching that term.
@@ -184,6 +207,7 @@ public:
     std::optional<ClauseId> next() override;
 
     /// @brief Add a clause and update watchlists.
+    /// @pre Non-unit clauses have valid, distinct watched-row indices.
     void add_clause(Clause clause) override;
 
     /// @brief Add an asserting clause and refresh the queue.

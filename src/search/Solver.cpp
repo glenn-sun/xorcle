@@ -306,8 +306,8 @@ bool Solver::maybe_compact_level0_before_decision() {
     rewritten_clauses.reserve(num_clauses);
 
     std::vector<std::uint8_t> next_active = clause_sel->active_flags();
-    if (next_active.size() < num_clauses) {
-        next_active.resize(num_clauses, 1);
+    if (next_active.size() != num_clauses) {
+        throw std::logic_error("Solver::maybe_compact_level0_before_decision: clause selector active flags are desynchronized");
     }
 
     util::ClauseSatisfactionWorkspace sat_ws(active_num_vars);
@@ -488,7 +488,7 @@ Result Solver::solve(std::atomic<bool>& stop_flag) {
         // Run unit propagation
         bool conflict = false;
         while (!conflict) {
-            auto propagate_result = propagation.unit_propagate_once(*clause_sel, trail, eqn_false, num_attempt_props, num_watch_updates);
+            auto propagate_result = propagation.unit_propagate_once(*clause_sel, trail, num_attempt_props, num_watch_updates);
             if (propagate_result) {
                 ++num_propagations;
                 auto [eqn, reason] = *propagate_result;
