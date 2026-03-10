@@ -7,7 +7,7 @@ This repository contains:
 - the C++ solver
 - Python tooling for benchmarking, validation, and format conversion under `tools/`
 
-For the Python scripts, see [tools/README.md](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/README.md).
+For the Python scripts, see [tools/README.md](tools/README.md).
 
 **Note: Parts of this repository are written with OpenAI Codex. All code has been manually reviewed and tested.**
 

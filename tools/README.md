@@ -66,21 +66,23 @@ If those packages are missing, the script fails explicitly rather than partially
 
 These are the scripts you use to produce benchmark data or paper plots.
 
-- [`run_benchmark.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/run_benchmark.py)
+- [`run_benchmark.py`](tools/run_benchmark.py)
   - Low-level benchmark runner.
   - Runs selected solvers on selected inputs and emits raw benchmark rows.
   - Useful when you want a generic benchmark job rather than one of the paper figures.
 
-- [`benchmark_representative_cactus.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/benchmark_representative_cactus.py)
+- [`benchmark_representative_cactus.py`](tools/benchmark_representative_cactus.py)
   - Produces the all-solver cactus figure on the representative set.
+  - [`benchmark_representative_family_cactus.py`](tools/benchmark_representative_family_cactus.py) produces plots broken down by family.
 
-- [`benchmark_satcomp_ascon_cactus.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/benchmark_satcomp_ascon_cactus.py)
+- [`benchmark_satcomp_ascon_cactus.py`](tools/benchmark_satcomp_ascon_cactus.py)
   - Produces the side-by-side all-solver cactus figure for SAT competition inputs and Ascon inputs.
+  - [`benchmark_satcomp_ascon_single_cactus.py`](tools/benchmark_satcomp_ascon_single_cactus.py) produces plots broken down by family
 
-- [`benchmark_tseitin_regression.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/benchmark_tseitin_regression.py)
+- [`benchmark_tseitin_regression.py`](benchmark_tseitin_regression.py)
   - Produces the two-panel Tseitin regression figure.
 
-- [`benchmark_xorcle_heuristics.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/benchmark_xorcle_heuristics.py)
+- [`benchmark_xorcle_heuristics.py`](benchmark_xorcle_heuristics.py)
   - Produces the Xorcle-only heuristic comparison figure.
 
 #### Shared benchmark behavior
@@ -97,20 +99,20 @@ Representative-set benchmarks use deterministic sampling, so increasing the samp
 
 ### 2. Validation and checking
 
-- [`test_solver_correctness_matrix.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/test_solver_correctness_matrix.py)
+- [`test_solver_correctness_matrix.py`](tools/test_solver_correctness_matrix.py)
   - Regression harness for Xorcle.
   - Runs selected Xorcle configurations, checks SAT assignments, and checks UNSAT proofs.
   - This is the main solver-validation script, not a paper benchmark.
 
-- [`check_drup_parity.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/check_drup_parity.py)
+- [`check_drup_parity.py`](tools/check_drup_parity.py)
   - Local DRUP(+) proof checker used by the repo’s proof-validation flow.
 
 ### 3. XNF generation and conversion
 
-- [`generate_xnf_tests.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/generate_xnf_tests.py)
+- [`generate_xnf_tests.py`](tools/generate_xnf_tests.py)
   - Generates the repo’s synthetic benchmark families and writes manifests for them.
 
-- [`xnf_convert.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/xnf_convert.py)
+- [`xnf_convert.py`](tools/xnf_convert.py)
   - Command-line wrapper for converting XNF into other solver-facing formats.
   - Use this when you want a one-off conversion from the shell.
 
@@ -122,26 +124,26 @@ The Python XNF parser is strict. Clause lines must end with a trailing `0`, matc
 
 These are not the main things to run directly. They exist to keep the entrypoint scripts smaller and more consistent.
 
-- [`benchmark_core.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/benchmark_core.py)
+- [`benchmark_core.py`](tools/benchmark_core.py)
   - Shared benchmark execution, caching, row construction, summaries, and solver invocation logic.
 
-- [`benchmark_orchestration.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/benchmark_orchestration.py)
+- [`benchmark_orchestration.py`](benchmark_orchestration.py)
   - Shared benchmark metadata, representative-set sampling rules, solver labels, and progress formatting.
 
-- [`benchmark_plot_style.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/benchmark_plot_style.py)
+- [`benchmark_plot_style.py`](benchmark_plot_style.py)
   - Shared visual/layout constants for the benchmark figures.
   - This is the main place to edit figure width, spacing, font sizing, and related paper-plot defaults.
 
-- [`plot_cactus.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/plot_cactus.py)
+- [`plot_cactus.py`](tools/plot_cactus.py)
   - Shared cactus plotting helper used by the benchmark entrypoints.
 
-- [`tool_common.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/tool_common.py)
+- [`tool_common.py`](tool_common.py)
   - Small repo/tool utility helpers.
 
-- [`tool_process.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/tool_process.py)
+- [`tool_process.py`](tool_process.py)
   - Shared subprocess launching, timeout handling, memory-cap handling, and solver-output parsing.
 
-- [`xnf_lib.py`](/Users/glennsun/Documents/Projects/parity-sat-cpp/tools/xnf_lib.py)
+- [`xnf_lib.py`](tools/xnf_lib.py)
   - Shared XNF parsing and conversion logic used by the XNF-facing scripts.
 
 ## Which script should I use?
