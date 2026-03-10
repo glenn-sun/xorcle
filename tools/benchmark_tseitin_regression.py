@@ -143,6 +143,65 @@ def build_plot_data(point_rows: Sequence[Dict[str, str]]) -> Dict[str, Dict[str,
     return plot_data
 
 
+def add_custom_legend(figure, *, point_style, fit_styles, fit_labels, layout, legend_style) -> None:
+    from matplotlib.lines import Line2D
+    from matplotlib.offsetbox import AnchoredOffsetbox, DrawingArea, HPacker, TextArea, VPacker
+
+    handle_width = 18
+    handle_height = 8
+    text_props = {"fontsize": UNIFIED_FONT_SIZE}
+
+    def marker_row(label: str) -> HPacker:
+        drawing = DrawingArea(handle_width, handle_height, 0, 0)
+        drawing.add_artist(
+            Line2D(
+                [handle_width / 2.0],
+                [handle_height / 2.0],
+                linestyle="none",
+                marker=point_style.marker,
+                markersize=max(3.0, PAPER_MARKER_SIZE ** 0.5),
+                color=point_style.color,
+            )
+        )
+        return HPacker(children=[drawing, TextArea(label, textprops=text_props)], align="center", pad=0, sep=4)
+
+    def line_row(label: str, *, linestyle, color: str) -> HPacker:
+        drawing = DrawingArea(handle_width, handle_height, 0, 0)
+        drawing.add_artist(
+            Line2D(
+                [0, handle_width],
+                [handle_height / 2.0, handle_height / 2.0],
+                linestyle=linestyle,
+                color=color,
+                linewidth=PAPER_LINE_WIDTH,
+            )
+        )
+        return HPacker(children=[drawing, TextArea(label, textprops=text_props)], align="center", pad=0, sep=4)
+
+    legend_box = VPacker(
+        children=[
+            marker_row("One test file"),
+            TextArea("Lines for comparison:", textprops=text_props),
+            line_row(fit_labels["tseitin_4_n"], linestyle=fit_styles["tseitin_4_n"].linestyle, color=fit_styles["tseitin_4_n"].color),
+            line_row(fit_labels["tseitin_k_20"], linestyle=fit_styles["tseitin_k_20"].linestyle, color=fit_styles["tseitin_k_20"].color),
+        ],
+        align="left",
+        pad=0,
+        sep=max(2, int(legend_style.labelspacing * UNIFIED_FONT_SIZE)),
+    )
+    figure.add_artist(
+        AnchoredOffsetbox(
+            loc="center left",
+            child=legend_box,
+            frameon=False,
+            bbox_to_anchor=paper_layout_legend_anchor(layout),
+            bbox_transform=figure.transFigure,
+            borderpad=legend_style.borderaxespad,
+            pad=0.0,
+        )
+    )
+
+
 def render_plot(point_rows: Sequence[Dict[str, str]], output_path: Path) -> None:
     plt = import_matplotlib_pyplot()
     from matplotlib.ticker import NullLocator
@@ -224,21 +283,13 @@ def render_plot(point_rows: Sequence[Dict[str, str]], output_path: Path) -> None
         axis.yaxis.set_minor_locator(NullLocator())
         axis.grid(False, which="minor")
 
-    legend_handles = [
-        plt.Line2D([], [], linestyle="none", marker=point_style.marker, color=point_style.color, label="One test file"),
-        plt.Line2D([], [], linestyle=fit_styles["tseitin_4_n"].linestyle, color=fit_styles["tseitin_4_n"].color, linewidth=PAPER_LINE_WIDTH, label=fit_labels["tseitin_4_n"]),
-        plt.Line2D([], [], linestyle=fit_styles["tseitin_k_20"].linestyle, color=fit_styles["tseitin_k_20"].color, linewidth=PAPER_LINE_WIDTH, label=fit_labels["tseitin_k_20"]),
-    ]
-    figure.legend(
-        legend_handles,
-        [handle.get_label() for handle in legend_handles],
-        fontsize=UNIFIED_FONT_SIZE,
-        frameon=False,
-        loc="center left",
-        bbox_to_anchor=paper_layout_legend_anchor(layout),
-        borderaxespad=legend_style.borderaxespad,
-        handleheight=legend_style.handleheight,
-        labelspacing=legend_style.labelspacing,
+    add_custom_legend(
+        figure,
+        point_style=point_style,
+        fit_styles=fit_styles,
+        fit_labels=fit_labels,
+        layout=layout,
+        legend_style=legend_style,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

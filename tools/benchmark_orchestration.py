@@ -29,7 +29,7 @@ SOLVER_TO_BENCH_ARG = {
 }
 
 SOLVER_DISPLAY = {
-    "xorcle": "Xorcle",
+    "xorcle": "Xorcle 0.1",
     "2xornado": "2-Xornado 1.0.2",
     "kissat_plain": "Kissat --plain 4.0.4",
     "kissat_default": "Kissat 4.0.4",
