@@ -1,0 +1,23 @@
+# Build output
+/build/
+/out/
+
+# Generated test instances (see tests/manifest.csv)
+/tests/generated/
+
+# Generated documentation
+/docs/html/
+/docs/latex/
+
+# Python
+/.venv/
+__pycache__/
+*.pyc
+
+# Editor and OS
+/.vscode/
+.DS_Store
+
+# Proofs and profiling artifacts
+*.lrup
+*.dSYM/
