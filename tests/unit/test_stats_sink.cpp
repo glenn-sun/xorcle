@@ -137,24 +137,24 @@ TEST_CASE("ConsoleStatsSink: the CSIDS lines appear together or not at all") {
         stats.csids_decay = 0.98;
         stats.csids_bump = 1.0;
         const std::string output = console_output(stats);
-        // The 0.1 line keys are kept verbatim -- the format is byte-compatible
-        // even though the identifiers behind it were renamed to CSIDS.
-        CHECK(output.find("c Clause VSIDS learned base: 1\n") != std::string::npos);
-        CHECK(output.find("c Clause VSIDS decay: 0.98\n") != std::string::npos);
-        CHECK(output.find("c Clause VSIDS bump: 1\n") != std::string::npos);
+        // The line keys are the paper's vocabulary, matching the identifiers
+        // behind them.
+        CHECK(output.find("c CSIDS initial activity: 1\n") != std::string::npos);
+        CHECK(output.find("c CSIDS decay: 0.98\n") != std::string::npos);
+        CHECK(output.find("c CSIDS bump: 1\n") != std::string::npos);
         // They sit between the seed and the conflict counter.
-        CHECK(output.find("c Seed: 12345\nc Clause VSIDS learned base:") != std::string::npos);
-        CHECK(output.find("c Clause VSIDS bump: 1\nc Conflicts:") != std::string::npos);
+        CHECK(output.find("c Seed: 12345\nc CSIDS initial activity:") != std::string::npos);
+        CHECK(output.find("c CSIDS bump: 1\nc Conflicts:") != std::string::npos);
     }
 
     SUBCASE("only two set") {
         stats.csids_initial_activity = 1.0;
         stats.csids_decay = 0.98;
-        CHECK(console_output(stats).find("Clause VSIDS") == std::string::npos);
+        CHECK(console_output(stats).find("CSIDS") == std::string::npos);
     }
 
     SUBCASE("none set") {
-        CHECK(console_output(stats).find("Clause VSIDS") == std::string::npos);
+        CHECK(console_output(stats).find("CSIDS") == std::string::npos);
     }
 }
 
@@ -166,7 +166,7 @@ TEST_CASE("ConsoleStatsSink: the CSIDS lines print in default float format") {
     const std::string output = console_output(stats);
     // `setprecision(6)` without `std::fixed`: six significant digits, and small
     // magnitudes go to scientific notation rather than rounding to zero.
-    CHECK(output.find("c Clause VSIDS learned base: 1.23457e-06\n") != std::string::npos);
+    CHECK(output.find("c CSIDS initial activity: 1.23457e-06\n") != std::string::npos);
     // The sticky flags must not leak into the fixed-format lines that follow.
     CHECK(output.find("c Time: 0.013 s\n") != std::string::npos);
 }
@@ -254,7 +254,7 @@ TEST_CASE("CsvStatsSink: header then rows, appended") {
 
     const std::string first = read_file(temp.path());
     CHECK(first.starts_with(
-        "run_id,timestamp_utc,file,decision_procedure,cvsids_learned_base,cvsids_decay,cvsids_bump,"
+        "run_id,timestamp_utc,file,decision_procedure,csids_initial_activity,csids_decay,csids_bump,"
         "decision_phase,clause_selector,seed,result,"
         "num_vars,start_clauses,final_clauses,learned_clauses,"
         "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,"

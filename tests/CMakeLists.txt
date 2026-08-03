@@ -26,14 +26,16 @@ add_executable(xorcle_tests
     unit/test_equation.cpp
     unit/test_lrup_logger.cpp
     unit/test_max_heap.cpp
+    unit/test_options.cpp
     unit/test_propagation.cpp
     unit/test_random.cpp
     unit/test_restart_policy.cpp
     unit/test_row_echelon_matrix.cpp
+    unit/test_solver.cpp
     unit/test_stats_sink.cpp
     unit/test_trail.cpp
     unit/test_trail_basis.cpp)
 
 target_link_libraries(xorcle_tests PRIVATE xorcle_core doctest::doctest)
 
-add_test(NAME algebra COMMAND xorcle_tests)
+add_test(NAME unit COMMAND xorcle_tests)

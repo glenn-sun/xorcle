@@ -78,16 +78,17 @@ ConsoleStatsSink::log_impl(const RunStats& stats) {
     output << "c Clause selector: " << stats.clause_selector << "\n";
     output << "c Decision phase: " << stats.decision_phase << "\n";
     output << "c Seed: " << stats.seed << "\n";
-    // The three CSIDS lines appear together or not at all, and keep the 0.1
-    // spellings so the format stays byte-compatible. They use bare
-    // `setprecision(6)` -- no `std::fixed` -- and so print in default float
-    // format; every other formatted line sets its own flags immediately before
-    // its value, so the sticky stream state never leaks between lines.
+    // The three CSIDS lines appear together or not at all. The keys are the
+    // paper's vocabulary, not 0.1's `Clause VSIDS
+    // learned base`. They
+    // use bare `setprecision(6)` -- no `std::fixed` -- and so print in default
+    // float format; every other formatted line sets its own flags immediately
+    // before its value, so the sticky stream state never leaks between lines.
     if (stats.csids_initial_activity.has_value() && stats.csids_decay.has_value() &&
         stats.csids_bump.has_value()) {
-        output << "c Clause VSIDS learned base: " << std::setprecision(6) << *stats.csids_initial_activity << "\n";
-        output << "c Clause VSIDS decay: " << std::setprecision(6) << *stats.csids_decay << "\n";
-        output << "c Clause VSIDS bump: " << std::setprecision(6) << *stats.csids_bump << "\n";
+        output << "c CSIDS initial activity: " << std::setprecision(6) << *stats.csids_initial_activity << "\n";
+        output << "c CSIDS decay: " << std::setprecision(6) << *stats.csids_decay << "\n";
+        output << "c CSIDS bump: " << std::setprecision(6) << *stats.csids_bump << "\n";
     }
     output << "c Conflicts: " << stats.num_conflicts << "\n";
     output << "c Propagations: " << stats.num_propagations << "\n";
@@ -140,7 +141,7 @@ CsvStatsSink::ensure_header() {
     }
 
     if (need_header) {
-        file_ << "run_id,timestamp_utc,file,decision_procedure,cvsids_learned_base,cvsids_decay,cvsids_bump,"
+        file_ << "run_id,timestamp_utc,file,decision_procedure,csids_initial_activity,csids_decay,csids_bump,"
                  "decision_phase,clause_selector,seed,result,"
                  "num_vars,start_clauses,final_clauses,learned_clauses,"
                  "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,"

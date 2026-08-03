@@ -1,5 +1,6 @@
-# Build output
-/build/
+# Build output. The glob covers the alternate-configuration trees that
+# `cmake -B build-debug` and friends produce alongside the default one.
+/build*/
 /out/
 
 # Generated test instances (see tests/manifest.csv)
