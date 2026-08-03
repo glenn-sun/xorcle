@@ -405,12 +405,10 @@ TEST_CASE_TEMPLATE("clause: to_string", Tag, DenseTag, SparseTag) {
 
     // The watch bookkeeping survives copying, and so does the row space.
     clause.watched0 = 1;
-    clause.true_witness = 1;
     clause.next_watch_search_start = 2;
     const Clause copy = clause;
     CHECK(copy.watched0 == 1);
     CHECK(copy.watched1 == 1); // default, untouched
-    CHECK(copy.true_witness == 1);
     CHECK(copy.next_watch_search_start == 2);
     CHECK(copy.to_string() == clause.to_string());
     check_echelon_invariant(copy);

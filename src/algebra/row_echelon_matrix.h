@@ -253,9 +253,6 @@ public:
     /// @brief Index of the second watched equation.
     std::size_t watched1 = 1;
 
-    /// @brief Index of a known-true equation, to skip recomputation.
-    std::size_t true_witness = 0;
-
     /// @brief Starting index for the next cyclic search for a replacement watch.
     std::size_t next_watch_search_start = 0;
 

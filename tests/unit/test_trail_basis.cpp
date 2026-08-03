@@ -1,0 +1,431 @@
+#include <doctest/doctest.h>
+
+#include <cstddef>
+#include <optional>
+#include <span>
+#include <vector>
+
+#include "algebra/algebra.h"
+#include "algebra/equation.h"
+#include "algebra/row_echelon_matrix.h"
+#include "algebra_test_support.h"
+#include "core/clause_id.h"
+#include "core/trail.h"
+#include "core/trail_basis.h"
+
+namespace xorcle {
+
+namespace {
+
+/// @brief The 0.1 tree's `jumpable_levels()`, transcribed literally.
+///
+/// This is the arithmetic `asserting_level()` was derived from, kept here as an
+/// independent oracle: the port's claim is exactly
+/// `asserting_level() == trail.level() - jumpable_levels_reference(...)`, and
+/// this is the only place in the tree that states the old convention. The
+/// `row(1).sub(width).any()` prefix test is spelled out over the row's set
+/// columns so that the reference does not lean on the same `leading_column()`
+/// reasoning the implementation uses.
+std::size_t jumpable_levels_reference(const TrailBasisSpace& basis, const Trail& trail) {
+    REQUIRE(basis.rows() > 0);
+    if (basis.rows() == 1) {
+        return trail.size() - 1;
+    }
+
+    const std::vector<std::size_t> second_row = columns_of(basis.row(1));
+    std::size_t removable_levels = 1;
+    while (removable_levels < trail.size()) {
+        const std::size_t earlier_trail_rows =
+            trail[trail.size() - 1 - removable_levels].span().rows();
+        const std::size_t current_level_width = trail.span().rows() - earlier_trail_rows;
+
+        bool second_row_suffix_any = false;
+        for (const std::size_t column : second_row) {
+            if (column < current_level_width) {
+                second_row_suffix_any = true;
+                break;
+            }
+        }
+        if (second_row_suffix_any) {
+            return removable_levels - 1;
+        }
+        ++removable_levels;
+    }
+    return removable_levels - 1;
+}
+
+/// @brief Check `asserting_level()` against the 0.1 arithmetic and against the
+/// decision level of the trail step row 1 points at.
+void check_asserting_level(const TrailBasisSpace& basis, const Trail& trail,
+                           const std::vector<std::size_t>& level_of_trail_step) {
+    const std::size_t asserting_level = basis.asserting_level();
+    CHECK(asserting_level <= trail.level());
+    CHECK(asserting_level == trail.level() - jumpable_levels_reference(basis, trail));
+
+    // The independent derivation: column `c` is trail step `m - 1 - c`, so the
+    // clause asserts at the level that step was learned at.
+    if (basis.rows() == 1) {
+        CHECK(asserting_level == 0);
+    } else {
+        const std::optional<std::size_t> leading = basis.row(1).leading_column();
+        REQUIRE(leading.has_value());
+        const std::size_t trail_step = trail.span().rows() - *leading - 1;
+        REQUIRE(trail_step < level_of_trail_step.size());
+        CHECK(asserting_level == level_of_trail_step[trail_step]);
+    }
+}
+
+/// @brief A trail with a hand-checkable level structure.
+///
+/// Eight learned equations over four decision levels, all unit and on distinct
+/// variables, so the trail span is exactly what was learned and `order_map()` is
+/// the identity:
+///
+/// | trail step | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+/// |---|---|---|---|---|---|---|---|---|
+/// | level | 0 | 1 | 1 | 2 | 2 | 3 | 3 | 3 |
+/// | trail-basis column | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
+///
+/// So `trail[k].span().rows()` is 1, 3, 5, 8 for k = 0, 1, 2, 3.
+Trail make_levelled_trail(Algebra backend) {
+    Trail trail(backend, 8);
+    trail.learn(make_equation_with(backend, 8, {0, 8}), ClauseId{0}); // step 0, level 0
+    trail.learn(make_equation_with(backend, 8, {1}), std::nullopt); // step 1, level 1
+    trail.learn(make_equation_with(backend, 8, {2, 8}), ClauseId{1}); // step 2, level 1
+    trail.learn(make_equation_with(backend, 8, {3}), std::nullopt); // step 3, level 2
+    trail.learn(make_equation_with(backend, 8, {4, 8}), ClauseId{2}); // step 4, level 2
+    trail.learn(make_equation_with(backend, 8, {5}), std::nullopt); // step 5, level 3
+    trail.learn(make_equation_with(backend, 8, {6, 8}), ClauseId{3}); // step 6, level 3
+    trail.learn(make_equation_with(backend, 8, {7}), ClauseId{4}); // step 7, level 3
+    return trail;
+}
+
+/// @brief The per-trail-step levels of `make_levelled_trail()`.
+const std::vector<std::size_t>& levelled_trail_step_levels() {
+    static const std::vector<std::size_t> levels{0, 1, 1, 2, 2, 3, 3, 3};
+    return levels;
+}
+
+/// @brief Build a trail-basis space whose rows have exactly the listed columns.
+TrailBasisSpace make_basis(const Trail& trail,
+                           const std::vector<std::vector<std::size_t>>& rows) {
+    TrailBasisSpace basis(trail);
+    for (const std::vector<std::size_t>& columns : rows) {
+        Equation row(trail.backend(), basis.num_vars());
+        row.assign_columns(std::span<const std::size_t>(columns));
+        basis.add_row(row);
+    }
+    return basis;
+}
+
+/// @brief Whether two row spaces span the same subspace.
+bool spans_equal(const RowSpace& lhs, const RowSpace& rhs) {
+    if (lhs.rows() != rhs.rows()) {
+        return false;
+    }
+    for (const Equation& row : lhs) {
+        Equation reduced = row;
+        rhs.reduce(reduced);
+        if (!reduced.is_eq_true()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// @brief A random trail of unit equations on distinct variables.
+/// @param level_of_trail_step Receives the decision level of each trail step.
+Trail make_random_trail(Algebra backend, TestRandom& rng, std::size_t num_vars,
+                        std::vector<std::size_t>& level_of_trail_step) {
+    std::vector<std::size_t> variables(num_vars);
+    for (std::size_t i = 0; i < num_vars; ++i) {
+        variables[i] = i;
+    }
+    for (std::size_t i = num_vars; i-- > 1;) {
+        std::swap(variables[i], variables[rng.next(i + 1)]);
+    }
+
+    Trail trail(backend, num_vars);
+    level_of_trail_step.clear();
+    for (std::size_t step = 0; step < num_vars; ++step) {
+        // Every equation is a unit on a variable no earlier step touched, so the
+        // span never absorbs one and each step really does add a row.
+        std::vector<std::size_t> columns{variables[step]};
+        if (rng.chance(2)) {
+            columns.push_back(num_vars);
+        }
+        Equation eqn(backend, num_vars);
+        eqn.assign_columns(std::span<const std::size_t>(columns));
+
+        const bool decide = rng.chance(2);
+        trail.learn(eqn, decide ? std::optional<ClauseId>{} : std::optional<ClauseId>{step});
+        level_of_trail_step.push_back(trail.level());
+    }
+    return trail;
+}
+
+} // namespace
+
+TEST_CASE_TEMPLATE("trail basis: width bookkeeping and the fake constant column", Tag, DenseTag,
+                   SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    const Trail trail = make_levelled_trail(backend);
+    const TrailBasisSpace basis(trail);
+
+    // `cols()` is the trail span's row count, and `num_vars()` is one less only
+    // because the inherited matrix reserves a constant column that this class
+    // uses as an ordinary coordinate.
+    CHECK(basis.cols() == trail.span().rows());
+    CHECK(basis.num_vars() == trail.span().rows() - 1);
+    CHECK(basis.rows() == 0);
+    CHECK(basis.backend() == backend);
+
+    // The last column is the oldest trail row's coordinate, so a row set there
+    // alone is a perfectly ordinary basis row and not the false equation.
+    const TrailBasisSpace oldest_only = make_basis(trail, {{7}});
+    REQUIRE(oldest_only.rows() == 1);
+    CHECK(columns_of(oldest_only.row(0)) == std::vector<std::size_t>{7});
+    CHECK(oldest_only.to_RowSpace().rows() == 1);
+    check_echelon_invariant(oldest_only);
+}
+
+TEST_CASE_TEMPLATE("trail basis: an empty trail span gives a width-zero basis", Tag, DenseTag,
+                   SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    const Trail trail(backend, 4);
+    const TrailBasisSpace basis(trail);
+
+    CHECK(trail.span().rows() == 0);
+    CHECK(basis.rows() == 0);
+    CHECK(basis.cols() == 1);
+}
+
+TEST_CASE_TEMPLATE("trail basis: from_RowSpace maps trail step t to column m-1-t", Tag, DenseTag,
+                   SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    Trail trail(backend, 4);
+
+    // Learned leading columns 2, 0, 3, so row-echelon order and trail order
+    // disagree and the mapping really has to go through `reverse_order_map()`.
+    trail.learn(make_equation_with(backend, 4, {2}), ClauseId{0});
+    trail.learn(make_equation_with(backend, 4, {0, 4}), ClauseId{1});
+    trail.learn(make_equation_with(backend, 4, {3, 4}), ClauseId{2});
+    REQUIRE(trail.order_map() == std::vector<std::size_t>{1, 0, 2});
+
+    const std::size_t span_rows = trail.span().rows();
+    for (std::size_t trail_step = 0; trail_step < span_rows; ++trail_step) {
+        RowSpace one_row(backend, trail.num_vars());
+        one_row.add_row(trail.span().row(trail.order_map()[trail_step]));
+
+        const TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(one_row, trail);
+        REQUIRE(basis.rows() == 1);
+        const std::vector<std::size_t> expected{span_rows - trail_step - 1};
+        CHECK(columns_of(basis.row(0)) == expected);
+
+        // And back again, to the row we started from.
+        CHECK(spans_equal(basis.to_RowSpace(), one_row));
+    }
+}
+
+TEST_CASE_TEMPLATE("trail basis: from_RowSpace rewrites a combination of trail rows", Tag,
+                   DenseTag, SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    const Trail trail = make_levelled_trail(backend);
+    REQUIRE(trail.span().rows() == 8);
+
+    // Steps 1 and 6 together, i.e. columns 8 - 1 - 1 = 6 and 8 - 6 - 1 = 1.
+    Equation combination = trail.span().row(trail.order_map()[1]);
+    combination.xor_assign(trail.span().row(trail.order_map()[6]));
+
+    RowSpace row_space(backend, trail.num_vars());
+    row_space.add_row(combination);
+
+    const TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(row_space, trail);
+    REQUIRE(basis.rows() == 1);
+    CHECK(columns_of(basis.row(0)) == std::vector<std::size_t>{1, 6});
+    check_echelon_invariant(basis);
+    CHECK(spans_equal(basis.to_RowSpace(), row_space));
+}
+
+TEST_CASE_TEMPLATE("trail basis: from_RowSpace of the whole span is the full coordinate basis",
+                   Tag, DenseTag, SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    const Trail trail = make_levelled_trail(backend);
+
+    RowSpace whole_span(backend, trail.num_vars());
+    for (const Equation& row : trail.span()) {
+        whole_span.add_row(row);
+    }
+
+    const TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(whole_span, trail);
+    REQUIRE(basis.rows() == trail.span().rows());
+    for (std::size_t index = 0; index < basis.rows(); ++index) {
+        CHECK(columns_of(basis.row(index)) == std::vector<std::size_t>{index});
+    }
+    CHECK(spans_equal(basis.to_RowSpace(), whole_span));
+}
+
+TEST_CASE_TEMPLATE("trail basis: asserting level of a lifted unit clause is the root", Tag,
+                   DenseTag, SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    const Trail trail = make_levelled_trail(backend);
+    REQUIRE(trail.level() == 3);
+
+    // A single row is a lifted unit clause: it asserts at the root whatever it
+    // is made of, so every non-root level can be discarded. In the 0.1 sign
+    // convention this returned `trail.size() - 1`, which is 3 here -- the exact
+    // opposite end of the range.
+    for (const std::size_t column : {std::size_t{0}, std::size_t{3}, std::size_t{7}}) {
+        const TrailBasisSpace basis = make_basis(trail, {{column}});
+        REQUIRE(basis.rows() == 1);
+        CHECK(basis.asserting_level() == 0);
+        check_asserting_level(basis, trail, levelled_trail_step_levels());
+    }
+}
+
+TEST_CASE_TEMPLATE("trail basis: asserting level with a hand-computed answer", Tag, DenseTag,
+                   SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    const Trail trail = make_levelled_trail(backend);
+    REQUIRE(trail.level() == 3);
+
+    // `make_levelled_trail()` gives level widths (equations learned strictly
+    // after level k) of 0, 3, 5, 7 for k = 3, 2, 1, 0, so the leading column of
+    // row 1 lands as follows:
+    //
+    //   columns 0, 1, 2 -> trail steps 7, 6, 5 -> level 3
+    //   columns 3, 4    -> trail steps 4, 3    -> level 2
+    //   columns 5, 6    -> trail steps 2, 1    -> level 1
+    //   column  7       -> trail step  0       -> level 0
+    struct Case {
+        std::vector<std::vector<std::size_t>> rows;
+        std::size_t expected;
+    };
+    const std::vector<Case> cases{
+        // Row 1 touches the most recent level, so nothing is discardable and
+        // conflict analysis must keep resolving.
+        {{{0}, {1}}, 3},
+        {{{0}, {2}}, 3},
+        {{{0, 4}, {2, 7}}, 3},
+        // Row 1 reaches back to level 2, so level 3 goes.
+        {{{0}, {3}}, 2},
+        {{{1}, {4}}, 2},
+        // Only row 1 matters: the later rows reach further back but are older,
+        // hence at lower levels, and cannot raise the answer.
+        {{{0}, {3}, {6}}, 2},
+        {{{0}, {3}, {5}, {7}}, 2},
+        // Row 1 reaches back to level 1.
+        {{{0}, {5}}, 1},
+        {{{4}, {6}}, 1},
+        // Row 1 reaches all the way to the root equation.
+        {{{3}, {7}}, 0},
+        {{{0}, {7}}, 0},
+    };
+
+    for (const Case& test_case : cases) {
+        const TrailBasisSpace basis = make_basis(trail, test_case.rows);
+        REQUIRE(basis.rows() == test_case.rows.size());
+        CHECK(basis.asserting_level() == test_case.expected);
+        check_asserting_level(basis, trail, levelled_trail_step_levels());
+    }
+}
+
+TEST_CASE_TEMPLATE("trail basis: asserting level on a single-level trail is the root", Tag,
+                   DenseTag, SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    Trail trail(backend, 4);
+    trail.learn(make_equation_with(backend, 4, {0}), ClauseId{0});
+    trail.learn(make_equation_with(backend, 4, {1, 4}), ClauseId{1});
+    REQUIRE(trail.level() == 0);
+
+    // With no decisions there is nothing to discard and nothing to keep, and
+    // both ends of the range collapse onto the root.
+    const std::vector<std::size_t> step_levels{0, 0};
+
+    const TrailBasisSpace one_row = make_basis(trail, {{0}});
+    CHECK(one_row.asserting_level() == 0);
+    check_asserting_level(one_row, trail, step_levels);
+
+    const TrailBasisSpace two_rows = make_basis(trail, {{0}, {1}});
+    REQUIRE(two_rows.rows() == 2);
+    CHECK(two_rows.asserting_level() == 0);
+    check_asserting_level(two_rows, trail, step_levels);
+}
+
+TEST_CASE_TEMPLATE("trail basis: asserting level agrees with the 0.1 arithmetic on random input",
+                   Tag, DenseTag, SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    TestRandom rng(987654321u);
+
+    for (std::size_t iteration = 0; iteration < 400; ++iteration) {
+        const std::size_t num_vars = 1 + rng.next(10);
+        std::vector<std::size_t> level_of_trail_step;
+        const Trail trail = make_random_trail(backend, rng, num_vars, level_of_trail_step);
+        REQUIRE(trail.span().rows() == num_vars);
+
+        TrailBasisSpace basis(trail);
+        const std::size_t attempts = 1 + rng.next(4);
+        for (std::size_t attempt = 0; attempt < attempts; ++attempt) {
+            std::vector<std::size_t> columns;
+            for (std::size_t column = 0; column < basis.cols(); ++column) {
+                if (rng.chance(3)) {
+                    columns.push_back(column);
+                }
+            }
+            if (columns.empty()) {
+                continue;
+            }
+            Equation row(backend, basis.num_vars());
+            row.assign_columns(std::span<const std::size_t>(columns));
+            basis.add_row(row);
+        }
+        if (basis.rows() == 0) {
+            continue;
+        }
+
+        check_echelon_invariant(basis);
+        check_asserting_level(basis, trail, level_of_trail_step);
+    }
+}
+
+TEST_CASE_TEMPLATE("trail basis: from_RowSpace and to_RowSpace round-trip on random input", Tag,
+                   DenseTag, SparseTag) {
+    constexpr Algebra backend = Tag::value;
+    TestRandom rng(123456789u);
+
+    for (std::size_t iteration = 0; iteration < 200; ++iteration) {
+        const std::size_t num_vars = 1 + rng.next(10);
+        std::vector<std::size_t> level_of_trail_step;
+        const Trail trail = make_random_trail(backend, rng, num_vars, level_of_trail_step);
+
+        // Random combinations of trail rows, which is exactly the precondition
+        // `from_RowSpace()` asserts: every row lies in the trail span.
+        RowSpace row_space(backend, trail.num_vars());
+        const std::size_t attempts = 1 + rng.next(5);
+        for (std::size_t attempt = 0; attempt < attempts; ++attempt) {
+            Equation combination(backend, trail.num_vars());
+            for (const Equation& span_row : trail.span()) {
+                if (rng.chance(2)) {
+                    combination.xor_assign(span_row);
+                }
+            }
+            if (!combination.is_eq_true()) {
+                row_space.add_row(combination);
+            }
+        }
+
+        const TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(row_space, trail);
+        check_echelon_invariant(basis);
+        CHECK(basis.rows() == row_space.rows());
+        CHECK(spans_equal(basis.to_RowSpace(), row_space));
+
+        // And the other direction: coordinates out, coordinates back in.
+        const TrailBasisSpace again = TrailBasisSpace::from_RowSpace(basis.to_RowSpace(), trail);
+        REQUIRE(again.rows() == basis.rows());
+        for (std::size_t index = 0; index < basis.rows(); ++index) {
+            CHECK(columns_of(again.row(index)) == columns_of(basis.row(index)));
+        }
+    }
+}
+
+} // namespace xorcle

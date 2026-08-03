@@ -13,11 +13,23 @@ FetchContent_MakeAvailable(doctest)
 add_executable(xorcle_tests
     unit/algebra_test_support.cpp
     unit/allocation_counter.cpp
+    unit/heuristics_test_support.cpp
     unit/main.cpp
     unit/reference_matrix.cpp
     unit/test_bitmap.cpp
+    unit/test_clause_selector.cpp
+    unit/test_compaction.cpp
+    unit/test_decision_utils.cpp
+    unit/test_decisions.cpp
     unit/test_equation.cpp
-    unit/test_row_echelon_matrix.cpp)
+    unit/test_max_heap.cpp
+    unit/test_propagation.cpp
+    unit/test_random.cpp
+    unit/test_restart_policy.cpp
+    unit/test_row_echelon_matrix.cpp
+    unit/test_stats_sink.cpp
+    unit/test_trail.cpp
+    unit/test_trail_basis.cpp)
 
 target_link_libraries(xorcle_tests PRIVATE xorcle_core doctest::doctest)
 

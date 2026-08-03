@@ -32,7 +32,27 @@ add_library(xorcle_core
     src/algebra/dense/dense_row.cpp
     src/algebra/sparse/sparse_backend.cpp
     src/algebra/sparse/sparse_row.cpp
-    src/util/bitmap.cpp)
+    src/core/propagation.cpp
+    src/core/trail.cpp
+    src/core/trail_basis.cpp
+    src/heuristics/compaction/compaction.cpp
+    src/heuristics/compaction/original_space.cpp
+    src/heuristics/decisions/csids.cpp
+    src/heuristics/decisions/decision_procedure.cpp
+    src/heuristics/decisions/decision_utils.cpp
+    src/heuristics/decisions/fixed_literals.cpp
+    src/heuristics/decisions/phase.cpp
+    src/heuristics/decisions/variable_vsids.cpp
+    src/heuristics/restarts/geometric.cpp
+    src/heuristics/restarts/luby.cpp
+    src/heuristics/restarts/restart_policy.cpp
+    src/heuristics/selection/clause_selector.cpp
+    src/heuristics/selection/cyclic.cpp
+    src/heuristics/selection/leading_term_watchlist.cpp
+    src/util/bitmap.cpp
+    src/util/random.cpp
+    src/util/stats.cpp
+    src/util/stats_sink.cpp)
 
 target_link_libraries(xorcle_core PUBLIC gf2::gf2)
 target_include_directories(xorcle_core PUBLIC src)
