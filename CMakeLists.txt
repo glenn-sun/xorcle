@@ -32,6 +32,7 @@ add_library(xorcle_core
     src/algebra/dense/dense_row.cpp
     src/algebra/sparse/sparse_backend.cpp
     src/algebra/sparse/sparse_row.cpp
+    src/core/analysis.cpp
     src/core/propagation.cpp
     src/core/trail.cpp
     src/core/trail_basis.cpp
@@ -49,6 +50,8 @@ add_library(xorcle_core
     src/heuristics/selection/clause_selector.cpp
     src/heuristics/selection/cyclic.cpp
     src/heuristics/selection/leading_term_watchlist.cpp
+    src/io/dimacs.cpp
+    src/io/lrup_logger.cpp
     src/util/bitmap.cpp
     src/util/random.cpp
     src/util/stats.cpp

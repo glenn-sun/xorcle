@@ -16,12 +16,15 @@ add_executable(xorcle_tests
     unit/heuristics_test_support.cpp
     unit/main.cpp
     unit/reference_matrix.cpp
+    unit/test_analysis.cpp
     unit/test_bitmap.cpp
     unit/test_clause_selector.cpp
     unit/test_compaction.cpp
     unit/test_decision_utils.cpp
     unit/test_decisions.cpp
+    unit/test_dimacs.cpp
     unit/test_equation.cpp
+    unit/test_lrup_logger.cpp
     unit/test_max_heap.cpp
     unit/test_propagation.cpp
     unit/test_random.cpp
