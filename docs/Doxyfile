@@ -1,0 +1,88 @@
+# Doxygen configuration for Xorcle.
+#
+# Convention: this file lists only the settings that differ from Doxygen's
+# defaults. `doxygen -g` writes every tag with its default value, which is
+# 134 KB of noise in which the handful of real decisions is invisible; the 0.1
+# tree carried exactly that file. To see a default, run `doxygen -g` into a
+# scratch file and look it up there.
+#
+# Relative paths are resolved against the working directory, not this file's
+# location, so run it from the repository root:
+#
+#     doxygen docs/Doxyfile
+
+#---------------------------------------------------------------------------
+# Project
+#---------------------------------------------------------------------------
+
+PROJECT_NAME           = Xorcle
+PROJECT_NUMBER         = 0.2.0
+PROJECT_BRIEF          = "A CDCL(+) solver for XNF: clauses that are disjunctions of linear equations modulo 2"
+
+OUTPUT_DIRECTORY       = docs
+
+#---------------------------------------------------------------------------
+# Input
+#---------------------------------------------------------------------------
+
+INPUT                  = src
+RECURSIVE              = YES
+
+# The default patterns already cover *.h and *.cpp. `cli/options.inc` is
+# deliberately left out: Doxygen has no way to read an X-macro table, and adding
+# *.inc turns each `XORCLE_OPTION(...)` row into an invented function or
+# variable in the output. The table documents itself in its own @file comment,
+# which `cli/options.h` refers to.
+
+# Show `io/dimacs.h` rather than `src/io/dimacs.h`; `src` is the include root
+# the library exports, so paths already read that way in the source.
+STRIP_FROM_PATH        = src
+
+#---------------------------------------------------------------------------
+# What to extract
+#---------------------------------------------------------------------------
+
+# Private members and file-local helpers are documented in this tree -- the
+# preallocated scratch buffers, the trail's invariants, the anonymous-namespace
+# parsing helpers -- and those comments are where the reasoning lives. Extract
+# them or the generated reference omits the half of the documentation that
+# explains why the code is shaped the way it is.
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+
+# Declaration order in these headers is deliberate (construction, then queries,
+# then mutators, then the private state they act on). Alphabetizing loses it.
+SORT_MEMBER_DOCS       = NO
+
+#---------------------------------------------------------------------------
+# Diagnostics
+#---------------------------------------------------------------------------
+
+# Progress chatter off, warnings still on: the point of running Doxygen in this
+# tree is to find doc comments that no longer match their code.
+QUIET                  = YES
+
+# Coverage warnings off, drift warnings on. With EXTRACT_PRIVATE above, the
+# undocumented-member warnings are almost entirely self-describing private
+# storage (`bits_`, `old_to_new_`) and defaulted copy and move members, and the
+# noise buries the warnings that matter. WARN_NO_PARAMDOC keeps the check that
+# does matter: a function with a doc comment must document all of its
+# parameters and its return value, so a signature change that leaves the comment
+# behind is reported.
+WARN_IF_UNDOCUMENTED   = NO
+WARN_NO_PARAMDOC       = YES
+
+#---------------------------------------------------------------------------
+# Output formats
+#---------------------------------------------------------------------------
+
+# HTML only. LaTeX is on by default and nothing here wants a PDF.
+# (`.gitignore` covers `/docs/latex/` regardless, in case it is turned back on.)
+GENERATE_LATEX         = NO
+
+# The doc comments carry the paper's notation as @f$...@f$ math. By default
+# Doxygen renders each formula to an image by shelling out to latex and dvips,
+# which fails outright on a machine without a TeX installation. MathJax renders
+# them in the browser instead, so building the reference needs nothing beyond
+# Doxygen itself.
+USE_MATHJAX            = YES

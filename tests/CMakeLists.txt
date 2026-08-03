@@ -39,3 +39,11 @@ add_executable(xorcle_tests
 target_link_libraries(xorcle_tests PRIVATE xorcle_core doctest::doctest)
 
 add_test(NAME unit COMMAND xorcle_tests)
+
+# The doctest binary and the proof round-trip register with CTest, so `ctest
+# --test-dir build` is the single command. `proof_roundtrip` skips rather than
+# fails without python3.
+add_test(NAME proof_roundtrip
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle>)
+set_tests_properties(proof_roundtrip PROPERTIES SKIP_RETURN_CODE 77)
