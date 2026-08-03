@@ -34,6 +34,7 @@ add_library(xorcle_core
     src/algebra/sparse/sparse_row.cpp
     src/core/analysis.cpp
     src/core/propagation.cpp
+    src/core/solver.cpp
     src/core/trail.cpp
     src/core/trail_basis.cpp
     src/heuristics/compaction/compaction.cpp
