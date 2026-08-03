@@ -42,10 +42,20 @@ namespace {
 /// only fires when `size() % 64 != 0`. Its presence blocks vectorization of the
 /// whole loop. The same measurement over word-aligned widths shows `gf2::copy`
 /// matching memcpy at every size (24.1 ns vs 24.9 ns at 250 words), which
-/// confirms the plan's claim that the penalty is specific to ragged widths --
-/// and equations are ragged essentially always. There is still no case for
-/// padding equations to word boundaries: the penalty is specific to `copy`, and
-/// `^=` and `first_set` are unaffected.
+/// confirms that the penalty is specific to ragged widths -- and equations are
+/// ragged essentially always. There is still no case for padding equations to
+/// word boundaries.
+///
+/// @warning The penalty is **not** specific to `gf2::copy`, as this note
+/// originally claimed. `operator^=` writes through
+/// `set_word` too, so it cleaned the final word on every row XOR in the
+/// reduction loop; that alone accounted for roughly half of a 25% throughput
+/// regression against 0.1. `xor_assign` and the column scans are therefore word
+/// loops over `store()` in `dense_row.h`, and the copy below is one as well --
+/// the threshold now separates a plain word loop from `memcpy`, not `gf2::copy`
+/// from `memcpy`. The measured crossover is unchanged: a word loop matches
+/// `gf2::copy` minus the clean below the threshold and loses to `memcpy` above
+/// it for the same reason `gf2::copy` did.
 constexpr std::size_t assign_from_word_threshold = 7;
 
 /// @brief Fibonacci hashing multiplier, as used by the old tree's equation hash.
@@ -55,10 +65,15 @@ constexpr std::uint64_t hash_multiplier = 11400714819323198485ull;
 
 void DenseRow::assign_from(const DenseRow& other) noexcept {
     assert(bits_.size() == other.bits_.size() && "width mismatch in assign_from");
-    if (bits_.words() <= assign_from_word_threshold) {
-        gf2::copy(other.bits_, bits_);
+    const std::size_t num_words = bits_.words();
+    if (num_words <= assign_from_word_threshold) {
+        Word* destination = bits_.store();
+        const Word* source = other.bits_.store();
+        for (std::size_t i = 0; i < num_words; ++i) {
+            destination[i] = source[i];
+        }
     } else {
-        std::memcpy(bits_.store(), other.bits_.store(), bits_.words() * sizeof(Word));
+        std::memcpy(bits_.store(), other.bits_.store(), num_words * sizeof(Word));
     }
 }
 
