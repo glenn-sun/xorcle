@@ -7,14 +7,13 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Above this many words, `std::memcpy` beats `gf2::copy`.
+/// @brief Above this many words, `std::memcpy` beats a plain word loop.
 ///
-/// Measured on the target machine (Apple M2, Apple clang 17, `-O3 -DNDEBUG`)
-/// with 64 distinct source/destination pairs per width so the per-call overhead
-/// is amortized the way it is at a real `assign_from()` call site. Widths are
-/// `num_vars + 1` bits, i.e. the last word is always partially used -- the case
-/// that actually occurs. Nanoseconds per copy, best of nine runs, reproduced
-/// across two independent invocations:
+/// Measured on Apple M2, Apple clang 17, `-O3 -DNDEBUG`, with 64 distinct
+/// source/destination pairs per width so per-call overhead is amortized as it is
+/// at a real `assign_from()` call site. Widths are `num_vars + 1` bits, so the
+/// last word is always partially used -- the case that actually occurs.
+/// Nanoseconds per copy, best of nine runs, reproduced across two invocations:
 ///
 ///     words   n_vars   gf2::copy    memcpy    copy/memcpy
 ///         1        0       1.274     2.112       0.60
@@ -32,33 +31,21 @@ namespace {
 ///       231    14720      89.832    45.117       1.99
 ///       250    15936      92.994    46.083       2.02
 ///
-/// The crossover is sharp and sits between 7 and 8 words, so the threshold is 7
-/// rather than the plan's provisional 4 (which would have given up 7-8% over the
-/// 4-7 word range). Below the threshold `gf2::copy` wins by up to 1.7x; above
-/// it, memcpy wins by 2-3x.
+/// The crossover is sharp and sits between 7 and 8 words. Below it the word loop
+/// wins by up to 1.7x; above it memcpy wins by 2-3x. A threshold of 4 would give
+/// up 7-8% over the 4-7 word range.
 ///
-/// The cause is `gf2::copy`'s `dst.set_word(i, src.word(i))` loop: `set_word`
-/// calls `clean()` on the last word, and `clean()` is a read-modify-write that
-/// only fires when `size() % 64 != 0`. Its presence blocks vectorization of the
-/// whole loop. The same measurement over word-aligned widths shows `gf2::copy`
-/// matching memcpy at every size (24.1 ns vs 24.9 ns at 250 words), which
-/// confirms that the penalty is specific to ragged widths -- and equations are
-/// ragged essentially always. There is still no case for padding equations to
-/// word boundaries.
-///
-/// @warning The penalty is **not** specific to `gf2::copy`, as this note
-/// originally claimed. `operator^=` writes through
-/// `set_word` too, so it cleaned the final word on every row XOR in the
-/// reduction loop; that alone accounted for roughly half of a 25% throughput
-/// regression against 0.1. `xor_assign` and the column scans are therefore word
-/// loops over `store()` in `dense_row.h`, and the copy below is one as well --
-/// the threshold now separates a plain word loop from `memcpy`, not `gf2::copy`
-/// from `memcpy`. The measured crossover is unchanged: a word loop matches
-/// `gf2::copy` minus the clean below the threshold and loses to `memcpy` above
-/// it for the same reason `gf2::copy` did.
+/// The `gf2::copy` column is measured for comparison: its
+/// `dst.set_word(i, src.word(i))` loop calls `clean()` on the last word, a
+/// read-modify-write firing whenever `size() % 64 != 0` whose presence blocks
+/// vectorization of the whole loop. The word loop below is that loop minus the
+/// clean, and crosses over against memcpy at the same width. Over word-aligned
+/// widths `gf2::copy` instead matches memcpy at every size (24.1 vs 24.9 ns at
+/// 250 words), so the penalty is specific to ragged widths -- and equations are
+/// ragged essentially always. There is still no case for padding them.
 constexpr std::size_t assign_from_word_threshold = 7;
 
-/// @brief Fibonacci hashing multiplier, as used by the old tree's equation hash.
+/// @brief Fibonacci hashing multiplier.
 constexpr std::uint64_t hash_multiplier = 11400714819323198485ull;
 
 } // namespace

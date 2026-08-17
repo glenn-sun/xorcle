@@ -23,22 +23,17 @@ namespace xorcle {
 ///
 /// Instantiated once per backend, in that backend's own translation unit. Every
 /// per-column loop -- projection, lifting, column collection, formatting --
-/// lives here, inside the virtual boundary, so it is a single dispatch from the
-/// caller's point of view and a fully inlined direct call from `R`'s.
+/// lives here, inside the virtual boundary: a single dispatch from the caller's
+/// point of view and a fully inlined direct call from `R`'s.
 template <Row R>
 class EquationImpl final : public EquationStorage {
 public:
-    /// @brief Construct the all-zero row of the given width.
-    /// @param width Number of columns, i.e. `num_vars + 1`.
     explicit EquationImpl(std::size_t width) : row_(width) {}
 
-    /// @brief Adopt an already-built row.
     explicit EquationImpl(R row) : row_(std::move(row)) {}
 
-    /// @brief The stored row.
     const R& row() const noexcept { return row_; }
 
-    /// @brief The stored row.
     R& row() noexcept { return row_; }
 
     Algebra backend() const noexcept override { return R::algebra; }
@@ -156,19 +151,14 @@ private:
 };
 
 /// @brief Reach the concrete row behind an `Equation` handle.
-/// @param equation Handle whose storage is an `EquationImpl<R>`.
-/// @return The stored row.
-/// @pre `!equation.empty()` and `equation.backend() == R::algebra`.
+/// @pre `!equation.empty()` and `equation.backend() == R::algebra`; likewise for
+/// the mutable overload below.
 template <Row R>
 const R& row_of(const Equation& equation) noexcept {
     assert(!equation.empty() && equation.backend() == R::algebra);
     return static_cast<const EquationImpl<R>&>(equation.storage()).row();
 }
 
-/// @brief Reach the concrete row behind a mutable `Equation` handle.
-/// @param equation Handle whose storage is an `EquationImpl<R>`.
-/// @return The stored row.
-/// @pre `!equation.empty()` and `equation.backend() == R::algebra`.
 template <Row R>
 R& row_of(Equation& equation) noexcept {
     assert(!equation.empty() && equation.backend() == R::algebra);
@@ -176,7 +166,6 @@ R& row_of(Equation& equation) noexcept {
 }
 
 /// @brief Wrap a concrete row in an `Equation` handle.
-/// @param row The row to take ownership of.
 template <Row R>
 Equation make_equation_from_row(R row) {
     return Equation(std::make_unique<EquationImpl<R>>(std::move(row)));

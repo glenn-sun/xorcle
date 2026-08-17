@@ -17,44 +17,33 @@
 
 namespace xorcle {
 
-/// @brief Activity bookkeeping for the variable-VSIDS family.
 struct VsidsParams {
-    /// @brief Heap of literal equations, keyed by activity.
-    MaxHeap<Equation, EquationHash> activity_heap;
-
-    /// @brief The amount a single bump adds. Grows by @f$1/\alpha@f$ per conflict.
-    double inc_amt = 1.0;
+    MaxHeap<Equation, EquationHash> activity_heap; ///< Literal equations, keyed by activity.
+    double inc_amt = 1.0; ///< What one bump adds. Grows by @f$1/\alpha@f$ per conflict.
 
     /// @brief @f$\alpha@f$, the decay factor. Must satisfy @f$0 < \alpha < 1@f$.
     double decay = 0.98;
 
     /// @brief Bump one equation's activity, rescaling everything if it overflows.
-    /// @param eqn The literal equation to bump.
     /// @note Rather than decaying every score per conflict, the increment grows;
-    /// rescaling by @f$10^{-100}@f$ once a score passes @f$10^{100}@f$ keeps the
-    /// two equivalent while staying in range.
+    /// rescaling by @f$10^{-100}@f$ once a score passes @f$10^{100}@f$ keeps
+    /// that equivalent while staying in range.
     void bump_activity(const Equation& eqn);
 };
 
 /// @brief Decides the highest-activity variable the trail has not determined.
 ///
 /// One heap element per variable, holding the unit equation @f$x_v@f$. Activity
-/// is bumped for the leading variable of every equation resolved through during
-/// conflict analysis and of every row of the resulting asserting clause.
+/// is bumped for the leading variable of every equation conflict analysis
+/// resolves through, and of every row of the resulting asserting clause.
 ///
-/// @note `make_decision()` returns the *reduced* candidate, and the rejected
+/// @note `make_decision()` returns the *reduced* candidate, and rejected
 /// candidates stay extracted from the heap until the next
-/// `update_with_asserting_clause()` rebuilds it. Both are load-bearing for
-/// reproducing the 0.1 tree's search order.
+/// `update_with_asserting_clause()` rebuilds it. Both bear on the search order.
 class VariableVsids final : public DecisionProcedure {
 public:
-    /// @brief Construct a variable-VSIDS procedure.
-    /// @param backend Storage representation to use.
-    /// @param num_vars Number of active variable columns.
-    /// @param seed Base solver seed.
     VariableVsids(Algebra backend, std::size_t num_vars, Seed seed);
 
-    /// @brief Reset activity, the phase RNG, and the counters for a fresh run.
     void reinitialize() override;
 
     /// @brief Return the highest-activity literal that is still a legal decision.
@@ -72,16 +61,13 @@ public:
                                 const std::vector<std::uint8_t>& clause_active) override;
 
 private:
-    /// @brief Rebuild the heap from scratch for a fresh run.
     void reset_decision_heap_for_fresh_run();
 
     /// @brief Restore an unexpectedly empty heap mid-solve.
     void refill_decision_heap();
 
     VsidsParams vsids_params_;
-
-    /// @brief The unit equation for each active variable.
-    std::vector<Equation> unit_eqns_;
+    std::vector<Equation> unit_eqns_; ///< The unit equation for each active variable.
 };
 
 } // namespace xorcle

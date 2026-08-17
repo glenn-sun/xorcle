@@ -19,22 +19,17 @@ namespace xorcle {
 
 /// @brief The one implementation of `RowEchelonMatrixStorage`, written against `Row`.
 ///
-/// This is the port of the old tree's `REFMatrix`, with the sentinel returns
-/// replaced by `ReduceResult` and the per-column scan in `add_row_get_index`
-/// replaced by a popcount. Every reduction loop below is a direct, inlinable
-/// call chain on `R`; the caller pays exactly one virtual call for the whole
-/// loop.
+/// Every reduction loop below is a direct, inlinable call chain on `R`; the
+/// caller pays exactly one virtual call for the whole loop.
 ///
 /// The rows are held in an ordinary `std::vector`, not a matrix type: insertion
 /// at an arbitrary index and removal of the first row are ordinary vector
-/// operations, and `gf2::BitMatrix` can express neither.
-/// The element type is `Equation` rather than `R` itself so that `row()`
-/// can hand out a `const Equation&` without copying; each element owns exactly
-/// one `R` through an `EquationImpl<R>`.
+/// operations that a packed bit-matrix cannot express. The element type is
+/// `Equation` rather than `R` so that `row()` can hand out a `const Equation&`
+/// without copying; each element owns exactly one `R` via an `EquationImpl<R>`.
 template <Row R>
 class RowEchelonMatrixImpl final : public RowEchelonMatrixStorage {
 public:
-    /// @brief Construct an empty matrix over `num_vars` variables.
     explicit RowEchelonMatrixImpl(std::size_t num_vars)
         : pivot_columns_(num_vars + 1), column_to_row_(num_vars + 1, 0), num_vars_(num_vars) {}
 
@@ -64,10 +59,9 @@ public:
     std::optional<std::size_t> add_row_get_index(const Equation& v) override {
         assert(v.size() == cols() && v.backend() == R::algebra);
 
-        // Partially reduce a copy of `v` against the stored rows. The old tree
-        // walked every column from 0 to num_vars calling `element()`; driving
-        // the loop from `leading_column()` / `next_column()` visits only the set
-        // columns and reaches the identical leading column.
+        // Partially reduce a copy of `v` against the stored rows. Driving the
+        // loop from `leading_column()` / `next_column()` visits only the set
+        // columns and reaches the same leading column a full scan would.
         Equation reduced = v;
         R& reduced_row = row_of<R>(reduced);
         std::optional<std::size_t> leading = reduced_row.leading_column();
@@ -81,7 +75,7 @@ public:
 
         // Row-echelon order means the insertion index is the number of pivots
         // strictly below the new leading column -- a popcount over the pivot
-        // bitmap rather than the old O(num_vars) scan.
+        // bitmap, not a scan.
         const std::size_t leading_column = *leading;
         const std::size_t insert_index = pivot_columns_.count_below(leading_column);
 
@@ -101,9 +95,8 @@ public:
     void reduce(Equation& v) const override {
         assert(v.size() == cols() && v.backend() == R::algebra);
         R& row = row_of<R>(v);
-        // `v` is mutated while its set columns are being walked; `next_column`
-        // is re-evaluated against the live row, exactly as the old
-        // `if_set_call` did.
+        // `v` is mutated while its set columns are being walked, so
+        // `next_column` must be re-evaluated against the live row each time.
         for (auto column = row.leading_column(); column; column = row.next_column(*column)) {
             if (pivot_columns_.test(*column)) {
                 row.xor_assign(row_of<R>(rows_[column_to_row_[*column]]));
@@ -217,10 +210,7 @@ public:
     void solution(Bitmap& out) const override {
         // Every variable column is a pivot and the constant column is not, so
         // rows() == num_vars and row `i` has leading column `i`. Back-substitute
-        // from the last row upward. This replaces the old tree's
-        // `get_unique_solution`, which reduced the matrix and then read off a
-        // whole column -- the one operation deliberately absent from this
-        // interface.
+        // from the last row upward, row-wise only, never by column.
         assert(rows_.size() == num_vars_);
         out.reset_width(num_vars_);
         for (std::size_t i = num_vars_; i-- > 0;) {
@@ -240,19 +230,15 @@ public:
 private:
     std::size_t cols() const noexcept { return num_vars_ + 1; }
 
-    /// @brief Turn an irreducible leading column into a `ReduceResult`.
-    ///
-    /// A leading column equal to `num_vars_` is the constant column, and since
-    /// it is the last column nothing else can be set: the row is
-    /// @f$\mathbf{1}@f$.
+    /// @brief Turn an irreducible leading column into a `ReduceResult`. A
+    /// leading column equal to `num_vars_` is the constant column, and since it
+    /// is the last column nothing else can be set: the row is @f$\mathbf{1}@f$.
     ReduceResult classify_leading(std::size_t column) const noexcept {
         return column == num_vars_ ? ReduceResult::eq_false() : ReduceResult::leading(column);
     }
 
-    /// @brief Check the representation invariants.
-    ///
-    /// Ported from the old tree's `debug_assert_valid_representation`, expressed
-    /// over `Row`. Compiled out under `NDEBUG`.
+    /// @brief Check the representation invariants documented on
+    /// `RowEchelonMatrix`. Compiled out under `NDEBUG`.
     void debug_assert_valid_representation() const {
 #ifndef NDEBUG
         assert(pivot_columns_.size() == cols());

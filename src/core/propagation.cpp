@@ -78,8 +78,7 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
     assert(trail.span().cols() == num_vars_ + 1);
 
     // A unit clause has nothing to watch: conflict and propagation are the same
-    // code path, and the caller tells them apart afterwards by reducing
-    // the false equation against the span.
+    // code path, and the caller tells them apart afterwards.
     if (clause.rows() == 1) {
         assert(!zero_watch_hint.has_value() && "non-unit hint for a unit clause");
         working_eqn_.assign_from(clause.row(0));
@@ -99,8 +98,7 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
 
     // Overwrites `scratch`. `distinct_from` is an already reduced row, so a
     // replacement must be nonzero *and* independent of it modulo the span --
-    // that is what keeps the pair a legal watch pair rather than two names for
-    // the same reduced row.
+    // that is what keeps the pair legal rather than two names for one row.
     const auto find_replacement_cyclic =
         [&](Equation& scratch, const Equation& distinct_from) -> std::optional<std::size_t> {
         assert(clause.rows() > 1);
@@ -125,9 +123,8 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
     std::size_t num_tasks = 0;
 
     if (zero_watch_hint.has_value()) {
-        // The selector already knows which trigger fired, so the reductions are
-        // skipped and only the task is built. A sum trigger is normalized here
-        // to moving `watched1`.
+        // The trigger is known, so the reductions are skipped and only the task
+        // is built. A sum trigger is normalized here to moving `watched1`.
 #ifndef NDEBUG
         debug_assert_watch_hint_holds(clause, trail, *zero_watch_hint);
 #endif
@@ -150,10 +147,10 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
         }
 
         // Reducing modulo the span *plus* the reduced first watch folds the sum
-        // check in: the result is 0 exactly when the second watch is dead or
-        // has become equal to the first. When the first watch reduced to 0 the
-        // extra row is 0 too and this degenerates to a plain partial reduction,
-        // which is what makes the two-task case come out right.
+        // check in: the result is 0 exactly when the second watch is dead or has
+        // become equal to the first. When the first watch reduced to 0 the extra
+        // row is 0 too and this degenerates to a plain partial reduction, which
+        // is what makes the two-task case come out right.
         working_eqn2_.assign_from(clause.row(clause.watched1));
         const ReduceResult reduced1 = trail.span().partial_reduce_with_extra(working_eqn2_,
                                                                              working_eqn_);
@@ -165,16 +162,16 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
     for (std::size_t i = 0; i < num_tasks; ++i) {
         const PropagationTask& task = tasks[i];
 
-        // This overwrites the second watch's reduction computed above, on
-        // purpose: from here on only the complement watch's reduction matters.
+        // Overwrites the second watch's reduction on purpose: from here only the
+        // complement watch's reduction matters.
         working_eqn2_.assign_from(clause.row(*task.complem_ptr));
         const ReduceResult complement = trail.span().partial_reduce(working_eqn2_);
 
         if (const std::optional<std::size_t> replacement =
                 find_replacement_cyclic(working_eqn_, working_eqn2_)) {
-            // The clause is updated before the observer is told, because the
-            // observer reads the clause to find the watch's new row while being
-            // handed `old_watch` for its old one. Reversing the two corrupts a
+            // The clause is updated before the observer is told: the observer
+            // reads the clause for the watch's new row while being handed
+            // `old_watch` for the old one. Reversing the two corrupts a
             // watchlist keyed on the watched rows.
             const EquationId old_watch = *task.update_ptr;
             *task.update_ptr = *replacement;
@@ -182,8 +179,7 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
             observer.update_with_new_watch(id, old_watch, task.type, trail);
         } else {
             if (complement.kind == ReduceResult::Kind::eq_false) {
-                // The complement watch reduced to 1, so the clause is already
-                // satisfied. A second task, if there is one, still runs.
+                // Complement reduced to 1: satisfied. A second task still runs.
                 continue;
             }
             working_eqn2_.xor_assign(false_equation_);

@@ -43,14 +43,13 @@ std::string rejection_message(std::vector<std::string> arguments) {
     return "<accepted>";
 }
 
-/// @brief True if @p haystack contains @p needle.
 bool contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
 } // namespace
 
-TEST_CASE("options: the defaults are the ones the paper fixes") {
+TEST_CASE("options: the documented defaults") {
     const Options options = parse_with_input({});
     CHECK(options.input_path == "instance.xnf");
     CHECK(options.algebra == Algebra::dense);
@@ -105,7 +104,7 @@ TEST_CASE("options: a table name's underscores are dashes on the command line") 
     CHECK(parse_with_input({"--compact_every=64"}).compact_every == 64);
 }
 
-TEST_CASE("options: booleans accept the 0.1 tree's on/off too") {
+TEST_CASE("options: booleans accept on/off as well as true/false") {
     CHECK(parse_with_input({"--compact=off"}).compact == false);
     CHECK(parse_with_input({"--compact=on"}).compact == true);
     CHECK(parse_with_input({"--compact=0"}).compact == false);
@@ -142,19 +141,17 @@ TEST_CASE("options: an unknown enum value lists the accepted spellings") {
     const std::string message = rejection_message<CliError>({"--phase=unsat"});
     CHECK(contains(message, "--phase='unsat' is not one of"));
     CHECK(contains(message, "falsify|satisfy|random"));
-    // The 0.1 spellings of the phase are gone: the paper's names are the names.
     CHECK(contains(rejection_message<CliError>({"--phase=sat"}), "is not one of"));
-    // So is the selector 0.2 does not port.
     CHECK(contains(rejection_message<CliError>({"--selection=exact_watchlist"}), "is not one of"));
 }
 
 TEST_CASE("options: malformed command lines are rejected") {
     CHECK(contains(rejection_message<CliError>({"--seed"}), "needs a value"));
     CHECK(contains(rejection_message<CliError>({"--nonsense=1"}), "unknown option '--nonsense'"));
-    // 0.1's short flags are gone, and say so rather than looking like extra
+    // Single-dash arguments are named as such rather than being taken for extra
     // positional arguments.
-    CHECK(contains(rejection_message<CliError>({"-d", "clause_vsids"}), "0.1 short option"));
-    CHECK(contains(rejection_message<CliError>({"-x", "off"}), "0.1 short option"));
+    CHECK(contains(rejection_message<CliError>({"-d", "clause_vsids"}), "every option has the form --name=value"));
+    CHECK(contains(rejection_message<CliError>({"-x", "off"}), "every option has the form --name=value"));
 
     std::ostringstream help;
     CHECK_THROWS_AS(parse_options({}, help), CliError);
@@ -162,9 +159,10 @@ TEST_CASE("options: malformed command lines are rejected") {
 }
 
 TEST_CASE("options: the CSIDS presets set the whole triple") {
-    // Taken from `csids_berkmin_config` and
-    // `csids_cmtf_config` rather than retyped: the paper writes its tuples as
-    // (A0, delta, alpha) and `CsidsConfig` declares them as (A0, alpha, delta).
+    // Taken from `csids_berkmin_config` and `csids_cmtf_config` rather than
+    // retyped: the triple is usually written (A0, delta, alpha) while
+    // `CsidsConfig` declares it as (A0, alpha, delta), so a positional copy
+    // would silently swap the bump and the decay.
     SUBCASE("berkmin: A0 = 1, delta = 0, alpha = 0.5") {
         const Options options = parse_with_input({"--decisions=berkmin"});
         CHECK(options.decisions == DecisionProcedureName::csids);
@@ -229,7 +227,6 @@ TEST_CASE("options: --help is generated from the table") {
     const std::string text = help.str();
 
     CHECK(contains(text, "Usage: xorcle [options] <input>"));
-    // Every option appears with its spelling, its value syntax and its default.
     CHECK(contains(text, "--algebra=dense|sparse"));
     CHECK(contains(text, "[default: dense]"));
     CHECK(contains(text, "--seed=N"));
@@ -246,7 +243,6 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--stats-file=PATH"));
     CHECK(contains(text, "--help"));
 
-    // Restarts are marked experimental.
     CHECK(contains(text, "--restart=none|geometric|luby"));
     CHECK(contains(text, "EXPERIMENTAL: restart schedule"));
     CHECK(contains(text, "EXPERIMENTAL: growth factor"));

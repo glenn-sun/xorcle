@@ -15,16 +15,12 @@ namespace xorcle {
 
 /// @brief A malformed instance file.
 ///
-/// Parsing is where user-facing input errors live, so every rejection is an
-/// exception rather than an assert or an error return.
-/// `main` catches these, reports them, and exits non-zero.
+/// Input errors are user-facing, so every rejection is an exception rather than
+/// an assert or an error return. `main` catches these, reports them, and exits
+/// non-zero.
 class DimacsError : public std::runtime_error {
 public:
     /// @brief Build the error message `"<origin>:<line>: <message>"`.
-    /// @param origin Name of the input, e.g. a file path.
-    /// @param line_number 1-based line the error was found on, or `0` if the
-    /// error is about the input as a whole.
-    /// @param message What was wrong.
     DimacsError(std::string_view origin, std::size_t line_number, std::string_view message);
 
     /// @brief The 1-based line the error was found on, or `0` for a whole-input error.
@@ -34,9 +30,7 @@ private:
     std::size_t line_number_;
 };
 
-/// @brief One parsed instance: the header's variable count and the clauses.
 struct ParsedDimacs {
-    /// @brief Number of variables declared in the header.
     std::size_t num_vars = 0;
 
     /// @brief The clauses, in file order, each in its linear negation.
@@ -67,16 +61,12 @@ struct ParsedDimacs {
 /// linearly dependent literals yields fewer rows than tokens, and the rows are
 /// stored in row-echelon order rather than source order.
 ///
-/// This is stricter than the 0.1 parser in three places, each of which turned a
-/// silent misparse into an error: integer tokens must be consumed in full
-/// (`3junk` was read as `3`), a `+` may not be trailing (`1+2+` was accepted),
-/// and tokens after a clause terminator are rejected (they were dropped).
+/// Three rejections are easy to miss, and each would otherwise be a silent
+/// misparse: an integer token must be consumed in full (`3junk` is not `3`), a
+/// `+` may not be trailing (`1+2+`), and any token after a clause terminator is
+/// an error rather than being dropped.
 ///
-/// @param input Stream to read; read to end of stream.
-/// @param backend Storage representation to build the clauses in. Both backends
-/// parse the same text into the same clauses.
-/// @param origin Name to put in error messages, e.g. the file path.
-/// @return The declared variable count and the parsed clauses.
+/// Both backends parse the same text into the same clauses.
 /// @throws DimacsError On any malformed input.
 ParsedDimacs parse_dimacs(std::istream& input, Algebra backend,
                           std::string_view origin = "<input>");
@@ -85,10 +75,6 @@ ParsedDimacs parse_dimacs(std::istream& input, Algebra backend,
 ///
 /// The convenience form of `parse_dimacs()`, so a test can state an instance as
 /// a string literal instead of writing a file.
-/// @param text The whole instance.
-/// @param backend Storage representation to build the clauses in.
-/// @param origin Name to put in error messages.
-/// @return The declared variable count and the parsed clauses.
 /// @throws DimacsError On any malformed input.
 ParsedDimacs parse_dimacs_string(std::string_view text, Algebra backend,
                                  std::string_view origin = "<string>");
@@ -97,9 +83,6 @@ ParsedDimacs parse_dimacs_string(std::string_view text, Algebra backend,
 ///
 /// The thin wrapper over `parse_dimacs()`: it opens the file and does nothing
 /// else, so all of the parsing is reachable without touching the filesystem.
-/// @param path File to read.
-/// @param backend Storage representation to build the clauses in.
-/// @return The declared variable count and the parsed clauses.
 /// @throws DimacsError If the file cannot be opened, or on any malformed input.
 ParsedDimacs parse_dimacs_file(const std::filesystem::path& path, Algebra backend);
 

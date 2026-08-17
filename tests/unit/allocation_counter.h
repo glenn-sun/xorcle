@@ -8,8 +8,7 @@ namespace xorcle {
 ///
 /// The test binary replaces the global allocation functions so that
 /// `assign_from()`'s freedom from allocation -- the whole point of the
-/// preallocated-scratch discipline -- can be
-/// asserted rather than assumed.
+/// preallocated-scratch discipline -- can be asserted rather than assumed.
 std::size_t allocation_count() noexcept;
 
 } // namespace xorcle

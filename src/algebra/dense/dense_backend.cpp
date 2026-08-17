@@ -6,9 +6,8 @@
 
 namespace xorcle {
 
-// This translation unit is where the shared templated algorithms are
-// instantiated for the dense backend. Everything gf2 touches is confined here
-// and in dense_row.{h,cpp}.
+// Instantiates the shared templated algorithms for the dense backend. Everything
+// gf2 touches is confined here and in dense_row.{h,cpp}.
 static_assert(Row<DenseRow>, "DenseRow must satisfy the Row concept");
 
 std::unique_ptr<EquationStorage> make_dense_equation_storage(std::size_t num_vars) {

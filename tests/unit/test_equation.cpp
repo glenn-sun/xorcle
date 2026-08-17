@@ -114,7 +114,6 @@ TEST_CASE_TEMPLATE("equation: xor_assign", Tag, DenseTag, SparseTag) {
     left.xor_assign(right);
     CHECK(columns_of(left) == std::vector<std::size_t>{1, 64, 70});
 
-    // Adding a row to itself is the true equation.
     Equation self = make_equation_with(backend, 100, {2, 3, 99});
     const Equation copy = self;
     self.xor_assign(copy);
@@ -155,7 +154,6 @@ TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, Dens
     CHECK(after == before);
     CHECK(scratch == source);
 
-    // Refilling from a different equation of the same width also works.
     const Equation other = make_equation_with(backend, num_vars, {7});
     scratch.assign_from(other);
     CHECK(scratch == other);
@@ -165,11 +163,10 @@ TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, Dens
 TEST_CASE_TEMPLATE("equation: assign_from rejects a width mismatch", Tag, DenseTag, SparseTag) {
     constexpr Algebra backend = Tag::value;
 
-    // The old tree's `unsafe_copy` documented that it "will silently fail if not
-    // the same size". The port turns that into an assertion, which can only be
-    // observed by watching a child process die (asserts for internal
-    // invariants). Compiled out of release builds along
-    // with the assertion itself.
+    // A same-width copy is an internal invariant, so a mismatch asserts rather
+    // than silently failing. That can only be observed by watching a child
+    // process die, and it is compiled out of release builds along with the
+    // assertion itself.
     const pid_t child = ::fork();
     REQUIRE(child >= 0);
     if (child == 0) {
@@ -200,14 +197,12 @@ TEST_CASE_TEMPLATE("equation: hash agrees with equality", Tag, DenseTag, SparseT
     CHECK(copy == a);
     CHECK(copy.hash() == a.hash());
 
-    // `EquationHash` makes `Equation` usable as a hash key.
     std::unordered_map<Equation, int, EquationHash> seen;
     seen[a] = 1;
     seen[c] = 2;
     CHECK(seen.size() == 2);
     CHECK(seen.at(b) == 1);
 
-    // Equations of different widths are never equal.
     CHECK_FALSE(make_equation_with(backend, 10, {1}) == make_equation_with(backend, 11, {1}));
 }
 
@@ -277,7 +272,7 @@ TEST_CASE_TEMPLATE("equation: project and lift round-trip", Tag, DenseTag, Spars
 TEST_CASE_TEMPLATE("equation: to_string", Tag, DenseTag, SparseTag) {
     constexpr Algebra backend = Tag::value;
 
-    // Columns are zero-based; variables print one-based, as in the old tree.
+    // Columns are zero-based; variables print one-based.
     const Equation equation = make_equation_with(backend, 3, {0, 2, 3});
     const Equation no_constant = make_equation_with(backend, 3, {0, 2});
     const Equation eq_true = Equation::eq_true(backend, 3);

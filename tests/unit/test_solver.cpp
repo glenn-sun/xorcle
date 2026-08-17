@@ -27,31 +27,26 @@ namespace xorcle {
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// The instances
-//
-// Each one is small enough to work out by hand, and every expected verdict below
-// is derived in the comment rather than read off a run.
-// ---------------------------------------------------------------------------
+// --- The instances ---------------------------------------------------------
+// Each is small enough to work out by hand, and every expected verdict below is
+// derived in the comment rather than read off a run.
 
 /// @brief `[x1 = 1] ^ [x1 = 0]`: UNSAT by root propagation alone, no decisions.
 constexpr std::string_view root_unsat_instance = "p cnf 1 2\n"
                                                  "1 0\n"
                                                  "-1 0\n";
 
-/// @brief Three unit clauses fixing every variable: SAT with no decisions.
-///
-/// `x1 = 1`, `x2 = 0`, `x1 + x3 = 1`, so the only solution is `1 0 0`.
+/// @brief Three unit clauses fixing every variable, so SAT with no decisions:
+/// `x1 = 1`, `x2 = 0`, `x1 + x3 = 1`, whose only solution is `1 0 0`.
 constexpr std::string_view unit_sat_instance = "p cnf 3 3\n"
                                                "1 0\n"
                                                "-2 0\n"
                                                "1+3 0\n";
 
 /// @brief SAT, but only after deciding: no clause is unit to begin with.
-///
 /// `[x1 v x2] ^ [-x1 v -x2] ^ [[x1 + x2 = 1] v x3]` forces exactly one of
-/// @f$x_1, x_2@f$ and then satisfies the third clause outright, so @f$x_3@f$ is
-/// free and the solver has to decide it as well as the first variable.
+/// @f$x_1, x_2@f$ and satisfies the third clause outright, leaving @f$x_3@f$
+/// free to decide.
 constexpr std::string_view search_sat_instance = "p cnf 3 3\n"
                                                  "1 2 0\n"
                                                  "-1 -2 0\n"
@@ -70,12 +65,11 @@ constexpr std::string_view search_unsat_instance = "p cnf 3 8\n"
                                                    "-1 -2 -3 0\n";
 
 /// @brief SAT, with three root-level pivots for compaction to eliminate.
-///
-/// Root propagation fixes `x1 = 1`, `x2 = 0` and `x4 + x5 = 1`, which pivot
-/// columns 0, 1 and 3 -- so the compacted space keeps only @f$x_3@f$ and
-/// @f$x_5@f$, and the surviving clauses `[x3 v x4]` and `[-x3 v -x4]` still need
-/// a decision. Every solution has @f$x_3 \ne x_4@f$ and @f$x_5 = x_4 + 1@f$, and
-/// two of the five variables the answer names are ones the search never saw.
+/// Root propagation fixes `x1 = 1`, `x2 = 0` and `x4 + x5 = 1`, pivoting columns
+/// 0, 1 and 3, so the compacted space keeps only @f$x_3@f$ and @f$x_5@f$ and the
+/// surviving `[x3 v x4]`, `[-x3 v -x4]` still need a decision. Every solution
+/// has @f$x_3 \ne x_4@f$ and @f$x_5 = x_4 + 1@f$, and two of the five variables
+/// the answer names are ones the search never saw.
 constexpr std::string_view compaction_sat_instance = "p cnf 5 5\n"
                                                      "1 0\n"
                                                      "-2 0\n"
@@ -83,14 +77,10 @@ constexpr std::string_view compaction_sat_instance = "p cnf 5 5\n"
                                                      "3 4 0\n"
                                                      "-3 -4 0\n";
 
-// ---------------------------------------------------------------------------
-// Checking an answer
-// ---------------------------------------------------------------------------
+// --- Checking an answer ----------------------------------------------------
 
-/// @brief Whether an assignment satisfies one stored clause row.
-///
-/// A row is the equation @f$\sum_{c} x_c + b = 0@f$, with `b` the constant
-/// column at index `num_vars`.
+/// @brief Whether an assignment satisfies one stored clause row, which is the
+/// equation @f$\sum_{c} x_c + b = 0@f$ with `b` the column at index `num_vars`.
 bool row_holds(const Equation& row, const Bitmap& assignment) {
     bool parity = false;
     for (const std::size_t column : columns_of(row)) {
@@ -100,11 +90,9 @@ bool row_holds(const Equation& row, const Bitmap& assignment) {
 }
 
 /// @brief Whether an assignment satisfies a clause.
-///
-/// A clause is stored in its linear negation: row @f$i@f$ is @f$f_i +
-/// \mathbf{1}@f$, so the literal @f$f_i@f$ holds exactly where its row does
-/// *not*. The clause is the disjunction of the literals, hence satisfied as soon
-/// as one row fails.
+/// A clause is stored in its linear negation -- row @f$i@f$ is @f$f_i +
+/// \mathbf{1}@f$ -- so literal @f$f_i@f$ holds exactly where its row does *not*,
+/// and the disjunction is satisfied as soon as one row fails.
 bool clause_is_satisfied(const Clause& clause, const Bitmap& assignment) {
     for (const Equation& row : clause) {
         if (!row_holds(row, assignment)) {
@@ -114,10 +102,9 @@ bool clause_is_satisfied(const Clause& clause, const Bitmap& assignment) {
     return false;
 }
 
-/// @brief Assert that a reported assignment satisfies every input clause.
-///
-/// This is the check that separates a wrong answer from a merely different one:
-/// it re-evaluates the original instance rather than trusting the search.
+/// @brief Assert that a reported assignment satisfies every input clause. This
+/// separates a wrong answer from a merely different one: it re-evaluates the
+/// original instance rather than trusting the search.
 void check_satisfies(const std::vector<Clause>& clauses, const Solution& solution,
                      std::size_t num_vars) {
     REQUIRE(solution.result == SolveResult::sat);
@@ -129,27 +116,20 @@ void check_satisfies(const std::vector<Clause>& clauses, const Solution& solutio
     }
 }
 
-// ---------------------------------------------------------------------------
-// Building a run
-// ---------------------------------------------------------------------------
+// --- Building a run --------------------------------------------------------
 
 /// @brief One configured solver together with the instance it was built from.
 struct Run {
-    std::size_t num_vars = 0; ///< The instance's variable count.
+    std::size_t num_vars = 0;
     std::vector<Clause> clauses; ///< The input clauses, kept for checking answers.
     std::unique_ptr<Solver> solver; ///< The solver, already loaded with `clauses`.
 };
 
-/// @brief Parse an instance and build a solver over it.
-///
-/// The heuristics are the CLI's defaults -- CSIDS at seed 0 over a cyclic
-/// selector -- so a run here is the run `xorcle <file>` performs, and the
-/// counter values asserted below are the ones the differential harness compares.
-/// @param backend Storage representation for every equation the solver builds.
-/// @param instance The whole instance, in the extended DIMACS format.
-/// @param compaction Compaction settings.
-/// @param restarts Restart policy, or null for `NoRestarts`.
-/// @param selector Clause selector, or null for `Cyclic`.
+/// @brief Parse an instance and build a solver over it, using the CLI's default
+/// heuristics (CSIDS at seed 0 over a cyclic selector) so that a run here is the
+/// run `xorcle <file>` performs and the counters asserted below are the ones the
+/// differential harness compares. Null `restarts`/`selector` mean `NoRestarts`
+/// and `Cyclic`.
 Run make_run(Algebra backend, std::string_view instance, const CompactionConfig& compaction = {},
              std::unique_ptr<RestartPolicy> restarts = nullptr,
              std::unique_ptr<ClauseSelector> selector = nullptr) {
@@ -170,11 +150,9 @@ Run make_run(Algebra backend, std::string_view instance, const CompactionConfig&
     return run;
 }
 
-/// @brief A `Geometric` policy on the smallest budget that still grows.
-///
-/// Budgets 1, 2, 3, 5, ... : the very first conflict restarts, so a run of a
-/// handful of conflicts restarts several times, and the growth keeps the
-/// schedule from pinning the search at budget 1 forever.
+/// @brief A `Geometric` policy on the smallest budget that still grows: 1, 2, 3,
+/// 5, ... The first conflict restarts, so a handful of conflicts restart several
+/// times, while the growth keeps the schedule off budget 1 forever.
 std::unique_ptr<RestartPolicy> tiny_geometric_restarts() {
     RestartConfig config;
     config.method = RestartMethod::geometric;
@@ -183,19 +161,14 @@ std::unique_ptr<RestartPolicy> tiny_geometric_restarts() {
     return std::make_unique<Geometric>(config);
 }
 
-// ---------------------------------------------------------------------------
-// Watching the backjump
-// ---------------------------------------------------------------------------
+// --- Watching the backjump -------------------------------------------------
 
-/// @brief How many dimensions a clause adds to a span, i.e. @f$\dim\big((\mathrm{neg}(C) +
-/// \mathrm{span}(U)) / \mathrm{span}(U)\big)@f$.
-///
-/// The clause propagates exactly when this is 1: every equation it needs but one
-/// is already implied, so the remaining one is forced. Counting *rows* outside
-/// the span instead would be wrong, because a clause is stored in row-echelon
-/// form and echelonizing mixes rows -- two stored rows can each lie outside the
-/// span while their sum lies inside, which is asserting all the same. That is
-/// the parity case with no literal-level analogue.
+/// @brief How many dimensions a clause adds to a span, i.e.
+/// @f$\dim\big((\mathrm{neg}(C) + \mathrm{span}(U)) / \mathrm{span}(U)\big)@f$.
+/// The clause propagates exactly when this is 1. Counting *rows* outside the
+/// span would be wrong: echelonizing mixes rows, so two stored rows can each lie
+/// outside the span while their sum lies inside -- asserting all the same. That
+/// is the parity case with no literal-level analogue.
 std::size_t dimension_outside_span(const Clause& clause, const RowSpace& span) {
     RowSpace extended = span;
     std::size_t outside = 0;
@@ -208,12 +181,11 @@ std::size_t dimension_outside_span(const Clause& clause, const RowSpace& span) {
 }
 
 /// @brief The level a clause asserts at, recomputed from the conflicting trail.
-///
 /// Independent of `AssertingClause::asserting_level`, which reads it off the
 /// leading column of the trail-basis row: this backjumps a copy of the trail and
-/// measures the clause against the span directly. The dimension outside the span
-/// only grows as levels are discarded, and it is 0 on the conflicting trail, so
-/// the first level at which it is 1 is where the clause asserts.
+/// measures against the span directly. The dimension outside the span only grows
+/// as levels are discarded and is 0 on the conflicting trail, so the first level
+/// at which it is 1 is where the clause asserts.
 std::size_t asserting_level_of(const Clause& clause, const Trail& conflict_trail) {
     for (std::size_t level = 0; level <= conflict_trail.level(); ++level) {
         Trail backjumped = conflict_trail;
@@ -235,16 +207,12 @@ struct Backjump {
 };
 
 /// @brief A cyclic selector that records every backjump it is told about.
-///
 /// `removed_levels` has no observable effect in `Cyclic` -- only
-/// `LeadingTermWatchlist` reads it -- so a wrong value there is invisible from
-/// outside. This makes it visible, together with the two quantities it is easy
-/// to confuse it with.
-///
-/// The cycle logic is `Cyclic`'s, minus the decision-clause hint, because
-/// `Cyclic` is final. The contract it has to keep is the same one: never report
-/// quiescence while a clause could still propagate, and always report it
-/// eventually.
+/// `LeadingTermWatchlist` reads it -- so a wrong value is invisible from outside.
+/// This makes it visible alongside the two quantities it is easy to confuse with.
+/// The cycle logic duplicates `Cyclic`'s, minus the decision-clause hint, because
+/// `Cyclic` is final; it keeps the same contract of never reporting quiescence
+/// while a clause could still propagate, and always reporting it eventually.
 class RecordingSelector final : public ClauseSelector {
 public:
     /// @brief The next active clause in cyclic order, or `std::nullopt` at quiescence.
@@ -269,23 +237,19 @@ public:
         return std::nullopt;
     }
 
-    /// @brief Record the trail a conflict would be analysed against, then delegate.
     void update_with_propagation(const Equation& reduced_eqn, const Trail& trail) override {
         last_trail_ = trail;
         ClauseSelector::update_with_propagation(reduced_eqn, trail);
     }
 
-    /// @brief Record the trail a later conflict would be analysed against, then delegate.
     void update_with_decision(const Equation& reduced_eqn, const Trail& trail) override {
         last_trail_ = trail;
         ClauseSelector::update_with_decision(reduced_eqn, trail);
     }
 
-    /// @brief Record the backjump, then store the clause.
-    ///
-    /// The trail passed here is the backjumped one; the last trail seen before
-    /// it is the conflicting one, because the selector is notified of the
-    /// propagation that conflicts.
+    /// @brief Record the backjump, then store the clause. The trail passed here
+    /// is the backjumped one; the last trail seen before it is the conflicting
+    /// one, because the selector is notified of the propagation that conflicts.
     void add_asserting_clause(Clause clause, const Trail& trail,
                               std::size_t removed_levels) override {
         REQUIRE(last_trail_.has_value());
@@ -348,7 +312,6 @@ TEST_CASE_TEMPLATE("solver: SAT decided entirely by root propagation", Tag, Dens
     CHECK_FALSE(solution.assignment->test(1));
     CHECK_FALSE(solution.assignment->test(2));
 
-    // One propagation per clause, and no conflict anywhere.
     CHECK(run.solver->counters().num_propagations == 3);
     CHECK(run.solver->counters().num_conflicts == 0);
     CHECK(run.solver->decision_stats().decisions == 0);
@@ -400,14 +363,12 @@ TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTa
     // Watches really do move on this instance: every clause has three rows, so
     // the engine has somewhere to move a watch to.
     CHECK(counters.num_watch_updates > 0);
-    // `NoRestarts` never fires.
     CHECK(counters.num_restarts == 0);
 
     // Not hand-derived: measured on this instance with the heuristics `make_run`
     // fixes (CSIDS at seed 0, cyclic selection, falsify phase, compaction on).
-    // Asserted because the search order is exactly what the differential harness
-    // pins down -- a change in it is a real change, and this says so here rather
-    // than only against the 0.1 binary.
+    // Asserted because the search order is what the differential harness pins
+    // down -- a change in it is a real change, and this says so here too.
     CHECK(counters.num_conflicts == 4);
     CHECK(run.solver->decision_stats().decisions == 3);
 }
@@ -496,11 +457,10 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
     constexpr Algebra backend = Tag::value;
 
     // `removed_levels` is what the solver discarded, which is the complement of
-    // the asserting level only when no restart fired (the warning on
-    // `AssertingClause::asserting_level`). Both runs
-    // below check the same invariant -- levels removed plus levels left equals
-    // levels held -- and the restarting run is the one where the two candidate
-    // quantities come apart.
+    // the asserting level only when no restart fired (see the warning on
+    // `AssertingClause::asserting_level`). Both runs below check the same
+    // invariant -- levels removed plus levels left equals levels held -- and the
+    // restarting run is the one where the two candidate quantities come apart.
     auto record = [&](std::unique_ptr<RestartPolicy> restarts) {
         auto selector = std::make_unique<RecordingSelector>();
         RecordingSelector& recorder = *selector;

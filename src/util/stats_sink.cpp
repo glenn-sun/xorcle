@@ -10,7 +10,6 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Literals per `v` line in the DIMACS assignment output.
 constexpr std::size_t assignment_literals_per_line = 20;
 
 std::optional<double> divide_or_nullopt(const double numer, const double denom) {
@@ -78,12 +77,10 @@ ConsoleStatsSink::log_impl(const RunStats& stats) {
     output << "c Clause selector: " << stats.clause_selector << "\n";
     output << "c Decision phase: " << stats.decision_phase << "\n";
     output << "c Seed: " << stats.seed << "\n";
-    // The three CSIDS lines appear together or not at all. The keys are the
-    // paper's vocabulary, not 0.1's `Clause VSIDS
-    // learned base`. They
-    // use bare `setprecision(6)` -- no `std::fixed` -- and so print in default
-    // float format; every other formatted line sets its own flags immediately
-    // before its value, so the sticky stream state never leaks between lines.
+    // The three CSIDS lines appear together or not at all, and use bare
+    // `setprecision(6)` -- no `std::fixed` -- so they print in default float
+    // format. Every other formatted line sets its own flags immediately before
+    // its value, so sticky stream state never leaks between lines.
     if (stats.csids_initial_activity.has_value() && stats.csids_decay.has_value() &&
         stats.csids_bump.has_value()) {
         output << "c CSIDS initial activity: " << std::setprecision(6) << *stats.csids_initial_activity << "\n";

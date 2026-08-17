@@ -26,7 +26,6 @@ std::filesystem::path proof_path(Algebra backend, std::string_view name) {
            ("xorcle_lrup_test_" + std::string{name} + suffix);
 }
 
-/// @brief The whole contents of a file.
 std::string read_file(const std::filesystem::path& path) {
     std::ifstream file{path};
     std::ostringstream contents;

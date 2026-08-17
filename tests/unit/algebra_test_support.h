@@ -13,18 +13,16 @@ namespace xorcle {
 
 /// @brief Tag selecting the dense backend in a `TEST_CASE_TEMPLATE`.
 struct DenseTag {
-    static constexpr Algebra value = Algebra::dense; ///< The backend under test.
+    static constexpr Algebra value = Algebra::dense;
 };
 
 /// @brief Tag selecting the sparse backend in a `TEST_CASE_TEMPLATE`.
 struct SparseTag {
-    static constexpr Algebra value = Algebra::sparse; ///< The backend under test.
+    static constexpr Algebra value = Algebra::sparse;
 };
 
-/// @brief Build an equation with exactly the listed columns set.
-/// @param backend Storage representation to use.
-/// @param num_vars Number of variable columns.
-/// @param columns Columns to set; `num_vars` is the constant column.
+/// @brief Build an equation with exactly the listed columns set, where column
+/// `num_vars` is the constant column.
 Equation make_equation_with(Algebra backend, std::size_t num_vars,
                             std::initializer_list<std::size_t> columns);
 
@@ -41,7 +39,6 @@ void check_echelon_invariant(const RowEchelonMatrix& matrix);
 /// @brief A small deterministic generator, so failures are reproducible.
 class TestRandom {
 public:
-    /// @brief Seed the generator.
     explicit TestRandom(std::uint64_t seed) noexcept : state_(seed | 1u) {}
 
     /// @brief Next value in `[0, bound)`.

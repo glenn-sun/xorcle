@@ -17,8 +17,8 @@ enum class ClausePrintMode {
 
 /// @brief Combined print-mode configuration for equations and clauses.
 struct PrintMode {
-    EquationPrintMode equation_mode = EquationPrintMode::standard; ///< Equation formatting.
-    ClausePrintMode clause_mode = ClausePrintMode::as_clause;      ///< Clause formatting.
+    EquationPrintMode equation_mode = EquationPrintMode::standard;
+    ClausePrintMode clause_mode = ClausePrintMode::as_clause;
 };
 
 } // namespace xorcle

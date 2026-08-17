@@ -4,7 +4,7 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Fibonacci hashing multiplier, as used by the old tree's equation hash.
+/// @brief Fibonacci hashing multiplier.
 constexpr std::uint64_t hash_multiplier = 11400714819323198485ull;
 
 } // namespace
@@ -69,9 +69,8 @@ void SparseRow::assign_from(const SparseRow& other) {
     assert(width_ == other.width_ && "width mismatch in assign_from");
     // `assign` reuses the existing buffer whenever its capacity suffices, which
     // it always does once a scratch equation has been filled to its high-water
-    // mark. Unlike the dense backend a sparse row's storage grows with its
-    // weight, so freedom from allocation is a property of the reuse discipline
-    // rather than of the width alone.
+    // mark. A sparse row's storage grows with its weight, not its width, so
+    // freedom from allocation here is a property of the reuse discipline.
     columns_.assign(other.columns_.begin(), other.columns_.end());
 }
 

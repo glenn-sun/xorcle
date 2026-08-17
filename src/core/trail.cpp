@@ -7,8 +7,8 @@ namespace xorcle {
 namespace {
 
 #ifndef NDEBUG
-/// @brief Check that a snapshot's two order maps are inverse permutations of
-/// each other and that both agree with the span and the reason list.
+/// @brief The two order maps are inverse permutations of each other, and both
+/// agree with the span and the reason list.
 void debug_assert_snapshot_valid(const TrailSnapshot& snapshot) {
     const std::size_t trail_rows = snapshot.span().rows();
     assert(snapshot.order_map().size() == trail_rows);
@@ -62,9 +62,8 @@ void Trail::learn(const Equation& eqn, std::optional<ClauseId> reason) {
     assert(eqn.size() == span().cols());
 
     if (!reason.has_value()) {
-        // A decision opens a new level, which is a full copy of the current
-        // snapshot. See the class comment: the copy is what makes backjumping a
-        // truncation rather than an undo log.
+        // A decision opens a new level: a full copy, which is what makes
+        // backjumping a truncation rather than an undo log.
         TrailSnapshot new_snapshot = snapshots_.back();
         snapshots_.push_back(std::move(new_snapshot));
     }

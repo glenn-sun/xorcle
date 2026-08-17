@@ -6,17 +6,12 @@
 namespace xorcle {
 namespace {
 
-/// @brief Bits consumed from the RNG per draw.
-///
-/// Not `std::numeric_limits<...>::digits` of some storage word: the value is
-/// part of the reproducibility contract, not a property of how `Bitmap` happens
-/// to be laid out. `Rng::result_type` is 64 bits wide and the 0.1 tree packed
-/// its coefficient vectors into 64-bit blocks, so one draw fills 64 bits.
+/// @brief Bits consumed from the RNG per draw. Not the digit count of some
+/// storage word: this is part of the reproducibility contract, not a property of
+/// how `Bitmap` happens to be laid out.
 constexpr std::size_t bits_per_draw = 64;
 
 /// @brief SplitMix64 finalizer, with the gamma increment applied first.
-///
-/// Constants from Vigna's SplitMix64 generator.
 Seed mix_seed(Seed x) {
     x += 0x9e3779b97f4a7c15ULL;
     x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -56,9 +51,8 @@ random_nonzero_coefficients(std::size_t num_bits, Rng& rng) {
         for (std::size_t draw = 0; draw < draws_per_attempt; ++draw) {
             const std::uint64_t word = rng();
             const std::size_t first_bit = draw * bits_per_draw;
-            // Bits at or beyond `num_bits` are dropped. This is the 0.1 tree's
-            // `blocks.back() &= tail_mask`, expressed as a bound on the index so
-            // that it does not depend on any storage layout.
+            // Bits at or beyond `num_bits` are dropped, expressed as a bound on
+            // the index so that it does not depend on any storage layout.
             const std::size_t width = std::min(bits_per_draw, num_bits - first_bit);
             for (std::size_t offset = 0; offset < width; ++offset) {
                 if ((word >> offset) & 1ULL) {

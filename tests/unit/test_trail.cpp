@@ -107,7 +107,6 @@ TEST_CASE_TEMPLATE("trail: order maps are inverse permutations", Tag, DenseTag, 
     const std::vector<std::vector<std::size_t>> expected{{2}, {0, 4}, {3, 4}};
     CHECK(rows_in_trail_order(trail.back()) == expected);
 
-    // The maps really are inverse permutations of each other.
     for (std::size_t t = 0; t < trail.order_map().size(); ++t) {
         CHECK(trail.reverse_order_map()[trail.order_map()[t]] == t);
     }

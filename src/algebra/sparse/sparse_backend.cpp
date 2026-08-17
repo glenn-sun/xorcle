@@ -7,8 +7,8 @@
 namespace xorcle {
 
 // The shared templated algorithms, instantiated for the sparse backend. Nothing
-// here differs from dense_backend.cpp but the row type -- which is the point:
-// the algorithms are written once.
+// here differs from dense_backend.cpp but the row type: the algorithms are
+// written once.
 static_assert(Row<SparseRow>, "SparseRow must satisfy the Row concept");
 
 std::unique_ptr<EquationStorage> make_sparse_equation_storage(std::size_t num_vars) {

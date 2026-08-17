@@ -11,7 +11,6 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Assert that a non-unit clause's watches are in range and distinct.
 void debug_assert_non_unit_watches_valid(const Clause& clause) {
     if (clause.rows() <= 1) {
         return;
@@ -31,9 +30,7 @@ std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, EquationId row
     const ReduceResult leading = clause.row(row_id).classify();
     // A stored clause row is never the true equation, and the constant column is
     // a legal bucket, so both surviving cases name a real column. The bucket
-    // array is sized for the *initial* variable space and is never shrunk, so a
-    // clause narrowed by compaction indexes its own constant column, not the
-    // last bucket.
+    // array is sized for the *initial* variable space and never shrunk.
     assert(leading.kind != ReduceResult::Kind::eq_true && "clause row is the true equation");
     const std::size_t bucket = leading.is_leading() ? leading.column : clause.cols() - 1;
     assert(bucket < by_leading_term_.size() && "leading column out of bucket range");
@@ -120,8 +117,7 @@ void LeadingTermWatchlist::add_asserting_clause(Clause clause, const Trail&, std
     add_clause(std::move(clause));
 
     // Everything queued before the conflict was queued against a trail that no
-    // longer exists, so the queue is rebuilt from the unit clauses with the new
-    // asserting clause on top.
+    // longer exists, so rebuild from the unit clauses with the new clause on top.
     queue_.clear();
     std::fill(in_queue_.begin(), in_queue_.end(), false);
     append_top(unit_clauses_);
@@ -132,20 +128,12 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
                                                     const Trail& trail) {
     const ReduceResult leading = reduced_eqn.classify();
     // The trail never learns the true equation, and the false equation is the
-    // conflict the solver detects separately, so a learned equation always has a
-    // real leading column. The 0.1 tree indexed the bucket array with
-    // `first_set()` and relied on a debug-only bounds assert to catch the
-    // sentinel; this rules it out explicitly.
+    // conflict the solver detects separately, so there is always a real column.
     assert(leading.is_leading() && "learned equation has no leading column");
     assert(leading.column < by_leading_term_.size() && "leading column out of bucket range");
 
     // Reduction can only lift a row's leading term up to `leading.column`, and
-    // only from a column that is itself a pivot. `pivot_columns()` is a concrete
-    // `Bitmap` rather than part of the algebra dispatch surface, so its
-    // word-level primitives are available directly: `count_below()` gives the
-    // number of pivots to wake in one pass over words, and `for_each_set()`
-    // visits the pivots that exist rather than testing every column below
-    // `leading.column` as the 0.1 tree did.
+    // only from a column that is itself a pivot; only those buckets need waking.
     std::size_t pivots_below = trail.span().pivot_columns().count_below(leading.column);
     if (pivots_below != 0) {
         trail.span().pivot_columns().for_each_set([&](std::size_t column) {

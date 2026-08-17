@@ -11,10 +11,6 @@ namespace xorcle {
 
 namespace {
 
-/// @brief The index of the row equal to `clause_row`, if the clause has one.
-///
-/// A linear scan comparing whole equations. Clauses are short, and equality is
-/// a coarse operation in both backends.
 std::optional<std::size_t> find_row_index(const Clause& clause, const Equation& clause_row) {
     for (std::size_t row_index = 0; row_index < clause.rows(); ++row_index) {
         if (clause.row(row_index) == clause_row) {
@@ -24,7 +20,7 @@ std::optional<std::size_t> find_row_index(const Clause& clause, const Equation& 
     return std::nullopt;
 }
 
-/// @brief The first row index other than `row_to_avoid`, or 0 if there is none.
+/// @return The first row index other than `row_to_avoid`, or 0 if there is none.
 std::size_t first_distinct_row(std::size_t num_rows, std::size_t row_to_avoid) {
     for (std::size_t row_index = 0; row_index < num_rows; ++row_index) {
         if (row_index != row_to_avoid) {
@@ -34,7 +30,6 @@ std::size_t first_distinct_row(std::size_t num_rows, std::size_t row_to_avoid) {
     return 0;
 }
 
-/// @brief Reduce one old clause row by the trail span and project it.
 Equation project_old_row(const Clause& old_clause, std::size_t row_index,
                          const RowSpace& trail_span, const CompactionTransform& transform) {
     assert(row_index < old_clause.rows());
@@ -45,11 +40,9 @@ Equation project_old_row(const Clause& old_clause, std::size_t row_index,
 
 /// @brief Re-establish a rewritten clause's watches and cyclic search cursor.
 ///
-/// The rewrite can merge or drop rows, so the old indices mean nothing. Each old
-/// watch is projected and looked up by value; whichever lookups fail fall back
-/// to any legal pair. `next_watch_search_start` is carried across modulo the new
-/// row count, because it is persistent per-clause state that the differential
-/// harness depends on.
+/// Each old watch is projected and looked up by value; whichever lookups fail
+/// fall back to any legal pair. `next_watch_search_start` is persistent
+/// per-clause state, so it is carried across modulo the new row count.
 void rebuild_clause_watch_metadata(Clause& rewritten, const Clause& old_clause,
                                    const RowSpace& trail_span,
                                    const CompactionTransform& transform) {
@@ -138,8 +131,7 @@ CompactionPlan build_compaction_plan(const CompactionInputs& inputs,
 
         Clause rewritten(backend, transform.new_num_vars());
         if (becomes_inactive) {
-            // A satisfied clause is kept as a placeholder so clause ids stay
-            // stable; it is never selected again.
+            // Kept as a placeholder so clause ids stay stable; never selected.
             rewritten.add_row(false_clause_row);
             rewritten.watched0 = 0;
             rewritten.watched1 = 0;

@@ -265,7 +265,6 @@ TEST_CASE_TEMPLATE("row echelon: matches the old REFMatrix", Tag, DenseTag, Spar
             check_matches_reference(matrix, reference);
             check_echelon_invariant(matrix);
 
-            // Reduction must agree too, both fully and partially.
             const Bits probe = random_bits(random, num_vars, 4);
             Equation reduced = to_equation(backend, probe);
             Bits reference_reduced = probe;
@@ -298,9 +297,8 @@ TEST_CASE_TEMPLATE("row echelon: matches the old REFMatrix", Tag, DenseTag, Spar
 
 TEST_CASE_TEMPLATE("row echelon: a reduced row never leads on a pivot column", Tag, DenseTag,
                    SparseTag) {
-    // A random equation reduced against a
-    // random echelon basis must have a leading column that is not a pivot
-    // column of that basis.
+    // A random equation reduced against a random echelon basis must have a
+    // leading column that is not a pivot column of that basis.
     constexpr Algebra backend = Tag::value;
     constexpr std::size_t num_vars = 24;
     TestRandom random(31337);
@@ -331,8 +329,6 @@ TEST_CASE_TEMPLATE("row echelon: a reduced row never leads on a pivot column", T
                 break;
         }
 
-        // Full reduction leaves no pivot column set at all, and agrees with
-        // partial reduction on the classification.
         Equation fully = original;
         matrix.reduce(fully);
         for (const std::size_t column : columns_of(fully)) {
@@ -340,8 +336,6 @@ TEST_CASE_TEMPLATE("row echelon: a reduced row never leads on a pivot column", T
         }
         CHECK(fully.classify() == result);
 
-        // Adding the reduced row to the basis must succeed exactly when the row
-        // was not already in the span.
         RowEchelonMatrix extended = matrix;
         CHECK(extended.add_row_get_index(original).has_value() ==
               (result.kind != ReduceResult::Kind::eq_true));
@@ -403,7 +397,6 @@ TEST_CASE_TEMPLATE("clause: to_string", Tag, DenseTag, SparseTag) {
     as_stored.clause_mode = ClausePrintMode::as_linear_negation;
     CHECK(clause.to_string(as_stored) == "[x1 + x2 = 0] ^ [x3 = 1]");
 
-    // The watch bookkeeping survives copying, and so does the row space.
     clause.watched0 = 1;
     clause.next_watch_search_start = 2;
     const Clause copy = clause;

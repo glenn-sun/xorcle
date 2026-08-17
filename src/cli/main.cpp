@@ -3,10 +3,8 @@
 /// report.
 ///
 /// Thin by design. Every option lives in `cli/options.inc` and everything that
-/// reads it lives in `cli/options.h`, so what is
-/// left here is the enum-to-object mapping the 0.1 tree kept in
-/// `heuristics/Factory.cpp`, the run itself, and the error boundary
-/// around both.
+/// reads it lives in `cli/options.h`, so what is left here is the
+/// enum-to-object mapping, the run itself, and the error boundary around both.
 
 #include <chrono>
 #include <cstddef>
@@ -44,14 +42,11 @@ namespace xorcle {
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Building the heuristics
+// --- Building the heuristics -----------------------------------------------
 //
-// The enum-to-object mapping has to live somewhere, and it belongs beside the
-// option table that names the enumerators.
-// ---------------------------------------------------------------------------
+// The enum-to-object mapping belongs beside the option table that names the
+// enumerators.
 
-/// @brief Build the decision procedure the options name.
 std::unique_ptr<DecisionProcedure> make_decision_procedure(const Options& options,
                                                            std::size_t num_vars) {
     std::unique_ptr<DecisionProcedure> procedure;
@@ -71,7 +66,6 @@ std::unique_ptr<DecisionProcedure> make_decision_procedure(const Options& option
     return procedure;
 }
 
-/// @brief Build the clause selector the options name.
 std::unique_ptr<ClauseSelector> make_clause_selector(const Options& options,
                                                      std::size_t num_vars) {
     switch (options.selection) {
@@ -83,9 +77,7 @@ std::unique_ptr<ClauseSelector> make_clause_selector(const Options& options,
     return std::make_unique<Cyclic>(num_vars);
 }
 
-// ---------------------------------------------------------------------------
-// Running
-// ---------------------------------------------------------------------------
+// --- Running ---------------------------------------------------------------
 
 /// @brief The current UTC time as `%Y-%m-%dT%H:%M:%SZ`.
 std::string utc_timestamp() {
@@ -105,7 +97,6 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
     return timestamp_utc + "-" + std::to_string(millis);
 }
 
-/// @brief Solve one instance and collect its statistics.
 RunStats run_once(const Options& options) {
     ParsedDimacs parsed = parse_dimacs_file(options.input_path, options.algebra);
 
@@ -166,8 +157,7 @@ RunStats run_once(const Options& options) {
     return stats;
 }
 
-/// @brief Check the positional input names a file we can read.
-/// @throws CliError if it does not.
+/// @throws CliError if the input does not name a readable regular file.
 void require_readable_input(const std::string& input_path) {
     const std::filesystem::path input(input_path);
     if (!std::filesystem::exists(input) || !std::filesystem::is_regular_file(input)) {

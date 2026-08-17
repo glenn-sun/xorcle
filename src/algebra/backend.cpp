@@ -5,9 +5,9 @@
 
 namespace xorcle {
 
-// This file deliberately includes only the backend factory headers, whose
-// signatures mention nothing but our own types. That is what keeps gf2 confined
-// to a single translation unit tree.
+// Only the backend factory headers are included here, and their signatures
+// mention nothing but our own types -- that is what keeps gf2 confined to
+// `algebra/dense/`.
 
 std::unique_ptr<EquationStorage> make_equation_storage(Algebra backend, std::size_t num_vars) {
     switch (backend) {

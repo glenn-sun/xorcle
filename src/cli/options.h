@@ -4,17 +4,16 @@
 /// @brief Everything the command line configures, generated from
 /// `cli/options.inc`.
 ///
-/// One X-macro table generates the options struct,
-/// the `--name=value` parser, the bounds checks and `--help`, following CaDiCaL
-/// and Kissat. Enum-valued choices use a parallel name-to-enumerator table, so
-/// they validate and self-document the same way.
+/// One X-macro table generates the options struct, the `--name=value` parser,
+/// the bounds checks and `--help`, following CaDiCaL and Kissat. Enum-valued
+/// choices use a parallel name-to-enumerator table, so they validate and
+/// self-document the same way.
 ///
 /// Header-only, so the parser links into the unit-test binary as well as the
 /// executable.
 ///
-/// Everything here reports user error by throwing `CliError`;
-/// `main` catches it, prints it, and exits
-/// non-zero. Nothing here asserts on input.
+/// Everything here reports user error by throwing `CliError`; `main` catches it,
+/// prints it, and exits non-zero. Nothing here asserts on input.
 
 #include <cmath>
 #include <cstddef>
@@ -50,9 +49,7 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-// ---------------------------------------------------------------------------
-// Option value kinds
-// ---------------------------------------------------------------------------
+// --- Option value kinds ----------------------------------------------------
 
 /// @brief Tag types naming the value kinds the option table's `kind` column can
 /// hold.
@@ -61,7 +58,7 @@ public:
 /// differ only in whether their bounds are inclusive, so they have to be
 /// distinct types for overload resolution to tell them apart.
 struct OptionKind {
-    struct Bool {};  ///< `true`/`false`, also accepting the 0.1 tree's `on`/`off`.
+    struct Bool {};  ///< `true`/`false`, also accepting `on`/`off`, `1`/`0`, `yes`/`no`.
     struct U64 {};   ///< Unsigned 64-bit integer; bounds inclusive.
     struct Size {};  ///< `std::size_t`; bounds inclusive.
     struct Real {};  ///< Finite double; bounds inclusive.
@@ -98,21 +95,16 @@ struct OptionValue<OptionKind::Text> {
     using type = std::string;
 };
 
-// ---------------------------------------------------------------------------
-// The generated structs
-// ---------------------------------------------------------------------------
+// --- The generated structs -------------------------------------------------
 
-/// @brief Everything the command line configures.
-///
-/// One member per table row, plus the two things that are not options: the
-/// positional input path, and which `--decisions=` preset was chosen.
+/// @brief One member per table row, plus the two things that are not options:
+/// the positional input path, and which `--decisions=` preset was chosen.
 struct Options {
 #define XORCLE_OPTION(name, kind, default_value, lo, hi, help)                                     \
     OptionValue<OptionKind::kind>::type name = default_value;
 #define XORCLE_ENUM_OPTION(name, type, default_value, help) type name = default_value;
 #include "cli/options.inc"
 
-    /// @brief The positional `<input>` argument.
     std::string input_path;
 
     /// @brief The `--decisions=` preset in force, or empty.
@@ -129,9 +121,7 @@ struct OptionSeen {
 #include "cli/options.inc"
 };
 
-// ---------------------------------------------------------------------------
-// Enum values and presets, as parallel tables
-// ---------------------------------------------------------------------------
+// --- Enum values and presets, as parallel tables ---------------------------
 
 /// @brief One accepted spelling of one enum-valued option.
 ///
@@ -141,7 +131,7 @@ struct OptionSeen {
 struct EnumOptionValue {
     std::string_view option;   ///< The option's table name, e.g. `"decisions"`.
     std::string_view spelling; ///< The accepted value, e.g. `"berkmin"`.
-    int value;                 ///< The enumerator, as an integer.
+    int value;
 };
 
 /// @brief Every accepted spelling of every enum-valued option, in table order.
@@ -154,7 +144,7 @@ inline constexpr EnumOptionValue enum_option_values[]{
 /// @brief A `--decisions=` spelling that fixes the whole CSIDS triple.
 struct CsidsPreset {
     std::string_view spelling; ///< The `--decisions=` value, e.g. `"cmtf"`.
-    CsidsConfig config;        ///< The triple it stands for.
+    CsidsConfig config;
 };
 
 /// @brief The CSIDS presets, from the same table.
@@ -163,7 +153,6 @@ inline constexpr CsidsPreset csids_presets[]{
 #include "cli/options.inc"
 };
 
-/// @brief The preset named @p spelling, or null if it is not a preset.
 inline const CsidsPreset* find_csids_preset(std::string_view spelling) {
     for (const CsidsPreset& preset : csids_presets) {
         if (preset.spelling == spelling) {
@@ -173,9 +162,7 @@ inline const CsidsPreset* find_csids_preset(std::string_view spelling) {
     return nullptr;
 }
 
-// ---------------------------------------------------------------------------
-// Spelling
-// ---------------------------------------------------------------------------
+// --- Spelling --------------------------------------------------------------
 
 /// @brief The command-line spelling of a table name: `compact_every` becomes
 /// `--compact-every`.
@@ -229,11 +216,8 @@ inline std::string enum_option_label(std::string_view option, int value) {
     return {};
 }
 
-// ---------------------------------------------------------------------------
-// Value parsing and bounds checking, one overload per kind
-// ---------------------------------------------------------------------------
+// --- Value parsing and bounds checking, one overload per kind --------------
 
-/// @brief Format a double the way `--help` and error messages want it.
 inline std::string format_real(const double value) {
     std::ostringstream text;
     text << value;
@@ -271,7 +255,6 @@ inline double parse_real(std::string_view option, const std::string& text) {
     }
 }
 
-/// @brief `--compact=false`, or the 0.1 tree's `off`.
 inline bool parse_option_value(OptionKind::Bool, std::string_view option, const std::string& text,
                                bool, bool) {
     if (text == "true" || text == "on" || text == "1" || text == "yes") {
@@ -295,7 +278,6 @@ std::string bounds_requirement(const T lo, const T hi) {
     return "in " + std::to_string(lo) + ".." + std::to_string(hi);
 }
 
-/// @brief The requirement clause of an out-of-range message, for doubles.
 inline std::string bounds_requirement(const double lo, const double hi) {
     if (std::isinf(hi)) {
         return "at least " + format_real(lo);
@@ -303,7 +285,6 @@ inline std::string bounds_requirement(const double lo, const double hi) {
     return "in " + format_real(lo) + ".." + format_real(hi);
 }
 
-/// @brief An unsigned 64-bit value within an inclusive range.
 inline std::uint64_t parse_option_value(OptionKind::U64, std::string_view option,
                                         const std::string& text, std::uint64_t lo,
                                         std::uint64_t hi) {
@@ -315,7 +296,6 @@ inline std::uint64_t parse_option_value(OptionKind::U64, std::string_view option
     return value;
 }
 
-/// @brief A size within an inclusive range.
 inline std::size_t parse_option_value(OptionKind::Size, std::string_view option,
                                       const std::string& text, std::size_t lo, std::size_t hi) {
     const std::uint64_t value = parse_unsigned(option, text);
@@ -326,7 +306,6 @@ inline std::size_t parse_option_value(OptionKind::Size, std::string_view option,
     return static_cast<std::size_t>(value);
 }
 
-/// @brief A finite double within an inclusive range.
 inline double parse_option_value(OptionKind::Real, std::string_view option, const std::string& text,
                                  double lo, double hi) {
     const double value = parse_real(option, text);
@@ -348,7 +327,6 @@ inline double parse_option_value(OptionKind::Ratio, std::string_view option,
     return value;
 }
 
-/// @brief Any string, taken verbatim.
 inline std::string parse_option_value(OptionKind::Text, std::string_view, const std::string& text,
                                       std::string_view, std::string_view) {
     return text;
@@ -366,9 +344,7 @@ Enum parse_enum_option_value(std::string_view option, const std::string& text) {
                    enum_option_spellings(option));
 }
 
-// ---------------------------------------------------------------------------
-// --help, generated from the same table
-// ---------------------------------------------------------------------------
+// --- --help, generated from the same table ---------------------------------
 
 /// @brief The placeholder shown after `=` in the help text.
 inline std::string option_syntax(OptionKind::Bool) { return "true|false"; }
@@ -469,23 +445,15 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
         << "  --proof requires --compact=false, and does not turn compaction off for\n"
         << "  you: it refuses instead. Compaction changes the search rather than only\n"
         << "  its bookkeeping, so a run that silently disabled it would answer a\n"
-        << "  different question than the one asked. Proof emission with compaction\n"
-        << "  on is not implemented in 0.2; the paper's artifact supports it.\n"
+        << "  different question than the one asked.\n"
         << "\n"
-        << "  The restart options are EXPERIMENTAL and untuned. The paper's\n"
-        << "  Conclusion lists restarts among what Xorcle does not yet fully\n"
-        << "  implement.\n";
+        << "  The restart options are EXPERIMENTAL and untuned.\n";
 }
 
-// ---------------------------------------------------------------------------
-// Parsing a command line
-// ---------------------------------------------------------------------------
+// --- Parsing a command line ------------------------------------------------
 
-/// @brief Apply one `--name=value` option.
-/// @param options Options to update.
-/// @param seen Per-option "was it given?" flags to update.
-/// @param spelling The option name as written, `--` included.
-/// @param value The text after the `=`.
+/// @brief Apply one `--name=value` option, given `spelling` with its `--` still
+/// on and `value` as the text after the `=`.
 /// @throws CliError if the name is unknown or the value is out of range.
 inline void apply_option(Options& options, OptionSeen& seen, const std::string& spelling,
                          const std::string& value) {
@@ -512,11 +480,11 @@ inline void apply_option(Options& options, OptionSeen& seen, const std::string& 
 ///
 /// Called after `apply_option` has already resolved the enumerator, so this only
 /// has to overwrite the CSIDS triple and record which preset is in force. The
-/// values come from `csids_berkmin_config` and `csids_cmtf_config` rather than
-/// being retyped: the declaration order of `CsidsConfig` is
-/// @f$(A_0, \alpha, \Delta)@f$ while the paper writes its preset tuples as
-/// @f$(A_0, \Delta, \alpha)@f$, so retyping them positionally would silently
-/// swap the bump and the decay.
+/// values are copied from `csids_berkmin_config` and `csids_cmtf_config` by
+/// member name rather than retyped: `CsidsConfig` declares the triple as
+/// @f$(A_0, \alpha, \Delta)@f$ and the literature usually writes it as
+/// @f$(A_0, \Delta, \alpha)@f$, so a positional copy would silently swap the
+/// bump and the decay.
 inline void apply_decisions_preset(Options& options, const std::string& value) {
     const CsidsPreset* preset = find_csids_preset(value);
     if (preset == nullptr) {
@@ -539,8 +507,7 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
                        " is a preset that fixes A0, alpha and delta; it does not accept "
                        "--csids-initial, --csids-decay or --csids-bump");
     }
-    // Refuse rather than silently flipping
-    // --compact. The message names the fix.
+    // Refuse rather than silently flipping --compact. The message names the fix.
     require_compaction_disabled_for_proof(!options.proof.empty(), options.compact);
 }
 
@@ -566,16 +533,15 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
             print_help(help_out, program_name, version);
             return std::nullopt;
         }
-        // 0.1's short flags (`-d`, `-p`, `-c`, `-x`, `-s`) are gone; catching
-        // them here beats silently counting them as extra positionals.
+        // Single-dash arguments are rejected outright: silently counting them as
+        // extra positionals would turn a typo into "expected exactly one input".
         if (argument.starts_with("-") && !argument.starts_with("--")) {
             throw CliError("'" + argument +
-                           "' is a 0.1 short option; 0.2 has only --name=value options, "
+                           "' is not an option; every option has the form --name=value, "
                            "listed by --help");
         }
-        // A bare positional token is the input path and nothing else: 0.1's
-        // sniffing of trailing parameters, and its `looks_like_path` heuristic,
-        // are exactly what the table replaces.
+        // A bare positional token is the input path and nothing else; there is no
+        // sniffing of trailing parameters and no path-shaped heuristic.
         if (!argument.starts_with("--")) {
             positionals.push_back(argument);
             continue;
@@ -603,9 +569,7 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     return options;
 }
 
-// ---------------------------------------------------------------------------
-// Projections onto the configuration structs the solver takes
-// ---------------------------------------------------------------------------
+// --- Projections onto the configuration structs the solver takes -----------
 
 /// @brief The CSIDS triple, by member name (see `CsidsConfig`'s warning).
 inline CsidsConfig csids_config(const Options& options) {
@@ -614,12 +578,10 @@ inline CsidsConfig csids_config(const Options& options) {
                        .bump = options.csids_bump};
 }
 
-/// @brief The compaction configuration.
 inline CompactionConfig compaction_config(const Options& options) {
     return CompactionConfig{.enabled = options.compact, .conflict_interval = options.compact_every};
 }
 
-/// @brief The restart configuration.
 inline RestartConfig restart_config(const Options& options) {
     return RestartConfig{.method = options.restart,
                          .geometric_multiplier = options.restart_geometric_factor,

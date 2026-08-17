@@ -19,7 +19,6 @@ namespace xorcle {
 
 namespace {
 
-/// @brief The set variable indices of an assignment.
 std::vector<std::size_t> set_variables(const Bitmap& assignment) {
     std::vector<std::size_t> out;
     assignment.for_each_set([&](std::size_t index) { out.push_back(index); });

@@ -13,13 +13,9 @@ namespace xorcle {
 namespace {
 
 #ifndef NDEBUG
-/// @brief Whether some combination of a clause's rows reduces to a legal decision.
-///
-/// Echelonizes the clause's rows after reduction by the trail span. The result
-/// has a row exactly when some combination survives reduction, and has the
-/// constant column as a pivot exactly when @f$\mathbf{1}@f$ lies in the reduced
-/// clause span — which is the case `sample_equation_from_clause()` rejects and
-/// its precondition rules out.
+/// @brief Whether some combination of a clause's rows reduces to a legal
+/// decision, by echelonizing the rows after reduction by the trail span. This is
+/// `sample_equation_from_clause()`'s precondition, checked directly.
 bool clause_admits_a_legal_decision(const Clause& clause, const RowSpace& trail_span) {
     RowSpace reduced_clause_space(clause.backend(), clause.num_vars());
     Equation reduced_row(clause.backend(), clause.num_vars());
@@ -89,9 +85,8 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
 
     workspace.clear_local_basis();
 
-    // The false equation is reduced once by the trail span here, then reduced
-    // incrementally by each clause row as the local basis grows. Recomputing it
-    // from scratch per row would be the same answer at quadratic cost.
+    // Reduced once by the trail span here, then incrementally by each clause row
+    // as the local basis grows; recomputing per row costs quadratic for nothing.
     workspace.scratch_false_.assign_from(workspace.false_equation_);
     trail_span.reduce(workspace.scratch_false_);
     if (workspace.scratch_false_.is_eq_true()) {

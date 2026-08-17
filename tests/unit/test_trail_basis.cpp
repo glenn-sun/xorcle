@@ -17,15 +17,14 @@ namespace xorcle {
 
 namespace {
 
-/// @brief The 0.1 tree's `jumpable_levels()`, transcribed literally.
+/// @brief A reference count of how many levels a clause lets you discard.
 ///
-/// This is the arithmetic `asserting_level()` was derived from, kept here as an
-/// independent oracle: the port's claim is exactly
-/// `asserting_level() == trail.level() - jumpable_levels_reference(...)`, and
-/// this is the only place in the tree that states the old convention. The
-/// `row(1).sub(width).any()` prefix test is spelled out over the row's set
-/// columns so that the reference does not lean on the same `leading_column()`
-/// reasoning the implementation uses.
+/// Kept as an independent oracle for `asserting_level()`, which computes the
+/// same thing from the other end of the range: the claim under test is exactly
+/// `asserting_level() == trail.level() - jumpable_levels_reference(...)`. The
+/// prefix test is spelled out over the row's set columns so that the reference
+/// does not lean on the same `leading_column()` reasoning the implementation
+/// uses.
 std::size_t jumpable_levels_reference(const TrailBasisSpace& basis, const Trail& trail) {
     REQUIRE(basis.rows() > 0);
     if (basis.rows() == 1) {
@@ -54,8 +53,8 @@ std::size_t jumpable_levels_reference(const TrailBasisSpace& basis, const Trail&
     return removable_levels - 1;
 }
 
-/// @brief Check `asserting_level()` against the 0.1 arithmetic and against the
-/// decision level of the trail step row 1 points at.
+/// @brief Check `asserting_level()` against the reference arithmetic and against
+/// the decision level of the trail step row 1 points at.
 void check_asserting_level(const TrailBasisSpace& basis, const Trail& trail,
                            const std::vector<std::size_t>& level_of_trail_step) {
     const std::size_t asserting_level = basis.asserting_level();
@@ -222,7 +221,6 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace maps trail step t to column m-1-t
         const std::vector<std::size_t> expected{span_rows - trail_step - 1};
         CHECK(columns_of(basis.row(0)) == expected);
 
-        // And back again, to the row we started from.
         CHECK(spans_equal(basis.to_RowSpace(), one_row));
     }
 }
@@ -272,9 +270,9 @@ TEST_CASE_TEMPLATE("trail basis: asserting level of a lifted unit clause is the 
     REQUIRE(trail.level() == 3);
 
     // A single row is a lifted unit clause: it asserts at the root whatever it
-    // is made of, so every non-root level can be discarded. In the 0.1 sign
-    // convention this returned `trail.size() - 1`, which is 3 here -- the exact
-    // opposite end of the range.
+    // is made of, so every non-root level can be discarded. The discard-count
+    // convention reports `trail.size() - 1` here, which is 3 -- the opposite end
+    // of the range, which is why the two are easy to confuse.
     for (const std::size_t column : {std::size_t{0}, std::size_t{3}, std::size_t{7}}) {
         const TrailBasisSpace basis = make_basis(trail, {{column}});
         REQUIRE(basis.rows() == 1);
@@ -352,7 +350,7 @@ TEST_CASE_TEMPLATE("trail basis: asserting level on a single-level trail is the 
     check_asserting_level(two_rows, trail, step_levels);
 }
 
-TEST_CASE_TEMPLATE("trail basis: asserting level agrees with the 0.1 arithmetic on random input",
+TEST_CASE_TEMPLATE("trail basis: asserting level agrees with the reference arithmetic on random input",
                    Tag, DenseTag, SparseTag) {
     constexpr Algebra backend = Tag::value;
     TestRandom rng(987654321u);

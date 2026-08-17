@@ -14,22 +14,20 @@ namespace xorcle {
 ///
 /// A `Row` is a concrete, non-virtual, fully inlinable row of width
 /// @f$w = n + 1@f$ over columns @f$[0, w)@f$, where column @f$n@f$ is the
-/// constant column.
-///
-/// The row-echelon algorithms are written once, as templates over this concept,
-/// so that every inner loop inlines. Per-bit operations (`test`, `set`,
-/// `next_column`, `for_each_column`) are used freely by those templates because
-/// they are direct calls, not dispatch. They are deliberately **absent** from
-/// the public `Equation` and `RowEchelonMatrix`, where the same operations
-/// would be virtual and cost 3x-1200x.
+/// constant column. The row-echelon algorithms are written once, as templates
+/// over this concept, so that every inner loop inlines. Per-bit operations
+/// (`test`, `set`, `next_column`, `for_each_column`) are used freely by those
+/// templates because they are direct calls, not dispatch; they are deliberately
+/// **absent** from the public `Equation` and `RowEchelonMatrix`, where the same
+/// operations would be virtual and cost orders of magnitude more per bit.
 ///
 /// @note `classify()` must be implemented directly by each backend -- a word
 /// scan for dense, a size-and-front check for sparse -- and never composed from
 /// separate emptiness and constant-column queries.
 template <class R>
 concept Row = requires(R r, const R cr, std::size_t i, std::span<const std::size_t> cols) {
-    /// The backend this row belongs to. Lets the templated algorithms assert
-    /// that a downcast from the abstract storage is well-founded.
+    // Lets the templated algorithms assert that a downcast from the abstract
+    // storage is well-founded.
     { R::algebra } -> std::convertible_to<Algebra>;
 
     { R(i) }; // zero row of width `i`

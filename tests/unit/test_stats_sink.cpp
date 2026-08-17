@@ -2,9 +2,9 @@
 /// @brief The console and CSV stats formats.
 ///
 /// The differential harness
-/// diffs old against new output, so these are byte-exact expectations rather
-/// than shape checks. The strings below were checked against the 0.1 binary's
-/// `ConsoleStatsSink` / `CsvStatsSink`.
+/// diffs one binary's output against another's, so these are byte-exact
+/// expectations rather than shape checks: a whitespace change here is a
+/// breaking change there.
 
 #include <doctest/doctest.h>
 
@@ -77,7 +77,6 @@ private:
     std::string path_string_ = path_.string();
 };
 
-/// @brief Read a whole file.
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
     std::ostringstream buffer;
@@ -137,8 +136,6 @@ TEST_CASE("ConsoleStatsSink: the CSIDS lines appear together or not at all") {
         stats.csids_decay = 0.98;
         stats.csids_bump = 1.0;
         const std::string output = console_output(stats);
-        // The line keys are the paper's vocabulary, matching the identifiers
-        // behind them.
         CHECK(output.find("c CSIDS initial activity: 1\n") != std::string::npos);
         CHECK(output.find("c CSIDS decay: 0.98\n") != std::string::npos);
         CHECK(output.find("c CSIDS bump: 1\n") != std::string::npos);
@@ -294,8 +291,8 @@ TEST_CASE("CsvStatsSink: fields containing separators are quoted") {
 }
 
 TEST_CASE("CsvStatsSink: an unopenable path is a user-facing error") {
-    // Error policy: bad output paths come from the command
-    // line, so they throw rather than assert.
+    // Bad output paths come from the command line, so they throw rather than
+    // assert.
     CHECK_THROWS_AS(CsvStatsSink("/nonexistent-directory-for-xorcle-tests/out.csv"),
                     std::runtime_error);
 }

@@ -132,8 +132,8 @@ TEST_CASE_TEMPLATE("dimacs: a clause line must end with 0", Tag, DenseTag, Spars
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1 2\n", backend), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n1 0\n2 3\n", backend), DimacsError);
 
-    // The 0.1 parser dropped everything after the terminator, which silently
-    // lost the second clause of a two-clause line.
+    // Rejected rather than dropped: silently ignoring the rest of the line would
+    // lose the second clause of a two-clause line.
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n1 0 2 0\n", backend), DimacsError);
 }
 

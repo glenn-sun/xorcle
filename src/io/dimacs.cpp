@@ -21,11 +21,10 @@ namespace {
 
 /// @brief Header fields, once validated.
 struct ParsedHeader {
-    std::size_t num_vars = 0;    ///< Declared variable count.
-    std::size_t num_clauses = 0; ///< Declared clause count.
+    std::size_t num_vars = 0;
+    std::size_t num_clauses = 0;
 };
 
-/// @brief Throw a `DimacsError` naming the input and the line.
 [[noreturn]] void fail(std::string_view origin, std::size_t line_number,
                        const std::string& message) {
     throw DimacsError(origin, line_number, message);
@@ -40,16 +39,14 @@ void trim_trailing_cr(std::string& line) {
 
 /// @brief Whether a line carries no clause or header content.
 ///
-/// Leading whitespace is skipped before the test, which matches
-/// `tools/xnf_lib.py`; the 0.1 parser looked at the raw first character and so
-/// rejected an indented comment.
+/// Leading whitespace is skipped before the test, so an indented `c` is still a
+/// comment. This matches `tools/xnf_lib.py`.
 bool is_blank_or_comment(std::string_view line) {
     const std::size_t start = line.find_first_not_of(" \t");
     return start == std::string_view::npos || line[start] == 'c';
 }
 
-/// @brief Parse a whole token as a non-negative decimal count.
-/// @return The value, or `std::nullopt` if the token is not exactly one.
+/// @brief Parse a whole token as a non-negative decimal count, or `std::nullopt`.
 std::optional<std::size_t> parse_count(std::string_view token) {
     std::size_t value = 0;
     const char* const first = token.data();
@@ -61,11 +58,9 @@ std::optional<std::size_t> parse_count(std::string_view token) {
     return value;
 }
 
-/// @brief Parse a whole token as a signed decimal literal.
-/// @return The value, or `std::nullopt` if the token is not exactly one.
+/// @brief Parse a whole token as a signed decimal literal, or `std::nullopt`.
 ///
-/// Unlike the 0.1 parser's `std::stoi`, the token must be consumed in full:
-/// `3junk` is an error rather than the literal `3`.
+/// The token must be consumed in full, so `3junk` fails rather than reading `3`.
 std::optional<long long> parse_signed(std::string_view token) {
     long long value = 0;
     const char* const first = token.data();
@@ -112,7 +107,6 @@ ParsedHeader parse_header_line(const std::string& line, std::string_view origin,
     return ParsedHeader{*num_vars, *num_clauses};
 }
 
-/// @brief Record the variable named by one term of a token.
 void push_variable(std::string_view term, std::string_view token, std::size_t num_vars,
                    std::vector<std::size_t>& columns_out, std::string_view origin,
                    std::size_t line_number) {
@@ -181,8 +175,7 @@ void parse_clause_token(std::string_view token, std::size_t num_vars,
         }
         term_start = plus_pos + 1;
         if (term_start == body.size()) {
-            // A trailing '+' names an empty variable. The 0.1 parser stopped
-            // here and accepted the token.
+            // A trailing '+' names an empty variable.
             fail(origin, line_number, "empty variable in token: " + std::string{token});
         }
     }
@@ -213,8 +206,8 @@ Clause parse_clause_line(const std::string& line, std::size_t num_vars, Algebra 
         fail(origin, line_number, "clause line is missing its terminating 0: " + line);
     }
     if (stream >> token) {
-        // The 0.1 parser dropped these silently; `tools/xnf_lib.py` reads the
-        // body as one token stream and would start a second clause here.
+        // Rejected rather than dropped: `tools/xnf_lib.py` reads the body as one
+        // token stream and would start a second clause here.
         fail(origin, line_number, "unexpected token after the clause terminator: " + token);
     }
     return clause;

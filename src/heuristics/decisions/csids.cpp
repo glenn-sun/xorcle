@@ -79,8 +79,7 @@ Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clau
         state_.last_decision_clause = id;
 
         // The clause is not satisfied, which is exactly the precondition that
-        // makes the rejection loop terminate and lets it reject a combination
-        // reducing to the false equation.
+        // makes the rejection loop terminate.
         const bool sampled = sample_equation_from_clause(clause, trail_span, clause_equation_rng_,
                                                          candidate_, reduced_candidate_);
         assert(sampled && "Csids: sampled no legal equation from an unsatisfied clause");

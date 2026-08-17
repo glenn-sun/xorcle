@@ -3,11 +3,10 @@
 /// @file options.inc
 /// @brief The option table: one row per command-line option.
 ///
-/// Including
-/// it with the four macros below defined generates, from the same rows, the
-/// options struct, the "was it given?" struct, the `--name=value` parser, the
-/// bounds checks, the enum value tables and `--help`. `src/cli/options.h` does
-/// each of those in turn; nothing else includes this file.
+/// Including this file with the four macros below defined generates, from the
+/// same rows, the options struct, the "was it given?" struct, the `--name=value`
+/// parser, the bounds checks, the enum value tables and `--help`.
+/// `src/cli/options.h` does each in turn; nothing else includes this file.
 ///
 /// ## The macros
 ///
@@ -86,9 +85,9 @@ XORCLE_ENUM_VALUE(selection, "leading_term_watchlist", ClauseSelectorName::leadi
 
 // --- Restarts --------------------------------------------------------------
 //
-// Marked EXPERIMENTAL in `--help`: the paper's
-// Conclusion lists restarts among the parts of Xorcle that are not yet fully
-// implemented, and these schedules were never tuned against its benchmarks.
+// Marked EXPERIMENTAL in `--help`: restarts are not yet fully integrated with
+// the rest of the search, and these schedules have not been tuned against any
+// benchmark set.
 
 XORCLE_ENUM_OPTION(restart, RestartMethod, RestartMethod::none, "EXPERIMENTAL: restart schedule")
 XORCLE_ENUM_VALUE(restart, "none", RestartMethod::none)

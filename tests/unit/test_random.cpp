@@ -1,13 +1,13 @@
 /// @file test_random.cpp
-/// @brief Pins the RNG stream derivation against the 0.1 binary.
+/// @brief Pins the RNG stream derivation to fixed, externally measured values.
 ///
-/// Every expected value in this file was produced by running the 0.1 tree's
-/// `util::derive_seed`, `util::random_int` and `util::random_nonzero_coefficients`
-/// directly (compiled against `../parity-sat-cpp`), not by running the code
-/// under test. The differential harness requires
-/// identical conflict counts from matching seeds, which requires identical
-/// streams; these are the fixtures that make that a checked property rather
-/// than an intention.
+/// Every expected value here was produced by running a separate reference
+/// implementation of `derive_seed`, `random_int` and
+/// `random_nonzero_coefficients`, not by running the code under test, so these
+/// are real fixtures rather than a snapshot of current behaviour. The
+/// differential harness requires identical conflict counts from matching seeds,
+/// which requires identical streams; this file is what makes that a checked
+/// property rather than an intention.
 
 #include <doctest/doctest.h>
 
@@ -33,15 +33,15 @@ std::string to_bit_string(const Bitmap& bitmap) {
 
 } // namespace
 
-TEST_CASE("random: the component tags keep their 0.1 values") {
-    // Renaming `clause_vsids_equation` to `csids_equation` must not change the
-    // stream it identifies.
+TEST_CASE("random: the component tags keep their fixed values") {
+    // A component tag identifies a stream, so renaming the enumerator must not
+    // change its value.
     CHECK(static_cast<std::uint64_t>(RngComponent::decision_phase) == 0x6a09e667f3bcc909ULL);
     CHECK(static_cast<std::uint64_t>(RngComponent::csids_equation) == 0xbb67ae8584caa73bULL);
     CHECK(default_seed == 0u);
 }
 
-TEST_CASE("random: derive_seed reproduces the 0.1 values") {
+TEST_CASE("random: derive_seed reproduces its reference values") {
     struct Case {
         Seed base;
         RngComponent component;
@@ -94,7 +94,7 @@ TEST_CASE("random: make_rng seeds from derive_seed") {
     }
 }
 
-TEST_CASE("random: random_int reproduces the 0.1 phase draws") {
+TEST_CASE("random: random_int reproduces its reference phase draws") {
     struct Case {
         Seed base;
         const char* draws;
@@ -116,7 +116,7 @@ TEST_CASE("random: random_int reproduces the 0.1 phase draws") {
     }
 }
 
-TEST_CASE("random: random_nonzero_coefficients reproduces the 0.1 draws") {
+TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") {
     // First eight samples off a fresh csids_equation stream, as bit strings in
     // ascending index order.
     SUBCASE("seed 0, width 1") {
@@ -219,7 +219,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces the 0.1 draws") {
     }
 }
 
-TEST_CASE("random: the number of draws consumed matches the 0.1 stream") {
+TEST_CASE("random: the number of draws consumed matches the reference stream") {
     // The state of the shared stream after eight samples is what the
     // differential harness actually depends on -- a reimplementation that draws
     // per bit, or draws 32-bit words, diverges here even when the coefficient

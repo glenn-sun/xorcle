@@ -16,10 +16,9 @@ namespace {
 /// @brief Rewrite every key of an activity heap through a compaction.
 ///
 /// Projection is not injective: two literal equations can land on the same
-/// compacted equation, in which case their activities are summed, and a key can
-/// project to @f$\mathbf{0}@f$ or @f$\mathbf{1}@f$, in which case it is dropped
-/// because neither is a legal decision. The heap and popped lists are then
-/// filtered and deduplicated against the surviving activities.
+/// compacted equation, and their activities are then summed. A key projecting to
+/// @f$\mathbf{0}@f$ or @f$\mathbf{1}@f$ is dropped, neither being a legal
+/// decision. The heap and popped lists are filtered against what survives.
 void remap_vsids_heap(MaxHeap<Equation, EquationHash>& heap,
                       const CompactionTransform& transform) {
     using Snapshot = MaxHeap<Equation, EquationHash>::StateSnapshot;

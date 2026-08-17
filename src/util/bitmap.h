@@ -7,22 +7,19 @@
 
 namespace xorcle {
 
-/// @brief A fixed-width, bit-packed set of column indices.
-///
-/// Used for pivot-column bookkeeping and for reduction coefficient vectors.
-/// This is a plain concrete container, not part of the algebra dispatch surface
-/// (see `algebra/equation.h`): per-bit access on it is a direct inlined call and
-/// carries none of the cost that motivates the coarse algebra interface.
+/// @brief A fixed-width, bit-packed set of column indices, used for pivot-column
+/// bookkeeping and for reduction coefficient vectors. A plain concrete container,
+/// not part of the algebra dispatch surface (see `algebra/equation.h`): per-bit
+/// access on it is a direct inlined call and carries none of the cost that
+/// motivates the coarse algebra interface.
 ///
 /// @note Bit packing is not an optimization here but a requirement. Every
 /// `Clause` carries a pivot bitmap of width `num_vars + 1`, so a byte-per-column
 /// representation would cost eight times as much across the clause database.
 class Bitmap {
 public:
-    /// @brief Construct an all-zero bitmap of the given width.
     explicit Bitmap(std::size_t width = 0) : width_(width), words_(word_count(width), 0) {}
 
-    /// @brief Number of columns this bitmap covers.
     std::size_t size() const noexcept { return width_; }
 
     /// @brief Resize to a new width, zeroing the whole bitmap.
@@ -38,31 +35,23 @@ public:
         }
     }
 
-    /// @brief Return whether column `i` is set.
-    /// @pre `i < size()`.
+    /// @pre `i < size()`, here and in `set()` and `reset()`.
     bool test(std::size_t i) const noexcept {
         return (words_[i >> 6] >> (i & 63)) & 1u;
     }
 
-    /// @brief Set column `i`.
-    /// @pre `i < size()`.
     void set(std::size_t i) noexcept { words_[i >> 6] |= std::uint64_t{1} << (i & 63); }
 
-    /// @brief Clear column `i`.
-    /// @pre `i < size()`.
     void reset(std::size_t i) noexcept { words_[i >> 6] &= ~(std::uint64_t{1} << (i & 63)); }
 
-    /// @brief Number of set columns strictly below `i`.
-    ///
-    /// This is how a row's insertion index into a row-echelon matrix is found:
-    /// a row with leading column `c` is inserted at `count_below(c)`.
+    /// @brief Number of set columns strictly below `i`. This is how a row's
+    /// insertion index into a row-echelon matrix is found: a row with leading
+    /// column `c` is inserted at `count_below(c)`.
     /// @pre `i <= size()`.
     std::size_t count_below(std::size_t i) const noexcept;
 
-    /// @brief Total number of set columns.
     std::size_t count() const noexcept;
 
-    /// @brief Whether no column is set.
     bool none() const noexcept;
 
     /// @brief Call `f(column)` for each set column, in ascending order.
@@ -78,7 +67,6 @@ public:
         }
     }
 
-    /// @brief Compare two bitmaps of equal width.
     bool operator==(const Bitmap& other) const noexcept = default;
 
 private:

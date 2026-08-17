@@ -58,7 +58,6 @@ TEST_CASE("MaxHeap: set_activity without insert registers a score only") {
 
     heap.insert(7);
     CHECK(heap.size() == 1);
-    // A second insert of a live element is a no-op.
     heap.insert(7);
     CHECK(heap.size() == 1);
 }
@@ -75,7 +74,6 @@ TEST_CASE("MaxHeap: increase_key reorders live elements") {
     CHECK(heap.get_priority(1) == 11.0);
     CHECK(heap.peek_max() == 1);
 
-    // A negative delta is ignored outright.
     heap.increase_key(1, -100.0);
     CHECK(heap.get_priority(1) == 11.0);
 
@@ -94,7 +92,6 @@ TEST_CASE("MaxHeap: increase_key on an extracted element still records the score
     CHECK(heap.get_priority(2) == 102.0);
     CHECK(heap.size() == 1);
 
-    // rebuild() brings it back, now at the top.
     heap.rebuild();
     CHECK(heap.size() == 2);
     CHECK(heap.peek_max() == 2);
@@ -113,7 +110,6 @@ TEST_CASE("MaxHeap: rebuild restores every popped element exactly once") {
 
     heap.rebuild();
     CHECK(heap.size() == 8);
-    // A second rebuild has nothing left to do.
     heap.rebuild();
     CHECK(heap.size() == 8);
     CHECK(drain(heap) == std::vector<int>{7, 6, 5, 4, 3, 2, 1, 0});
@@ -140,7 +136,6 @@ TEST_CASE("MaxHeap: reset clears activities as well as the heap") {
     heap.reset();
     CHECK(heap.empty());
     CHECK(heap.get_priority(1) == 0.0);
-    // The popped list went with it, so rebuild() finds nothing.
     heap.rebuild();
     CHECK(heap.empty());
 }

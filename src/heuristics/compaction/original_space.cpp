@@ -9,10 +9,6 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Scatter an assignment through an index map into a wider space.
-/// @param source One bit per index of `index_map`.
-/// @param index_map Where each source index lands in the destination.
-/// @param destination_width Width of the result.
 Bitmap scatter_through_map(const Bitmap& source, const std::vector<std::size_t>& index_map,
                            std::size_t destination_width) {
     assert(source.size() == index_map.size());
@@ -26,7 +22,6 @@ Bitmap scatter_through_map(const Bitmap& source, const std::vector<std::size_t>&
     return destination;
 }
 
-/// @brief Undo one compaction step, in place on `assignment`.
 void undo_one_compaction(Bitmap& assignment, const CompactionHistoryEntry& entry,
                          std::vector<std::size_t>& column_scratch) {
     const std::size_t old_num_vars = entry.transform.old_num_vars();

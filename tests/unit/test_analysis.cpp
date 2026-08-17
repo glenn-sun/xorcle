@@ -21,31 +21,25 @@ namespace xorcle {
 
 namespace {
 
-/// @brief A decision procedure that only records the notifications conflict
-/// analysis makes, in order.
-///
-/// The two calls are order-sensitive and feed CSIDS, so getting them wrong
-/// changes conflict counts without changing correctness -- the kind of bug a
-/// "did we learn something" test never catches.
+/// @brief A decision procedure that only records, in order, the notifications
+/// conflict analysis makes. The two calls are order-sensitive and feed CSIDS, so
+/// getting them wrong changes conflict counts without changing correctness --
+/// the kind of bug a "did we learn something" test never catches.
 class RecordingDecisions final : public DecisionProcedure {
 public:
-    /// @brief One recorded notification.
     struct Event {
-        /// @brief Which notification fired.
         enum class Kind {
             resolved, ///< `update_with_resolved_clause()`
             critical ///< `update_with_critical_equation()`
         };
 
-        Kind kind; ///< Which notification fired.
+        Kind kind;
         ClauseId id = 0; ///< The reason clause, for `resolved`.
         std::vector<std::size_t> columns; ///< The equation's set columns, for `critical`.
 
-        /// @brief Compare recorded events field by field.
         bool operator==(const Event& other) const = default;
     };
 
-    /// @brief Construct a recorder over a given variable count.
     RecordingDecisions(Algebra backend, std::size_t num_vars)
         : DecisionProcedure(backend, num_vars, Seed{0}) {}
 
@@ -58,12 +52,10 @@ public:
         return Equation(backend(), num_vars());
     }
 
-    /// @brief Record a reason clause.
     void update_with_resolved_clause(ClauseId id) override {
         events.push_back(Event{Event::Kind::resolved, id, {}});
     }
 
-    /// @brief Record a trail row resolved away.
     void update_with_critical_equation(const Equation& eqn) override {
         events.push_back(Event{Event::Kind::critical, 0, columns_of(eqn)});
     }
@@ -83,10 +75,9 @@ RecordingDecisions::Event critical(std::vector<std::size_t> columns) {
                                      std::move(columns)};
 }
 
-/// @brief The rows of `clause` that do not lie in `span`.
-///
-/// A clause is asserting exactly when this is 1: every row but one is falsified,
-/// so the remaining one is implied.
+/// @brief The rows of `clause` that do not lie in `span`. A clause is asserting
+/// exactly when this is 1: every row but one is falsified, so the last is
+/// implied.
 std::size_t rows_outside_span(const Clause& clause, const RowSpace& span) {
     std::size_t outside = 0;
     for (const Equation& row : clause) {
@@ -99,12 +90,11 @@ std::size_t rows_outside_span(const Clause& clause, const RowSpace& span) {
     return outside;
 }
 
-/// @brief Check the learned clause really asserts where it says it does.
-///
-/// This is independent of how `asserting_level()` is computed: it backjumps a
-/// copy of the trail and counts falsified rows directly. At the asserting level
-/// exactly one row survives, and one level lower at least two do -- otherwise
-/// the clause would assert lower still.
+/// @brief Check the learned clause really asserts where it says it does,
+/// independently of how `asserting_level()` is computed: backjump a copy of the
+/// trail and count falsified rows directly. At the asserting level exactly one
+/// row survives; one level lower at least two do, or the clause would assert
+/// lower still.
 void check_asserts_at(const AssertingClause& learned, const Trail& trail) {
     Trail backjumped = trail;
     backjumped.resize(learned.asserting_level + 1);
@@ -128,14 +118,13 @@ std::vector<std::vector<std::size_t>> rows_of(const RowEchelonMatrix& matrix) {
 
 /// @brief A conflicting trail together with the clause database that built it.
 struct Conflict {
-    Trail trail; ///< The conflicting trail.
+    Trail trail;
     std::vector<Clause> clauses; ///< The clause database, in clause-id order.
 };
 
-/// @brief The smallest conflict that needs exactly one resolution step.
-///
-/// Three variables, one decision level, and a chain of two propagations closed
-/// by a conflicting clause:
+/// @brief The smallest conflict that needs exactly one resolution step: three
+/// variables, one decision level, and a chain of two propagations closed by a
+/// conflicting clause.
 ///
 /// | step | equation | reason | level |
 /// |---|---|---|---|
@@ -144,13 +133,11 @@ struct Conflict {
 /// | 2 | `[x2 = 1]` | clause 1 | 1 |
 /// | 3 | @f$\mathbf{1}@f$ | clause 2 | 1 |
 ///
-/// Clause 2 is `[x1 = 0] v [x2 = 0]`, both of whose literals are falsified.
-/// Resolving it against clause 1 = `[x1 = 0] v [x2 = 1]` on @f$x_2@f$ gives the
-/// unit clause `[x1 = 0]`, which asserts at the root.
-///
-/// Every equation is learned in the form the solver learns it in: already
-/// reduced by the span, so step 3 is @f$\mathbf{1}@f$ itself rather than the raw
-/// `[x1 = 0]` the clause implied.
+/// Clause 2 is `[x1 = 0] v [x2 = 0]`, both literals falsified. Resolving it
+/// against clause 1 = `[x1 = 0] v [x2 = 1]` on @f$x_2@f$ gives the unit clause
+/// `[x1 = 0]`, which asserts at the root. Every equation is learned in the form
+/// the solver learns it in -- already reduced by the span -- so step 3 is
+/// @f$\mathbf{1}@f$ rather than the raw `[x1 = 0]` the clause implied.
 Conflict make_one_step_conflict(Algebra backend) {
     constexpr std::size_t num_vars = 3;
     std::vector<Clause> clauses;
@@ -167,8 +154,7 @@ Conflict make_one_step_conflict(Algebra backend) {
 }
 
 /// @brief A conflict over two decision levels, needing two resolution steps.
-///
-/// Six variables. Level 1 fixes @f$x_5 = 1@f$; level 2 derives a chain
+/// Six variables: level 1 fixes @f$x_5 = 1@f$, level 2 derives a chain
 /// @f$x_2 \to x_3, x_4@f$ that the conflicting clause closes.
 ///
 /// | step | equation | reason | level | span row | basis column |
@@ -183,9 +169,8 @@ Conflict make_one_step_conflict(Algebra backend) {
 ///
 /// Row-echelon order and trail order deliberately disagree (step 1 lands at span
 /// row 5), so the column arithmetic really has to go through `order_map()`.
-///
-/// @param conflict_clause_id Which clause caused the conflict: clause 4, whose
-/// analysis takes two resolution steps, or clause 5, which is already asserting.
+/// `conflict_clause_id` picks clause 4, whose analysis takes two resolution
+/// steps, or clause 5, which is already asserting.
 Conflict make_two_level_conflict(Algebra backend, ClauseId conflict_clause_id) {
     constexpr std::size_t num_vars = 6;
     std::vector<Clause> clauses;
@@ -399,10 +384,10 @@ TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the cur
     RecordingDecisions decisions(backend, trail.num_vars());
 
     // Walk the same loop by hand, checking the condition's sign at every step.
-    // The 0.1 tree's `jumpable_levels() == 0` is `asserting_level() ==
-    // trail.level()`, not `== 0`: here the initial basis has asserting level 2
-    // and the final one 1, so testing against 0 would exit before doing anything
-    // and testing against `trail.level()` keeps going for exactly two steps.
+    // The loop condition is `asserting_level() == trail.level()`, not `== 0`:
+    // here the initial basis has asserting level 2 and the final one 1, so
+    // testing against 0 would exit before doing anything, while testing against
+    // `trail.level()` keeps going for exactly two steps.
     TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(conflict.clauses[4], trail);
     const Equation trail_basis_one = make_equation_with(backend, basis.num_vars(), {0});
 

@@ -17,22 +17,16 @@ namespace xorcle {
 
 /// @brief Hands out clauses in round-robin order until a full cycle is fruitless.
 ///
-/// The default selector, and the simplest thing
-/// that satisfies the propagation loop's contract: it must eventually report
-/// quiescence, and it must not report it while a clause could still propagate.
-///
-/// `count_` is what makes both true. It counts clauses handed out since the last
-/// equation was learned, and reaching the database size means a whole cycle
-/// passed without anything being learned — which is exactly quiescence. Every
-/// learned equation resets it. Getting this wrong makes the solver either spin
-/// forever or declare quiescence early, and declaring it early produces wrong
-/// SAT answers rather than a crash.
+/// The default selector, and the simplest thing satisfying the propagation
+/// loop's contract: it must eventually report quiescence, and must not report it
+/// while a clause could still propagate. `count_` makes both true — it counts
+/// clauses handed out since the last equation was learned, so reaching the
+/// database size means a whole cycle passed learning nothing, exactly
+/// quiescence. Get it wrong and the solver either spins forever or declares
+/// quiescence early, and early gives wrong SAT answers, not a crash.
 class Cyclic final : public ClauseSelector {
 public:
-    /// @brief Construct a cyclic selector.
-    /// @param num_vars Number of active variable columns. Unused; the cyclic
-    /// order does not depend on the variable space, but the selector interface
-    /// is constructed uniformly.
+    /// @param num_vars Unused; cyclic order is independent of the variable space.
     explicit Cyclic(std::size_t num_vars);
 
     /// @brief The next active clause in cyclic order, or `std::nullopt` at quiescence.
@@ -52,14 +46,9 @@ protected:
     void add_clause(Clause clause) override;
 
 private:
-    /// @brief The next clause id to hand out.
-    ClauseId id_ = 0;
-
-    /// @brief Clauses handed out since the last equation was learned.
-    std::size_t count_ = 0;
-
-    /// @brief A clause to jump the cursor to, from the decision procedure.
-    std::optional<ClauseId> pending_restart_clause_;
+    ClauseId id_ = 0; ///< The next clause id to hand out.
+    std::size_t count_ = 0; ///< Clauses handed out since the last equation was learned.
+    std::optional<ClauseId> pending_restart_clause_; ///< A clause to jump the cursor to.
 };
 
 } // namespace xorcle

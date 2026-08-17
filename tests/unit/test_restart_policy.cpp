@@ -246,7 +246,6 @@ TEST_CASE("restart policies: note_restart is what advances the schedule") {
         CHECK(policy.should_restart_after_conflict() == (i == 9));
     }
     CHECK(policy.current_budget() == 10);
-    // Further conflicts keep reporting true until the restart is acknowledged.
     CHECK(policy.should_restart_after_conflict());
     policy.note_restart();
     CHECK(policy.current_budget() == 10); // luby_value(2) == 1

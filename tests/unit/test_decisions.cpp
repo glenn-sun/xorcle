@@ -19,9 +19,9 @@
 
 namespace xorcle {
 
-TEST_CASE("csids: the presets carry the values the paper fixes") {
-    // The declaration order is (A0, alpha, delta), which is not the order the
-    // paper writes its tuples in. These check the members by name, which is the
+TEST_CASE("csids: the presets carry their documented values") {
+    // The declaration order is (A0, alpha, delta), while the triple is usually
+    // written (A0, delta, alpha). These check the members by name, which is the
     // only way the two orders cannot be confused.
     CHECK(csids_default_config.initial_activity == doctest::Approx(1.0));
     CHECK(csids_default_config.bump == doctest::Approx(1.0));

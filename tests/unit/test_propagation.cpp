@@ -33,7 +33,6 @@ Clause make_clause(Algebra backend, std::size_t clause_num_vars,
 /// @brief A `WatchObserver` that records every notification it receives.
 class RecordingObserver final : public WatchObserver {
 public:
-    /// @brief One recorded watch movement.
     struct Record {
         ClauseId id; ///< The clause whose watch moved.
         EquationId old_watch; ///< The row the watch pointed at before the move.
@@ -45,7 +44,6 @@ public:
     /// @brief Observe `clause`, so the recorded watches reflect the update order.
     explicit RecordingObserver(const Clause& clause) : clause_(&clause) {}
 
-    /// @brief Record the notification.
     void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType type,
                                const Trail&) override {
         records.push_back({id, old_watch, type, clause_->watched0, clause_->watched1});
