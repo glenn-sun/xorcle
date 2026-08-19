@@ -51,8 +51,8 @@ public:
 
     virtual void pop_last_row() = 0;
 
-    /// @brief Write the unique solution of the stored system into `out`.
-    virtual void solution(ColumnSet& out) const = 0;
+    /// @brief The unique solution of the stored system, one bit per variable.
+    virtual ColumnSet solution() const = 0;
 };
 
 /// @brief A matrix over GF(2) in row-echelon form.
@@ -106,6 +106,10 @@ public:
     /// @brief `coefficients_out` gets one bit per participating row, sized
     /// `rows()`. Its set indices are row indices, not columns: this is the one
     /// place a `ColumnSet` is indexed by row.
+    ///
+    /// @note An out-parameter rather than a return value because its only caller,
+    /// `TrailBasisSpace::from_RowSpace()`, refills one `ColumnSet` once per row of
+    /// the row space it converts, from a buffer hoisted out of that loop.
     void reduce(Equation& v, ColumnSet& coefficients_out) const {
         storage_->reduce(v, coefficients_out);
     }

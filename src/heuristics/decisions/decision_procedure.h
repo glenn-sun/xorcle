@@ -84,7 +84,6 @@ public:
     EquationRepr repr() const noexcept { return repr_; }
 
     void set_decision_phase(DecisionPhase phase) noexcept { decision_phase_ = phase; }
-    DecisionPhase decision_phase() const noexcept { return decision_phase_; }
 
 protected:
     void record_decision(bool used_fallback);
@@ -103,7 +102,6 @@ protected:
     Equation unit_equation(std::size_t var) const;
 
     Seed base_seed() const noexcept { return base_seed_; }
-    const Equation& false_equation() const noexcept { return false_equation_; }
 
 private:
     EquationRepr repr_;

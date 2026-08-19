@@ -7,17 +7,16 @@
 #include "algebra/equation.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
-#include "heuristics/decisions/clause_sampling.h"
+#include "heuristics/decisions/clause_decisions.h"
 #include "heuristics_test_support.h"
 #include "util/column_set.h"
 #include "util/random.h"
 
 namespace xorcle {
 
-TEST_CASE_TEMPLATE("clause sampling: clause satisfaction", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause decisions: clause satisfaction", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     ClauseSatisfactionWorkspace workspace(repr, 4);
-    CHECK(workspace.num_vars() == 4);
 
     SUBCASE("a clause whose row is falsified by the trail is satisfied") {
         // The clause is [x0 = 1], stored as the row [x0 = 0]. With x0 = 1 on the
@@ -61,14 +60,13 @@ TEST_CASE_TEMPLATE("clause sampling: clause satisfaction", Tag, DenseTag, Sparse
         CHECK(clause_satisfied_by_trail(wide_span, wide_clause, workspace));
 
         workspace.reconfigure(2);
-        CHECK(workspace.num_vars() == 2);
         const RowSpace narrow_span = make_row_space(repr, 2, {{0}});
         const Clause narrow_clause = make_clause(repr, 2, {{0}});
         CHECK_FALSE(clause_satisfied_by_trail(narrow_span, narrow_clause, workspace));
     }
 }
 
-TEST_CASE_TEMPLATE("clause sampling: decide from a basis", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause decisions: decide from a basis", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     std::vector<Equation> basis;
     for (std::size_t var = 0; var < 4; ++var) {
@@ -96,7 +94,7 @@ TEST_CASE_TEMPLATE("clause sampling: decide from a basis", Tag, DenseTag, Sparse
     }
 }
 
-TEST_CASE_TEMPLATE("clause sampling: compact a basis", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause decisions: compact a basis", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
     // Eliminate x1 out of four variables, so the survivors are x0, x2, x3.
@@ -137,7 +135,7 @@ TEST_CASE_TEMPLATE("clause sampling: compact a basis", Tag, DenseTag, SparseTag)
     }
 }
 
-TEST_CASE_TEMPLATE("clause sampling: sample an equation from a clause", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause decisions: sample an equation from a clause", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const RowSpace span(repr, 4);
     Equation candidate(repr, 4);

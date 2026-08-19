@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "algebra/reduce_result.h"
-#include "heuristics/decisions/clause_sampling.h"
+#include "heuristics/decisions/clause_decisions.h"
 
 namespace xorcle {
 

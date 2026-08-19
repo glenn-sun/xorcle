@@ -1,6 +1,6 @@
 #include "heuristics/decisions/fixed_literals.h"
 
-#include "heuristics/decisions/clause_sampling.h"
+#include "heuristics/decisions/clause_decisions.h"
 
 namespace xorcle {
 

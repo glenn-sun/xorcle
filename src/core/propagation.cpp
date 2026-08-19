@@ -13,7 +13,8 @@ namespace {
 /// @brief One watch that has to move, and the other watch it is paired with.
 struct PropagationTask {
     std::size_t* update_ptr; ///< The watch to move.
-    std::size_t* complem_ptr; ///< The other watch, whose row is propagated if no move is possible.
+    /// @brief The other watch, whose row is propagated if no move is possible.
+    std::size_t* complement_ptr;
     WatchType type; ///< Which watch is moving, as reported to the handler.
 };
 
@@ -163,7 +164,7 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
 
         // Overwrites the second watch's reduction on purpose: from here only the
         // complement watch's reduction matters.
-        working_eqn2_.assign_from(clause.row(*task.complem_ptr));
+        working_eqn2_.assign_from(clause.row(*task.complement_ptr));
         const ReduceResult complement = trail.span().partial_reduce(working_eqn2_);
 
         if (const std::optional<std::size_t> replacement =

@@ -30,7 +30,6 @@ std::vector<int> drain(Heap& heap) {
 TEST_CASE("MaxHeap: an empty heap") {
     MaxHeap<int> heap;
     CHECK(heap.empty());
-    CHECK(heap.size() == 0);
     CHECK_FALSE(heap.extract_max().has_value());
     CHECK(heap.get_priority(3) == 0.0);
 }
@@ -44,7 +43,6 @@ TEST_CASE("MaxHeap: elements come out in descending activity") {
         heap.set_activity(id, activity);
         heap.insert(id);
     }
-    CHECK(heap.size() == 5);
     CHECK(heap.peek_max() == 20);
     CHECK(drain(heap) == std::vector<int>{20, 40, 30, 50, 10});
     CHECK(heap.empty());
@@ -57,9 +55,9 @@ TEST_CASE("MaxHeap: set_activity without insert registers a score only") {
     CHECK(heap.empty());
 
     heap.insert(7);
-    CHECK(heap.size() == 1);
+    // A second insert of a live element is a no-op rather than a duplicate.
     heap.insert(7);
-    CHECK(heap.size() == 1);
+    CHECK(drain(heap) == std::vector<int>{7});
 }
 
 TEST_CASE("MaxHeap: increase_key reorders live elements") {
@@ -90,10 +88,8 @@ TEST_CASE("MaxHeap: increase_key on an extracted element still records the score
     CHECK(heap.extract_max() == 2);
     heap.increase_key(2, 100.0);
     CHECK(heap.get_priority(2) == 102.0);
-    CHECK(heap.size() == 1);
 
     heap.rebuild();
-    CHECK(heap.size() == 2);
     CHECK(heap.peek_max() == 2);
 }
 
@@ -106,12 +102,9 @@ TEST_CASE("MaxHeap: rebuild restores every popped element exactly once") {
     for (int i = 0; i < 5; ++i) {
         CHECK(heap.extract_max().has_value());
     }
-    CHECK(heap.size() == 3);
 
     heap.rebuild();
-    CHECK(heap.size() == 8);
     heap.rebuild();
-    CHECK(heap.size() == 8);
     CHECK(drain(heap) == std::vector<int>{7, 6, 5, 4, 3, 2, 1, 0});
 }
 
@@ -155,10 +148,8 @@ TEST_CASE("MaxHeap: snapshot round-trips") {
 
     MaxHeap<int> restored;
     restored.load_snapshot(state);
-    CHECK(restored.size() == 3);
     CHECK(restored.peek_max() == 3);
     restored.rebuild();
-    CHECK(restored.size() == 4);
     CHECK(drain(restored) == std::vector<int>{4, 3, 2, 1});
 }
 
@@ -171,7 +162,6 @@ TEST_CASE("MaxHeap: load_snapshot drops keys a remap collapsed or orphaned") {
 
     MaxHeap<int> heap;
     heap.load_snapshot(state);
-    CHECK(heap.size() == 2);
     CHECK(heap.peek_max() == 2);
     CHECK(drain(heap) == std::vector<int>{2, 1});
 }
@@ -188,7 +178,6 @@ TEST_CASE("MaxHeap: works with a custom hash") {
     for (const char* key : {"a", "bb", "cc"}) {
         heap.insert(key);
     }
-    CHECK(heap.size() == 3);
     CHECK(heap.peek_max() == "bb");
 }
 

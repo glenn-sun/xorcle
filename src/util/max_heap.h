@@ -94,8 +94,6 @@ public:
         return heap_.front();
     }
 
-    std::size_t size() const noexcept { return heap_.size(); }
-
     bool empty() const noexcept { return heap_.empty(); }
 
     /// @brief Set an activity score without inserting into the heap.

@@ -26,6 +26,19 @@ std::filesystem::path proof_path(EquationRepr repr, std::string_view name) {
            ("xorcle_lrup_test_" + std::string{name} + suffix);
 }
 
+/// @brief How many of the logger's temporary files sit next to `path`. The
+/// logger names them `<final filename>.tmp.<counter>` in the same directory.
+std::size_t count_temp_files(const std::filesystem::path& path) {
+    const std::string prefix = path.filename().string() + ".tmp.";
+    std::size_t found = 0;
+    for (const auto& entry : std::filesystem::directory_iterator{path.parent_path()}) {
+        if (entry.path().filename().string().starts_with(prefix)) {
+            ++found;
+        }
+    }
+    return found;
+}
+
 std::string read_file(const std::filesystem::path& path) {
     std::ifstream file{path};
     std::ostringstream contents;
@@ -50,14 +63,11 @@ TEST_CASE_TEMPLATE("lrup logger: learned and empty clause lines", Tag, DenseTag,
     {
         LrupLogger logger(path, 3);
         CHECK(logger.num_vars() == 3);
-        CHECK(logger.path() == path);
-        CHECK_FALSE(logger.finalized());
 
         logger.log_learned_clause(ClauseId{5}, clause_from("1 -2 0", 3, repr),
                                   std::vector<ClauseId>{0, 2, 3});
         logger.log_empty_clause(ClauseId{7}, std::vector<ClauseId>{1, 0});
         logger.finalize(true);
-        CHECK(logger.finalized());
     }
 
     // Every id is written 1-based: learned id 5 is `6`, reasons 0,2,3 are `1 3 4`.
@@ -115,34 +125,30 @@ TEST_CASE_TEMPLATE("lrup logger: an empty reason list still closes the line", Ta
 TEST_CASE_TEMPLATE("lrup logger: finalize(false) discards the proof", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const std::filesystem::path path = proof_path(repr, "discard");
-    std::filesystem::path temp;
 
     {
         LrupLogger logger(path, 2);
-        temp = logger.temp_path();
         logger.log_empty_clause(ClauseId{0}, std::vector<ClauseId>{0});
-        CHECK(std::filesystem::exists(temp));
+        CHECK(count_temp_files(path) == 1);
         logger.finalize(false);
     }
 
     CHECK_FALSE(std::filesystem::exists(path));
-    CHECK_FALSE(std::filesystem::exists(temp));
+    CHECK(count_temp_files(path) == 0);
 }
 
 TEST_CASE_TEMPLATE("lrup logger: an abandoned logger leaves nothing behind", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const std::filesystem::path path = proof_path(repr, "abandoned");
-    std::filesystem::path temp;
 
     {
         LrupLogger logger(path, 2);
-        temp = logger.temp_path();
         logger.log_empty_clause(ClauseId{0}, std::vector<ClauseId>{0});
     }
 
     CHECK_FALSE(std::filesystem::exists(path));
-    CHECK_FALSE(std::filesystem::exists(temp));
+    CHECK(count_temp_files(path) == 0);
 }
 
 TEST_CASE_TEMPLATE("lrup logger: finalize is idempotent", Tag, DenseTag, SparseTag) {

@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file clause_sampling.h
+/// @file clause_decisions.h
 /// @brief Shared machinery the decision procedures build on: the clause
 /// satisfaction test, basis scanning and compaction, and clause sampling.
 
@@ -17,14 +17,14 @@ namespace xorcle {
 
 /// @brief Reusable scratch for `clause_satisfied_by_trail()`. The small echelon
 /// basis and the two equations fed through it are the whole cost of that test,
-/// so they are refilled here rather than reallocated per call.
+/// so they are refilled here rather than reallocated per call: it is passed by
+/// reference because `Csids::make_decision()` refills one member instance per
+/// clause it probes, and probes several per decision.
 class ClauseSatisfactionWorkspace {
 public:
     ClauseSatisfactionWorkspace(EquationRepr repr, std::size_t num_vars);
 
     void reconfigure(std::size_t num_vars);
-
-    std::size_t num_vars() const noexcept { return num_vars_; }
 
 private:
     friend bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
@@ -50,6 +50,9 @@ private:
 /// @return The first candidate whose reduction has a leading bit, i.e. is a
 /// legal decision. It points into `basis` and is *not* reduced.
 /// @pre Both have width `trail_span.cols()`, and some legal decision remains.
+/// @note `reduced_scratch` is a caller-owned buffer rather than a local because
+/// both callers refill one long-lived member once per decision:
+/// `FixedLiterals::make_decision()` and the `Csids::make_decision()` fallback.
 const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span,
                                   Equation& reduced_scratch);
 
@@ -58,7 +61,7 @@ const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowS
 /// \mathrm{span}(U)@f$, and *satisfied* exactly when @f$\mathbf{1} \in
 /// \mathrm{span}(U) + \langle g_1, \dots, g_k \rangle@f$; the second is computed
 /// incrementally, stopping as soon as it holds.
-/// @pre `workspace.num_vars() + 1 == trail_span.cols()`.
+/// @pre `workspace` was configured for `trail_span.cols() - 1` variables.
 bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
                                ClauseSatisfactionWorkspace& workspace);
 
@@ -76,6 +79,9 @@ std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basi
 /// @pre `clause.rows() > 0`; the out-params have width `trail_span.cols()`; and
 /// the clause is not satisfied by the trail, i.e. `clause_satisfied_by_trail()`
 /// returned false for it.
+/// @note Out-parameters rather than a returned pair because the only caller,
+/// `Csids::make_decision()`, refills the same two long-lived members
+/// (`candidate_` and `reduced_candidate_`) once per decision.
 ///
 /// Rejection sampling, so the draw count is data-dependent;
 /// `random_nonzero_coefficients()` documents the per-attempt pattern. Only a

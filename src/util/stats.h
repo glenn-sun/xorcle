@@ -45,7 +45,8 @@ struct RunStats {
     std::size_t num_restarts = 0;
     std::size_t decisions = 0;
     std::size_t fallback_decisions = 0;      ///< Decisions that used fallback logic.
-    std::optional<ColumnSet> sat_assignment;    ///< Original-space, when available.
+    /// @brief In the original variable numbering, when available.
+    std::optional<ColumnSet> sat_assignment;
 };
 
 /// @brief `SAT`/`UNSAT`, the CSV spelling. The console sink writes

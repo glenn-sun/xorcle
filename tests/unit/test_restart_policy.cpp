@@ -76,7 +76,6 @@ TEST_CASE("Luby: budgets are the unit times the sequence") {
 
     Luby policy(config);
     CHECK(policy.enabled());
-    CHECK(policy.current_budget() == 100);
 
     const std::vector<std::size_t> expected = {100, 100, 200, 100, 100, 200, 400, 100, 100, 200};
     CHECK(observed_budgets(policy, expected.size()) == expected);
@@ -98,7 +97,6 @@ TEST_CASE("Luby: a zero unit is clamped up to one") {
     config.luby_unit_conflicts = 0;
 
     Luby policy(config);
-    CHECK(policy.current_budget() == 1);
     const std::vector<std::size_t> expected = {1, 1, 2, 1, 1, 2, 4};
     CHECK(observed_budgets(policy, expected.size()) == expected);
 }
@@ -108,10 +106,12 @@ TEST_CASE("Luby: an enormous unit saturates rather than wrapping") {
     config.method = RestartMethod::luby;
     config.luby_unit_conflicts = std::numeric_limits<std::size_t>::max();
 
+    // A wrapped product would be a small budget that fires almost at once; a
+    // saturated one never fires here, before or after the schedule advances.
     Luby policy(config);
-    CHECK(policy.current_budget() == std::numeric_limits<std::size_t>::max());
+    CHECK_FALSE(policy.should_restart_after_conflict());
     policy.note_restart();
-    CHECK(policy.current_budget() == std::numeric_limits<std::size_t>::max());
+    CHECK_FALSE(policy.should_restart_after_conflict());
 }
 
 TEST_CASE("Geometric: budgets grow by the multiplier, rounding up") {
@@ -122,7 +122,6 @@ TEST_CASE("Geometric: budgets grow by the multiplier, rounding up") {
 
     Geometric policy(config);
     CHECK(policy.enabled());
-    CHECK(policy.current_budget() == 100);
 
     // 100, 150, 225, ceil(337.5) = 338, ceil(507) = 507, ceil(760.5) = 761,
     // ceil(1141.5) = 1142, 1713, ceil(2569.5) = 2570, 3855.
@@ -160,7 +159,6 @@ TEST_CASE("Geometric: degenerate configurations clamp to one") {
         config.geometric_multiplier = 1.5;
 
         Geometric policy(config);
-        CHECK(policy.current_budget() == 1);
         // ceil(1 * 1.5) = 2, then 3, then ceil(4.5) = 5.
         const std::vector<std::size_t> expected = {1, 2, 3, 5};
         CHECK(observed_budgets(policy, expected.size()) == expected);
@@ -184,12 +182,14 @@ TEST_CASE("Geometric: growth saturates instead of overflowing") {
     config.geometric_initial_conflicts = std::numeric_limits<std::size_t>::max();
     config.geometric_multiplier = 1.5;
 
+    // Growing past `SIZE_MAX` must clamp; an overflowed budget would be small
+    // enough to fire on the next conflict.
     Geometric policy(config);
-    CHECK(policy.current_budget() == std::numeric_limits<std::size_t>::max());
+    CHECK_FALSE(policy.should_restart_after_conflict());
     policy.note_restart();
-    CHECK(policy.current_budget() == std::numeric_limits<std::size_t>::max());
+    CHECK_FALSE(policy.should_restart_after_conflict());
     policy.note_restart();
-    CHECK(policy.current_budget() == std::numeric_limits<std::size_t>::max());
+    CHECK_FALSE(policy.should_restart_after_conflict());
 }
 
 TEST_CASE("NoRestarts: never fires and consumes no budget") {
@@ -241,16 +241,16 @@ TEST_CASE("restart policies: note_restart is what advances the schedule") {
 
     Luby policy(config);
     // Exhausting a budget without calling note_restart leaves the schedule
-    // where it was; the solver only advances it after a real restart.
+    // where it was; the solver only advances it after a real restart, so the
+    // exhausted budget keeps firing until it does.
     for (int i = 0; i < 10; ++i) {
         CHECK(policy.should_restart_after_conflict() == (i == 9));
     }
-    CHECK(policy.current_budget() == 10);
     CHECK(policy.should_restart_after_conflict());
+
+    // Advancing gives luby_value(2) == 1 then luby_value(3) == 2, i.e. 10 and 20.
     policy.note_restart();
-    CHECK(policy.current_budget() == 10); // luby_value(2) == 1
-    policy.note_restart();
-    CHECK(policy.current_budget() == 20); // luby_value(3) == 2
+    CHECK(observed_budgets(policy, 2) == std::vector<std::size_t>{10, 20});
 }
 
 } // namespace xorcle

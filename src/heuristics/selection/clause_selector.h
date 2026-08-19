@@ -102,7 +102,7 @@ protected:
     virtual void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail);
 
 #ifndef NDEBUG
-    void debug_assert_storage_synchronized() const;
+    void debug_assert_database_synchronized() const;
 #endif
 
     std::vector<Clause> clauses_; ///< The clause database; a clause's id is its index.

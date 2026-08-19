@@ -39,6 +39,11 @@ struct AssertingClause {
 /// the caller reverses this exactly once before logging it. Ids are appended
 /// rather than replacing what the buffer already holds.
 ///
+/// @note An out-parameter rather than a return value because it is optional and
+/// hot: `Solver::handle_non_root_conflict()` runs once per conflict and passes
+/// null unless a proof is being written, so the default path collects nothing,
+/// and the resolution loop below appends to that one buffer per step.
+///
 /// @pre `trail.level() > 0`; a root conflict is UNSAT and is not analysed.
 /// @pre **The trail is conflicting**, i.e. @f$\mathbf{1} \in
 /// \mathrm{span}(U)@f$, every equation it holds is reduced, and the equation
@@ -60,7 +65,9 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 /// column is row 0's. `trail_basis_one` is the coordinate vector of
 /// @f$\mathbf{1}@f$, the unit vector at column 0, passed in because the loop
 /// calls this repeatedly and it never changes within one conflict. `reason_ids`,
-/// if non-null, receives the reason clause's id, appended.
+/// if non-null, receives the reason clause's id, appended: an out-parameter
+/// because `find_asserting_clause()` passes its own buffer down once per
+/// resolution step of a conflict.
 ///
 /// @pre `asserting_basis.rows() > 0` and `pivot_column ==
 /// asserting_basis.row(0).leading_bit()`.

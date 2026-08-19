@@ -155,11 +155,11 @@ public:
     /// constant bit `num_vars()`, and must each be `< num_bits()`.
     void assign_bits(std::span<const std::size_t> bits);
 
-    /// @brief Old active space to compacted space.
+    /// @brief Old active variable numbering to the compacted one.
     /// @pre `num_bits() == transform.old_num_vars() + 1`.
     Equation compact(const CompactionTransform& transform) const;
 
-    /// @brief Compacted space back to the pre-compaction space.
+    /// @brief Compacted numbering back to the pre-compaction one.
     /// @pre `num_bits() == transform.new_num_vars() + 1`.
     Equation uncompact(const CompactionTransform& transform) const;
 

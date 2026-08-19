@@ -6,15 +6,15 @@
 namespace xorcle {
 
 #ifndef NDEBUG
-void ClauseSelector::debug_assert_storage_synchronized() const {
+void ClauseSelector::debug_assert_database_synchronized() const {
     assert(clauses_.size() == clause_active_.size() &&
-           "clause storage and activity flags are desynchronized");
+           "clause database and activity flags are desynchronized");
 }
 #endif
 
 Clause& ClauseSelector::clause(ClauseId id) {
 #ifndef NDEBUG
-    debug_assert_storage_synchronized();
+    debug_assert_database_synchronized();
 #endif
     assert(id < clauses_.size());
     return clauses_[id];
@@ -22,7 +22,7 @@ Clause& ClauseSelector::clause(ClauseId id) {
 
 const Clause& ClauseSelector::clause(ClauseId id) const {
 #ifndef NDEBUG
-    debug_assert_storage_synchronized();
+    debug_assert_database_synchronized();
 #endif
     assert(id < clauses_.size());
     return clauses_[id];
@@ -30,7 +30,7 @@ const Clause& ClauseSelector::clause(ClauseId id) const {
 
 bool ClauseSelector::is_clause_active(ClauseId id) const {
 #ifndef NDEBUG
-    debug_assert_storage_synchronized();
+    debug_assert_database_synchronized();
 #endif
     assert(id < clauses_.size());
     return clause_active_[id] != 0;
@@ -38,7 +38,7 @@ bool ClauseSelector::is_clause_active(ClauseId id) const {
 
 void ClauseSelector::set_clause_active(ClauseId id, bool active) {
 #ifndef NDEBUG
-    debug_assert_storage_synchronized();
+    debug_assert_database_synchronized();
 #endif
     assert(id < clauses_.size());
     clause_active_[id] = active ? 1 : 0;

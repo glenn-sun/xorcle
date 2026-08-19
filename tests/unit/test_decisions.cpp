@@ -72,8 +72,6 @@ TEST_CASE_TEMPLATE("phase: applying a decision phase", Tag, DenseTag, SparseTag)
 
     SUBCASE("falsify is the default") {
         CHECK(default_decision_phase == DecisionPhase::falsify);
-        const FixedLiterals procedure(repr, 4, default_seed);
-        CHECK(procedure.decision_phase() == DecisionPhase::falsify);
     }
 }
 

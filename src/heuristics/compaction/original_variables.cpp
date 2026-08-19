@@ -22,6 +22,9 @@ ColumnSet scatter_through_map(const ColumnSet& source, const std::vector<std::si
     return destination;
 }
 
+/// @brief Undo one compaction step in place. `bit_scratch` is passed in rather
+/// than made local because `reconstruct_original_assignment()` owns one buffer
+/// across every history entry, and `Equation::bits()` refills it per trail row.
 void undo_one_compaction(ColumnSet& assignment, const CompactionHistoryEntry& entry,
                          std::vector<std::size_t>& bit_scratch) {
     const std::size_t old_num_vars = entry.transform.old_num_vars();

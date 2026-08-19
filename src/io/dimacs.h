@@ -20,14 +20,9 @@ namespace xorcle {
 /// non-zero.
 class DimacsError : public std::runtime_error {
 public:
-    /// @brief Build the error message `"<origin>:<line>: <message>"`.
+    /// @brief Build the error message `"<origin>:<line>: <message>"`, with
+    /// `line_number` 1-based, or `0` for a whole-input error.
     DimacsError(std::string_view origin, std::size_t line_number, std::string_view message);
-
-    /// @brief The 1-based line the error was found on, or `0` for a whole-input error.
-    std::size_t line_number() const noexcept { return line_number_; }
-
-private:
-    std::size_t line_number_;
 };
 
 struct ParsedDimacs {

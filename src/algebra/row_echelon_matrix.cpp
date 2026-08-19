@@ -22,9 +22,7 @@ ColumnSet RowSpace::unique_solution() const {
     assert(rows() + 1 == cols() && "row space is not full-rank");
     assert(!pivot_columns().test(cols() - 1) && "row space contains the false equation");
 
-    ColumnSet out(num_vars());
-    storage().solution(out);
-    return out;
+    return storage().solution();
 }
 
 std::string Clause::to_string(const PrintMode& mode) const {

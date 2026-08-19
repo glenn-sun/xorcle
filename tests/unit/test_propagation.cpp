@@ -285,10 +285,7 @@ TEST_CASE_TEMPLATE("propagation: the cyclic search start persists across calls",
 TEST_CASE_TEMPLATE("propagation: reconfigure resizes the scratch", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Propagator propagator(repr, default_num_vars);
-    CHECK(propagator.num_vars() == default_num_vars);
-
     propagator.reconfigure(2);
-    CHECK(propagator.num_vars() == 2);
 
     Trail trail(repr, 2);
     IgnoreWatchUpdates handler;

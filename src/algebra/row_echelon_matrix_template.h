@@ -184,12 +184,12 @@ public:
         debug_assert_valid_representation();
     }
 
-    void solution(ColumnSet& out) const override {
+    ColumnSet solution() const override {
         // Every variable column is a pivot and the constant column is not, so
         // rows() == num_vars and row `i` has leading column `i`. Back-substitute
         // from the last row upward, row-wise only, never by column.
         assert(rows_.size() == num_vars_);
-        out.reset_width(num_vars_);
+        ColumnSet out(num_vars_);
         for (std::size_t i = num_vars_; i-- > 0;) {
             const V& row = gf2_vector_of<V>(rows_[i]);
             assert(row.leading_bit() == std::optional<std::size_t>(i));
@@ -202,6 +202,7 @@ public:
                 out.set(i);
             }
         }
+        return out;
     }
 
 private:

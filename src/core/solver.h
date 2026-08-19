@@ -56,8 +56,8 @@ struct SolverCounters {
 ///
 /// `num_vars()` never changes: it is the input's variable count, the variable
 /// numbering every reported assignment and proof line is written in.
-/// `active_num_vars()` is the numbering the search runs in, which compaction
-/// shrinks; the trail, the propagator, the clause database, the decision
+/// The *active* variable count is the numbering the search runs in, which
+/// compaction shrinks; the trail, the propagator, the clause database, the decision
 /// procedure and the two preallocated equations all live there and are rewritten
 /// together whenever it changes.
 ///
@@ -93,8 +93,6 @@ public:
     Solution solve();
 
     std::size_t num_vars() const noexcept { return original_num_vars_; }
-
-    std::size_t active_num_vars() const noexcept { return active_num_vars_; }
 
     std::size_t num_clauses() const noexcept { return selector_->num_clauses(); }
 
@@ -159,7 +157,7 @@ private:
     std::unique_ptr<ClauseSelector> selector_;
     std::unique_ptr<DecisionProcedure> decisions_;
     std::unique_ptr<RestartPolicy> restarts_;
-    Propagator propagation_;
+    Propagator propagator_;
 
     LrupLogger* proof_logger_; ///< Not owned; null for no proof.
 

@@ -48,7 +48,7 @@ LrupLogger::~LrupLogger() {
 }
 
 void LrupLogger::write_token(const Equation& row) {
-    assert(row.num_bits() == num_vars_ + 1 && "proof rows live in the logger's variable space");
+    assert(row.num_bits() == num_vars_ + 1 && "proof rows live in the logger's variable numbering");
     row.bits(bits_);
 
     // `bits()` is ascending, so the constant bit is last if it is set at all.
@@ -78,7 +78,8 @@ void LrupLogger::write_reasons(const std::vector<ClauseId>& reason_ids) {
 void LrupLogger::log_learned_clause(ClauseId new_id, const Clause& clause,
                                     const std::vector<ClauseId>& reason_ids) {
     assert(!finalized_ && "the proof is closed");
-    assert(clause.num_vars() == num_vars_ && "the variable space must not change under the logger");
+    assert(clause.num_vars() == num_vars_ &&
+           "the variable numbering must not change under the logger");
 
     out_ << (new_id + 1);
     for (const Equation& row : clause) {

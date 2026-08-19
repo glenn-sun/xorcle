@@ -127,6 +127,10 @@ void push_variable(std::string_view term, std::string_view token, std::size_t nu
 ///
 /// The stored row is the literal's linear negation, which is why a leading `-`
 /// (right-hand side 0) sets the constant bit and a bare token does not.
+///
+/// `bits_out` is an out-parameter, cleared and refilled here, because
+/// `parse_dimacs()` owns one buffer for the whole file and hands it down through
+/// `parse_clause_line()`, which calls this once per literal token of every clause.
 void parse_clause_token(std::string_view token, std::size_t num_vars,
                         std::vector<std::size_t>& bits_out, std::string_view origin,
                         std::size_t line_number) {
@@ -220,8 +224,7 @@ DimacsError::DimacsError(std::string_view origin, std::size_t line_number,
     : std::runtime_error(line_number == 0
                              ? std::string{origin} + ": " + std::string{message}
                              : std::string{origin} + ":" + std::to_string(line_number) + ": " +
-                                   std::string{message}),
-      line_number_(line_number) {}
+                                   std::string{message}) {}
 
 ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_view origin) {
     std::string line;

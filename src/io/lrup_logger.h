@@ -84,12 +84,12 @@ void require_compaction_disabled_for_proof(bool proof_enabled, bool compaction_e
 /// takes the root trail's reasons in trail order, which is already derivation
 /// order; no reversal there.
 ///
-/// ## The fixed variable space
+/// ## The fixed variable numbering
 ///
-/// @pre The variable space never changes under the logger. Every clause logged
+/// @pre The variable numbering never changes under the logger. Every clause logged
 /// must be over exactly `num_vars()` variables -- the count from the input
 /// header -- because the tokens and the input clause ids they refer to are only
-/// meaningful in that one space. Every logging call asserts it.
+/// meaningful in that one numbering. Every logging call asserts it.
 ///
 /// Compaction renumbers variables mid-solve and discards the root trail, which
 /// breaks both halves of that precondition. Nothing here bridges that gap; use
@@ -115,9 +115,6 @@ public:
     LrupLogger& operator=(const LrupLogger&) = delete;
 
     std::size_t num_vars() const noexcept { return num_vars_; }
-    const std::filesystem::path& path() const noexcept { return final_path_; }
-    const std::filesystem::path& temp_path() const noexcept { return temp_path_; }
-    bool finalized() const noexcept { return finalized_; }
 
     /// @brief Write one learned-clause line.
     /// @param new_id Id of the learned clause, 0-based.

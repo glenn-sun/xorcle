@@ -168,7 +168,6 @@ TEST_CASE_TEMPLATE("dimacs: errors name the input and the line", Tag, DenseTag, 
         parse_dimacs_string("p cnf 3 1\nc a comment\n9 0\n", repr, "instance.xnf");
         FAIL("expected a DimacsError");
     } catch (const DimacsError& error) {
-        CHECK(error.line_number() == 3);
         CHECK(std::string{error.what()}.starts_with("instance.xnf:3:"));
     }
 }

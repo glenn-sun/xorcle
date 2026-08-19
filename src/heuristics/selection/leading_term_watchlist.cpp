@@ -96,7 +96,7 @@ void LeadingTermWatchlist::index_clause(ClauseId id) {
 
 void LeadingTermWatchlist::add_clause(Clause clause) {
     assert(in_queue_.size() == clauses_.size() &&
-           "queue membership flags are desynchronized from clause storage");
+           "queue membership flags are desynchronized from the clause database");
 
     const ClauseId new_id = clauses_.size();
     debug_assert_non_unit_watches_valid(clause);
@@ -109,7 +109,7 @@ void LeadingTermWatchlist::add_clause(Clause clause) {
     }
 
 #ifndef NDEBUG
-    debug_assert_storage_synchronized();
+    debug_assert_database_synchronized();
 #endif
 }
 
@@ -177,7 +177,7 @@ void LeadingTermWatchlist::update_with_new_watch(ClauseId id, ClauseRowIndex old
 
 void LeadingTermWatchlist::update_with_compaction(const CompactionTransform&, const Trail&) {
     assert(in_queue_.size() == clauses_.size() &&
-           "queue membership flags are desynchronized from clause storage");
+           "queue membership flags are desynchronized from the clause database");
 
     for (std::vector<ClauseId>& bucket : by_leading_term_) {
         bucket.clear();
@@ -202,7 +202,7 @@ void LeadingTermWatchlist::update_with_compaction(const CompactionTransform&, co
     append_top(unit_clauses_);
 
 #ifndef NDEBUG
-    debug_assert_storage_synchronized();
+    debug_assert_database_synchronized();
 #endif
 }
 

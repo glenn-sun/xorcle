@@ -27,8 +27,6 @@ public:
     bool should_restart_after_conflict() override;
     void note_restart() override;
 
-    std::size_t current_budget() const { return current_budget_; }
-
 private:
     double multiplier_;                     ///< Growth factor between budgets.
     std::size_t initial_conflicts_;         ///< First budget, before any growth.

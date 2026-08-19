@@ -8,12 +8,12 @@
 
 namespace xorcle {
 
-/// @brief Describes one variable-space compaction step.
+/// @brief Describes one variable-numbering compaction step.
 ///
 /// Compaction eliminates the variables that the trail has already pivoted on,
-/// renumbering the survivors into a smaller active space. This type is the
+/// renumbering the survivors into a smaller active numbering. This type is the
 /// resulting change of basis; applying it to an equation is `Equation::compact()`
-/// (old space to compacted) and `Equation::uncompact()` (compacted back to old).
+/// (old numbering to compacted) and `Equation::uncompact()` (compacted back to old).
 ///
 /// Invariants: `pivot_columns` has width `old_num_vars + 1`, the constant column
 /// is never a pivot, and `old_to_new` / `new_to_old` are inverse maps on the
@@ -25,7 +25,7 @@ public:
 
     CompactionTransform() = default;
 
-    /// @brief Build the transform eliminating the given old-space pivots.
+    /// @brief Build the transform eliminating the given pivots of the old numbering.
     /// @pre `pivots.size() == old_num_vars + 1` and does not mark the constant
     /// column.
     static CompactionTransform from_pivots(std::size_t old_num_vars, const ColumnSet& pivots);
@@ -34,16 +34,10 @@ public:
 
     std::size_t new_num_vars() const noexcept { return new_num_vars_; }
 
-    /// @brief The eliminated (pivot) columns, in old space.
+    /// @brief The eliminated (pivot) columns, in the old variable numbering.
     const ColumnSet& pivot_columns() const noexcept { return pivot_columns_; }
 
-    /// @brief Whether an old-space variable is eliminated. Tolerates `old_index
-    /// >= old_num_vars()`, unlike `to_new()`.
-    bool is_pivot_old(std::size_t old_index) const noexcept {
-        return old_index < old_num_vars_ && pivot_columns_.test(old_index);
-    }
-
-    /// @brief Compacted index of an old-space variable, or `npos` if eliminated.
+    /// @brief Compacted index of a variable of the old numbering, or `npos` if eliminated.
     /// @pre `old_index < old_num_vars()`.
     std::size_t to_new(std::size_t old_index) const noexcept { return old_to_new_[old_index]; }
 

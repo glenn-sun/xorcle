@@ -31,8 +31,6 @@ public:
     bool should_restart_after_conflict() override;
     void note_restart() override;
 
-    std::size_t current_budget() const { return current_budget_; }
-
 private:
     std::size_t unit_conflicts_;              ///< Budget for a Luby value of 1.
     std::size_t conflicts_since_restart_ = 0; ///< Conflicts counted against the active budget.

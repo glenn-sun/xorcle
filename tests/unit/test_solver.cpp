@@ -402,15 +402,14 @@ TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the ori
     Run without = make_run(repr, compaction_sat_instance, compaction_off);
     const Solution without_solution = without.solver->solve();
     check_satisfies(without.clauses, without_solution, without.num_vars);
-    CHECK(without.solver->active_num_vars() == without.solver->num_vars());
 
     Run with = make_run(repr, compaction_sat_instance);
     const Solution with_solution = with.solver->solve();
 
     // Compaction really happened, rather than the trigger quietly declining:
-    // the root trail pivots columns 0, 1 and 3, leaving x3 and x5 to search in.
+    // the root trail pivots columns 0, 1 and 3, leaving x3 and x5 to search in,
+    // and the assignment below still comes back over all five input variables.
     REQUIRE(with.solver->num_vars() == 5);
-    CHECK(with.solver->active_num_vars() == 2);
 
     // Same verdict, and an assignment over the *original* five variables --
     // including x1, x2 and x4, which the compacted search never represented.

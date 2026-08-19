@@ -26,7 +26,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       selector_(std::move(selector)),
       decisions_(std::move(decisions)),
       restarts_(std::move(restarts)),
-      propagation_(repr, num_vars),
+      propagator_(repr, num_vars),
       proof_logger_(proof_logger),
       conflict_check_eqn_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)) {
@@ -69,7 +69,7 @@ bool Solver::propagate_until_conflict() {
                "selector returned an inactive clause");
         ++counters_.num_attempt_props;
 
-        Equation* propagated_eqn = propagation_.unit_propagate_one_clause(
+        Equation* propagated_eqn = propagator_.unit_propagate_one_clause(
             selection->id, selector_->clause(selection->id), trail_, selection->zero_watch_hint,
             counters_.num_watch_updates, *selector_);
         if (propagated_eqn == nullptr) {
@@ -227,7 +227,7 @@ void Solver::apply_compaction(CompactionPlan plan) {
     active_var_to_original_ = std::move(compacted_var_to_original);
     compaction_history_.push_back(std::move(plan.history_entry));
 
-    propagation_.reconfigure(active_num_vars_);
+    propagator_.reconfigure(active_num_vars_);
     false_equation_ = Equation::eq_false(repr_, active_num_vars_);
     conflict_check_eqn_.resize(active_num_vars_);
     conflict_check_eqn_.set_eq_true();

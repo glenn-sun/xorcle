@@ -31,8 +31,6 @@ public:
     /// problem into fewer variables.
     void reconfigure(std::size_t num_vars);
 
-    std::size_t num_vars() const noexcept { return num_vars_; }
-
     /// @brief Attempt to propagate from a single clause, in its linear negation
     /// and with its watches possibly updated. `zero_watch_hint` is a trigger the
     /// selector already computed, if it tracks reductions itself; otherwise it is

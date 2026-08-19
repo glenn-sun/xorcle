@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "core/clause_id.h"
-#include "heuristics/decisions/clause_sampling.h"
+#include "heuristics/decisions/clause_decisions.h"
 
 namespace xorcle {
 

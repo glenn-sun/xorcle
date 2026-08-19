@@ -1,4 +1,4 @@
-#include "heuristics/decisions/clause_sampling.h"
+#include "heuristics/decisions/clause_decisions.h"
 
 #include <cassert>
 #include <cstdint>

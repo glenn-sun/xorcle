@@ -13,7 +13,7 @@
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
-#include "heuristics/decisions/clause_sampling.h"
+#include "heuristics/decisions/clause_decisions.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "util/max_heap.h"
 #include "util/random.h"
