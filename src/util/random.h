@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <random>
 
-#include "util/bitmap.h"
+#include "util/column_set.h"
 
 namespace xorcle {
 
@@ -54,6 +54,6 @@ int random_int(Rng& rng, int upper_bound);
 /// produces a different search from the same seed. Writing the fill over bit
 /// *indices* rather than storage words is what makes the sparse and dense
 /// representations consume the stream identically.
-Bitmap random_nonzero_coefficients(std::size_t num_bits, Rng& rng);
+ColumnSet random_nonzero_coefficients(std::size_t num_bits, Rng& rng);
 
 } // namespace xorcle

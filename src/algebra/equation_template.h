@@ -44,11 +44,11 @@ public:
         return std::make_unique<EquationTemplate>(*this);
     }
 
-    std::size_t size() const noexcept override { return vector_.num_bits(); }
+    std::size_t num_bits() const noexcept override { return vector_.num_bits(); }
 
     void resize(std::size_t num_bits) override { vector_.resize(num_bits); }
 
-    void clear() noexcept override { vector_.clear(); }
+    void set_eq_true() noexcept override { vector_.zero(); }
 
     void assign_bits(std::span<const std::size_t> bits) override { vector_.assign_bits(bits); }
 
@@ -157,17 +157,17 @@ private:
 };
 
 /// @brief Reach the concrete GF(2) vector behind an `Equation` handle.
-/// @pre `!equation.empty()` and `equation.repr() == V::repr`; likewise for the
+/// @pre `!equation.is_null()` and `equation.repr() == V::repr`; likewise for the
 /// mutable overload below.
 template <GF2Vector V>
 const V& gf2_vector_of(const Equation& equation) noexcept {
-    assert(!equation.empty() && equation.repr() == V::repr);
+    assert(!equation.is_null() && equation.repr() == V::repr);
     return static_cast<const EquationTemplate<V>&>(equation.storage()).vector();
 }
 
 template <GF2Vector V>
 V& gf2_vector_of(Equation& equation) noexcept {
-    assert(!equation.empty() && equation.repr() == V::repr);
+    assert(!equation.is_null() && equation.repr() == V::repr);
     return static_cast<EquationTemplate<V>&>(equation.storage()).vector();
 }
 

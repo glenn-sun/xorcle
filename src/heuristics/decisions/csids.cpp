@@ -138,9 +138,9 @@ void Csids::update_with_compaction(const CompactionTransform& transform, const R
     set_num_vars(transform.new_num_vars());
     clause_sat_workspace_.reconfigure(num_vars());
     candidate_.resize(num_vars());
-    candidate_.clear();
+    candidate_.set_eq_true();
     reduced_candidate_.resize(num_vars());
-    reduced_candidate_.clear();
+    reduced_candidate_.set_eq_true();
 
     state_.num_vars = num_vars();
     state_.num_clauses = static_cast<ClauseId>(clauses.size());

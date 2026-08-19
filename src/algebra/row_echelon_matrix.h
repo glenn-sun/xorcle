@@ -8,7 +8,7 @@
 #include "algebra/equation.h"
 #include "algebra/equation_repr.h"
 #include "algebra/reduce_result.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 #include "util/print_mode.h"
 
 namespace xorcle {
@@ -35,13 +35,13 @@ public:
 
     virtual const Equation& row(std::size_t index) const = 0;
 
-    virtual const Bitmap& pivot_columns() const noexcept = 0;
+    virtual const ColumnSet& pivot_columns() const noexcept = 0;
 
     virtual std::optional<std::size_t> add_row_get_index(const Equation& v) = 0;
 
     virtual void reduce(Equation& v) const = 0;
 
-    virtual void reduce(Equation& v, Bitmap& coefficients_out) const = 0;
+    virtual void reduce(Equation& v, ColumnSet& coefficients_out) const = 0;
 
     virtual ReduceResult partial_reduce(Equation& v) const = 0;
 
@@ -52,7 +52,7 @@ public:
     virtual void pop_last_row() = 0;
 
     /// @brief Write the unique solution of the stored system into `out`.
-    virtual void solution(Bitmap& out) const = 0;
+    virtual void solution(ColumnSet& out) const = 0;
 };
 
 /// @brief A matrix over GF(2) in row-echelon form.
@@ -90,8 +90,8 @@ public:
     /// @brief Row `index`, in row-echelon order.
     const Equation& row(std::size_t index) const { return storage_->row(index); }
 
-    /// @brief Bitmap of the pivot columns, of width `cols()`.
-    const Bitmap& pivot_columns() const noexcept { return storage_->pivot_columns(); }
+    /// @brief The set of pivot columns, of width `cols()`.
+    const ColumnSet& pivot_columns() const noexcept { return storage_->pivot_columns(); }
 
     /// @brief Does nothing if `v` is already in the span.
     void add_row(const Equation& v) { storage_->add_row_get_index(v); }
@@ -103,8 +103,10 @@ public:
 
     void reduce(Equation& v) const { storage_->reduce(v); }
 
-    /// @brief `coefficients_out` gets one bit per participating row, sized `rows()`.
-    void reduce(Equation& v, Bitmap& coefficients_out) const {
+    /// @brief `coefficients_out` gets one bit per participating row, sized
+    /// `rows()`. Its set indices are row indices, not columns: this is the one
+    /// place a `ColumnSet` is indexed by row.
+    void reduce(Equation& v, ColumnSet& coefficients_out) const {
         storage_->reduce(v, coefficients_out);
     }
 
@@ -163,7 +165,7 @@ public:
     /// @brief One bit per variable.
     /// @pre The row space has exactly one solution; equivalently, every variable
     /// column is pivoted and the constant column is not.
-    Bitmap unique_solution() const;
+    ColumnSet unique_solution() const;
 };
 
 /// @brief A clause in its linear negation: the conjunction of the linear

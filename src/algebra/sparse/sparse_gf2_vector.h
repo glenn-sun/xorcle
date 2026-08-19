@@ -33,9 +33,9 @@ public:
     /// @brief Resize to `num_bits` bits, dropping any set bit at or above it.
     void resize(std::size_t num_bits);
 
-    void clear() noexcept { bits_.clear(); }
+    void zero() noexcept { bits_.clear(); }
 
-    /// @brief Clear, then set each listed bit; each must be below `num_bits()`.
+    /// @brief Zero, then set each listed bit; each must be below `num_bits()`.
     void assign_bits(std::span<const std::size_t> bits);
 
     /// @pre `i < num_bits()`.

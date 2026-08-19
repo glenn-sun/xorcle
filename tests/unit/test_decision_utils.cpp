@@ -9,7 +9,7 @@
 #include "algebra_test_support.h"
 #include "heuristics/decisions/decision_utils.h"
 #include "heuristics_test_support.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 #include "util/random.h"
 
 namespace xorcle {
@@ -100,7 +100,7 @@ TEST_CASE_TEMPLATE("decision utils: project a basis", Tag, DenseTag, SparseTag) 
     constexpr EquationRepr repr = Tag::value;
 
     // Eliminate x1 out of four variables, so the survivors are x0, x2, x3.
-    Bitmap pivots(5);
+    ColumnSet pivots(5);
     pivots.set(1);
     const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
     REQUIRE(transform.new_num_vars() == 3);

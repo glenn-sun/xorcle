@@ -354,7 +354,7 @@ TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", T
     // recently learned trail row is 1 itself on a conflicting trail.
     const Equation trail_basis_one =
         make_equation_with(repr, basis.num_vars(), {0});
-    REQUIRE(trail_basis_one.size() == basis.cols());
+    REQUIRE(trail_basis_one.num_bits() == basis.cols());
 
     std::vector<ClauseId> reason_ids;
     resolve_asserting_basis_with_reason(basis, 1, trail, conflict.clauses, decisions,

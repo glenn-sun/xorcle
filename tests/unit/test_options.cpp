@@ -52,7 +52,7 @@ bool contains(const std::string& haystack, const std::string& needle) {
 TEST_CASE("options: the documented defaults") {
     const Options options = parse_with_input({});
     CHECK(options.input_path == "instance.xnf");
-    CHECK(options.algebra == EquationRepr::dense);
+    CHECK(options.equation_repr == EquationRepr::dense);
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
     CHECK(options.compact_every == 16);
@@ -69,7 +69,7 @@ TEST_CASE("options: the documented defaults") {
 }
 
 TEST_CASE("options: --name=value sets each kind") {
-    const Options options = parse_with_input({"--algebra=sparse",
+    const Options options = parse_with_input({"--equation-repr=sparse",
                                               "--seed=42",
                                               "--compact=false",
                                               "--csids-initial=2.5",
@@ -81,7 +81,7 @@ TEST_CASE("options: --name=value sets each kind") {
                                               "--restart-luby-unit=7",
                                               "--proof=out.lrup",
                                               "--stats-file=stats.csv"});
-    CHECK(options.algebra == EquationRepr::sparse);
+    CHECK(options.equation_repr == EquationRepr::sparse);
     CHECK(options.seed == 42);
     CHECK(options.compact == false);
     CHECK(options.csids_initial == doctest::Approx(2.5));
@@ -217,7 +217,7 @@ TEST_CASE("options: enum labels are the first spelling naming an enumerator") {
     CHECK(enum_option_label("decisions", static_cast<int>(DecisionProcedureName::csids)) == "csids");
     CHECK(enum_option_label("phase", static_cast<int>(DecisionPhase::falsify)) == "falsify");
     CHECK(enum_option_label("selection", static_cast<int>(ClauseSelectorName::cyclic)) == "cyclic");
-    CHECK(enum_option_spellings("algebra") == "dense|sparse");
+    CHECK(enum_option_spellings("equation_repr") == "dense|sparse");
     CHECK(enum_option_spellings("restart") == "none|geometric|luby");
 }
 
@@ -227,7 +227,7 @@ TEST_CASE("options: --help is generated from the table") {
     const std::string text = help.str();
 
     CHECK(contains(text, "Usage: xorcle [options] <input>"));
-    CHECK(contains(text, "--algebra=dense|sparse"));
+    CHECK(contains(text, "--equation-repr=dense|sparse"));
     CHECK(contains(text, "[default: dense]"));
     CHECK(contains(text, "--seed=N"));
     CHECK(contains(text, "[default: 0; minimum 0]"));

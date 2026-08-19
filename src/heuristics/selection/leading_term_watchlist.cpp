@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "algebra/reduce_result.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 
 namespace xorcle {
 

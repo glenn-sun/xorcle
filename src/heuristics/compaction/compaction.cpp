@@ -93,7 +93,7 @@ bool should_compact_before_decision(const CompactionInputs& inputs) {
         return false;
     }
 
-    const Bitmap& pivots = inputs.trail.span().pivot_columns();
+    const ColumnSet& pivots = inputs.trail.span().pivot_columns();
     assert(pivots.size() == inputs.active_num_vars + 1 && "trail pivot width mismatch");
     assert(!pivots.test(inputs.active_num_vars) &&
            "the constant column cannot be a compaction pivot");
@@ -101,7 +101,7 @@ bool should_compact_before_decision(const CompactionInputs& inputs) {
 }
 
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars) {
-    const Bitmap& pivots = trail.span().pivot_columns();
+    const ColumnSet& pivots = trail.span().pivot_columns();
     assert(pivots.size() == active_num_vars + 1 && "trail pivot width mismatch");
     assert(!pivots.test(active_num_vars) && "the constant column cannot be a compaction pivot");
     return CompactionTransform::from_pivots(active_num_vars, pivots);

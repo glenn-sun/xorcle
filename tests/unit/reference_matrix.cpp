@@ -45,7 +45,7 @@ Equation to_equation(EquationRepr repr, const Bits& bits) {
 }
 
 Bits to_bits(const Equation& equation) {
-    Bits out(equation.size(), false);
+    Bits out(equation.num_bits(), false);
     for (const std::size_t bit : bits_of(equation)) {
         out[bit] = true;
     }

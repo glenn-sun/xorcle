@@ -52,13 +52,15 @@ std::unique_ptr<DecisionProcedure> make_decision_procedure(const Options& option
     std::unique_ptr<DecisionProcedure> procedure;
     switch (options.decisions) {
         case DecisionProcedureName::fixed_literals:
-            procedure = std::make_unique<FixedLiterals>(options.algebra, num_vars, options.seed);
+            procedure =
+                std::make_unique<FixedLiterals>(options.equation_repr, num_vars, options.seed);
             break;
         case DecisionProcedureName::variable_vsids:
-            procedure = std::make_unique<VariableVsids>(options.algebra, num_vars, options.seed);
+            procedure =
+                std::make_unique<VariableVsids>(options.equation_repr, num_vars, options.seed);
             break;
         case DecisionProcedureName::csids:
-            procedure = std::make_unique<Csids>(options.algebra, num_vars, options.seed,
+            procedure = std::make_unique<Csids>(options.equation_repr, num_vars, options.seed,
                                                 csids_config(options));
             break;
     }
@@ -98,14 +100,14 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
 }
 
 RunStats run_once(const Options& options) {
-    ParsedDimacs parsed = parse_dimacs_file(options.input_path, options.algebra);
+    ParsedDimacs parsed = parse_dimacs_file(options.input_path, options.equation_repr);
 
     std::unique_ptr<LrupLogger> proof_logger;
     if (!options.proof.empty()) {
         proof_logger = std::make_unique<LrupLogger>(options.proof, parsed.num_vars);
     }
 
-    Solver solver(options.algebra, parsed.num_vars,
+    Solver solver(options.equation_repr, parsed.num_vars,
                   make_clause_selector(options, parsed.num_vars),
                   make_decision_procedure(options, parsed.num_vars),
                   make_restart_policy(restart_config(options)), proof_logger.get(),

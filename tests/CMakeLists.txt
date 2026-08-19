@@ -17,7 +17,7 @@ add_executable(xorcle_tests
     unit/main.cpp
     unit/reference_matrix.cpp
     unit/test_analysis.cpp
-    unit/test_bitmap.cpp
+    unit/test_column_set.cpp
     unit/test_clause_selector.cpp
     unit/test_compaction.cpp
     unit/test_decision_utils.cpp

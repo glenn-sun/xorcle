@@ -48,7 +48,7 @@ LrupLogger::~LrupLogger() {
 }
 
 void LrupLogger::write_token(const Equation& row) {
-    assert(row.size() == num_vars_ + 1 && "proof rows live in the logger's variable space");
+    assert(row.num_bits() == num_vars_ + 1 && "proof rows live in the logger's variable space");
     row.bits(bits_);
 
     // `bits()` is ascending, so the constant bit is last if it is set at all.

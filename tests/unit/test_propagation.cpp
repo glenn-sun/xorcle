@@ -298,7 +298,7 @@ TEST_CASE_TEMPLATE("propagation: reconfigure resizes the scratch", Tag, DenseTag
     Equation* implied = engine.unit_propagate_one_clause(0, clause, trail, std::nullopt,
                                                          num_watch_updates, observer);
     REQUIRE(implied != nullptr);
-    CHECK(implied->size() == 3);
+    CHECK(implied->num_bits() == 3);
     CHECK(bits_of(*implied) == std::vector<std::size_t>{1, 2});
 }
 

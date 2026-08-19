@@ -33,8 +33,8 @@ concept GF2Vector = requires(V v, const V cv, std::size_t i, std::span<const std
     { V(i) }; // zero vector of `i` bits
     { cv.num_bits() } -> std::same_as<std::size_t>;
     { v.resize(i) } -> std::same_as<void>;
-    { v.clear() } -> std::same_as<void>; // set to all-zero, bit count unchanged
-    { v.assign_bits(bits) } -> std::same_as<void>; // clear, then set each listed bit
+    { v.zero() } -> std::same_as<void>; // set to all-zero, bit count unchanged
+    { v.assign_bits(bits) } -> std::same_as<void>; // zero, then set each listed bit
     { cv.test_bit(i) } -> std::same_as<bool>;
     { v.set_bit(i) } -> std::same_as<void>;
     { cv.leading_bit() } -> std::same_as<std::optional<std::size_t>>;

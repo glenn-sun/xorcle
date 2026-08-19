@@ -26,7 +26,7 @@ void debug_assert_snapshot_valid(const TrailSnapshot& snapshot) {
 } // namespace
 
 void TrailSnapshot::learn(const Equation& eqn, std::optional<ClauseId> reason) {
-    assert(eqn.size() == span_.cols());
+    assert(eqn.num_bits() == span_.cols());
 
     const std::optional<std::size_t> maybe_inserted_index = span_.add_row_get_index(eqn);
     // A caller that learns an equation already in the span would leave the two
@@ -59,7 +59,7 @@ Trail::Trail(EquationRepr repr, std::size_t num_vars) {
 
 void Trail::learn(const Equation& eqn, std::optional<ClauseId> reason) {
     assert(!snapshots_.empty());
-    assert(eqn.size() == span().cols());
+    assert(eqn.num_bits() == span().cols());
 
     if (!reason.has_value()) {
         // A decision opens a new level: a full copy, which is what makes

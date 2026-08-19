@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "heuristics/compaction/compaction.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 
 namespace xorcle {
 
@@ -26,8 +26,8 @@ namespace xorcle {
 /// were recorded in row-echelon order, so reversing makes each eliminated
 /// variable the leftmost unknown in its row, everything to the right already
 /// solved. Forwards is not a different answer, it is a wrong one.
-Bitmap reconstruct_original_assignment(
-    const Bitmap& active_assignment,
+ColumnSet reconstruct_original_assignment(
+    const ColumnSet& active_assignment,
     const std::vector<CompactionHistoryEntry>& compaction_history,
     const std::vector<std::size_t>& active_var_to_original, std::size_t original_num_vars);
 

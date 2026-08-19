@@ -14,7 +14,7 @@
 #include "heuristics/decisions/phase.h"
 #include "heuristics/decisions/variable_vsids.h"
 #include "heuristics_test_support.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 #include "util/random.h"
 
 namespace xorcle {
@@ -97,7 +97,7 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
     }
 
     SUBCASE("compaction reprojects the basis") {
-        Bitmap pivots(5);
+        ColumnSet pivots(5);
         pivots.set(0);
         const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
         procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, {});
@@ -105,7 +105,7 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
 
         const RowSpace compacted(repr, 3);
         const Equation decision = procedure.make_decision(compacted, clauses);
-        CHECK(decision.size() == 4);
+        CHECK(decision.num_bits() == 4);
         CHECK(bits_of(decision) == std::vector<std::size_t>{0});
     }
 }
@@ -139,7 +139,7 @@ TEST_CASE_TEMPLATE("variable vsids: activity drives the choice", Tag, DenseTag, 
     SUBCASE("compaction remaps the heap and keeps a legal decision available") {
         procedure.update_with_asserting_clause(make_clause(repr, 4, {{2}}));
 
-        Bitmap pivots(5);
+        ColumnSet pivots(5);
         pivots.set(0);
         const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
         procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, {});
@@ -147,7 +147,7 @@ TEST_CASE_TEMPLATE("variable vsids: activity drives the choice", Tag, DenseTag, 
 
         const RowSpace compacted(repr, 3);
         const Equation decision = procedure.make_decision(compacted, clauses);
-        CHECK(decision.size() == 4);
+        CHECK(decision.num_bits() == 4);
         // Old x2 became new x1, and it kept its activity lead.
         CHECK(bits_of(decision) == std::vector<std::size_t>{1});
     }
@@ -220,7 +220,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         (void)procedure.make_decision(empty, clauses);
         REQUIRE(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
 
-        Bitmap pivots(5);
+        ColumnSet pivots(5);
         pivots.set(0);
         const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
         const std::vector<std::uint8_t> clause_active{1, 0, 1};

@@ -56,8 +56,8 @@ void Solver::add_starting_clause(Clause clause) {
 
 bool Solver::propagate_until_conflict() {
     assert(active_var_to_original_.size() == active_num_vars_);
-    assert(false_equation_.size() == active_num_vars_ + 1);
-    assert(conflict_check_eqn_.size() == active_num_vars_ + 1);
+    assert(false_equation_.num_bits() == active_num_vars_ + 1);
+    assert(conflict_check_eqn_.num_bits() == active_num_vars_ + 1);
 
     while (true) {
         const std::optional<ClauseSelection> selection = selector_->next_with_hint();
@@ -77,7 +77,7 @@ bool Solver::propagate_until_conflict() {
         }
 
         ++counters_.num_propagations;
-        assert(propagated_eqn->size() == active_num_vars_ + 1);
+        assert(propagated_eqn->num_bits() == active_num_vars_ + 1);
 
         // Re-normalize: the engine reduced the clause row it propagated from,
         // not the negation it returns, so the result can still hold span rows.
@@ -168,7 +168,7 @@ void Solver::write_root_unsat_proof() {
 void Solver::make_decision_step() {
     Equation decision_eqn = decisions_->make_decision(trail_.span(), selector_->clauses());
     [[maybe_unused]] const ReduceResult reduced = trail_.span().partial_reduce(decision_eqn);
-    assert(decision_eqn.size() == active_num_vars_ + 1);
+    assert(decision_eqn.num_bits() == active_num_vars_ + 1);
     // A decision must be neither 0 (already implied) nor 1 (already refuted).
     assert(reduced.kind == ReduceResult::Kind::leading &&
            "the decision procedure returned an equation the trail already decides");
@@ -230,7 +230,7 @@ void Solver::apply_compaction(CompactionPlan plan) {
     propagation_.reconfigure(active_num_vars_);
     false_equation_ = Equation::eq_false(repr_, active_num_vars_);
     conflict_check_eqn_.resize(active_num_vars_);
-    conflict_check_eqn_.clear();
+    conflict_check_eqn_.set_eq_true();
 
     // The root trail is thrown away on purpose; see the warning on this method.
     trail_ = Trail(repr_, active_num_vars_);
@@ -260,8 +260,8 @@ Solution Solver::solve() {
         // Quiescent at full rank over the variable columns: every variable is
         // determined and the trail is a total assignment.
         if (trail_.span().rows() == active_num_vars_) {
-            const Bitmap active_assignment = trail_.span().unique_solution();
-            Bitmap original_assignment = reconstruct_original_assignment(
+            const ColumnSet active_assignment = trail_.span().unique_solution();
+            ColumnSet original_assignment = reconstruct_original_assignment(
                 active_assignment, compaction_history_, active_var_to_original_,
                 original_num_vars_);
             return Solution{SolveResult::sat, std::move(original_assignment)};

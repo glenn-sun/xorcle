@@ -6,7 +6,7 @@
 namespace xorcle {
 
 /// @brief Which storage representation the algebra layer uses for an equation.
-/// Selected at runtime via `--algebra=`. The two are behaviourally identical;
+/// Selected at runtime via `--equation-repr=`. The two are behaviourally identical;
 /// only their performance characteristics differ.
 enum class EquationRepr {
     dense, ///< Bit-packed equations, on `gf2::BitVector`.

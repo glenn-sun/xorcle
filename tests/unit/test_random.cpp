@@ -21,12 +21,12 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Render a coefficient bitmap as '0'/'1' in ascending index order.
-std::string to_bit_string(const Bitmap& bitmap) {
+/// @brief Render a coefficient column set as '0'/'1' in ascending index order.
+std::string to_bit_string(const ColumnSet& columns) {
     std::string bits;
-    bits.reserve(bitmap.size());
-    for (std::size_t i = 0; i < bitmap.size(); ++i) {
-        bits.push_back(bitmap.test(i) ? '1' : '0');
+    bits.reserve(columns.size());
+    for (std::size_t i = 0; i < columns.size(); ++i) {
+        bits.push_back(columns.test(i) ? '1' : '0');
     }
     return bits;
 }
@@ -258,7 +258,7 @@ TEST_CASE("random: random_nonzero_coefficients postconditions") {
                                  std::size_t{65}, std::size_t{200}}) {
         CAPTURE(num_bits);
         for (int trial = 0; trial < 32; ++trial) {
-            const Bitmap coefficients = random_nonzero_coefficients(num_bits, rng);
+            const ColumnSet coefficients = random_nonzero_coefficients(num_bits, rng);
             CHECK(coefficients.size() == num_bits);
             CHECK_FALSE(coefficients.none());
             CHECK(coefficients.count() <= num_bits);

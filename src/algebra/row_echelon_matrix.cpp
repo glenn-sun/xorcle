@@ -18,11 +18,11 @@ RowEchelonMatrix& RowEchelonMatrix::operator=(const RowEchelonMatrix& other) {
     return *this;
 }
 
-Bitmap RowSpace::unique_solution() const {
+ColumnSet RowSpace::unique_solution() const {
     assert(rows() + 1 == cols() && "row space is not full-rank");
     assert(!pivot_columns().test(cols() - 1) && "row space contains the false equation");
 
-    Bitmap out(num_vars());
+    ColumnSet out(num_vars());
     storage().solution(out);
     return out;
 }

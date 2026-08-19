@@ -6,7 +6,7 @@
 #include <utility>
 
 #include "algebra/reduce_result.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 
 namespace xorcle {
 
@@ -51,9 +51,9 @@ void ClauseSatisfactionWorkspace::reconfigure(std::size_t num_vars) {
     false_equation_.assign_bits(std::span<const std::size_t>(&constant_bit, 1));
 
     scratch_false_.resize(num_vars);
-    scratch_false_.clear();
+    scratch_false_.set_eq_true();
     scratch_row_.resize(num_vars);
-    scratch_row_.clear();
+    scratch_row_.set_eq_true();
 
     local_basis_ = RowSpace(repr_, num_vars);
 }
@@ -68,7 +68,7 @@ const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowS
                                   Equation& reduced_scratch) {
     assert(!basis.empty() && "decide_from_basis: empty basis");
     for (const Equation& candidate : basis) {
-        assert(candidate.size() == trail_span.cols());
+        assert(candidate.num_bits() == trail_span.cols());
         reduced_scratch.assign_from(candidate);
         if (trail_span.partial_reduce(reduced_scratch).is_leading()) {
             return candidate;
@@ -117,7 +117,7 @@ std::vector<Equation> project_basis_keep_order(const std::vector<Equation>& basi
     std::vector<std::uint8_t> seen_literal(transform.new_num_vars(), 0);
 
     for (const Equation& basis_equation : basis) {
-        assert(basis_equation.size() == transform.old_num_vars() + 1);
+        assert(basis_equation.num_bits() == transform.old_num_vars() + 1);
         Equation projected = basis_equation.compact(transform);
         const ReduceResult classified = projected.classify();
         if (!classified.is_leading()) {
@@ -144,14 +144,14 @@ bool sample_equation_from_clause(const Clause& clause, const RowSpace& trail_spa
                                  Equation& out_candidate, Equation& out_reduced) {
     assert(clause.rows() > 0);
     assert(clause.cols() == trail_span.cols());
-    assert(out_candidate.size() == trail_span.cols());
-    assert(out_reduced.size() == trail_span.cols());
+    assert(out_candidate.num_bits() == trail_span.cols());
+    assert(out_reduced.num_bits() == trail_span.cols());
     assert(clause_admits_a_legal_decision(clause, trail_span) &&
            "sample_equation_from_clause: the clause is already decided or satisfied");
 
     while (true) {
-        const Bitmap coefficients = random_nonzero_coefficients(clause.rows(), rng);
-        out_candidate.clear();
+        const ColumnSet coefficients = random_nonzero_coefficients(clause.rows(), rng);
+        out_candidate.set_eq_true();
         coefficients.for_each_set(
             [&](std::size_t row_index) { out_candidate.plus_assign(clause.row(row_index)); });
         out_reduced.assign_from(out_candidate);

@@ -13,7 +13,7 @@
 #include "algebra/gf2_vector.h"
 #include "algebra/reduce_result.h"
 #include "algebra/row_echelon_matrix.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 
 namespace xorcle {
 
@@ -50,10 +50,10 @@ public:
         return rows_[index];
     }
 
-    const Bitmap& pivot_columns() const noexcept override { return pivot_columns_; }
+    const ColumnSet& pivot_columns() const noexcept override { return pivot_columns_; }
 
     std::optional<std::size_t> add_row_get_index(const Equation& v) override {
-        assert(v.size() == cols() && v.repr() == V::repr);
+        assert(v.num_bits() == cols() && v.repr() == V::repr);
 
         // Partially reduce a copy of `v` against the stored rows. Driving the
         // loop from `leading_bit()` / `next_bit()` visits only the set columns
@@ -71,7 +71,7 @@ public:
 
         // Row-echelon order means the insertion index is the number of pivots
         // strictly below the new leading column -- a popcount over the pivot
-        // bitmap, not a scan.
+        // column set, not a scan.
         const std::size_t leading_column = *leading;
         const std::size_t insert_index = pivot_columns_.count_below(leading_column);
 
@@ -89,7 +89,7 @@ public:
     }
 
     void reduce(Equation& v) const override {
-        assert(v.size() == cols() && v.repr() == V::repr);
+        assert(v.num_bits() == cols() && v.repr() == V::repr);
         V& row = gf2_vector_of<V>(v);
         // `v` is mutated while its set columns are being walked, so `next_bit`
         // must be re-evaluated against the live row each time.
@@ -100,8 +100,8 @@ public:
         }
     }
 
-    void reduce(Equation& v, Bitmap& coefficients_out) const override {
-        assert(v.size() == cols() && v.repr() == V::repr);
+    void reduce(Equation& v, ColumnSet& coefficients_out) const override {
+        assert(v.num_bits() == cols() && v.repr() == V::repr);
         coefficients_out.reset_width(rows_.size());
         V& row = gf2_vector_of<V>(v);
         for (auto column = row.leading_bit(); column; column = row.next_bit(*column)) {
@@ -114,7 +114,7 @@ public:
     }
 
     ReduceResult partial_reduce(Equation& v) const override {
-        assert(v.size() == cols() && v.repr() == V::repr);
+        assert(v.num_bits() == cols() && v.repr() == V::repr);
         V& row = gf2_vector_of<V>(v);
         std::optional<std::size_t> column = row.leading_bit();
         while (true) {
@@ -130,8 +130,8 @@ public:
     }
 
     ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const override {
-        assert(v.size() == cols() && v.repr() == V::repr);
-        assert(extra.size() == cols() && extra.repr() == V::repr);
+        assert(v.num_bits() == cols() && v.repr() == V::repr);
+        assert(extra.num_bits() == cols() && extra.repr() == V::repr);
 
         const V& extra_row = gf2_vector_of<V>(extra);
         const std::optional<std::size_t> extra_leading = extra_row.leading_bit();
@@ -184,7 +184,7 @@ public:
         debug_assert_valid_representation();
     }
 
-    void solution(Bitmap& out) const override {
+    void solution(ColumnSet& out) const override {
         // Every variable column is a pivot and the constant column is not, so
         // rows() == num_vars and row `i` has leading column `i`. Back-substitute
         // from the last row upward, row-wise only, never by column.
@@ -246,7 +246,7 @@ private:
     }
 
     std::vector<Equation> rows_;
-    Bitmap pivot_columns_;
+    ColumnSet pivot_columns_;
     std::vector<std::size_t> column_to_row_;
     std::size_t num_vars_;
 };

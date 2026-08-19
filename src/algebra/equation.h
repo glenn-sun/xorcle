@@ -31,11 +31,11 @@ public:
 
     virtual std::unique_ptr<EquationInterface> clone() const = 0;
 
-    virtual std::size_t size() const noexcept = 0;
+    virtual std::size_t num_bits() const noexcept = 0;
 
     virtual void resize(std::size_t num_bits) = 0;
 
-    virtual void clear() noexcept = 0;
+    virtual void set_eq_true() noexcept = 0;
 
     virtual void assign_bits(std::span<const std::size_t> bits) = 0;
 
@@ -77,8 +77,8 @@ public:
 /// operation costs nothing. Algorithms needing per-bit access belong inside a
 /// representation, written against the `GF2Vector` concept.
 ///
-/// Every method other than `size()`, `empty()`, `clear()`, `bits()`, `hash()`,
-/// `to_string()` and `operator==` requires `!empty()`.
+/// Every method other than `num_bits()`, `is_null()`, `set_eq_true()`,
+/// `bits()`, `hash()`, `to_string()` and `operator==` requires `!is_null()`.
 class Equation {
 public:
     /// @brief A null handle: no storage, width 0.
@@ -110,15 +110,15 @@ public:
     std::size_t num_vars() const noexcept;
 
     /// @brief Bit count, i.e. `num_vars() + 1`; zero for a null handle.
-    std::size_t size() const noexcept { return storage_ ? storage_->size() : 0; }
+    std::size_t num_bits() const noexcept { return storage_ ? storage_->num_bits() : 0; }
 
-    bool empty() const noexcept { return storage_ == nullptr; }
+    bool is_null() const noexcept { return storage_ == nullptr; }
 
     /// @brief Resize to hold `num_vars` variables, zeroing any new bits.
     void resize(std::size_t num_vars);
 
     /// @brief Become the true equation @f$\mathbf{0}@f$, keeping the width.
-    void clear() noexcept;
+    void set_eq_true() noexcept;
 
     /// @brief First set bit, or `std::nullopt` for the true equation.
     std::optional<std::size_t> leading_bit() const noexcept { return storage_->leading_bit(); }
@@ -152,15 +152,15 @@ public:
     /// permutation, as building a `TrailBasisSpace` row from reduction
     /// coefficients needs: collect the mapped bits, then assign in one dispatch.
     /// @param bits Bits to set; need not be sorted or distinct, may include the
-    /// constant bit `num_vars()`, and must each be `< size()`.
+    /// constant bit `num_vars()`, and must each be `< num_bits()`.
     void assign_bits(std::span<const std::size_t> bits);
 
     /// @brief Old active space to compacted space.
-    /// @pre `size() == transform.old_num_vars() + 1`.
+    /// @pre `num_bits() == transform.old_num_vars() + 1`.
     Equation compact(const CompactionTransform& transform) const;
 
     /// @brief Compacted space back to the pre-compaction space.
-    /// @pre `size() == transform.new_num_vars() + 1`.
+    /// @pre `num_bits() == transform.new_num_vars() + 1`.
     Equation uncompact(const CompactionTransform& transform) const;
 
     /// @brief Collect every set bit, ascending, into `out`, cleared first. This

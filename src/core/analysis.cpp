@@ -32,7 +32,7 @@ Equation make_trail_basis_one(const Trail& trail) {
 bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
     std::vector<std::size_t> bits;
     eqn.bits(bits);
-    return eqn.size() == basis.cols() && bits == std::vector<std::size_t>{0};
+    return eqn.num_bits() == basis.cols() && bits == std::vector<std::size_t>{0};
 }
 #endif
 

@@ -12,7 +12,7 @@
 #include "algebra/reduce_result.h"
 #include "algebra_test_support.h"
 #include "allocation_counter.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 #include "util/print_mode.h"
 
 #if !defined(NDEBUG) && (defined(__APPLE__) || defined(__unix__))
@@ -27,20 +27,20 @@ TEST_CASE_TEMPLATE("equation: construction and width", Tag, DenseTag, SparseTag)
     constexpr EquationRepr repr = Tag::value;
 
     Equation null_handle;
-    CHECK(null_handle.empty());
-    CHECK(null_handle.size() == 0);
+    CHECK(null_handle.is_null());
+    CHECK(null_handle.num_bits() == 0);
 
     Equation equation(repr, 5);
-    CHECK_FALSE(equation.empty());
+    CHECK_FALSE(equation.is_null());
     CHECK(equation.repr() == repr);
     CHECK(equation.num_vars() == 5);
-    CHECK(equation.size() == 6);
+    CHECK(equation.num_bits() == 6);
     CHECK(equation.is_eq_true());
     CHECK(bits_of(equation).empty());
 
     equation.resize(9);
     CHECK(equation.num_vars() == 9);
-    CHECK(equation.size() == 10);
+    CHECK(equation.num_bits() == 10);
     CHECK(equation.is_eq_true());
 }
 
@@ -124,12 +124,12 @@ TEST_CASE_TEMPLATE("equation: plus_assign", Tag, DenseTag, SparseTag) {
     CHECK(bits_of(back) == std::vector<std::size_t>{1, 5, 70, 100});
 }
 
-TEST_CASE_TEMPLATE("equation: clear", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("equation: set_eq_true", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Equation equation = make_equation_with(repr, 70, {0, 40, 70});
-    equation.clear();
+    equation.set_eq_true();
     CHECK(equation.is_eq_true());
-    CHECK(equation.size() == 71); // width unchanged
+    CHECK(equation.num_bits() == 71); // width unchanged
 }
 
 TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, DenseTag, SparseTag) {
@@ -146,7 +146,7 @@ TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, Dens
     // The sparse buffer is now at its high-water mark, so from here on both
     // representations must refill in place. This is the property the whole
     // preallocated-scratch discipline rests on.
-    scratch.clear();
+    scratch.set_eq_true();
     const std::size_t before = allocation_count();
     scratch.assign_from(source);
     const std::size_t after = allocation_count();
@@ -227,7 +227,7 @@ TEST_CASE_TEMPLATE("equation: compact and uncompact round-trip", Tag, DenseTag, 
     constexpr std::size_t old_num_vars = 8;
 
     // Eliminate variables 1, 3 and 6; survivors 0,2,4,5,7 renumber to 0..4.
-    Bitmap pivots(old_num_vars + 1);
+    ColumnSet pivots(old_num_vars + 1);
     pivots.set(1);
     pivots.set(3);
     pivots.set(6);

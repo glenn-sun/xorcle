@@ -20,14 +20,14 @@ std::vector<std::size_t> bits_of(const Equation& equation) {
 }
 
 void check_echelon_invariant(const RowEchelonMatrix& matrix) {
-    const Bitmap& pivots = matrix.pivot_columns();
+    const ColumnSet& pivots = matrix.pivot_columns();
     REQUIRE(pivots.size() == matrix.cols());
     REQUIRE(pivots.count() == matrix.rows());
 
     std::optional<std::size_t> previous_pivot;
     for (std::size_t index = 0; index < matrix.rows(); ++index) {
         const Equation& row = matrix.row(index);
-        REQUIRE(row.size() == matrix.cols());
+        REQUIRE(row.num_bits() == matrix.cols());
         REQUIRE(row.repr() == matrix.repr());
 
         const std::optional<std::size_t> leading = row.leading_bit();

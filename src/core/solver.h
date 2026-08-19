@@ -16,7 +16,7 @@
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
 #include "io/lrup_logger.h"
-#include "util/bitmap.h"
+#include "util/column_set.h"
 #include "util/stats.h"
 
 namespace xorcle {
@@ -34,7 +34,7 @@ struct Solution {
     /// @brief One bit per *original* variable, present exactly when
     /// `result == SolveResult::sat`. Compaction is already undone: the solver
     /// searches over the compacted variables but reports over the input's.
-    std::optional<Bitmap> assignment;
+    std::optional<ColumnSet> assignment;
 };
 
 /// @brief The counters a run accumulates, named as `RunStats` names them.

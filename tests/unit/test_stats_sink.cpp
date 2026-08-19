@@ -16,7 +16,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "util/bitmap.h"
+#include "util/column_set.h"
 #include "util/stats.h"
 #include "util/stats_sink.h"
 
@@ -200,7 +200,7 @@ TEST_CASE("ConsoleStatsSink: the SAT assignment lines") {
         RunStats stats;
         stats.file = "x.xnf";
         stats.result = SolveResult::sat;
-        Bitmap assignment(25);
+        ColumnSet assignment(25);
         assignment.set(0);
         assignment.set(4);
         assignment.set(24);
@@ -216,7 +216,7 @@ TEST_CASE("ConsoleStatsSink: the SAT assignment lines") {
         RunStats stats;
         stats.file = "x.xnf";
         stats.result = SolveResult::sat;
-        stats.sat_assignment = Bitmap(20);
+        stats.sat_assignment = ColumnSet(20);
 
         const std::string output = console_output(stats);
         CHECK(output.find("v -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 "
@@ -227,7 +227,7 @@ TEST_CASE("ConsoleStatsSink: the SAT assignment lines") {
         RunStats stats;
         stats.file = "x.xnf";
         stats.result = SolveResult::sat;
-        stats.sat_assignment = Bitmap(0);
+        stats.sat_assignment = ColumnSet(0);
         CHECK(console_output(stats).find("s SATISFIABLE\nv 0\n") != std::string::npos);
     }
 

@@ -5,7 +5,7 @@
 namespace xorcle {
 
 CompactionTransform CompactionTransform::from_pivots(std::size_t old_num_vars,
-                                                     const Bitmap& pivots) {
+                                                     const ColumnSet& pivots) {
     assert(pivots.size() == old_num_vars + 1);
     assert(!pivots.test(old_num_vars) && "the constant column is never a pivot");
 

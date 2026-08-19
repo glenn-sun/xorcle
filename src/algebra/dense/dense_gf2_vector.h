@@ -36,11 +36,11 @@ public:
     /// @brief Resize to `num_bits` bits, zeroing any new ones.
     void resize(std::size_t num_bits) { bits_.resize(num_bits); }
 
-    void clear() noexcept { gf2::set_all(bits_, false); }
+    void zero() noexcept { gf2::set_all(bits_, false); }
 
-    /// @brief Clear, then set each listed bit; each must be below `num_bits()`.
+    /// @brief Zero, then set each listed bit; each must be below `num_bits()`.
     void assign_bits(std::span<const std::size_t> bits) {
-        clear();
+        zero();
         for (const std::size_t bit : bits) {
             set_bit(bit);
         }

@@ -40,7 +40,7 @@ EquationRepr Equation::repr() const noexcept {
 
 std::size_t Equation::num_vars() const noexcept {
     assert(storage_ != nullptr);
-    return storage_->size() - 1;
+    return storage_->num_bits() - 1;
 }
 
 void Equation::resize(std::size_t num_vars) {
@@ -48,9 +48,9 @@ void Equation::resize(std::size_t num_vars) {
     storage_->resize(num_vars + 1);
 }
 
-void Equation::clear() noexcept {
+void Equation::set_eq_true() noexcept {
     if (storage_) {
-        storage_->clear();
+        storage_->set_eq_true();
     }
 }
 
@@ -58,7 +58,7 @@ void Equation::plus_assign(const Equation& other) {
     assert(storage_ != nullptr && other.storage_ != nullptr);
     assert(storage_->repr() == other.storage_->repr() &&
            "representation mismatch in plus_assign");
-    assert(storage_->size() == other.storage_->size() && "width mismatch in plus_assign");
+    assert(storage_->num_bits() == other.storage_->num_bits() && "width mismatch in plus_assign");
     storage_->plus_assign(*other.storage_);
 }
 
@@ -66,19 +66,19 @@ void Equation::assign_from(const Equation& other) {
     assert(storage_ != nullptr && other.storage_ != nullptr);
     assert(storage_->repr() == other.storage_->repr() &&
            "representation mismatch in assign_from");
-    assert(storage_->size() == other.storage_->size() && "width mismatch in assign_from");
+    assert(storage_->num_bits() == other.storage_->num_bits() && "width mismatch in assign_from");
     storage_->assign_from(*other.storage_);
 }
 
 Equation Equation::compact(const CompactionTransform& transform) const {
     assert(storage_ != nullptr);
-    assert(storage_->size() == transform.old_num_vars() + 1 && "width mismatch in compact");
+    assert(storage_->num_bits() == transform.old_num_vars() + 1 && "width mismatch in compact");
     return Equation(storage_->compact(transform));
 }
 
 Equation Equation::uncompact(const CompactionTransform& transform) const {
     assert(storage_ != nullptr);
-    assert(storage_->size() == transform.new_num_vars() + 1 && "width mismatch in uncompact");
+    assert(storage_->num_bits() == transform.new_num_vars() + 1 && "width mismatch in uncompact");
     return Equation(storage_->uncompact(transform));
 }
 

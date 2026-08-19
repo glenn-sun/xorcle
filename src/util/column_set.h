@@ -14,15 +14,16 @@ namespace xorcle {
 /// motivates the coarse algebra interface.
 ///
 /// @note Bit packing is not an optimization here but a requirement. Every
-/// `Clause` carries a pivot bitmap of width `num_vars + 1`, so a byte-per-column
-/// representation would cost eight times as much across the clause database.
-class Bitmap {
+/// `Clause` carries a pivot column set of width `num_vars + 1`, so a
+/// byte-per-column representation would cost eight times as much across the
+/// clause database.
+class ColumnSet {
 public:
-    explicit Bitmap(std::size_t width = 0) : width_(width), words_(word_count(width), 0) {}
+    explicit ColumnSet(std::size_t width = 0) : width_(width), words_(word_count(width), 0) {}
 
     std::size_t size() const noexcept { return width_; }
 
-    /// @brief Resize to a new width, zeroing the whole bitmap.
+    /// @brief Resize to a new width, zeroing the whole set.
     void reset_width(std::size_t width) {
         width_ = width;
         words_.assign(word_count(width), 0);
@@ -67,7 +68,7 @@ public:
         }
     }
 
-    bool operator==(const Bitmap& other) const noexcept = default;
+    bool operator==(const ColumnSet& other) const noexcept = default;
 
 private:
     static std::size_t word_count(std::size_t width) noexcept { return (width + 63) / 64; }

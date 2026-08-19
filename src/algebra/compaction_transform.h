@@ -4,7 +4,7 @@
 #include <limits>
 #include <vector>
 
-#include "util/bitmap.h"
+#include "util/column_set.h"
 
 namespace xorcle {
 
@@ -28,14 +28,14 @@ public:
     /// @brief Build the transform eliminating the given old-space pivots.
     /// @pre `pivots.size() == old_num_vars + 1` and does not mark the constant
     /// column.
-    static CompactionTransform from_pivots(std::size_t old_num_vars, const Bitmap& pivots);
+    static CompactionTransform from_pivots(std::size_t old_num_vars, const ColumnSet& pivots);
 
     std::size_t old_num_vars() const noexcept { return old_num_vars_; }
 
     std::size_t new_num_vars() const noexcept { return new_num_vars_; }
 
     /// @brief The eliminated (pivot) columns, in old space.
-    const Bitmap& pivot_columns() const noexcept { return pivot_columns_; }
+    const ColumnSet& pivot_columns() const noexcept { return pivot_columns_; }
 
     /// @brief Whether an old-space variable is eliminated. Tolerates `old_index
     /// >= old_num_vars()`, unlike `to_new()`.
@@ -53,7 +53,7 @@ public:
 private:
     std::size_t old_num_vars_ = 0;
     std::size_t new_num_vars_ = 0;
-    Bitmap pivot_columns_;
+    ColumnSet pivot_columns_;
     std::vector<std::size_t> old_to_new_;
     std::vector<std::size_t> new_to_old_;
 };

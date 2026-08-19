@@ -34,7 +34,7 @@ public:
     TrailSnapshot(EquationRepr repr, std::size_t num_vars) : span_(repr, num_vars) {}
 
     /// @brief Learn a new equation, with `reason` empty for a decision.
-    /// @pre `eqn.size() == span().cols()`, and `eqn` has been reduced by `span()`
+    /// @pre `eqn.num_bits() == span().cols()`, and `eqn` has been reduced by `span()`
     /// so it is not already in the span.
     /// @pre If `reason` is provided, then `eqn + `@f$\mathbf{1}@f$ belongs to that
     /// reason clause.

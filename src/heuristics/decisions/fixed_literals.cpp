@@ -30,7 +30,7 @@ void FixedLiterals::update_with_compaction(const CompactionTransform& transform,
     decision_basis_ = project_basis_keep_order(decision_basis_, transform, repr());
     set_num_vars(transform.new_num_vars());
     reduced_scratch_.resize(num_vars());
-    reduced_scratch_.clear();
+    reduced_scratch_.set_eq_true();
 }
 
 } // namespace xorcle

@@ -29,8 +29,8 @@ void PropagationEngine::reconfigure(std::size_t num_vars) {
     num_vars_ = num_vars;
     working_eqn_.resize(num_vars);
     working_eqn2_.resize(num_vars);
-    working_eqn_.clear();
-    working_eqn2_.clear();
+    working_eqn_.set_eq_true();
+    working_eqn2_.set_eq_true();
 
     const std::size_t constant_bit = num_vars;
     false_equation_.resize(num_vars);

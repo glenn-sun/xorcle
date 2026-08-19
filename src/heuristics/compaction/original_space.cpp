@@ -9,10 +9,10 @@ namespace xorcle {
 
 namespace {
 
-Bitmap scatter_through_map(const Bitmap& source, const std::vector<std::size_t>& index_map,
+ColumnSet scatter_through_map(const ColumnSet& source, const std::vector<std::size_t>& index_map,
                            std::size_t destination_width) {
     assert(source.size() == index_map.size());
-    Bitmap destination(destination_width);
+    ColumnSet destination(destination_width);
     for (std::size_t index = 0; index < index_map.size(); ++index) {
         if (source.test(index)) {
             assert(index_map[index] < destination_width);
@@ -22,13 +22,13 @@ Bitmap scatter_through_map(const Bitmap& source, const std::vector<std::size_t>&
     return destination;
 }
 
-void undo_one_compaction(Bitmap& assignment, const CompactionHistoryEntry& entry,
+void undo_one_compaction(ColumnSet& assignment, const CompactionHistoryEntry& entry,
                          std::vector<std::size_t>& bit_scratch) {
     const std::size_t old_num_vars = entry.transform.old_num_vars();
     assert(assignment.size() == entry.transform.new_num_vars() &&
            "compaction history does not line up with the assignment width");
 
-    Bitmap before(old_num_vars);
+    ColumnSet before(old_num_vars);
     for (std::size_t new_index = 0; new_index < entry.transform.new_num_vars(); ++new_index) {
         if (assignment.test(new_index)) {
             before.set(entry.transform.to_old(new_index));
@@ -63,11 +63,11 @@ void undo_one_compaction(Bitmap& assignment, const CompactionHistoryEntry& entry
 
 } // namespace
 
-Bitmap reconstruct_original_assignment(
-    const Bitmap& active_assignment,
+ColumnSet reconstruct_original_assignment(
+    const ColumnSet& active_assignment,
     const std::vector<CompactionHistoryEntry>& compaction_history,
     const std::vector<std::size_t>& active_var_to_original, std::size_t original_num_vars) {
-    Bitmap assignment = active_assignment;
+    ColumnSet assignment = active_assignment;
     std::vector<std::size_t> bit_scratch;
 
     for (auto entry = compaction_history.rbegin(); entry != compaction_history.rend(); ++entry) {

@@ -42,9 +42,10 @@
 
 // --- Storage and reproducibility -------------------------------------------
 
-XORCLE_ENUM_OPTION(algebra, EquationRepr, EquationRepr::dense, "equation storage representation")
-XORCLE_ENUM_VALUE(algebra, "dense", EquationRepr::dense)
-XORCLE_ENUM_VALUE(algebra, "sparse", EquationRepr::sparse)
+XORCLE_ENUM_OPTION(equation_repr, EquationRepr, EquationRepr::dense,
+                   "storage representation for equations")
+XORCLE_ENUM_VALUE(equation_repr, "dense", EquationRepr::dense)
+XORCLE_ENUM_VALUE(equation_repr, "sparse", EquationRepr::sparse)
 
 XORCLE_OPTION(seed, U64, 0, 0, UINT64_MAX, "base RNG seed; a run is reproducible from it")
 

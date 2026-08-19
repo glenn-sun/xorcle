@@ -5,7 +5,7 @@
 #include <optional>
 #include <vector>
 
-#include "util/bitmap.h"
+#include "util/column_set.h"
 
 namespace xorcle {
 
@@ -49,11 +49,11 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
     // Preallocated scratch: nothing in the loop allocates after the first pass.
     Equation reduced_eqn(trail.repr(), trail.num_vars());
     Equation trail_basis_row(trail.repr(), trail_basis.num_vars());
-    Bitmap row_coefficients;
+    ColumnSet row_coefficients;
     std::vector<std::size_t> mapped_bits;
 
     for (const Equation& eqn : rs) {
-        assert(eqn.size() == reduced_eqn.size());
+        assert(eqn.num_bits() == reduced_eqn.num_bits());
         reduced_eqn.assign_from(eqn);
         // `row_coefficients` is indexed by row index within the span, i.e.
         // row-echelon order, not trail order.
@@ -90,7 +90,7 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
     for (const Equation& trail_basis_row : *this) {
         // Add up the selected subset of trail rows, dispatching at row
         // granularity: one `bits()` call, then one `plus_assign()` per row.
-        lifted_eqn.clear();
+        lifted_eqn.set_eq_true();
         trail_basis_row.bits(coefficient_bits);
         for (const std::size_t coefficient_bit : coefficient_bits) {
             const std::size_t trail_index = coefficient_width - coefficient_bit - 1;
