@@ -5,8 +5,8 @@
 #include <utility>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
 #include "core/analysis.h"
@@ -35,13 +35,13 @@ public:
 
         Kind kind;
         ClauseId id = 0; ///< The reason clause, for `resolved`.
-        std::vector<std::size_t> columns; ///< The equation's set columns, for `critical`.
+        std::vector<std::size_t> bits; ///< The equation's set bits, for `critical`.
 
         bool operator==(const Event& other) const = default;
     };
 
-    RecordingDecisions(Algebra backend, std::size_t num_vars)
-        : DecisionProcedure(backend, num_vars, Seed{0}) {}
+    RecordingDecisions(EquationRepr repr, std::size_t num_vars)
+        : DecisionProcedure(repr, num_vars, Seed{0}) {}
 
     /// @brief Unused; conflict analysis never resets a decision procedure.
     void reinitialize() override {}
@@ -49,7 +49,7 @@ public:
     /// @brief Unused; conflict analysis never decides.
     Equation make_decision(const RowSpace&, const std::vector<Clause>&) override {
         CHECK_MESSAGE(false, "conflict analysis must not make decisions");
-        return Equation(backend(), num_vars());
+        return Equation(repr(), num_vars());
     }
 
     void update_with_resolved_clause(ClauseId id) override {
@@ -57,7 +57,7 @@ public:
     }
 
     void update_with_critical_equation(const Equation& eqn) override {
-        events.push_back(Event{Event::Kind::critical, 0, columns_of(eqn)});
+        events.push_back(Event{Event::Kind::critical, 0, bits_of(eqn)});
     }
 
     /// @brief The notifications received, oldest first.
@@ -70,9 +70,9 @@ RecordingDecisions::Event resolved(ClauseId id) {
 }
 
 /// @brief A `critical` event, for building an expected sequence.
-RecordingDecisions::Event critical(std::vector<std::size_t> columns) {
+RecordingDecisions::Event critical(std::vector<std::size_t> bits) {
     return RecordingDecisions::Event{RecordingDecisions::Event::Kind::critical, 0,
-                                     std::move(columns)};
+                                     std::move(bits)};
 }
 
 /// @brief The rows of `clause` that do not lie in `span`. A clause is asserting
@@ -107,11 +107,11 @@ void check_asserts_at(const AssertingClause& learned, const Trail& trail) {
     }
 }
 
-/// @brief The rows of a clause or row space, as lists of set columns.
+/// @brief The rows of a clause or row space, as lists of set bits.
 std::vector<std::vector<std::size_t>> rows_of(const RowEchelonMatrix& matrix) {
     std::vector<std::vector<std::size_t>> rows;
     for (const Equation& row : matrix) {
-        rows.push_back(columns_of(row));
+        rows.push_back(bits_of(row));
     }
     return rows;
 }
@@ -138,18 +138,18 @@ struct Conflict {
 /// `[x1 = 0]`, which asserts at the root. Every equation is learned in the form
 /// the solver learns it in -- already reduced by the span -- so step 3 is
 /// @f$\mathbf{1}@f$ rather than the raw `[x1 = 0]` the clause implied.
-Conflict make_one_step_conflict(Algebra backend) {
+Conflict make_one_step_conflict(EquationRepr repr) {
     constexpr std::size_t num_vars = 3;
     std::vector<Clause> clauses;
-    clauses.push_back(make_clause(backend, num_vars, {{0}, {1}})); // 0: implies [x1 = 1]
-    clauses.push_back(make_clause(backend, num_vars, {{1, 3}, {2}})); // 1: implies [x2 = 1]
-    clauses.push_back(make_clause(backend, num_vars, {{1, 3}, {2, 3}})); // 2: the conflict
+    clauses.push_back(make_clause(repr, num_vars, {{0}, {1}})); // 0: implies [x1 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{1, 3}, {2}})); // 1: implies [x2 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{1, 3}, {2, 3}})); // 2: the conflict
 
-    Trail trail(backend, num_vars);
-    trail.learn(make_equation_with(backend, num_vars, {0}), std::nullopt);
-    trail.learn(make_equation_with(backend, num_vars, {1, 3}), ClauseId{0});
-    trail.learn(make_equation_with(backend, num_vars, {2, 3}), ClauseId{1});
-    trail.learn(Equation::eq_false(backend, num_vars), ClauseId{2});
+    Trail trail(repr, num_vars);
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
+    trail.learn(make_equation_with(repr, num_vars, {1, 3}), ClauseId{0});
+    trail.learn(make_equation_with(repr, num_vars, {2, 3}), ClauseId{1});
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2});
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -171,26 +171,26 @@ Conflict make_one_step_conflict(Algebra backend) {
 /// row 5), so the column arithmetic really has to go through `order_map()`.
 /// `conflict_clause_id` picks clause 4, whose analysis takes two resolution
 /// steps, or clause 5, which is already asserting.
-Conflict make_two_level_conflict(Algebra backend, ClauseId conflict_clause_id) {
+Conflict make_two_level_conflict(EquationRepr repr, ClauseId conflict_clause_id) {
     constexpr std::size_t num_vars = 6;
     std::vector<Clause> clauses;
-    clauses.push_back(make_clause(backend, num_vars, {{0}, {5}})); // 0: implies [x5 = 1]
-    clauses.push_back(make_clause(backend, num_vars, {{1}, {2}})); // 1: implies [x2 = 1]
-    clauses.push_back(make_clause(backend, num_vars, {{2, 6}, {3}})); // 2: implies [x3 = 1]
-    clauses.push_back(make_clause(backend, num_vars, {{2, 6}, {4}})); // 3: implies [x4 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{0}, {5}})); // 0: implies [x5 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{1}, {2}})); // 1: implies [x2 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{2, 6}, {3}})); // 2: implies [x3 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{2, 6}, {4}})); // 3: implies [x4 = 1]
     // 4: [x3 + x4 = 1] v [x2 = 0] v [x5 = 0], every literal falsified.
-    clauses.push_back(make_clause(backend, num_vars, {{3, 4}, {2, 6}, {5, 6}}));
+    clauses.push_back(make_clause(repr, num_vars, {{3, 4}, {2, 6}, {5, 6}}));
     // 5: [x3 + x4 = 1] v [x5 = 0], also falsified, but already asserting.
-    clauses.push_back(make_clause(backend, num_vars, {{3, 4}, {5, 6}}));
+    clauses.push_back(make_clause(repr, num_vars, {{3, 4}, {5, 6}}));
 
-    Trail trail(backend, num_vars);
-    trail.learn(make_equation_with(backend, num_vars, {0}), std::nullopt);
-    trail.learn(make_equation_with(backend, num_vars, {5, 6}), ClauseId{0});
-    trail.learn(make_equation_with(backend, num_vars, {1}), std::nullopt);
-    trail.learn(make_equation_with(backend, num_vars, {2, 6}), ClauseId{1});
-    trail.learn(make_equation_with(backend, num_vars, {3, 6}), ClauseId{2});
-    trail.learn(make_equation_with(backend, num_vars, {4, 6}), ClauseId{3});
-    trail.learn(Equation::eq_false(backend, num_vars), conflict_clause_id);
+    Trail trail(repr, num_vars);
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
+    trail.learn(make_equation_with(repr, num_vars, {5, 6}), ClauseId{0});
+    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt);
+    trail.learn(make_equation_with(repr, num_vars, {2, 6}), ClauseId{1});
+    trail.learn(make_equation_with(repr, num_vars, {3, 6}), ClauseId{2});
+    trail.learn(make_equation_with(repr, num_vars, {4, 6}), ClauseId{3});
+    trail.learn(Equation::eq_false(repr, num_vars), conflict_clause_id);
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -202,7 +202,7 @@ void check_conflicting(const Conflict& conflict) {
 
     // The conflict: 1 lies in the span, and the row that put it there is the most
     // recent one. Everything in `analysis.cpp` rests on this.
-    REQUIRE(columns_of(trail.span().row(trail.span().rows() - 1)) ==
+    REQUIRE(bits_of(trail.span().row(trail.span().rows() - 1)) ==
             std::vector<std::size_t>{trail.num_vars()});
     REQUIRE(trail.order_map()[trail.span().rows() - 1] == trail.span().rows() - 1);
 
@@ -218,14 +218,14 @@ void check_conflicting(const Conflict& conflict) {
 } // namespace
 
 TEST_CASE_TEMPLATE("analysis: the fixtures really do conflict", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
-    const Conflict one_step = make_one_step_conflict(backend);
+    const Conflict one_step = make_one_step_conflict(repr);
     check_conflicting(one_step);
     CHECK(one_step.trail.level() == 1);
     CHECK(one_step.trail.order_map() == std::vector<std::size_t>{0, 1, 2, 3});
 
-    const Conflict two_level = make_two_level_conflict(backend, ClauseId{4});
+    const Conflict two_level = make_two_level_conflict(repr, ClauseId{4});
     check_conflicting(two_level);
     CHECK(two_level.trail.level() == 2);
     CHECK(two_level.trail.order_map() == std::vector<std::size_t>{0, 5, 1, 2, 3, 4, 6});
@@ -235,9 +235,9 @@ TEST_CASE_TEMPLATE("analysis: the fixtures really do conflict", Tag, DenseTag, S
 }
 
 TEST_CASE_TEMPLATE("analysis: a conflict resolved in one step", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const Conflict conflict = make_one_step_conflict(backend);
-    RecordingDecisions decisions(backend, conflict.trail.num_vars());
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_one_step_conflict(repr);
+    RecordingDecisions decisions(repr, conflict.trail.num_vars());
     std::vector<ClauseId> reason_ids;
 
     const AssertingClause learned =
@@ -247,7 +247,7 @@ TEST_CASE_TEMPLATE("analysis: a conflict resolved in one step", Tag, DenseTag, S
     // unit clause [x1 = 0], stored as its linear negation [x1 = 1] = {1, 3}.
     CHECK(rows_of(learned.clause) == std::vector<std::vector<std::size_t>>{{1, 3}});
     CHECK(learned.clause.cols() == conflict.trail.span().cols());
-    CHECK(learned.clause.backend() == backend);
+    CHECK(learned.clause.repr() == repr);
 
     // A unit clause asserts at the root, so the whole decision level goes.
     CHECK(learned.asserting_level == 0);
@@ -263,9 +263,9 @@ TEST_CASE_TEMPLATE("analysis: a conflict resolved in one step", Tag, DenseTag, S
 
 TEST_CASE_TEMPLATE("analysis: a conflict needing several resolution steps", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const Conflict conflict = make_two_level_conflict(backend, ClauseId{4});
-    RecordingDecisions decisions(backend, conflict.trail.num_vars());
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
+    RecordingDecisions decisions(repr, conflict.trail.num_vars());
     std::vector<ClauseId> reason_ids;
 
     const AssertingClause learned =
@@ -291,9 +291,9 @@ TEST_CASE_TEMPLATE("analysis: a conflict needing several resolution steps", Tag,
 
 TEST_CASE_TEMPLATE("analysis: an already-asserting conflict clause is learned unchanged", Tag,
                    DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const Conflict conflict = make_two_level_conflict(backend, ClauseId{5});
-    RecordingDecisions decisions(backend, conflict.trail.num_vars());
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_two_level_conflict(repr, ClauseId{5});
+    RecordingDecisions decisions(repr, conflict.trail.num_vars());
     std::vector<ClauseId> reason_ids;
 
     const AssertingClause learned =
@@ -314,9 +314,9 @@ TEST_CASE_TEMPLATE("analysis: an already-asserting conflict clause is learned un
 
 TEST_CASE_TEMPLATE("analysis: reason ids are collected in derivation order", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const Conflict conflict = make_two_level_conflict(backend, ClauseId{4});
-    RecordingDecisions decisions(backend, conflict.trail.num_vars());
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
+    RecordingDecisions decisions(repr, conflict.trail.num_vars());
 
     // The buffer is appended to, never cleared, and the caller reverses it once
     // to obtain proof order: the reversed sequence ends with the conflicting
@@ -327,7 +327,7 @@ TEST_CASE_TEMPLATE("analysis: reason ids are collected in derivation order", Tag
     CHECK(reason_ids == std::vector<ClauseId>{99, 4, 3, 2});
 
     // And the buffer really is optional.
-    RecordingDecisions other_decisions(backend, conflict.trail.num_vars());
+    RecordingDecisions other_decisions(repr, conflict.trail.num_vars());
     const AssertingClause without_ids =
         find_asserting_clause(conflict.trail, conflict.clauses, other_decisions, nullptr);
     CHECK(rows_of(without_ids.clause) == rows_of(learned.clause));
@@ -337,10 +337,10 @@ TEST_CASE_TEMPLATE("analysis: reason ids are collected in derivation order", Tag
 
 TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const Conflict conflict = make_two_level_conflict(backend, ClauseId{4});
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
     const Trail& trail = conflict.trail;
-    RecordingDecisions decisions(backend, trail.num_vars());
+    RecordingDecisions decisions(repr, trail.num_vars());
 
     // Clause 4's three rows, in trail-basis coordinates. Column c is trail step
     // m - 1 - c with m = 7, so:
@@ -353,7 +353,7 @@ TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", T
     // The coordinate vector of 1: the unit vector at column 0, because the most
     // recently learned trail row is 1 itself on a conflicting trail.
     const Equation trail_basis_one =
-        make_equation_with(backend, basis.num_vars(), {0});
+        make_equation_with(repr, basis.num_vars(), {0});
     REQUIRE(trail_basis_one.size() == basis.cols());
 
     std::vector<ClauseId> reason_ids;
@@ -378,10 +378,10 @@ TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", T
 
 TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the current level", Tag,
                    DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const Conflict conflict = make_two_level_conflict(backend, ClauseId{4});
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
     const Trail& trail = conflict.trail;
-    RecordingDecisions decisions(backend, trail.num_vars());
+    RecordingDecisions decisions(repr, trail.num_vars());
 
     // Walk the same loop by hand, checking the condition's sign at every step.
     // The loop condition is `asserting_level() == trail.level()`, not `== 0`:
@@ -389,18 +389,18 @@ TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the cur
     // testing against 0 would exit before doing anything, while testing against
     // `trail.level()` keeps going for exactly two steps.
     TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(conflict.clauses[4], trail);
-    const Equation trail_basis_one = make_equation_with(backend, basis.num_vars(), {0});
+    const Equation trail_basis_one = make_equation_with(repr, basis.num_vars(), {0});
 
     std::vector<std::size_t> asserting_levels{basis.asserting_level()};
     std::size_t steps = 0;
     while (basis.asserting_level() == trail.level()) {
-        const std::optional<std::size_t> pivot_column = basis.row(0).leading_column();
+        const std::optional<std::size_t> pivot_column = basis.row(0).leading_bit();
         REQUIRE(pivot_column.has_value());
         resolve_asserting_basis_with_reason(basis, *pivot_column, trail, conflict.clauses,
                                             decisions, trail_basis_one, nullptr);
         // Each step strictly advances the pivot column, which is why the loop
         // terminates at all.
-        REQUIRE(basis.row(0).leading_column() > pivot_column);
+        REQUIRE(basis.row(0).leading_bit() > pivot_column);
         asserting_levels.push_back(basis.asserting_level());
         ++steps;
         REQUIRE(steps <= trail.span().rows());

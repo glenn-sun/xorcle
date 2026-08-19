@@ -7,8 +7,8 @@
 #include <utility>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
 #include "core/clause_id.h"
@@ -80,11 +80,11 @@ constexpr std::string_view compaction_sat_instance = "p cnf 5 5\n"
 // --- Checking an answer ----------------------------------------------------
 
 /// @brief Whether an assignment satisfies one stored clause row, which is the
-/// equation @f$\sum_{c} x_c + b = 0@f$ with `b` the column at index `num_vars`.
+/// equation @f$\sum_{c} x_c + b = 0@f$ with `b` the bit at index `num_vars`.
 bool row_holds(const Equation& row, const Bitmap& assignment) {
     bool parity = false;
-    for (const std::size_t column : columns_of(row)) {
-        parity ^= column == assignment.size() ? true : assignment.test(column);
+    for (const std::size_t bit : bits_of(row)) {
+        parity ^= bit == assignment.size() ? true : assignment.test(bit);
     }
     return !parity;
 }
@@ -130,18 +130,18 @@ struct Run {
 /// run `xorcle <file>` performs and the counters asserted below are the ones the
 /// differential harness compares. Null `restarts`/`selector` mean `NoRestarts`
 /// and `Cyclic`.
-Run make_run(Algebra backend, std::string_view instance, const CompactionConfig& compaction = {},
+Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfig& compaction = {},
              std::unique_ptr<RestartPolicy> restarts = nullptr,
              std::unique_ptr<ClauseSelector> selector = nullptr) {
-    ParsedDimacs parsed = parse_dimacs_string(instance, backend);
+    ParsedDimacs parsed = parse_dimacs_string(instance, repr);
 
     Run run;
     run.num_vars = parsed.num_vars;
     run.clauses = parsed.clauses;
     run.solver = std::make_unique<Solver>(
-        backend, parsed.num_vars,
+        repr, parsed.num_vars,
         selector != nullptr ? std::move(selector) : std::make_unique<Cyclic>(parsed.num_vars),
-        std::make_unique<Csids>(backend, parsed.num_vars, default_seed),
+        std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
         restarts != nullptr ? std::move(restarts) : std::make_unique<NoRestarts>(), nullptr,
         compaction);
     for (Clause& clause : parsed.clauses) {
@@ -281,8 +281,8 @@ private:
 } // namespace
 
 TEST_CASE_TEMPLATE("solver: a root conflict, proved with no decisions", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    Run run = make_run(backend, root_unsat_instance);
+    constexpr EquationRepr repr = Tag::value;
+    Run run = make_run(repr, root_unsat_instance);
 
     const Solution solution = run.solver->solve();
     CHECK(solution.result == SolveResult::unsat);
@@ -301,8 +301,8 @@ TEST_CASE_TEMPLATE("solver: a root conflict, proved with no decisions", Tag, Den
 }
 
 TEST_CASE_TEMPLATE("solver: SAT decided entirely by root propagation", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    Run run = make_run(backend, unit_sat_instance);
+    constexpr EquationRepr repr = Tag::value;
+    Run run = make_run(repr, unit_sat_instance);
 
     const Solution solution = run.solver->solve();
     check_satisfies(run.clauses, solution, run.num_vars);
@@ -318,8 +318,8 @@ TEST_CASE_TEMPLATE("solver: SAT decided entirely by root propagation", Tag, Dens
 }
 
 TEST_CASE_TEMPLATE("solver: SAT found by search", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    Run run = make_run(backend, search_sat_instance);
+    constexpr EquationRepr repr = Tag::value;
+    Run run = make_run(repr, search_sat_instance);
 
     const Solution solution = run.solver->solve();
     check_satisfies(run.clauses, solution, run.num_vars);
@@ -331,8 +331,8 @@ TEST_CASE_TEMPLATE("solver: SAT found by search", Tag, DenseTag, SparseTag) {
 }
 
 TEST_CASE_TEMPLATE("solver: UNSAT found by search", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    Run run = make_run(backend, search_unsat_instance);
+    constexpr EquationRepr repr = Tag::value;
+    Run run = make_run(repr, search_unsat_instance);
 
     const Solution solution = run.solver->solve();
     CHECK(solution.result == SolveResult::unsat);
@@ -345,8 +345,8 @@ TEST_CASE_TEMPLATE("solver: UNSAT found by search", Tag, DenseTag, SparseTag) {
 }
 
 TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    Run run = make_run(backend, search_unsat_instance);
+    constexpr EquationRepr repr = Tag::value;
+    Run run = make_run(repr, search_unsat_instance);
     CHECK(run.solver->counters().num_conflicts == 0);
 
     const Solution solution = run.solver->solve();
@@ -373,12 +373,12 @@ TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTa
     CHECK(run.solver->decision_stats().decisions == 3);
 }
 
-TEST_CASE("solver: the two backends agree on what the search did") {
+TEST_CASE("solver: the two representations agree on what the search did") {
     // Deliberately not a `TEST_CASE_TEMPLATE`: the claim is about the two
-    // backends together. Storage is meant to be invisible above the algebra
+    // representations together. Storage is meant to be invisible above the algebra
     // layer, so the runs must agree conflict for conflict, not just in verdict.
-    Run dense = make_run(Algebra::dense, search_unsat_instance);
-    Run sparse = make_run(Algebra::sparse, search_unsat_instance);
+    Run dense = make_run(EquationRepr::dense, search_unsat_instance);
+    Run sparse = make_run(EquationRepr::sparse, search_unsat_instance);
 
     const Solution dense_solution = dense.solver->solve();
     const Solution sparse_solution = sparse.solver->solve();
@@ -395,16 +395,16 @@ TEST_CASE("solver: the two backends agree on what the search did") {
 
 TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the original space", Tag,
                    DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
     CompactionConfig compaction_off;
     compaction_off.enabled = false;
-    Run without = make_run(backend, compaction_sat_instance, compaction_off);
+    Run without = make_run(repr, compaction_sat_instance, compaction_off);
     const Solution without_solution = without.solver->solve();
     check_satisfies(without.clauses, without_solution, without.num_vars);
     CHECK(without.solver->active_num_vars() == without.solver->num_vars());
 
-    Run with = make_run(backend, compaction_sat_instance);
+    Run with = make_run(repr, compaction_sat_instance);
     const Solution with_solution = with.solver->solve();
 
     // Compaction really happened, rather than the trigger quietly declining:
@@ -427,34 +427,34 @@ TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the ori
 
 TEST_CASE_TEMPLATE("solver: compaction does not change an UNSAT verdict", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
     CompactionConfig compaction_off;
     compaction_off.enabled = false;
-    Run without = make_run(backend, search_unsat_instance, compaction_off);
-    Run with = make_run(backend, search_unsat_instance);
+    Run without = make_run(repr, search_unsat_instance, compaction_off);
+    Run with = make_run(repr, search_unsat_instance);
 
     CHECK(without.solver->solve().result == SolveResult::unsat);
     CHECK(with.solver->solve().result == SolveResult::unsat);
 }
 
 TEST_CASE_TEMPLATE("solver: restarting does not change the verdict", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    Run restarting = make_run(backend, search_unsat_instance, CompactionConfig{},
+    constexpr EquationRepr repr = Tag::value;
+    Run restarting = make_run(repr, search_unsat_instance, CompactionConfig{},
                               tiny_geometric_restarts());
 
     CHECK(restarting.solver->solve().result == SolveResult::unsat);
     CHECK(restarting.solver->counters().num_restarts > 0);
 
     Run satisfiable =
-        make_run(backend, search_sat_instance, CompactionConfig{}, tiny_geometric_restarts());
+        make_run(repr, search_sat_instance, CompactionConfig{}, tiny_geometric_restarts());
     const Solution solution = satisfiable.solver->solve();
     check_satisfies(satisfiable.clauses, solution, satisfiable.num_vars);
 }
 
 TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
     // `removed_levels` is what the solver discarded, which is the complement of
     // the asserting level only when no restart fired (see the warning on
@@ -464,7 +464,7 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
     auto record = [&](std::unique_ptr<RestartPolicy> restarts) {
         auto selector = std::make_unique<RecordingSelector>();
         RecordingSelector& recorder = *selector;
-        Run run = make_run(backend, search_unsat_instance, CompactionConfig{},
+        Run run = make_run(repr, search_unsat_instance, CompactionConfig{},
                            std::move(restarts), std::move(selector));
         CHECK(run.solver->solve().result == SolveResult::unsat);
         return recorder.backjumps;

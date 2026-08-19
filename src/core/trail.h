@@ -4,8 +4,8 @@
 #include <optional>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 
@@ -31,7 +31,7 @@ namespace xorcle {
 /// which is what makes trail-order arguments valid over row-echelon storage.
 class TrailSnapshot {
 public:
-    TrailSnapshot(Algebra backend, std::size_t num_vars) : span_(backend, num_vars) {}
+    TrailSnapshot(EquationRepr repr, std::size_t num_vars) : span_(repr, num_vars) {}
 
     /// @brief Learn a new equation, with `reason` empty for a decision.
     /// @pre `eqn.size() == span().cols()`, and `eqn` has been reduced by `span()`
@@ -75,7 +75,7 @@ private:
 class Trail {
 public:
     /// @brief A trail holding a single empty root snapshot.
-    Trail(Algebra backend, std::size_t num_vars);
+    Trail(EquationRepr repr, std::size_t num_vars);
 
     /// @brief Learn a new equation, opening a new decision level when `reason` is
     /// empty. Same preconditions as `TrailSnapshot::learn()`.
@@ -98,7 +98,7 @@ public:
     /// and this only ever truncates.
     void resize(std::size_t num_levels);
 
-    Algebra backend() const noexcept { return span().backend(); }
+    EquationRepr repr() const noexcept { return span().repr(); }
 
     std::size_t num_vars() const noexcept { return span().num_vars(); }
 

@@ -20,12 +20,12 @@ namespace {
 /// the test says otherwise.
 constexpr std::size_t default_num_vars = 4;
 
-/// @brief Build a clause from the set columns of each of its linear-negation rows.
-Clause make_clause(Algebra backend, std::size_t clause_num_vars,
+/// @brief Build a clause from the set bits of each of its linear-negation rows.
+Clause make_clause(EquationRepr repr, std::size_t clause_num_vars,
                    std::initializer_list<std::initializer_list<std::size_t>> rows) {
-    Clause clause(backend, clause_num_vars);
+    Clause clause(repr, clause_num_vars);
     for (const std::initializer_list<std::size_t>& row : rows) {
-        clause.add_row(make_equation_with(backend, clause_num_vars, row));
+        clause.add_row(make_equation_with(repr, clause_num_vars, row));
     }
     return clause;
 }
@@ -59,32 +59,32 @@ private:
 
 TEST_CASE_TEMPLATE("propagation: unit clause propagates its linear negation", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
     IgnoreWatchUpdates observer;
     std::size_t num_watch_updates = 0;
 
     // The clause [x0 = 1] is stored as its linear negation [x0 = 0].
-    Clause clause = make_clause(backend, default_num_vars, {{0}});
+    Clause clause = make_clause(repr, default_num_vars, {{0}});
     REQUIRE(clause.rows() == 1);
 
     Equation* implied = engine.unit_propagate_one_clause(0, clause, trail, std::nullopt,
                                                          num_watch_updates, observer);
     REQUIRE(implied != nullptr);
-    CHECK(columns_of(*implied) == std::vector<std::size_t>{0, default_num_vars});
+    CHECK(bits_of(*implied) == std::vector<std::size_t>{0, default_num_vars});
     CHECK(num_watch_updates == 0);
 }
 
 TEST_CASE_TEMPLATE("propagation: unit clause already satisfied", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
     IgnoreWatchUpdates observer;
     std::size_t num_watch_updates = 0;
 
-    Clause clause = make_clause(backend, default_num_vars, {{0}});
-    trail.learn(make_equation_with(backend, default_num_vars, {0, default_num_vars}), ClauseId{0});
+    Clause clause = make_clause(repr, default_num_vars, {{0}});
+    trail.learn(make_equation_with(repr, default_num_vars, {0, default_num_vars}), ClauseId{0});
 
     // The row reduces to 1, so its negation is 0: nothing to propagate.
     CHECK(engine.unit_propagate_one_clause(0, clause, trail, std::nullopt, num_watch_updates,
@@ -93,14 +93,14 @@ TEST_CASE_TEMPLATE("propagation: unit clause already satisfied", Tag, DenseTag, 
 
 TEST_CASE_TEMPLATE("propagation: unit clause conflict is an implied false equation", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
     IgnoreWatchUpdates observer;
     std::size_t num_watch_updates = 0;
 
-    Clause clause = make_clause(backend, default_num_vars, {{0}});
-    trail.learn(make_equation_with(backend, default_num_vars, {0}), ClauseId{0});
+    Clause clause = make_clause(repr, default_num_vars, {{0}});
+    trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
 
     // The row reduces to 0, so the clause implies 1: conflict and propagation
     // travel the same code path.
@@ -112,10 +112,10 @@ TEST_CASE_TEMPLATE("propagation: unit clause conflict is an implied false equati
 
 TEST_CASE_TEMPLATE("propagation: two-row clause with both watches alive", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
-    Clause clause = make_clause(backend, default_num_vars, {{0}, {1}});
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
+    Clause clause = make_clause(repr, default_num_vars, {{0}, {1}});
     RecordingObserver observer(clause);
     std::size_t num_watch_updates = 0;
 
@@ -129,21 +129,21 @@ TEST_CASE_TEMPLATE("propagation: two-row clause with both watches alive", Tag, D
 
 TEST_CASE_TEMPLATE("propagation: two-row clause propagates its complement watch", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
-    Clause clause = make_clause(backend, default_num_vars, {{0}, {1}});
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
+    Clause clause = make_clause(repr, default_num_vars, {{0}, {1}});
     RecordingObserver observer(clause);
     std::size_t num_watch_updates = 0;
 
-    trail.learn(make_equation_with(backend, default_num_vars, {0}), ClauseId{0});
+    trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
 
     // Watch 0 died and there is no third row to move it to, so the clause
     // implies the negation of watch 1.
     Equation* implied = engine.unit_propagate_one_clause(3, clause, trail, std::nullopt,
                                                          num_watch_updates, observer);
     REQUIRE(implied != nullptr);
-    CHECK(columns_of(*implied) == std::vector<std::size_t>{1, default_num_vars});
+    CHECK(bits_of(*implied) == std::vector<std::size_t>{1, default_num_vars});
     CHECK(num_watch_updates == 0);
     CHECK(clause.watched0 == 0);
     CHECK(clause.watched1 == 1);
@@ -151,15 +151,15 @@ TEST_CASE_TEMPLATE("propagation: two-row clause propagates its complement watch"
 
 TEST_CASE_TEMPLATE("propagation: clause satisfied through the complement watch", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
-    Clause clause = make_clause(backend, default_num_vars, {{0}, {1}});
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
+    Clause clause = make_clause(repr, default_num_vars, {{0}, {1}});
     RecordingObserver observer(clause);
     std::size_t num_watch_updates = 0;
 
-    trail.learn(make_equation_with(backend, default_num_vars, {0}), ClauseId{0});
-    trail.learn(make_equation_with(backend, default_num_vars, {1, default_num_vars}), ClauseId{1});
+    trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
+    trail.learn(make_equation_with(repr, default_num_vars, {1, default_num_vars}), ClauseId{1});
 
     // Watch 0 died, but watch 1 reduces to 1, so the clause is satisfied and
     // nothing is implied.
@@ -170,15 +170,15 @@ TEST_CASE_TEMPLATE("propagation: clause satisfied through the complement watch",
 }
 
 TEST_CASE_TEMPLATE("propagation: a dead watch moves to a live row", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
-    Clause clause = make_clause(backend, default_num_vars, {{0}, {1}, {2}});
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
+    Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}});
     RecordingObserver observer(clause);
     std::size_t num_watch_updates = 0;
 
     REQUIRE(clause.rows() == 3);
-    trail.learn(make_equation_with(backend, default_num_vars, {0}), ClauseId{0});
+    trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
 
     CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
                                            observer) == nullptr);
@@ -201,15 +201,15 @@ TEST_CASE_TEMPLATE("propagation: a dead watch moves to a live row", Tag, DenseTa
 
 TEST_CASE_TEMPLATE("propagation: two tasks run against the already-updated watch", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
-    Clause clause = make_clause(backend, default_num_vars, {{0}, {1}, {2}});
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
+    Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}});
     RecordingObserver observer(clause);
     std::size_t num_watch_updates = 0;
 
-    trail.learn(make_equation_with(backend, default_num_vars, {0}), ClauseId{0});
-    trail.learn(make_equation_with(backend, default_num_vars, {1}), ClauseId{1});
+    trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
+    trail.learn(make_equation_with(repr, default_num_vars, {1}), ClauseId{1});
 
     // Both watches died, so two tasks are scheduled. The first moves watch 0 to
     // row 2; the second then finds no row left, because it runs against the
@@ -217,7 +217,7 @@ TEST_CASE_TEMPLATE("propagation: two tasks run against the already-updated watch
     Equation* implied = engine.unit_propagate_one_clause(3, clause, trail, std::nullopt,
                                                          num_watch_updates, observer);
     REQUIRE(implied != nullptr);
-    CHECK(columns_of(*implied) == std::vector<std::size_t>{2, default_num_vars});
+    CHECK(bits_of(*implied) == std::vector<std::size_t>{2, default_num_vars});
     CHECK(clause.watched0 == 2);
     CHECK(clause.watched1 == 1);
     CHECK(num_watch_updates == 1);
@@ -229,20 +229,20 @@ TEST_CASE_TEMPLATE("propagation: two tasks run against the already-updated watch
 
 TEST_CASE_TEMPLATE("propagation: watches must stay independent, not merely nonzero", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
 
     // Rows 1 and 2 are equal modulo the span once x1 + x2 = 0 is known, so row 2
     // is not a legal replacement for a watch paired with row 1 even though it
     // reduces to something nonzero. Row 3 is.
-    Clause clause = make_clause(backend, default_num_vars, {{0}, {1}, {2}, {3}});
+    Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}, {3}});
     RecordingObserver observer(clause);
     std::size_t num_watch_updates = 0;
 
     REQUIRE(clause.rows() == 4);
-    trail.learn(make_equation_with(backend, default_num_vars, {0}), ClauseId{0});
-    trail.learn(make_equation_with(backend, default_num_vars, {1, 2}), ClauseId{1});
+    trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
+    trail.learn(make_equation_with(repr, default_num_vars, {1, 2}), ClauseId{1});
 
     CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
                                            observer) == nullptr);
@@ -254,14 +254,14 @@ TEST_CASE_TEMPLATE("propagation: watches must stay independent, not merely nonze
 
 TEST_CASE_TEMPLATE("propagation: the cyclic search start persists across calls", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
-    Trail trail(backend, default_num_vars);
-    Clause clause = make_clause(backend, default_num_vars, {{0}, {1}, {2}, {3}});
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
+    Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}, {3}});
     RecordingObserver observer(clause);
     std::size_t num_watch_updates = 0;
 
-    trail.learn(make_equation_with(backend, default_num_vars, {0}), ClauseId{0});
+    trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
     CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
                                            observer) == nullptr);
     CHECK(clause.watched0 == 2);
@@ -269,7 +269,7 @@ TEST_CASE_TEMPLATE("propagation: the cyclic search start persists across calls",
 
     // Watch 1 now dies. The search starts from the persisted position rather
     // than from row 0, so it settles on row 3.
-    trail.learn(make_equation_with(backend, default_num_vars, {1}), ClauseId{1});
+    trail.learn(make_equation_with(repr, default_num_vars, {1}), ClauseId{1});
     CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
                                            observer) == nullptr);
     CHECK(clause.watched0 == 2);
@@ -283,23 +283,23 @@ TEST_CASE_TEMPLATE("propagation: the cyclic search start persists across calls",
 }
 
 TEST_CASE_TEMPLATE("propagation: reconfigure resizes the scratch", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    PropagationEngine engine(backend, default_num_vars);
+    constexpr EquationRepr repr = Tag::value;
+    PropagationEngine engine(repr, default_num_vars);
     CHECK(engine.num_vars() == default_num_vars);
 
     engine.reconfigure(2);
     CHECK(engine.num_vars() == 2);
 
-    Trail trail(backend, 2);
+    Trail trail(repr, 2);
     IgnoreWatchUpdates observer;
     std::size_t num_watch_updates = 0;
-    Clause clause = make_clause(backend, 2, {{1}});
+    Clause clause = make_clause(repr, 2, {{1}});
 
     Equation* implied = engine.unit_propagate_one_clause(0, clause, trail, std::nullopt,
                                                          num_watch_updates, observer);
     REQUIRE(implied != nullptr);
     CHECK(implied->size() == 3);
-    CHECK(columns_of(*implied) == std::vector<std::size_t>{1, 2});
+    CHECK(bits_of(*implied) == std::vector<std::size_t>{1, 2});
 }
 
 } // namespace xorcle

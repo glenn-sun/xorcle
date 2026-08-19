@@ -30,7 +30,7 @@ inline constexpr DecisionPhase default_decision_phase = DecisionPhase::falsify;
 /// `false_equation` is a preallocated @f$\mathbf{1}@f$, added to flip the
 /// constant column in one whole-row operation; `rng` is consumed by exactly one
 /// draw under `DecisionPhase::random` and untouched otherwise.
-/// @pre `eqn.size() == false_equation.size()` and both share a backend.
+/// @pre `eqn.size() == false_equation.size()` and both share a representation.
 void apply_phase(Equation& eqn, DecisionPhase phase, const Equation& false_equation, Rng& rng);
 
 } // namespace xorcle

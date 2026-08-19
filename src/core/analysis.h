@@ -55,7 +55,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 /// against the reason clause of the trail step that coordinate names, then
 /// merging in the reason's remaining rows.
 ///
-/// `pivot_column` is always `asserting_basis.row(0).leading_column()`: rows are
+/// `pivot_column` is always `asserting_basis.row(0).leading_bit()`: rows are
 /// stored in ascending leading-column order, so the matrix's first non-zero
 /// column is row 0's. `trail_basis_one` is the coordinate vector of
 /// @f$\mathbf{1}@f$, the unit vector at column 0, passed in because the loop
@@ -63,11 +63,11 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 /// if non-null, receives the reason clause's id, appended.
 ///
 /// @pre `asserting_basis.rows() > 0` and `pivot_column ==
-/// asserting_basis.row(0).leading_column()`.
+/// asserting_basis.row(0).leading_bit()`.
 /// @pre The trail step named by `pivot_column` was propagated, not decided.
 /// @pre **The trail is conflicting.** Outside conflict analysis the identity
 /// this step is built on does not hold and the result is silently wrong.
-/// @post `asserting_basis.row(0).leading_column() > pivot_column`, so repeating
+/// @post `asserting_basis.row(0).leading_bit() > pivot_column`, so repeating
 /// the step terminates.
 void resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
                                          std::size_t pivot_column, const Trail& trail,

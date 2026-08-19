@@ -49,11 +49,11 @@ LrupLogger::~LrupLogger() {
 
 void LrupLogger::write_token(const Equation& row) {
     assert(row.size() == num_vars_ + 1 && "proof rows live in the logger's variable space");
-    row.columns(columns_);
+    row.bits(bits_);
 
-    // `columns()` is ascending, so the constant column is last if it is set at all.
-    const bool rhs_is_zero = !columns_.empty() && columns_.back() == num_vars_;
-    const std::size_t variable_count = columns_.size() - (rhs_is_zero ? 1u : 0u);
+    // `bits()` is ascending, so the constant bit is last if it is set at all.
+    const bool rhs_is_zero = !bits_.empty() && bits_.back() == num_vars_;
+    const std::size_t variable_count = bits_.size() - (rhs_is_zero ? 1u : 0u);
     assert(variable_count > 0 && "constant-only rows are not valid proof tokens");
 
     if (rhs_is_zero) {
@@ -63,7 +63,7 @@ void LrupLogger::write_token(const Equation& row) {
         if (i != 0) {
             out_ << '+';
         }
-        out_ << (columns_[i] + 1);
+        out_ << (bits_[i] + 1);
     }
 }
 

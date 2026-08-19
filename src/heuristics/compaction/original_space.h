@@ -18,7 +18,7 @@ namespace xorcle {
 /// surviving variables back to their pre-compaction indices, then
 /// back-substitutes the eliminated ones from the trail rows that eliminated them
 /// — for a row with leading column @f$p@f$, @f$x_p@f$ is the row's constant bit
-/// XOR the assignment of every other variable the row mentions.
+/// plus the assignment of every other variable the row mentions.
 /// @pre `active_assignment` has width `compaction_history.back().transform.new_num_vars()`,
 /// or, when no compaction has run, `active_var_to_original.size()`.
 ///

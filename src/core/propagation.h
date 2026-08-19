@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <optional>
 
-#include "algebra/algebra.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
@@ -25,7 +25,7 @@ namespace xorcle {
 /// `unit_propagate_one_clause()` returns a pointer into that scratch.
 class PropagationEngine {
 public:
-    PropagationEngine(Algebra backend, std::size_t num_vars);
+    PropagationEngine(EquationRepr repr, std::size_t num_vars);
 
     /// @brief Resize the internal scratch, after a compaction rewrites the
     /// problem into fewer variables.

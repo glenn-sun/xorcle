@@ -7,9 +7,9 @@
 #include <cstddef>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "util/random.h"
 
@@ -20,7 +20,7 @@ namespace xorcle {
 /// so they are refilled here rather than reallocated per call.
 class ClauseSatisfactionWorkspace {
 public:
-    ClauseSatisfactionWorkspace(Algebra backend, std::size_t num_vars);
+    ClauseSatisfactionWorkspace(EquationRepr repr, std::size_t num_vars);
 
     void reconfigure(std::size_t num_vars);
 
@@ -32,7 +32,7 @@ private:
 
     void clear_local_basis(); ///< Empties it, keeping the storage it has grown into.
 
-    Algebra backend_;
+    EquationRepr repr_;
     std::size_t num_vars_;
 
     Equation false_equation_; ///< A preallocated @f$\mathbf{1}@f$; a constant, not scratch.
@@ -47,7 +47,7 @@ private:
 
 /// @brief Choose the first basis equation, in order, the trail has not already
 /// decided; `reduced_scratch` takes each reduction in turn.
-/// @return The first candidate whose reduction has a leading column, i.e. is a
+/// @return The first candidate whose reduction has a leading bit, i.e. is a
 /// legal decision. It points into `basis` and is *not* reduced.
 /// @pre Both have width `trail_span.cols()`, and some legal decision remains.
 const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span,
@@ -63,13 +63,13 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
                                ClauseSatisfactionWorkspace& workspace);
 
 /// @brief Project a literal basis through a compaction, preserving basis order.
-/// @return The first projected equation for each new leading column, in old
-/// basis order, then a unit equation for each new variable none covered.
+/// @return The first projected equation for each new leading bit, in old basis
+/// order, then a unit equation for each new variable none covered.
 /// @pre Every equation in `basis` has width `transform.old_num_vars() + 1`.
-/// @post Exactly `transform.new_num_vars()` equations, one per leading column.
+/// @post Exactly `transform.new_num_vars()` equations, one per leading bit.
 std::vector<Equation> project_basis_keep_order(const std::vector<Equation>& basis,
                                                const CompactionTransform& transform,
-                                               Algebra backend);
+                                               EquationRepr repr);
 
 /// @brief Sample a random combination of a clause's rows that is a legal
 /// decision, into `out_candidate` unreduced and `out_reduced` partially reduced.
@@ -79,7 +79,7 @@ std::vector<Equation> project_basis_keep_order(const std::vector<Equation>& basi
 ///
 /// Rejection sampling, so the draw count is data-dependent;
 /// `random_nonzero_coefficients()` documents the per-attempt pattern. Only a
-/// reduction with a leading column is accepted: @f$\mathbf{0}@f$ is no decision,
+/// reduction with a leading bit is accepted: @f$\mathbf{0}@f$ is no decision,
 /// @f$\mathbf{1}@f$ would conflict at once, and both are resampled. The
 /// @f$\mathbf{1}@f$ branch is unreachable from the intended caller — it means
 /// @f$\mathbf{1} \in \mathrm{span}(U) + \langle g_i \rangle@f$, exactly what the

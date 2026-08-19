@@ -7,9 +7,9 @@
 #include <cstdint>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "util/random.h"
@@ -24,10 +24,11 @@ namespace xorcle {
 ///
 /// @warning **This is a debug baseline, not a serious heuristic.** It is kept
 /// only because a decision order that never changes makes divergences between
-/// builds, or between the algebra backends, instantly attributable.
+/// builds, or between the dense and sparse representations, instantly
+/// attributable.
 class FixedLiterals final : public DecisionProcedure {
 public:
-    FixedLiterals(Algebra backend, std::size_t num_vars, Seed seed);
+    FixedLiterals(EquationRepr repr, std::size_t num_vars, Seed seed);
 
     void reinitialize() override;
 

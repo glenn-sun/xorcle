@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-#include "algebra/algebra.h"
+#include "algebra/equation_repr.h"
 #include "algebra_test_support.h"
 #include "io/dimacs.h"
 
@@ -16,11 +16,11 @@ namespace xorcle {
 
 namespace {
 
-/// @brief The set columns of every row of a clause, in row-echelon order.
+/// @brief The set bits of every row of a clause, in row-echelon order.
 std::vector<std::vector<std::size_t>> rows_of(const Clause& clause) {
     std::vector<std::vector<std::size_t>> out;
     for (std::size_t i = 0; i < clause.rows(); ++i) {
-        out.push_back(columns_of(clause.row(i)));
+        out.push_back(bits_of(clause.row(i)));
     }
     return out;
 }
@@ -33,12 +33,12 @@ std::filesystem::path scratch_path(std::string_view name) {
 } // namespace
 
 TEST_CASE_TEMPLATE("dimacs: a plain CNF instance", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 2\n1 -2 0\n3 0\n", backend);
+    constexpr EquationRepr repr = Tag::value;
+    const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 2\n1 -2 0\n3 0\n", repr);
 
     CHECK(parsed.num_vars == 3);
     REQUIRE(parsed.clauses.size() == 2);
-    CHECK(parsed.clauses[0].backend() == backend);
+    CHECK(parsed.clauses[0].repr() == repr);
     CHECK(parsed.clauses[0].num_vars() == 3);
 
     // `1` is the literal [x1 = 1], stored as its linear negation [x1 = 0]; `-2`
@@ -48,8 +48,8 @@ TEST_CASE_TEMPLATE("dimacs: a plain CNF instance", Tag, DenseTag, SparseTag) {
 }
 
 TEST_CASE_TEMPLATE("dimacs: XOR tokens and the xnf header", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const ParsedDimacs parsed = parse_dimacs_string("p xnf 4 1\n1+2 -3+4 0\n", backend);
+    constexpr EquationRepr repr = Tag::value;
+    const ParsedDimacs parsed = parse_dimacs_string("p xnf 4 1\n1+2 -3+4 0\n", repr);
 
     CHECK(parsed.num_vars == 4);
     REQUIRE(parsed.clauses.size() == 1);
@@ -57,7 +57,7 @@ TEST_CASE_TEMPLATE("dimacs: XOR tokens and the xnf header", Tag, DenseTag, Spars
 }
 
 TEST_CASE_TEMPLATE("dimacs: comments, blank lines and CRLF", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
     const ParsedDimacs parsed = parse_dimacs_string(
         "c leading comment\r\n"
         "\r\n"
@@ -65,7 +65,7 @@ TEST_CASE_TEMPLATE("dimacs: comments, blank lines and CRLF", Tag, DenseTag, Spar
         "p cnf 2 1\r\n"
         "c between clauses\r\n"
         "1 2 0\r\n",
-        backend);
+        repr);
 
     CHECK(parsed.num_vars == 2);
     REQUIRE(parsed.clauses.size() == 1);
@@ -73,99 +73,99 @@ TEST_CASE_TEMPLATE("dimacs: comments, blank lines and CRLF", Tag, DenseTag, Spar
 }
 
 TEST_CASE_TEMPLATE("dimacs: rows are echelonized, not stored verbatim", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
     SUBCASE("a repeated literal collapses") {
-        const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\n2 2 0\n", backend);
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\n2 2 0\n", repr);
         REQUIRE(parsed.clauses.size() == 1);
         CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{1}});
     }
 
     SUBCASE("a dependent literal collapses") {
-        const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 1\n1 2 1+2 0\n", backend);
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 1\n1 2 1+2 0\n", repr);
         REQUIRE(parsed.clauses.size() == 1);
         CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0}, {1}});
     }
 
     SUBCASE("source order does not survive") {
-        const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 1\n3 1 0\n", backend);
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 1\n3 1 0\n", repr);
         REQUIRE(parsed.clauses.size() == 1);
         CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0}, {2}});
     }
 
     SUBCASE("a repeated variable inside one XOR token is idempotent, not cancelling") {
-        const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\n1+1 0\n", backend);
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\n1+1 0\n", repr);
         REQUIRE(parsed.clauses.size() == 1);
         CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0}});
     }
 }
 
 TEST_CASE_TEMPLATE("dimacs: a missing header is an error", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
-    CHECK_THROWS_AS(parse_dimacs_string("", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("c only comments\n\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("1 2 0\n", backend), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("c only comments\n\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("1 2 0\n", repr), DimacsError);
 }
 
 TEST_CASE_TEMPLATE("dimacs: malformed headers are errors", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1 extra\n1 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("q cnf 3 1\n1 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p dnf 3 1\n1 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf x 1\n1 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 -1\n1 0\n", backend), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1 extra\n1 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("q cnf 3 1\n1 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p dnf 3 1\n1 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf x 1\n1 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 -1\n1 0\n", repr), DimacsError);
 }
 
 TEST_CASE_TEMPLATE("dimacs: a wrong header clause count is an error", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 3\n1 0\n2 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1 0\n2 0\n", backend), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 3\n1 0\n2 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1 0\n2 0\n", repr), DimacsError);
 }
 
 TEST_CASE_TEMPLATE("dimacs: a clause line must end with 0", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1 2\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n1 0\n2 3\n", backend), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1 2\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n1 0\n2 3\n", repr), DimacsError);
 
     // Rejected rather than dropped: silently ignoring the rest of the line would
     // lose the second clause of a two-clause line.
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n1 0 2 0\n", backend), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n1 0 2 0\n", repr), DimacsError);
 }
 
 TEST_CASE_TEMPLATE("dimacs: out-of-range variables are errors", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n4 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-4 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1+9 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-0 0\n", backend), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n4 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-4 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1+9 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-0 0\n", repr), DimacsError);
 }
 
 TEST_CASE_TEMPLATE("dimacs: junk tokens are errors", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nhello 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1x 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1.5 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1+ 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n+1 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1++2 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1+-2 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n--1 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n- 0\n", backend), DimacsError);
-    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-+1 0\n", backend), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nhello 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1x 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1.5 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1+ 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n+1 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1++2 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1+-2 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n--1 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n- 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-+1 0\n", repr), DimacsError);
 }
 
 TEST_CASE_TEMPLATE("dimacs: errors name the input and the line", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
 
     try {
-        parse_dimacs_string("p cnf 3 1\nc a comment\n9 0\n", backend, "instance.xnf");
+        parse_dimacs_string("p cnf 3 1\nc a comment\n9 0\n", repr, "instance.xnf");
         FAIL("expected a DimacsError");
     } catch (const DimacsError& error) {
         CHECK(error.line_number() == 3);
@@ -174,10 +174,10 @@ TEST_CASE_TEMPLATE("dimacs: errors name the input and the line", Tag, DenseTag, 
 }
 
 TEST_CASE_TEMPLATE("dimacs: the stream and file forms agree", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
     const std::string text = "p cnf 3 2\n1+2 0\n-3 0\n";
     const std::filesystem::path path =
-        scratch_path(backend == Algebra::dense ? "dense.xnf" : "sparse.xnf");
+        scratch_path(repr == EquationRepr::dense ? "dense.xnf" : "sparse.xnf");
 
     {
         std::ofstream file{path};
@@ -185,8 +185,8 @@ TEST_CASE_TEMPLATE("dimacs: the stream and file forms agree", Tag, DenseTag, Spa
         file << text;
     }
 
-    const ParsedDimacs from_file = parse_dimacs_file(path, backend);
-    const ParsedDimacs from_string = parse_dimacs_string(text, backend);
+    const ParsedDimacs from_file = parse_dimacs_file(path, repr);
+    const ParsedDimacs from_string = parse_dimacs_string(text, repr);
 
     CHECK(from_file.num_vars == from_string.num_vars);
     REQUIRE(from_file.clauses.size() == from_string.clauses.size());
@@ -198,10 +198,10 @@ TEST_CASE_TEMPLATE("dimacs: the stream and file forms agree", Tag, DenseTag, Spa
 }
 
 TEST_CASE_TEMPLATE("dimacs: an unopenable file is an error", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
     const std::filesystem::path path = scratch_path("no_such_directory/missing.xnf");
 
-    CHECK_THROWS_AS(parse_dimacs_file(path, backend), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_file(path, repr), DimacsError);
 }
 
 } // namespace xorcle

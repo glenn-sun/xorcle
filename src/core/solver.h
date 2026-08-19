@@ -5,8 +5,8 @@
 #include <optional>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "core/propagation.h"
@@ -75,7 +75,7 @@ public:
     /// @pre If `proof_logger` is non-null then `compaction.enabled` is false and
     /// `proof_logger->num_vars() == num_vars`. The CLI enforces the first with
     /// `require_compaction_disabled_for_proof()`.
-    Solver(Algebra backend, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
+    Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
            LrupLogger* proof_logger = nullptr, const CompactionConfig& compaction = {});
 
@@ -137,7 +137,7 @@ private:
     /// are mutually exclusive.
     void apply_compaction(CompactionPlan plan);
 
-    Algebra backend_;
+    EquationRepr repr_;
 
     const std::size_t original_num_vars_;
     std::size_t active_num_vars_;

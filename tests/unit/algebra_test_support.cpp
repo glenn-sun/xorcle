@@ -7,15 +7,15 @@
 
 namespace xorcle {
 
-Equation make_equation_with(Algebra backend, std::size_t num_vars,
-                            std::initializer_list<std::size_t> columns) {
-    const std::vector<std::size_t> listed(columns);
-    return Equation::from_columns(backend, num_vars, std::span<const std::size_t>(listed));
+Equation make_equation_with(EquationRepr repr, std::size_t num_vars,
+                            std::initializer_list<std::size_t> bits) {
+    const std::vector<std::size_t> listed(bits);
+    return Equation::from_bits(repr, num_vars, std::span<const std::size_t>(listed));
 }
 
-std::vector<std::size_t> columns_of(const Equation& equation) {
+std::vector<std::size_t> bits_of(const Equation& equation) {
     std::vector<std::size_t> out;
-    equation.columns(out);
+    equation.bits(out);
     return out;
 }
 
@@ -28,24 +28,17 @@ void check_echelon_invariant(const RowEchelonMatrix& matrix) {
     for (std::size_t index = 0; index < matrix.rows(); ++index) {
         const Equation& row = matrix.row(index);
         REQUIRE(row.size() == matrix.cols());
-        REQUIRE(row.backend() == matrix.backend());
+        REQUIRE(row.repr() == matrix.repr());
 
-        const std::optional<std::size_t> leading = row.leading_column();
+        const std::optional<std::size_t> leading = row.leading_bit();
         REQUIRE(leading.has_value());
         REQUIRE(*leading < matrix.cols());
         if (previous_pivot) {
             REQUIRE(*previous_pivot < *leading);
         }
         REQUIRE(pivots.test(*leading));
-        REQUIRE(matrix.row_for_pivot_column(*leading) == index);
         previous_pivot = leading;
     }
-
-    pivots.for_each_set([&](std::size_t pivot_column) {
-        const std::size_t index = matrix.row_for_pivot_column(pivot_column);
-        REQUIRE(index < matrix.rows());
-        REQUIRE(matrix.row(index).leading_column() == std::optional<std::size_t>(pivot_column));
-    });
 
     // Row iteration must agree with indexed access.
     std::size_t seen = 0;

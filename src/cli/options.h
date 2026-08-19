@@ -29,7 +29,7 @@
 #include <utility>
 #include <vector>
 
-#include "algebra/algebra.h"
+#include "algebra/equation_repr.h"
 #include "core/solver.h"
 #include "heuristics/decisions/csids.h"
 #include "heuristics/decisions/decision_procedure.h"

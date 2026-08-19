@@ -23,7 +23,7 @@ Bitmap scatter_through_map(const Bitmap& source, const std::vector<std::size_t>&
 }
 
 void undo_one_compaction(Bitmap& assignment, const CompactionHistoryEntry& entry,
-                         std::vector<std::size_t>& column_scratch) {
+                         std::vector<std::size_t>& bit_scratch) {
     const std::size_t old_num_vars = entry.transform.old_num_vars();
     assert(assignment.size() == entry.transform.new_num_vars() &&
            "compaction history does not line up with the assignment width");
@@ -37,18 +37,18 @@ void undo_one_compaction(Bitmap& assignment, const CompactionHistoryEntry& entry
 
     for (auto row = entry.trail_rows_before.rbegin(); row != entry.trail_rows_before.rend();
          ++row) {
-        // One coarse call per row: the set columns come back ascending, so the
-        // first is the pivot variable and the last is the constant column when
-        // the row has one.
-        row->columns(column_scratch);
-        assert(!column_scratch.empty() && "compaction history holds a zero trail row");
-        const std::size_t pivot_var = column_scratch.front();
+        // One coarse call per row: the set bits come back ascending, so the
+        // first is the pivot variable and the last is the constant bit when the
+        // row has one.
+        row->bits(bit_scratch);
+        assert(!bit_scratch.empty() && "compaction history holds a zero trail row");
+        const std::size_t pivot_var = bit_scratch.front();
         assert(pivot_var < old_num_vars && "compaction history holds an invalid trail pivot");
 
         bool pivot_value = false;
-        for (std::size_t i = 1; i < column_scratch.size(); ++i) {
-            const std::size_t column = column_scratch[i];
-            pivot_value ^= (column == old_num_vars) ? true : before.test(column);
+        for (std::size_t i = 1; i < bit_scratch.size(); ++i) {
+            const std::size_t bit = bit_scratch[i];
+            pivot_value ^= (bit == old_num_vars) ? true : before.test(bit);
         }
 
         if (pivot_value) {
@@ -68,10 +68,10 @@ Bitmap reconstruct_original_assignment(
     const std::vector<CompactionHistoryEntry>& compaction_history,
     const std::vector<std::size_t>& active_var_to_original, std::size_t original_num_vars) {
     Bitmap assignment = active_assignment;
-    std::vector<std::size_t> column_scratch;
+    std::vector<std::size_t> bit_scratch;
 
     for (auto entry = compaction_history.rbegin(); entry != compaction_history.rend(); ++entry) {
-        undo_one_compaction(assignment, *entry, column_scratch);
+        undo_one_compaction(assignment, *entry, bit_scratch);
     }
 
     if (assignment.size() == original_num_vars) {

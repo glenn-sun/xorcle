@@ -8,9 +8,9 @@
 #include <optional>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "heuristics/decisions/decision_procedure.h"
@@ -66,7 +66,7 @@ struct CsidsParams {
 };
 
 struct CsidsState {
-    CsidsState(Algebra backend, std::size_t num_vars, const CsidsConfig& config);
+    CsidsState(EquationRepr repr, std::size_t num_vars, const CsidsConfig& config);
 
     /// @brief Rebuild the literal fallback basis if the active width changed.
     void ensure_unit_eqns();
@@ -78,7 +78,7 @@ struct CsidsState {
     std::optional<double> pending_learned_priority; ///< Activity awaiting the next new clause.
     ClauseId num_clauses = 0;
     double initial_inc_amt = 1.0; ///< @f$\Delta@f$, for restoring `inc_amt` on reset.
-    Algebra backend;
+    EquationRepr repr;
     std::size_t num_vars;
 };
 
@@ -93,7 +93,7 @@ struct CsidsState {
 class Csids final : public DecisionProcedure {
 public:
     /// @brief The equation-sampling stream derives from `seed`.
-    Csids(Algebra backend, std::size_t num_vars, Seed seed,
+    Csids(EquationRepr repr, std::size_t num_vars, Seed seed,
           const CsidsConfig& config = csids_default_config);
 
     /// @brief Resets both RNG streams as well as activity and the counters.

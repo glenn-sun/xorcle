@@ -46,7 +46,7 @@ namespace xorcle {
 class TrailBasisSpace : public RowEchelonMatrix {
 public:
     explicit TrailBasisSpace(const Trail& trail)
-        : RowEchelonMatrix(trail.backend(),
+        : RowEchelonMatrix(trail.repr(),
                            trail.span().rows() > 0 ? trail.span().rows() - 1 : 0),
           trail_(trail) {}
 

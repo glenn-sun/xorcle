@@ -4,12 +4,12 @@
 
 namespace xorcle {
 
-DecisionProcedure::DecisionProcedure(Algebra backend, std::size_t num_vars, Seed seed)
-    : backend_(backend),
+DecisionProcedure::DecisionProcedure(EquationRepr repr, std::size_t num_vars, Seed seed)
+    : repr_(repr),
       num_vars_(num_vars),
       base_seed_(seed),
       phase_rng_(make_rng(seed, RngComponent::decision_phase)),
-      false_equation_(Equation::eq_false(backend, num_vars)) {}
+      false_equation_(Equation::eq_false(repr, num_vars)) {}
 
 void DecisionProcedure::update_with_critical_equation(const Equation&) {}
 
@@ -55,13 +55,13 @@ void DecisionProcedure::apply_decision_phase(Equation& eqn) const {
 
 void DecisionProcedure::set_num_vars(std::size_t num_vars) {
     num_vars_ = num_vars;
-    const std::size_t constant_column = num_vars;
+    const std::size_t constant_bit = num_vars;
     false_equation_.resize(num_vars);
-    false_equation_.assign_columns(std::span<const std::size_t>(&constant_column, 1));
+    false_equation_.assign_bits(std::span<const std::size_t>(&constant_bit, 1));
 }
 
 Equation DecisionProcedure::unit_equation(std::size_t var) const {
-    return Equation::from_columns(backend_, num_vars_, std::span<const std::size_t>(&var, 1));
+    return Equation::from_bits(repr_, num_vars_, std::span<const std::size_t>(&var, 1));
 }
 
 } // namespace xorcle

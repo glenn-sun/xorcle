@@ -23,16 +23,16 @@ namespace {
 Equation make_trail_basis_one(const Trail& trail) {
     const std::size_t coefficient_width = trail.span().rows();
     assert(coefficient_width > 0 && "conflict analysis on an empty trail span");
-    const std::array<std::size_t, 1> columns{0};
-    return Equation::from_columns(trail.backend(), coefficient_width - 1,
-                                  std::span<const std::size_t>(columns));
+    const std::array<std::size_t, 1> bits{0};
+    return Equation::from_bits(trail.repr(), coefficient_width - 1,
+                               std::span<const std::size_t>(bits));
 }
 
 #ifndef NDEBUG
 bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
-    std::vector<std::size_t> set_columns;
-    eqn.columns(set_columns);
-    return eqn.size() == basis.cols() && set_columns == std::vector<std::size_t>{0};
+    std::vector<std::size_t> bits;
+    eqn.bits(bits);
+    return eqn.size() == basis.cols() && bits == std::vector<std::size_t>{0};
 }
 #endif
 
@@ -45,7 +45,7 @@ void resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
                                          const Equation& trail_basis_one,
                                          std::vector<ClauseId>* reason_ids) {
     assert(asserting_basis.rows() > 0 && "resolving against an empty basis");
-    assert(asserting_basis.row(0).leading_column() == std::optional<std::size_t>{pivot_column} &&
+    assert(asserting_basis.row(0).leading_bit() == std::optional<std::size_t>{pivot_column} &&
            "the pivot column is not the leading column of the first row");
     assert(is_trail_basis_one(trail_basis_one, asserting_basis));
 
@@ -107,8 +107,8 @@ void resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
     // the `from_RowSpace()` precondition come from 1 being in the span, so
     // calling this outside conflict analysis, or reordering the learn-then-check
     // sequence in the solver's propagation loop, breaks it silently.
-    asserting_row.xor_assign(reason_row);
-    asserting_row.xor_assign(trail_basis_one);
+    asserting_row.plus_assign(reason_row);
+    asserting_row.plus_assign(trail_basis_one);
     asserting_basis.add_row(asserting_row);
     for (const Equation& extra_reason_row : reason_basis) {
         asserting_basis.add_row(extra_reason_row);
@@ -123,7 +123,7 @@ void resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
     // Both eliminated coordinates are gone and nothing the reason contributed
     // reaches back into them, so the next step resolves a strictly later column.
     assert(asserting_basis.rows() > 0 && "resolution derived the empty clause below the root");
-    assert(*asserting_basis.row(0).leading_column() > pivot_column &&
+    assert(*asserting_basis.row(0).leading_bit() > pivot_column &&
            "resolution did not eliminate the pivot column");
 }
 
@@ -164,7 +164,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         ++resolution_steps;
         assert(resolution_steps < asserting_basis.cols() && "conflict analysis did not terminate");
         assert(asserting_basis.rows() > 0);
-        const std::optional<std::size_t> pivot_column = asserting_basis.row(0).leading_column();
+        const std::optional<std::size_t> pivot_column = asserting_basis.row(0).leading_bit();
         assert(pivot_column.has_value() && "a stored row is zero");
         resolve_asserting_basis_with_reason(asserting_basis, *pivot_column, trail, clauses,
                                             decisions, trail_basis_one, reason_ids);
@@ -177,7 +177,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     // watches a freshly built clause is supposed to have. The rows arrive already
     // in row-echelon order, so each `add_row()` inserts without reducing.
     const RowSpace lifted = asserting_basis.to_RowSpace();
-    Clause asserting_clause(trail.backend(), trail.num_vars());
+    Clause asserting_clause(trail.repr(), trail.num_vars());
     for (const Equation& row : lifted) {
         asserting_clause.add_row(row);
     }

@@ -149,8 +149,8 @@ private:
     std::size_t num_vars_;
     bool finalized_ = false;
 
-    /// @brief Reused buffer for one row's set columns, so logging does not allocate.
-    std::vector<std::size_t> columns_;
+    /// @brief Reused buffer for one row's set bits, so logging does not allocate.
+    std::vector<std::size_t> bits_;
 
     /// @brief Write the trailing `0 <reason id> ... 0` of a line.
     void write_reasons(const std::vector<ClauseId>& reason_ids);

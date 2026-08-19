@@ -52,7 +52,7 @@ bool contains(const std::string& haystack, const std::string& needle) {
 TEST_CASE("options: the documented defaults") {
     const Options options = parse_with_input({});
     CHECK(options.input_path == "instance.xnf");
-    CHECK(options.algebra == Algebra::dense);
+    CHECK(options.algebra == EquationRepr::dense);
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
     CHECK(options.compact_every == 16);
@@ -81,7 +81,7 @@ TEST_CASE("options: --name=value sets each kind") {
                                               "--restart-luby-unit=7",
                                               "--proof=out.lrup",
                                               "--stats-file=stats.csv"});
-    CHECK(options.algebra == Algebra::sparse);
+    CHECK(options.algebra == EquationRepr::sparse);
     CHECK(options.seed == 42);
     CHECK(options.compact == false);
     CHECK(options.csids_initial == doctest::Approx(2.5));

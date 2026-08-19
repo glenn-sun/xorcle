@@ -8,9 +8,9 @@
 #include <optional>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "heuristics/decisions/phase.h"
@@ -40,7 +40,7 @@ public:
     };
 
     /// @brief The phase RNG stream is derived from `seed`.
-    DecisionProcedure(Algebra backend, std::size_t num_vars, Seed seed);
+    DecisionProcedure(EquationRepr repr, std::size_t num_vars, Seed seed);
 
     DecisionProcedure(const DecisionProcedure&) = delete;
     DecisionProcedure& operator=(const DecisionProcedure&) = delete;
@@ -81,7 +81,7 @@ public:
     virtual DecisionStats decision_stats() const;
 
     std::size_t num_vars() const noexcept { return num_vars_; }
-    Algebra backend() const noexcept { return backend_; }
+    EquationRepr repr() const noexcept { return repr_; }
 
     void set_decision_phase(DecisionPhase phase) noexcept { decision_phase_ = phase; }
     DecisionPhase decision_phase() const noexcept { return decision_phase_; }
@@ -106,7 +106,7 @@ protected:
     const Equation& false_equation() const noexcept { return false_equation_; }
 
 private:
-    Algebra backend_;
+    EquationRepr repr_;
     std::size_t num_vars_;
     Seed base_seed_;
     DecisionPhase decision_phase_ = default_decision_phase;

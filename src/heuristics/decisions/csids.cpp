@@ -14,8 +14,8 @@ void CsidsParams::bump_activity(ClauseId id) {
     }
 }
 
-CsidsState::CsidsState(Algebra backend, std::size_t num_vars, const CsidsConfig& config)
-    : initial_inc_amt(config.bump), backend(backend), num_vars(num_vars) {
+CsidsState::CsidsState(EquationRepr repr, std::size_t num_vars, const CsidsConfig& config)
+    : initial_inc_amt(config.bump), repr(repr), num_vars(num_vars) {
     params.initial_activity = config.initial_activity;
     params.decay = config.decay;
     params.inc_amt = config.bump;
@@ -29,7 +29,7 @@ void CsidsState::ensure_unit_eqns() {
     unit_eqns.reserve(num_vars);
     for (std::size_t var = 0; var < num_vars; ++var) {
         unit_eqns.push_back(
-            Equation::from_columns(backend, num_vars, std::span<const std::size_t>(&var, 1)));
+            Equation::from_bits(repr, num_vars, std::span<const std::size_t>(&var, 1)));
     }
 }
 
@@ -45,13 +45,13 @@ void CsidsState::reset_activity() {
     pending_learned_priority.reset();
 }
 
-Csids::Csids(Algebra backend, std::size_t num_vars, Seed seed, const CsidsConfig& config)
-    : DecisionProcedure(backend, num_vars, seed),
-      state_(backend, num_vars, config),
-      clause_sat_workspace_(backend, num_vars),
+Csids::Csids(EquationRepr repr, std::size_t num_vars, Seed seed, const CsidsConfig& config)
+    : DecisionProcedure(repr, num_vars, seed),
+      state_(repr, num_vars, config),
+      clause_sat_workspace_(repr, num_vars),
       clause_equation_rng_(make_rng(seed, RngComponent::csids_equation)),
-      candidate_(backend, num_vars),
-      reduced_candidate_(backend, num_vars) {
+      candidate_(repr, num_vars),
+      reduced_candidate_(repr, num_vars) {
     reinitialize();
 }
 
@@ -133,7 +133,7 @@ std::optional<ClauseId> Csids::decision_clause_hint() const {
 void Csids::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                    const std::vector<Clause>& clauses,
                                    const std::vector<std::uint8_t>& clause_active) {
-    state_.unit_eqns = project_basis_keep_order(state_.unit_eqns, transform, backend());
+    state_.unit_eqns = project_basis_keep_order(state_.unit_eqns, transform, repr());
 
     set_num_vars(transform.new_num_vars());
     clause_sat_workspace_.reconfigure(num_vars());

@@ -7,9 +7,9 @@
 #include <cstdint>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "util/max_heap.h"
@@ -42,7 +42,7 @@ struct VsidsParams {
 /// `update_with_asserting_clause()` rebuilds it. Both bear on the search order.
 class VariableVsids final : public DecisionProcedure {
 public:
-    VariableVsids(Algebra backend, std::size_t num_vars, Seed seed);
+    VariableVsids(EquationRepr repr, std::size_t num_vars, Seed seed);
 
     void reinitialize() override;
 

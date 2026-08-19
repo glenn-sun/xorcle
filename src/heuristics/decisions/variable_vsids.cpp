@@ -28,7 +28,7 @@ void remap_vsids_heap(MaxHeap<Equation, EquationHash>& heap,
     std::unordered_map<Equation, double, EquationHash> activity_by_projected;
     activity_by_projected.reserve(old_snapshot.activity.size());
     for (const auto& [equation, score] : old_snapshot.activity) {
-        Equation projected = equation.project(transform);
+        Equation projected = equation.compact(transform);
         if (!projected.classify().is_leading()) {
             continue;
         }
@@ -44,7 +44,7 @@ void remap_vsids_heap(MaxHeap<Equation, EquationHash>& heap,
         std::unordered_set<Equation, EquationHash> seen;
         seen.reserve(source.size());
         for (const Equation& equation : source) {
-            Equation projected = equation.project(transform);
+            Equation projected = equation.compact(transform);
             if (next_snapshot.activity.find(projected) == next_snapshot.activity.end()) {
                 continue;
             }
@@ -69,8 +69,8 @@ void VsidsParams::bump_activity(const Equation& eqn) {
     }
 }
 
-VariableVsids::VariableVsids(Algebra backend, std::size_t num_vars, Seed seed)
-    : DecisionProcedure(backend, num_vars, seed) {
+VariableVsids::VariableVsids(EquationRepr repr, std::size_t num_vars, Seed seed)
+    : DecisionProcedure(repr, num_vars, seed) {
     reinitialize();
 }
 
@@ -127,17 +127,17 @@ Equation VariableVsids::make_decision(const RowSpace& trail_span, const std::vec
 
 void VariableVsids::update_with_critical_equation(const Equation& eqn) {
     const ReduceResult leading = eqn.classify();
-    assert(leading.is_leading() && leading.column < unit_eqns_.size() &&
-           "critical equation has no variable leading column");
-    vsids_params_.bump_activity(unit_eqns_[leading.column]);
+    assert(leading.is_leading() && leading.bit < unit_eqns_.size() &&
+           "critical equation has no variable leading bit");
+    vsids_params_.bump_activity(unit_eqns_[leading.bit]);
 }
 
 void VariableVsids::update_with_asserting_clause(const Clause& clause) {
     for (std::size_t row_index = 0; row_index < clause.rows(); ++row_index) {
         const ReduceResult leading = clause.row(row_index).classify();
-        assert(leading.is_leading() && leading.column < unit_eqns_.size() &&
-               "asserting clause row has no variable leading column");
-        vsids_params_.bump_activity(unit_eqns_[leading.column]);
+        assert(leading.is_leading() && leading.bit < unit_eqns_.size() &&
+               "asserting clause row has no variable leading bit");
+        vsids_params_.bump_activity(unit_eqns_[leading.bit]);
     }
     vsids_params_.inc_amt *= (1.0 / vsids_params_.decay);
     vsids_params_.activity_heap.rebuild();
@@ -146,7 +146,7 @@ void VariableVsids::update_with_asserting_clause(const Clause& clause) {
 void VariableVsids::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                            const std::vector<Clause>&,
                                            const std::vector<std::uint8_t>&) {
-    unit_eqns_ = project_basis_keep_order(unit_eqns_, transform, backend());
+    unit_eqns_ = project_basis_keep_order(unit_eqns_, transform, repr());
     set_num_vars(transform.new_num_vars());
     remap_vsids_heap(vsids_params_.activity_heap, transform);
     if (vsids_params_.activity_heap.empty()) {

@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-#include "algebra/algebra.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
 #include "core/clause_id.h"
@@ -20,8 +20,8 @@ namespace xorcle {
 namespace {
 
 /// @brief A proof path in the temp directory, unique to one test case.
-std::filesystem::path proof_path(Algebra backend, std::string_view name) {
-    const std::string suffix = backend == Algebra::dense ? "_dense.lrup" : "_sparse.lrup";
+std::filesystem::path proof_path(EquationRepr repr, std::string_view name) {
+    const std::string suffix = repr == EquationRepr::dense ? "_dense.lrup" : "_sparse.lrup";
     return std::filesystem::temp_directory_path() /
            ("xorcle_lrup_test_" + std::string{name} + suffix);
 }
@@ -34,9 +34,9 @@ std::string read_file(const std::filesystem::path& path) {
 }
 
 /// @brief The single clause of a one-clause instance.
-Clause clause_from(std::string_view line, std::size_t num_vars, Algebra backend) {
+Clause clause_from(std::string_view line, std::size_t num_vars, EquationRepr repr) {
     ParsedDimacs parsed = parse_dimacs_string(
-        "p cnf " + std::to_string(num_vars) + " 1\n" + std::string{line} + "\n", backend);
+        "p cnf " + std::to_string(num_vars) + " 1\n" + std::string{line} + "\n", repr);
     REQUIRE(parsed.clauses.size() == 1);
     return std::move(parsed.clauses[0]);
 }
@@ -44,8 +44,8 @@ Clause clause_from(std::string_view line, std::size_t num_vars, Algebra backend)
 } // namespace
 
 TEST_CASE_TEMPLATE("lrup logger: learned and empty clause lines", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const std::filesystem::path path = proof_path(backend, "lines");
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path = proof_path(repr, "lines");
 
     {
         LrupLogger logger(path, 3);
@@ -53,7 +53,7 @@ TEST_CASE_TEMPLATE("lrup logger: learned and empty clause lines", Tag, DenseTag,
         CHECK(logger.path() == path);
         CHECK_FALSE(logger.finalized());
 
-        logger.log_learned_clause(ClauseId{5}, clause_from("1 -2 0", 3, backend),
+        logger.log_learned_clause(ClauseId{5}, clause_from("1 -2 0", 3, repr),
                                   std::vector<ClauseId>{0, 2, 3});
         logger.log_empty_clause(ClauseId{7}, std::vector<ClauseId>{1, 0});
         logger.finalize(true);
@@ -66,12 +66,12 @@ TEST_CASE_TEMPLATE("lrup logger: learned and empty clause lines", Tag, DenseTag,
 }
 
 TEST_CASE_TEMPLATE("lrup logger: tokens round-trip through the parser", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const std::filesystem::path path = proof_path(backend, "roundtrip");
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path = proof_path(repr, "roundtrip");
 
     {
         LrupLogger logger(path, 4);
-        logger.log_learned_clause(ClauseId{0}, clause_from("1+2 -3 0", 4, backend),
+        logger.log_learned_clause(ClauseId{0}, clause_from("1+2 -3 0", 4, repr),
                                   std::vector<ClauseId>{4});
         logger.finalize(true);
     }
@@ -83,12 +83,12 @@ TEST_CASE_TEMPLATE("lrup logger: tokens round-trip through the parser", Tag, Den
 }
 
 TEST_CASE_TEMPLATE("lrup logger: rows are emitted in echelon order", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const std::filesystem::path path = proof_path(backend, "echelon");
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path = proof_path(repr, "echelon");
 
     {
         LrupLogger logger(path, 3);
-        logger.log_learned_clause(ClauseId{2}, clause_from("-3 1 0", 3, backend),
+        logger.log_learned_clause(ClauseId{2}, clause_from("-3 1 0", 3, repr),
                                   std::vector<ClauseId>{1});
         logger.finalize(true);
     }
@@ -99,8 +99,8 @@ TEST_CASE_TEMPLATE("lrup logger: rows are emitted in echelon order", Tag, DenseT
 
 TEST_CASE_TEMPLATE("lrup logger: an empty reason list still closes the line", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const std::filesystem::path path = proof_path(backend, "no_reasons");
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path = proof_path(repr, "no_reasons");
 
     {
         LrupLogger logger(path, 2);
@@ -113,8 +113,8 @@ TEST_CASE_TEMPLATE("lrup logger: an empty reason list still closes the line", Ta
 }
 
 TEST_CASE_TEMPLATE("lrup logger: finalize(false) discards the proof", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const std::filesystem::path path = proof_path(backend, "discard");
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path = proof_path(repr, "discard");
     std::filesystem::path temp;
 
     {
@@ -131,8 +131,8 @@ TEST_CASE_TEMPLATE("lrup logger: finalize(false) discards the proof", Tag, Dense
 
 TEST_CASE_TEMPLATE("lrup logger: an abandoned logger leaves nothing behind", Tag, DenseTag,
                    SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const std::filesystem::path path = proof_path(backend, "abandoned");
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path = proof_path(repr, "abandoned");
     std::filesystem::path temp;
 
     {
@@ -146,8 +146,8 @@ TEST_CASE_TEMPLATE("lrup logger: an abandoned logger leaves nothing behind", Tag
 }
 
 TEST_CASE_TEMPLATE("lrup logger: finalize is idempotent", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const std::filesystem::path path = proof_path(backend, "idempotent");
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path = proof_path(repr, "idempotent");
 
     {
         LrupLogger logger(path, 2);

@@ -4,8 +4,8 @@
 #include <optional>
 #include <vector>
 
-#include "algebra/algebra.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/reduce_result.h"
 #include "algebra_test_support.h"
 
@@ -16,18 +16,18 @@ using Bits = std::vector<bool>;
 
 std::optional<std::size_t> first_set(const Bits& bits);
 
-/// @brief First set column of `bits` strictly after `after`, or `std::nullopt`.
+/// @brief First set bit of `bits` strictly after `after`, or `std::nullopt`.
 std::optional<std::size_t> next_set(const Bits& bits, std::size_t after);
 
-void xor_into(Bits& target, const Bits& source);
+void plus_into(Bits& target, const Bits& source);
 
-std::vector<std::size_t> set_columns(const Bits& bits);
+std::vector<std::size_t> set_bits(const Bits& bits);
 
-Equation to_equation(Algebra backend, const Bits& bits);
+Equation to_equation(EquationRepr repr, const Bits& bits);
 
 Bits to_bits(const Equation& equation);
 
-/// @brief A row with each column set independently with probability `1 / density`.
+/// @brief A row with each bit set independently with probability `1 / density`.
 Bits random_bits(TestRandom& random, std::size_t num_vars, std::size_t density);
 
 /// @brief Translate a partial-reduction sentinel into a `ReduceResult`.
@@ -55,9 +55,6 @@ public:
     const Bits& row(std::size_t index) const { return rows_[index]; }
 
     bool is_pivot(std::size_t column) const { return pivot_[column]; }
-
-    /// @brief Index of the row whose leading column is `column`.
-    std::size_t row_for_pivot_column(std::size_t column) const { return column_to_row_[column]; }
 
     std::optional<std::size_t> add_row_get_index(const Bits& v);
 

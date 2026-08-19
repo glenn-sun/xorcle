@@ -5,28 +5,29 @@
 #include <optional>
 #include <string>
 
-#include "algebra/algebra.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/reduce_result.h"
 #include "util/bitmap.h"
 #include "util/print_mode.h"
 
 namespace xorcle {
 
-/// @brief The abstract backend interface behind `RowEchelonMatrix`.
+/// @brief The abstract interface behind `RowEchelonMatrix`.
 ///
 /// Every method is a whole-row or whole-loop operation, so the reduction loops
 /// pay one virtual call in total rather than one per row operation or per bit.
-/// Backends derive from this through `RowEchelonMatrixImpl<Row>`; nothing
-/// outside `src/algebra/` should name this type. The operations are documented
-/// on `RowEchelonMatrix`, which forwards.
-class RowEchelonMatrixStorage {
+/// Each representation derives from this through
+/// `RowEchelonMatrixTemplate<GF2Vector>`; nothing outside `src/algebra/` should
+/// name this type. The operations are documented on `RowEchelonMatrix`, which
+/// forwards.
+class RowEchelonMatrixInterface {
 public:
-    virtual ~RowEchelonMatrixStorage() = default;
+    virtual ~RowEchelonMatrixInterface() = default;
 
-    virtual Algebra backend() const noexcept = 0;
+    virtual EquationRepr repr() const noexcept = 0;
 
-    virtual std::unique_ptr<RowEchelonMatrixStorage> clone() const = 0;
+    virtual std::unique_ptr<RowEchelonMatrixInterface> clone() const = 0;
 
     virtual std::size_t rows() const noexcept = 0;
 
@@ -36,8 +37,6 @@ public:
 
     virtual const Bitmap& pivot_columns() const noexcept = 0;
 
-    virtual std::size_t row_for_pivot_column(std::size_t column) const = 0;
-
     virtual std::optional<std::size_t> add_row_get_index(const Equation& v) = 0;
 
     virtual void reduce(Equation& v) const = 0;
@@ -45,8 +44,6 @@ public:
     virtual void reduce(Equation& v, Bitmap& coefficients_out) const = 0;
 
     virtual ReduceResult partial_reduce(Equation& v) const = 0;
-
-    virtual void reduce_with_extra(Equation& v, const Equation& extra) const = 0;
 
     virtual ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const = 0;
 
@@ -64,15 +61,15 @@ public:
 /// - `pivot_columns().size() == num_vars() + 1`
 /// - every stored row has width `cols()`
 /// - stored rows have strictly increasing leading columns
-/// - `pivot_columns()` and `row_for_pivot_column()` describe exactly the pivots
+/// - `pivot_columns()` marks exactly the leading column of each stored row
 ///
 /// Reading out a whole column is deliberately absent: it is the one operation
-/// genuinely awful for a sparse backend, and every algorithm wanting it can be
-/// written row-wise instead. Every `Equation` argument below must satisfy
-/// `size() == cols()` and `backend() == backend()`.
+/// genuinely awful for the sparse representation, and every algorithm wanting it
+/// can be written row-wise instead. Every `Equation` argument below must satisfy
+/// `size() == cols()` and `repr() == repr()`.
 class RowEchelonMatrix {
 public:
-    RowEchelonMatrix(Algebra backend, std::size_t num_vars);
+    RowEchelonMatrix(EquationRepr repr, std::size_t num_vars);
 
     RowEchelonMatrix(const RowEchelonMatrix& other);
     RowEchelonMatrix(RowEchelonMatrix&& other) noexcept = default;
@@ -80,7 +77,7 @@ public:
     RowEchelonMatrix& operator=(RowEchelonMatrix&& other) noexcept = default;
     virtual ~RowEchelonMatrix() = default;
 
-    Algebra backend() const noexcept { return storage_->backend(); }
+    EquationRepr repr() const noexcept { return storage_->repr(); }
 
     /// @brief Number of stored rows, i.e. the rank.
     std::size_t rows() const noexcept { return storage_->rows(); }
@@ -95,12 +92,6 @@ public:
 
     /// @brief Bitmap of the pivot columns, of width `cols()`.
     const Bitmap& pivot_columns() const noexcept { return storage_->pivot_columns(); }
-
-    /// @brief Index of the row whose leading column is `column`.
-    /// @pre `column < cols()` and `pivot_columns().test(column)`.
-    std::size_t row_for_pivot_column(std::size_t column) const {
-        return storage_->row_for_pivot_column(column);
-    }
 
     /// @brief Does nothing if `v` is already in the span.
     void add_row(const Equation& v) { storage_->add_row_get_index(v); }
@@ -119,12 +110,6 @@ public:
 
     /// @brief Reduce `v` in place only until its leading column is not a pivot.
     ReduceResult partial_reduce(Equation& v) const { return storage_->partial_reduce(v); }
-
-    /// @brief Fully reduce `v` against this matrix augmented with `extra`.
-    /// @pre `extra` is @f$\mathbf{0}@f$, or its leading column is not a pivot of this matrix.
-    void reduce_with_extra(Equation& v, const Equation& extra) const {
-        storage_->reduce_with_extra(v, extra);
-    }
 
     /// @brief Partially reduce `v` against this matrix augmented with `extra`.
     /// @pre `extra` is @f$\mathbf{0}@f$, or its leading column is not a pivot of this matrix.
@@ -162,11 +147,11 @@ public:
     iterator end() const noexcept { return iterator(this, rows()); }
 
 protected:
-    /// @brief Access the backend storage. For use inside `src/algebra/` only.
-    RowEchelonMatrixStorage& storage() const noexcept { return *storage_; }
+    /// @brief Access the underlying interface. For use inside `src/algebra/` only.
+    RowEchelonMatrixInterface& storage() const noexcept { return *storage_; }
 
 private:
-    std::unique_ptr<RowEchelonMatrixStorage> storage_;
+    std::unique_ptr<RowEchelonMatrixInterface> storage_;
 };
 
 /// @brief A subspace of the space of linear equations over GF(2), held as a
@@ -198,5 +183,12 @@ public:
 
     std::string to_string(const PrintMode& mode = {}) const;
 };
+
+// The two factories below add the constant column, so widths are `num_vars + 1`.
+
+std::unique_ptr<RowEchelonMatrixInterface> make_row_echelon_matrix_interface(
+    EquationRepr repr, std::size_t num_vars);
+
+RowEchelonMatrix make_row_echelon_matrix(EquationRepr repr, std::size_t num_vars);
 
 } // namespace xorcle

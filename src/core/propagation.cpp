@@ -19,11 +19,11 @@ struct PropagationTask {
 
 } // namespace
 
-PropagationEngine::PropagationEngine(Algebra backend, std::size_t num_vars)
+PropagationEngine::PropagationEngine(EquationRepr repr, std::size_t num_vars)
     : num_vars_(num_vars),
-      working_eqn_(backend, num_vars),
-      working_eqn2_(backend, num_vars),
-      false_equation_(Equation::eq_false(backend, num_vars)) {}
+      working_eqn_(repr, num_vars),
+      working_eqn2_(repr, num_vars),
+      false_equation_(Equation::eq_false(repr, num_vars)) {}
 
 void PropagationEngine::reconfigure(std::size_t num_vars) {
     num_vars_ = num_vars;
@@ -32,9 +32,9 @@ void PropagationEngine::reconfigure(std::size_t num_vars) {
     working_eqn_.clear();
     working_eqn2_.clear();
 
-    const std::size_t constant_column = num_vars;
+    const std::size_t constant_bit = num_vars;
     false_equation_.resize(num_vars);
-    false_equation_.assign_columns(std::span<const std::size_t>(&constant_column, 1));
+    false_equation_.assign_bits(std::span<const std::size_t>(&constant_bit, 1));
 }
 
 #ifndef NDEBUG
@@ -87,7 +87,7 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
             // The clause row reduced to 1, so its negation is 0: already satisfied.
             return nullptr;
         }
-        working_eqn_.xor_assign(false_equation_);
+        working_eqn_.plus_assign(false_equation_);
         return &working_eqn_;
     }
 
@@ -182,7 +182,7 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
                 // Complement reduced to 1: satisfied. A second task still runs.
                 continue;
             }
-            working_eqn2_.xor_assign(false_equation_);
+            working_eqn2_.plus_assign(false_equation_);
             return &working_eqn2_;
         }
     }

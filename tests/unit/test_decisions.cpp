@@ -37,56 +37,56 @@ TEST_CASE("csids: the presets carry their documented values") {
 }
 
 TEST_CASE_TEMPLATE("phase: applying a decision phase", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    const Equation false_equation = Equation::eq_false(backend, 4);
+    constexpr EquationRepr repr = Tag::value;
+    const Equation false_equation = Equation::eq_false(repr, 4);
     Rng rng = make_rng(3, RngComponent::decision_phase);
 
     SUBCASE("falsify leaves the equation alone") {
-        Equation eqn = make_equation_with(backend, 4, {1});
+        Equation eqn = make_equation_with(repr, 4, {1});
         apply_phase(eqn, DecisionPhase::falsify, false_equation, rng);
-        CHECK(columns_of(eqn) == std::vector<std::size_t>{1});
+        CHECK(bits_of(eqn) == std::vector<std::size_t>{1});
     }
 
     SUBCASE("satisfy flips the constant column") {
-        Equation eqn = make_equation_with(backend, 4, {1});
+        Equation eqn = make_equation_with(repr, 4, {1});
         apply_phase(eqn, DecisionPhase::satisfy, false_equation, rng);
-        CHECK(columns_of(eqn) == std::vector<std::size_t>{1, 4});
+        CHECK(bits_of(eqn) == std::vector<std::size_t>{1, 4});
 
         apply_phase(eqn, DecisionPhase::satisfy, false_equation, rng);
-        CHECK(columns_of(eqn) == std::vector<std::size_t>{1});
+        CHECK(bits_of(eqn) == std::vector<std::size_t>{1});
     }
 
     SUBCASE("random is reproducible from the seed and only ever flips the constant") {
         Rng other = make_rng(3, RngComponent::decision_phase);
         for (int draw = 0; draw < 16; ++draw) {
-            Equation first = make_equation_with(backend, 4, {1});
-            Equation second = make_equation_with(backend, 4, {1});
+            Equation first = make_equation_with(repr, 4, {1});
+            Equation second = make_equation_with(repr, 4, {1});
             apply_phase(first, DecisionPhase::random, false_equation, rng);
             apply_phase(second, DecisionPhase::random, false_equation, other);
             CHECK(first == second);
-            const std::vector<std::size_t> columns = columns_of(first);
-            CHECK((columns == std::vector<std::size_t>{1} ||
-                   columns == std::vector<std::size_t>{1, 4}));
+            const std::vector<std::size_t> bits = bits_of(first);
+            CHECK((bits == std::vector<std::size_t>{1} ||
+                   bits == std::vector<std::size_t>{1, 4}));
         }
     }
 
     SUBCASE("falsify is the default") {
         CHECK(default_decision_phase == DecisionPhase::falsify);
-        const FixedLiterals procedure(backend, 4, default_seed);
+        const FixedLiterals procedure(repr, 4, default_seed);
         CHECK(procedure.decision_phase() == DecisionPhase::falsify);
     }
 }
 
 TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    FixedLiterals procedure(backend, 4, default_seed);
+    constexpr EquationRepr repr = Tag::value;
+    FixedLiterals procedure(repr, 4, default_seed);
     const std::vector<Clause> clauses;
 
-    const RowSpace empty(backend, 4);
-    CHECK(columns_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{0});
+    const RowSpace empty(repr, 4);
+    CHECK(bits_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{0});
 
-    const RowSpace span = make_row_space(backend, 4, {{0, 4}});
-    CHECK(columns_of(procedure.make_decision(span, clauses)) == std::vector<std::size_t>{1});
+    const RowSpace span = make_row_space(repr, 4, {{0, 4}});
+    CHECK(bits_of(procedure.make_decision(span, clauses)) == std::vector<std::size_t>{1});
 
     CHECK(procedure.decision_stats().decisions == 2);
     CHECK(procedure.decision_stats().fallback_decisions == 0);
@@ -100,74 +100,74 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
         Bitmap pivots(5);
         pivots.set(0);
         const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
-        procedure.update_with_compaction(transform, RowSpace(backend, 3), clauses, {});
+        procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, {});
         CHECK(procedure.num_vars() == 3);
 
-        const RowSpace compacted(backend, 3);
+        const RowSpace compacted(repr, 3);
         const Equation decision = procedure.make_decision(compacted, clauses);
         CHECK(decision.size() == 4);
-        CHECK(columns_of(decision) == std::vector<std::size_t>{0});
+        CHECK(bits_of(decision) == std::vector<std::size_t>{0});
     }
 }
 
 TEST_CASE_TEMPLATE("variable vsids: activity drives the choice", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    VariableVsids procedure(backend, 4, default_seed);
+    constexpr EquationRepr repr = Tag::value;
+    VariableVsids procedure(repr, 4, default_seed);
     const std::vector<Clause> clauses;
-    const RowSpace empty(backend, 4);
+    const RowSpace empty(repr, 4);
 
     SUBCASE("bumping an asserting clause's rows moves them to the front") {
-        procedure.update_with_asserting_clause(make_clause(backend, 4, {{2}}));
-        CHECK(columns_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{2});
+        procedure.update_with_asserting_clause(make_clause(repr, 4, {{2}}));
+        CHECK(bits_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{2});
     }
 
     SUBCASE("critical equations are bumped by their leading variable") {
-        procedure.update_with_critical_equation(make_equation_with(backend, 4, {3, 4}));
+        procedure.update_with_critical_equation(make_equation_with(repr, 4, {3, 4}));
         // The heap only reorders on rebuild, which an asserting clause triggers.
-        procedure.update_with_asserting_clause(make_clause(backend, 4, {{3}}));
-        CHECK(columns_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{3});
+        procedure.update_with_asserting_clause(make_clause(repr, 4, {{3}}));
+        CHECK(bits_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{3});
     }
 
     SUBCASE("determined variables are skipped and the decision comes back reduced") {
-        procedure.update_with_asserting_clause(make_clause(backend, 4, {{0}}));
-        const RowSpace span = make_row_space(backend, 4, {{0, 1}});
+        procedure.update_with_asserting_clause(make_clause(repr, 4, {{0}}));
+        const RowSpace span = make_row_space(repr, 4, {{0, 1}});
         // x0 is the highest-activity literal but reduces to x1, which is legal.
-        CHECK(columns_of(procedure.make_decision(span, clauses)) == std::vector<std::size_t>{1});
+        CHECK(bits_of(procedure.make_decision(span, clauses)) == std::vector<std::size_t>{1});
         CHECK(procedure.decision_stats().decisions == 1);
     }
 
     SUBCASE("compaction remaps the heap and keeps a legal decision available") {
-        procedure.update_with_asserting_clause(make_clause(backend, 4, {{2}}));
+        procedure.update_with_asserting_clause(make_clause(repr, 4, {{2}}));
 
         Bitmap pivots(5);
         pivots.set(0);
         const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
-        procedure.update_with_compaction(transform, RowSpace(backend, 3), clauses, {});
+        procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, {});
         CHECK(procedure.num_vars() == 3);
 
-        const RowSpace compacted(backend, 3);
+        const RowSpace compacted(repr, 3);
         const Equation decision = procedure.make_decision(compacted, clauses);
         CHECK(decision.size() == 4);
         // Old x2 became new x1, and it kept its activity lead.
-        CHECK(columns_of(decision) == std::vector<std::size_t>{1});
+        CHECK(bits_of(decision) == std::vector<std::size_t>{1});
     }
 }
 
 TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    Csids procedure(backend, 4, default_seed);
-    const RowSpace empty(backend, 4);
+    constexpr EquationRepr repr = Tag::value;
+    Csids procedure(repr, 4, default_seed);
+    const RowSpace empty(repr, 4);
 
     std::vector<Clause> clauses;
-    clauses.push_back(make_clause(backend, 4, {{0}}));
-    clauses.push_back(make_clause(backend, 4, {{1}}));
-    clauses.push_back(make_clause(backend, 4, {{2}}));
+    clauses.push_back(make_clause(repr, 4, {{0}}));
+    clauses.push_back(make_clause(repr, 4, {{1}}));
+    clauses.push_back(make_clause(repr, 4, {{2}}));
     procedure.update_with_new_clause(clauses[0], 0);
     procedure.update_with_new_clause(clauses[1], 1);
 
     SUBCASE("a resolved clause outranks an untouched one") {
         procedure.update_with_resolved_clause(1);
-        CHECK(columns_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{1});
+        CHECK(bits_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{1});
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
         CHECK(procedure.decision_stats().fallback_decisions == 0);
     }
@@ -175,29 +175,29 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
     SUBCASE("a new asserting clause enters above every starting clause") {
         procedure.update_with_asserting_clause(clauses[2]);
         procedure.update_with_new_clause(clauses[2], 2);
-        CHECK(columns_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{2});
+        CHECK(bits_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{2});
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{2});
     }
 
     SUBCASE("the satisfy phase flips the sampled equation's constant column") {
         procedure.set_decision_phase(DecisionPhase::satisfy);
         procedure.update_with_resolved_clause(0);
-        CHECK(columns_of(procedure.make_decision(empty, clauses)) ==
+        CHECK(bits_of(procedure.make_decision(empty, clauses)) ==
               std::vector<std::size_t>{0, 4});
     }
 
     SUBCASE("satisfied clauses are dropped from the heap") {
         procedure.update_with_resolved_clause(0);
         // x0 = 1 satisfies clause 0, so the next highest clause is used instead.
-        const RowSpace span = make_row_space(backend, 4, {{0, 4}});
-        CHECK(columns_of(procedure.make_decision(span, clauses)) == std::vector<std::size_t>{1});
+        const RowSpace span = make_row_space(repr, 4, {{0, 4}});
+        CHECK(bits_of(procedure.make_decision(span, clauses)) == std::vector<std::size_t>{1});
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
     }
 
     SUBCASE("an exhausted heap falls back to the literal basis") {
-        Csids fallback(backend, 4, default_seed);
+        Csids fallback(repr, 4, default_seed);
         const std::vector<Clause> no_clauses;
-        CHECK(columns_of(fallback.make_decision(empty, no_clauses)) ==
+        CHECK(bits_of(fallback.make_decision(empty, no_clauses)) ==
               std::vector<std::size_t>{0});
         CHECK(fallback.decision_clause_hint() == std::nullopt);
         CHECK(fallback.decision_stats().decisions == 1);
@@ -224,7 +224,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         pivots.set(0);
         const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
         const std::vector<std::uint8_t> clause_active{1, 0, 1};
-        procedure.update_with_compaction(transform, RowSpace(backend, 3), clauses, clause_active);
+        procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, clause_active);
 
         CHECK(procedure.num_vars() == 3);
         CHECK(procedure.decision_clause_hint() == std::nullopt);
@@ -232,14 +232,14 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
 }
 
 TEST_CASE_TEMPLATE("csids: decay makes later bumps worth more", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
-    Csids procedure(backend, 4, default_seed);
-    const RowSpace empty(backend, 4);
+    constexpr EquationRepr repr = Tag::value;
+    Csids procedure(repr, 4, default_seed);
+    const RowSpace empty(repr, 4);
 
     std::vector<Clause> clauses;
-    clauses.push_back(make_clause(backend, 4, {{0}}));
-    clauses.push_back(make_clause(backend, 4, {{1}}));
-    clauses.push_back(make_clause(backend, 4, {{2}}));
+    clauses.push_back(make_clause(repr, 4, {{0}}));
+    clauses.push_back(make_clause(repr, 4, {{1}}));
+    clauses.push_back(make_clause(repr, 4, {{2}}));
     procedure.update_with_new_clause(clauses[0], 0);
     procedure.update_with_new_clause(clauses[1], 1);
 
@@ -251,7 +251,7 @@ TEST_CASE_TEMPLATE("csids: decay makes later bumps worth more", Tag, DenseTag, S
     procedure.update_with_new_clause(clauses[2], 2);
     procedure.update_with_resolved_clause(1);
 
-    CHECK(columns_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{1});
+    CHECK(bits_of(procedure.make_decision(empty, clauses)) == std::vector<std::size_t>{1});
     CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
 }
 

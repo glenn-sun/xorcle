@@ -3,12 +3,10 @@
 #include <cassert>
 #include <sstream>
 
-#include "algebra/backend.h"
-
 namespace xorcle {
 
-RowEchelonMatrix::RowEchelonMatrix(Algebra backend, std::size_t num_vars)
-    : storage_(make_matrix_storage(backend, num_vars)) {}
+RowEchelonMatrix::RowEchelonMatrix(EquationRepr repr, std::size_t num_vars)
+    : storage_(make_row_echelon_matrix_interface(repr, num_vars)) {}
 
 RowEchelonMatrix::RowEchelonMatrix(const RowEchelonMatrix& other)
     : storage_(other.storage_->clone()) {}

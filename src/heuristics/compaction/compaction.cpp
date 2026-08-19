@@ -35,7 +35,7 @@ Equation project_old_row(const Clause& old_clause, std::size_t row_index,
     assert(row_index < old_clause.rows());
     Equation reduced_row = old_clause.row(row_index);
     trail_span.reduce(reduced_row);
-    return reduced_row.project(transform);
+    return reduced_row.compact(transform);
 }
 
 /// @brief Re-establish a rewritten clause's watches and cyclic search cursor.
@@ -118,9 +118,9 @@ CompactionPlan build_compaction_plan(const CompactionInputs& inputs,
     plan.rewritten_clauses.reserve(num_clauses);
     plan.clause_is_active = inputs.clause_is_active;
 
-    const Algebra backend = inputs.trail.backend();
-    ClauseSatisfactionWorkspace satisfaction_workspace(backend, inputs.active_num_vars);
-    const Equation false_clause_row = Equation::eq_false(backend, transform.new_num_vars());
+    const EquationRepr repr = inputs.trail.repr();
+    ClauseSatisfactionWorkspace satisfaction_workspace(repr, inputs.active_num_vars);
+    const Equation false_clause_row = Equation::eq_false(repr, transform.new_num_vars());
 
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
         const Clause& active_clause = inputs.clauses[clause_id];
@@ -129,7 +129,7 @@ CompactionPlan build_compaction_plan(const CompactionInputs& inputs,
             !was_active || clause_satisfied_by_trail(inputs.trail.span(), active_clause,
                                                      satisfaction_workspace);
 
-        Clause rewritten(backend, transform.new_num_vars());
+        Clause rewritten(repr, transform.new_num_vars());
         if (becomes_inactive) {
             // Kept as a placeholder so clause ids stay stable; never selected.
             rewritten.add_row(false_clause_row);

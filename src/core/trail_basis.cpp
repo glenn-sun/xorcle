@@ -36,7 +36,7 @@ bool trail_maps_are_consistent(const Trail& trail) {
 TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail) {
     assert(trail.span().rows() != 0 && "trail span is empty");
     assert(rs.cols() == trail.span().cols() && "row space width does not match the trail span");
-    assert(rs.backend() == trail.backend() && "row space and trail use different backends");
+    assert(rs.repr() == trail.repr() && "row space and trail use different representations");
     assert(trail_maps_are_consistent(trail));
 
     TrailBasisSpace trail_basis(trail);
@@ -47,10 +47,10 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
     assert(trail_basis.cols() == coefficient_width);
 
     // Preallocated scratch: nothing in the loop allocates after the first pass.
-    Equation reduced_eqn(trail.backend(), trail.num_vars());
-    Equation trail_basis_row(trail.backend(), trail_basis.num_vars());
+    Equation reduced_eqn(trail.repr(), trail.num_vars());
+    Equation trail_basis_row(trail.repr(), trail_basis.num_vars());
     Bitmap row_coefficients;
-    std::vector<std::size_t> mapped_columns;
+    std::vector<std::size_t> mapped_bits;
 
     for (const Equation& eqn : rs) {
         assert(eqn.size() == reduced_eqn.size());
@@ -64,12 +64,12 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
         // Rewriting into trail-basis coordinates permutes the bit vector by a
         // fixed index map: span row index -> trail order (`reverse_order_map`)
         // -> reversed (`m - 1 - t`), collected once and handed to the algebra
-        // layer in a single `assign_columns()` dispatch.
-        mapped_columns.clear();
+        // layer in a single `assign_bits()` dispatch.
+        mapped_bits.clear();
         row_coefficients.for_each_set([&](std::size_t row_index) {
-            mapped_columns.push_back(coefficient_width - trail.reverse_order_map()[row_index] - 1);
+            mapped_bits.push_back(coefficient_width - trail.reverse_order_map()[row_index] - 1);
         });
-        trail_basis_row.assign_columns(mapped_columns);
+        trail_basis_row.assign_bits(mapped_bits);
 
         // `add_row()` echelonizes into ascending leading-column order, i.e. most
         // recent trail equation first.
@@ -82,19 +82,19 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
 RowSpace TrailBasisSpace::to_RowSpace() const {
     assert(trail_maps_are_consistent(trail_));
 
-    RowSpace row_space(trail_.backend(), trail_.num_vars());
-    Equation lifted_eqn(trail_.backend(), trail_.num_vars());
-    std::vector<std::size_t> coefficient_columns;
+    RowSpace row_space(trail_.repr(), trail_.num_vars());
+    Equation lifted_eqn(trail_.repr(), trail_.num_vars());
+    std::vector<std::size_t> coefficient_bits;
     const std::size_t coefficient_width = cols();
 
     for (const Equation& trail_basis_row : *this) {
-        // XOR-accumulate the selected subset of trail rows, dispatching at row
-        // granularity: one `columns()` call, then one `xor_assign()` per row.
+        // Add up the selected subset of trail rows, dispatching at row
+        // granularity: one `bits()` call, then one `plus_assign()` per row.
         lifted_eqn.clear();
-        trail_basis_row.columns(coefficient_columns);
-        for (const std::size_t coefficient_column : coefficient_columns) {
-            const std::size_t trail_index = coefficient_width - coefficient_column - 1;
-            lifted_eqn.xor_assign(trail_.span().row(trail_.order_map()[trail_index]));
+        trail_basis_row.bits(coefficient_bits);
+        for (const std::size_t coefficient_bit : coefficient_bits) {
+            const std::size_t trail_index = coefficient_width - coefficient_bit - 1;
+            lifted_eqn.plus_assign(trail_.span().row(trail_.order_map()[trail_index]));
         }
         row_space.add_row(lifted_eqn);
     }
@@ -116,8 +116,8 @@ std::size_t TrailBasisSpace::asserting_level() const {
     // set column below some limit then neither do rows 2, 3, ... . Row 1 alone
     // therefore decides how far back the remaining basis reaches. And for a
     // single row, "has a set column below the limit" is exactly
-    // `leading_column() < limit`, so no sub-vector need be materialized.
-    const std::optional<std::size_t> second_row_leading = row(1).leading_column();
+    // `leading_bit() < limit`, so no sub-vector need be materialized.
+    const std::optional<std::size_t> second_row_leading = row(1).leading_bit();
     assert(second_row_leading && "a stored row is zero");
 
     const std::size_t span_rows = trail_.span().rows();

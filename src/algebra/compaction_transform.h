@@ -12,8 +12,8 @@ namespace xorcle {
 ///
 /// Compaction eliminates the variables that the trail has already pivoted on,
 /// renumbering the survivors into a smaller active space. This type is the
-/// resulting change of basis; applying it to an equation is `Equation::project()`
-/// (old space to compacted) and `Equation::lift()` (compacted back to old).
+/// resulting change of basis; applying it to an equation is `Equation::compact()`
+/// (old space to compacted) and `Equation::uncompact()` (compacted back to old).
 ///
 /// Invariants: `pivot_columns` has width `old_num_vars + 1`, the constant column
 /// is never a pivot, and `old_to_new` / `new_to_old` are inverse maps on the

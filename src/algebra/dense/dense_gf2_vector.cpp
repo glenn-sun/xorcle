@@ -1,4 +1,4 @@
-#include "algebra/dense/dense_row.h"
+#include "algebra/dense/dense_gf2_vector.h"
 
 #include <cstdint>
 #include <cstring>
@@ -50,7 +50,7 @@ constexpr std::uint64_t hash_multiplier = 11400714819323198485ull;
 
 } // namespace
 
-void DenseRow::assign_from(const DenseRow& other) noexcept {
+void DenseGF2Vector::assign_from(const DenseGF2Vector& other) noexcept {
     assert(bits_.size() == other.bits_.size() && "width mismatch in assign_from");
     const std::size_t num_words = bits_.words();
     if (num_words <= assign_from_word_threshold) {
@@ -64,7 +64,7 @@ void DenseRow::assign_from(const DenseRow& other) noexcept {
     }
 }
 
-std::size_t DenseRow::hash() const noexcept {
+std::size_t DenseGF2Vector::hash() const noexcept {
     // gf2 guarantees the unused high bits of the last word are always zero, so
     // hashing whole words needs no tail masking.
     std::uint64_t value = 0;

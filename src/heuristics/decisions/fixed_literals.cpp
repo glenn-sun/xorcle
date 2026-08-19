@@ -4,8 +4,8 @@
 
 namespace xorcle {
 
-FixedLiterals::FixedLiterals(Algebra backend, std::size_t num_vars, Seed seed)
-    : DecisionProcedure(backend, num_vars, seed), reduced_scratch_(backend, num_vars) {
+FixedLiterals::FixedLiterals(EquationRepr repr, std::size_t num_vars, Seed seed)
+    : DecisionProcedure(repr, num_vars, seed), reduced_scratch_(repr, num_vars) {
     reinitialize();
 }
 
@@ -27,7 +27,7 @@ Equation FixedLiterals::make_decision(const RowSpace& trail_span, const std::vec
 void FixedLiterals::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                            const std::vector<Clause>&,
                                            const std::vector<std::uint8_t>&) {
-    decision_basis_ = project_basis_keep_order(decision_basis_, transform, backend());
+    decision_basis_ = project_basis_keep_order(decision_basis_, transform, repr());
     set_num_vars(transform.new_num_vars());
     reduced_scratch_.resize(num_vars());
     reduced_scratch_.clear();

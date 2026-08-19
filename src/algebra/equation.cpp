@@ -2,12 +2,10 @@
 
 #include <cassert>
 
-#include "algebra/backend.h"
-
 namespace xorcle {
 
-Equation::Equation(Algebra backend, std::size_t num_vars)
-    : storage_(make_equation_storage(backend, num_vars)) {}
+Equation::Equation(EquationRepr repr, std::size_t num_vars)
+    : storage_(make_equation_interface(repr, num_vars)) {}
 
 Equation::Equation(const Equation& other)
     : storage_(other.storage_ ? other.storage_->clone() : nullptr) {}
@@ -19,25 +17,25 @@ Equation& Equation::operator=(const Equation& other) {
     return *this;
 }
 
-Equation Equation::eq_true(Algebra backend, std::size_t num_vars) {
-    return Equation(backend, num_vars);
+Equation Equation::eq_true(EquationRepr repr, std::size_t num_vars) {
+    return Equation(repr, num_vars);
 }
 
-Equation Equation::eq_false(Algebra backend, std::size_t num_vars) {
-    const std::size_t constant_column = num_vars;
-    return from_columns(backend, num_vars, std::span<const std::size_t>(&constant_column, 1));
+Equation Equation::eq_false(EquationRepr repr, std::size_t num_vars) {
+    const std::size_t constant_bit = num_vars;
+    return from_bits(repr, num_vars, std::span<const std::size_t>(&constant_bit, 1));
 }
 
-Equation Equation::from_columns(Algebra backend, std::size_t num_vars,
-                                std::span<const std::size_t> columns) {
-    Equation out(backend, num_vars);
-    out.storage_->assign_columns(columns);
+Equation Equation::from_bits(EquationRepr repr, std::size_t num_vars,
+                             std::span<const std::size_t> bits) {
+    Equation out(repr, num_vars);
+    out.storage_->assign_bits(bits);
     return out;
 }
 
-Algebra Equation::backend() const noexcept {
+EquationRepr Equation::repr() const noexcept {
     assert(storage_ != nullptr);
-    return storage_->backend();
+    return storage_->repr();
 }
 
 std::size_t Equation::num_vars() const noexcept {
@@ -56,41 +54,43 @@ void Equation::clear() noexcept {
     }
 }
 
-void Equation::xor_assign(const Equation& other) {
+void Equation::plus_assign(const Equation& other) {
     assert(storage_ != nullptr && other.storage_ != nullptr);
-    assert(storage_->backend() == other.storage_->backend() && "backend mismatch in xor_assign");
-    assert(storage_->size() == other.storage_->size() && "width mismatch in xor_assign");
-    storage_->xor_assign(*other.storage_);
+    assert(storage_->repr() == other.storage_->repr() &&
+           "representation mismatch in plus_assign");
+    assert(storage_->size() == other.storage_->size() && "width mismatch in plus_assign");
+    storage_->plus_assign(*other.storage_);
 }
 
 void Equation::assign_from(const Equation& other) {
     assert(storage_ != nullptr && other.storage_ != nullptr);
-    assert(storage_->backend() == other.storage_->backend() && "backend mismatch in assign_from");
+    assert(storage_->repr() == other.storage_->repr() &&
+           "representation mismatch in assign_from");
     assert(storage_->size() == other.storage_->size() && "width mismatch in assign_from");
     storage_->assign_from(*other.storage_);
 }
 
-Equation Equation::project(const CompactionTransform& transform) const {
+Equation Equation::compact(const CompactionTransform& transform) const {
     assert(storage_ != nullptr);
-    assert(storage_->size() == transform.old_num_vars() + 1 && "width mismatch in project");
-    return Equation(storage_->project(transform));
+    assert(storage_->size() == transform.old_num_vars() + 1 && "width mismatch in compact");
+    return Equation(storage_->compact(transform));
 }
 
-Equation Equation::lift(const CompactionTransform& transform) const {
+Equation Equation::uncompact(const CompactionTransform& transform) const {
     assert(storage_ != nullptr);
-    assert(storage_->size() == transform.new_num_vars() + 1 && "width mismatch in lift");
-    return Equation(storage_->lift(transform));
+    assert(storage_->size() == transform.new_num_vars() + 1 && "width mismatch in uncompact");
+    return Equation(storage_->uncompact(transform));
 }
 
-void Equation::assign_columns(std::span<const std::size_t> columns) {
+void Equation::assign_bits(std::span<const std::size_t> bits) {
     assert(storage_ != nullptr);
-    storage_->assign_columns(columns);
+    storage_->assign_bits(bits);
 }
 
-void Equation::columns(std::vector<std::size_t>& out) const {
+void Equation::bits(std::vector<std::size_t>& out) const {
     out.clear();
     if (storage_) {
-        storage_->columns(out);
+        storage_->bits(out);
     }
 }
 
@@ -98,7 +98,7 @@ bool Equation::operator==(const Equation& other) const noexcept {
     if (storage_ == nullptr || other.storage_ == nullptr) {
         return storage_ == other.storage_;
     }
-    if (storage_->backend() != other.storage_->backend()) {
+    if (storage_->repr() != other.storage_->repr()) {
         return false;
     }
     return storage_->equals(*other.storage_);

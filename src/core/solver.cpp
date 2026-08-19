@@ -13,23 +13,23 @@
 
 namespace xorcle {
 
-Solver::Solver(Algebra backend, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
+Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
                std::unique_ptr<DecisionProcedure> decisions,
                std::unique_ptr<RestartPolicy> restarts, LrupLogger* proof_logger,
                const CompactionConfig& compaction)
-    : backend_(backend),
+    : repr_(repr),
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
       active_var_to_original_(num_vars),
       compaction_(compaction),
-      trail_(backend, num_vars),
+      trail_(repr, num_vars),
       selector_(std::move(selector)),
       decisions_(std::move(decisions)),
       restarts_(std::move(restarts)),
-      propagation_(backend, num_vars),
+      propagation_(repr, num_vars),
       proof_logger_(proof_logger),
-      conflict_check_eqn_(backend, num_vars),
-      false_equation_(Equation::eq_false(backend, num_vars)) {
+      conflict_check_eqn_(repr, num_vars),
+      false_equation_(Equation::eq_false(repr, num_vars)) {
     assert(selector_ != nullptr);
     assert(decisions_ != nullptr);
     assert(restarts_ != nullptr);
@@ -228,12 +228,12 @@ void Solver::apply_compaction(CompactionPlan plan) {
     compaction_history_.push_back(std::move(plan.history_entry));
 
     propagation_.reconfigure(active_num_vars_);
-    false_equation_ = Equation::eq_false(backend_, active_num_vars_);
+    false_equation_ = Equation::eq_false(repr_, active_num_vars_);
     conflict_check_eqn_.resize(active_num_vars_);
     conflict_check_eqn_.clear();
 
     // The root trail is thrown away on purpose; see the warning on this method.
-    trail_ = Trail(backend_, active_num_vars_);
+    trail_ = Trail(repr_, active_num_vars_);
 
     selector_->update_with_compaction(plan.transform, trail_);
     decisions_->update_with_compaction(plan.transform, trail_.span(), selector_->clauses(),

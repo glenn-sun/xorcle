@@ -12,7 +12,7 @@ endif()
 
 include(FetchContent)
 
-# gf2 (nessan/gf2) -- the dense algebra backend's bit-vector library.
+# gf2 (nessan/gf2) -- the dense representation's bit-vector library.
 #
 # Pinned to a commit rather than a tag: the only tagged release, v1.0.1, predates
 # the rename of `BitVec` to `BitVector`, and the `current` tag is a rolling
@@ -24,15 +24,14 @@ FetchContent_Declare(gf2
 FetchContent_MakeAvailable(gf2)
 
 add_library(xorcle_core
-    src/algebra/algebra.cpp
-    src/algebra/backend.cpp
     src/algebra/compaction_transform.cpp
     src/algebra/equation.cpp
+    src/algebra/equation_repr.cpp
     src/algebra/row_echelon_matrix.cpp
-    src/algebra/dense/dense_backend.cpp
-    src/algebra/dense/dense_row.cpp
-    src/algebra/sparse/sparse_backend.cpp
-    src/algebra/sparse/sparse_row.cpp
+    src/algebra/dense/dense_gf2_vector.cpp
+    src/algebra/dense/dense_repr.cpp
+    src/algebra/sparse/sparse_gf2_vector.cpp
+    src/algebra/sparse/sparse_repr.cpp
     src/core/analysis.cpp
     src/core/propagation.cpp
     src/core/solver.cpp

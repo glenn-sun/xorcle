@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-#include "algebra/algebra.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 
 namespace xorcle {
@@ -66,9 +66,9 @@ struct ParsedDimacs {
 /// `+` may not be trailing (`1+2+`), and any token after a clause terminator is
 /// an error rather than being dropped.
 ///
-/// Both backends parse the same text into the same clauses.
+/// Both representations parse the same text into the same clauses.
 /// @throws DimacsError On any malformed input.
-ParsedDimacs parse_dimacs(std::istream& input, Algebra backend,
+ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr,
                           std::string_view origin = "<input>");
 
 /// @brief Parse the extended DIMACS/XNF format from an in-memory string.
@@ -76,7 +76,7 @@ ParsedDimacs parse_dimacs(std::istream& input, Algebra backend,
 /// The convenience form of `parse_dimacs()`, so a test can state an instance as
 /// a string literal instead of writing a file.
 /// @throws DimacsError On any malformed input.
-ParsedDimacs parse_dimacs_string(std::string_view text, Algebra backend,
+ParsedDimacs parse_dimacs_string(std::string_view text, EquationRepr repr,
                                  std::string_view origin = "<string>");
 
 /// @brief Parse an extended DIMACS/XNF file.
@@ -84,6 +84,6 @@ ParsedDimacs parse_dimacs_string(std::string_view text, Algebra backend,
 /// The thin wrapper over `parse_dimacs()`: it opens the file and does nothing
 /// else, so all of the parsing is reachable without touching the filesystem.
 /// @throws DimacsError If the file cannot be opened, or on any malformed input.
-ParsedDimacs parse_dimacs_file(const std::filesystem::path& path, Algebra backend);
+ParsedDimacs parse_dimacs_file(const std::filesystem::path& path, EquationRepr repr);
 
 } // namespace xorcle

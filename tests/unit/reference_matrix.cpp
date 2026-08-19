@@ -22,13 +22,13 @@ std::optional<std::size_t> next_set(const Bits& bits, std::size_t after) {
     return std::nullopt;
 }
 
-void xor_into(Bits& target, const Bits& source) {
+void plus_into(Bits& target, const Bits& source) {
     for (std::size_t i = 0; i < target.size(); ++i) {
         target[i] = target[i] != source[i];
     }
 }
 
-std::vector<std::size_t> set_columns(const Bits& bits) {
+std::vector<std::size_t> set_bits(const Bits& bits) {
     std::vector<std::size_t> out;
     for (std::size_t i = 0; i < bits.size(); ++i) {
         if (bits[i]) {
@@ -38,16 +38,16 @@ std::vector<std::size_t> set_columns(const Bits& bits) {
     return out;
 }
 
-Equation to_equation(Algebra backend, const Bits& bits) {
-    const std::vector<std::size_t> columns = set_columns(bits);
-    return Equation::from_columns(backend, bits.size() - 1,
-                                  std::span<const std::size_t>(columns));
+Equation to_equation(EquationRepr repr, const Bits& bits) {
+    const std::vector<std::size_t> indices = set_bits(bits);
+    return Equation::from_bits(repr, bits.size() - 1,
+                               std::span<const std::size_t>(indices));
 }
 
 Bits to_bits(const Equation& equation) {
     Bits out(equation.size(), false);
-    for (const std::size_t column : columns_of(equation)) {
-        out[column] = true;
+    for (const std::size_t bit : bits_of(equation)) {
+        out[bit] = true;
     }
     return out;
 }
@@ -91,7 +91,7 @@ std::optional<std::size_t> ReferenceMatrix::add_row_get_index(const Bits& v) {
     for (; leading_column <= num_vars_; ++leading_column) {
         if (reduced[leading_column]) {
             if (pivot_[leading_column]) {
-                xor_into(reduced, rows_[insert_index]);
+                plus_into(reduced, rows_[insert_index]);
             } else {
                 break;
             }
@@ -117,7 +117,7 @@ std::optional<std::size_t> ReferenceMatrix::add_row_get_index(const Bits& v) {
 void ReferenceMatrix::reduce(Bits& v) const {
     for (auto column = first_set(v); column; column = next_set(v, *column)) {
         if (pivot_[*column]) {
-            xor_into(v, rows_[column_to_row_[*column]]);
+            plus_into(v, rows_[column_to_row_[*column]]);
         }
     }
 }
@@ -131,7 +131,7 @@ std::optional<std::size_t> ReferenceMatrix::partial_reduce(Bits& v) const {
         if (!pivot_[*column]) {
             return column;
         }
-        xor_into(v, rows_[column_to_row_[*column]]);
+        plus_into(v, rows_[column_to_row_[*column]]);
         column = next_set(v, *column);
     }
 }

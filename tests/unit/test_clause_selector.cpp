@@ -33,13 +33,13 @@ std::vector<ClauseId> drain(ClauseSelector& selector) {
 } // namespace
 
 TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
     Cyclic selector(4);
-    const Trail trail(backend, 4);
+    const Trail trail(repr, 4);
 
-    selector.add_starting_clause(make_clause(backend, 4, {{0}}));
-    selector.add_starting_clause(make_clause(backend, 4, {{1}}));
-    selector.add_starting_clause(make_clause(backend, 4, {{2}}));
+    selector.add_starting_clause(make_clause(repr, 4, {{0}}));
+    selector.add_starting_clause(make_clause(repr, 4, {{1}}));
+    selector.add_starting_clause(make_clause(repr, 4, {{2}}));
     REQUIRE(selector.num_clauses() == 3);
 
     SUBCASE("a fresh selector starts at the most recently added clause") {
@@ -50,7 +50,7 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
     SUBCASE("learning an equation refreshes the budget without moving the cursor") {
         CHECK(selector.next() == std::optional<ClauseId>{2});
         CHECK(selector.next() == std::optional<ClauseId>{0});
-        selector.update_with_propagation(make_equation_with(backend, 4, {3}), trail);
+        selector.update_with_propagation(make_equation_with(repr, 4, {3}), trail);
         // The budget restarts, so the cycle continues from clause 1 for a full
         // pass rather than stopping after one more.
         CHECK(drain(selector) == std::vector<ClauseId>{1, 2, 0});
@@ -91,30 +91,30 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
 }
 
 TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseTag, SparseTag) {
-    constexpr Algebra backend = Tag::value;
+    constexpr EquationRepr repr = Tag::value;
     LeadingTermWatchlist selector(4);
-    Trail trail(backend, 4);
+    Trail trail(repr, 4);
 
     SUBCASE("a unit clause is queued immediately, a non-unit one is not") {
-        selector.add_starting_clause(make_clause(backend, 4, {{0}, {1}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
         CHECK(selector.next() == std::nullopt);
 
-        selector.add_starting_clause(make_clause(backend, 4, {{2}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{2}}));
         CHECK(selector.next() == std::optional<ClauseId>{1});
         CHECK(selector.next() == std::nullopt);
     }
 
     SUBCASE("only the buckets a learned equation can reach are woken") {
-        selector.add_starting_clause(make_clause(backend, 4, {{0}, {3}})); // buckets 0 and 3
-        selector.add_starting_clause(make_clause(backend, 4, {{1}, {3}})); // buckets 1 and 3
-        selector.add_starting_clause(make_clause(backend, 4, {{2}, {3}})); // buckets 2 and 3
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {3}})); // buckets 0 and 3
+        selector.add_starting_clause(make_clause(repr, 4, {{1}, {3}})); // buckets 1 and 3
+        selector.add_starting_clause(make_clause(repr, 4, {{2}, {3}})); // buckets 2 and 3
 
         // Learn x0 = 1 so column 0 becomes a pivot, then learn an equation
         // leading on column 2. Bucket 2 is the exact match; bucket 0 is a pivot
         // below it, so reduction could lift such a row up to column 2. Bucket 1
         // is below but is not a pivot, so clause 1 stays asleep.
-        trail.learn(make_equation_with(backend, 4, {0, 4}), ClauseId{0});
-        selector.update_with_propagation(make_equation_with(backend, 4, {2}), trail);
+        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0});
+        selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
 
         const std::vector<ClauseId> woken = drain(selector);
         CHECK(woken.size() == 2);
@@ -122,15 +122,15 @@ TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseT
     }
 
     SUBCASE("the work list is a deque: exact matches on top, lower pivots underneath") {
-        selector.add_starting_clause(make_clause(backend, 4, {{0}, {3}})); // id 0, buckets 0 and 3
-        selector.add_starting_clause(make_clause(backend, 4, {{2}, {3}})); // id 1, buckets 2 and 3
-        selector.add_starting_clause(make_clause(backend, 4, {{4}}));      // id 2, a unit clause
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {3}})); // id 0, buckets 0 and 3
+        selector.add_starting_clause(make_clause(repr, 4, {{2}, {3}})); // id 1, buckets 2 and 3
+        selector.add_starting_clause(make_clause(repr, 4, {{4}}));      // id 2, a unit clause
 
         // The unit clause is already queued. Learning an equation leading on
         // column 2 pushes bucket 2 to the top and bucket 0 -- a pivot below --
         // to the bottom, so the queued unit clause ends up between them.
-        trail.learn(make_equation_with(backend, 4, {0, 4}), ClauseId{0});
-        selector.update_with_propagation(make_equation_with(backend, 4, {2}), trail);
+        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0});
+        selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
 
         // A stack would push both buckets to the same end and yield 1, 0, 2
         // instead, which is what makes this ordering discriminating.
@@ -138,23 +138,23 @@ TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseT
     }
 
     SUBCASE("an asserting clause is queued above every unit clause") {
-        selector.add_starting_clause(make_clause(backend, 4, {{0}}));      // id 0, unit
-        selector.add_starting_clause(make_clause(backend, 4, {{1}}));      // id 1, unit
-        selector.add_starting_clause(make_clause(backend, 4, {{2}, {3}})); // id 2, non-unit
+        selector.add_starting_clause(make_clause(repr, 4, {{0}}));      // id 0, unit
+        selector.add_starting_clause(make_clause(repr, 4, {{1}}));      // id 1, unit
+        selector.add_starting_clause(make_clause(repr, 4, {{2}, {3}})); // id 2, non-unit
 
-        selector.add_asserting_clause(make_clause(backend, 4, {{3}, {4}}), trail, 2);
+        selector.add_asserting_clause(make_clause(repr, 4, {{3}, {4}}), trail, 2);
         CHECK(drain(selector) == std::vector<ClauseId>{3, 1, 0});
     }
 
     SUBCASE("inactive clauses are dropped as they are popped") {
-        selector.add_starting_clause(make_clause(backend, 4, {{0}}));
-        selector.add_starting_clause(make_clause(backend, 4, {{1}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{0}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{1}}));
         selector.set_clause_active(0, false);
         CHECK(drain(selector) == std::vector<ClauseId>{1});
     }
 
     SUBCASE("moving a watch moves the clause between buckets") {
-        selector.add_starting_clause(make_clause(backend, 4, {{0}, {1}, {2}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}, {2}}));
         Clause& clause = selector.clause(0);
         REQUIRE(clause.rows() == 3);
 
@@ -165,31 +165,31 @@ TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseT
 
         // Bucket 1 no longer holds the clause, so an equation leading there
         // wakes nothing; bucket 2 does.
-        selector.update_with_propagation(make_equation_with(backend, 4, {1}), trail);
+        selector.update_with_propagation(make_equation_with(repr, 4, {1}), trail);
         CHECK(selector.next() == std::nullopt);
 
-        selector.update_with_propagation(make_equation_with(backend, 4, {2}), trail);
+        selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
         CHECK(selector.next() == std::optional<ClauseId>{0});
     }
 
     SUBCASE("compaction rebuilds every bucket from the active clauses") {
-        selector.add_starting_clause(make_clause(backend, 4, {{0}, {1}})); // id 0
-        selector.add_starting_clause(make_clause(backend, 4, {{2}}));      // id 1, unit
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}})); // id 0
+        selector.add_starting_clause(make_clause(repr, 4, {{2}}));      // id 1, unit
         REQUIRE(drain(selector) == std::vector<ClauseId>{1});
 
         // Rewrite clause 0 in place, the way the solver applies a plan, and
         // deactivate the unit clause.
-        selector.clause(0) = make_clause(backend, 4, {{2}, {3}});
+        selector.clause(0) = make_clause(repr, 4, {{2}, {3}});
         selector.set_clause_active(1, false);
 
         const CompactionTransform transform;
         selector.update_with_compaction(transform, trail);
 
         // The old bucket 0 is gone; the new bucket 2 wakes the clause.
-        selector.update_with_propagation(make_equation_with(backend, 4, {0}), trail);
+        selector.update_with_propagation(make_equation_with(repr, 4, {0}), trail);
         CHECK(selector.next() == std::nullopt);
 
-        selector.update_with_propagation(make_equation_with(backend, 4, {2}), trail);
+        selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
         CHECK(selector.next() == std::optional<ClauseId>{0});
     }
 }

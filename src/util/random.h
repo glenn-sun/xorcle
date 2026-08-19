@@ -53,7 +53,7 @@ int random_int(Rng& rng, int upper_bound);
 /// the final draw. Drawing per bit, drawing 32-bit words, or masking differently
 /// produces a different search from the same seed. Writing the fill over bit
 /// *indices* rather than storage words is what makes the sparse and dense
-/// backends consume the stream identically.
+/// representations consume the stream identically.
 Bitmap random_nonzero_coefficients(std::size_t num_bits, Rng& rng);
 
 } // namespace xorcle

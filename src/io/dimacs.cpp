@@ -108,7 +108,7 @@ ParsedHeader parse_header_line(const std::string& line, std::string_view origin,
 }
 
 void push_variable(std::string_view term, std::string_view token, std::size_t num_vars,
-                   std::vector<std::size_t>& columns_out, std::string_view origin,
+                   std::vector<std::size_t>& bits_out, std::string_view origin,
                    std::size_t line_number) {
     if (term.empty()) {
         fail(origin, line_number, "empty variable in token: " + std::string{token});
@@ -120,17 +120,17 @@ void push_variable(std::string_view term, std::string_view token, std::size_t nu
     if (*variable == 0 || *variable > num_vars) {
         fail(origin, line_number, "variable out of range in token: " + std::string{token});
     }
-    columns_out.push_back(*variable - 1);
+    bits_out.push_back(*variable - 1);
 }
 
-/// @brief Decode one literal token into the columns of its stored row.
+/// @brief Decode one literal token into the set bits of its stored row.
 ///
 /// The stored row is the literal's linear negation, which is why a leading `-`
-/// (right-hand side 0) sets the constant column and a bare token does not.
+/// (right-hand side 0) sets the constant bit and a bare token does not.
 void parse_clause_token(std::string_view token, std::size_t num_vars,
-                        std::vector<std::size_t>& columns_out, std::string_view origin,
+                        std::vector<std::size_t>& bits_out, std::string_view origin,
                         std::size_t line_number) {
-    columns_out.clear();
+    bits_out.clear();
 
     if (token.find('+') == std::string_view::npos) {
         const std::optional<long long> literal = parse_signed(token);
@@ -146,9 +146,9 @@ void parse_clause_token(std::string_view token, std::size_t num_vars,
         if (magnitude > num_vars) {
             fail(origin, line_number, "variable out of range in token: " + std::string{token});
         }
-        columns_out.push_back(static_cast<std::size_t>(magnitude) - 1);
+        bits_out.push_back(static_cast<std::size_t>(magnitude) - 1);
         if (*literal < 0) {
-            columns_out.push_back(num_vars);
+            bits_out.push_back(num_vars);
         }
         return;
     }
@@ -168,7 +168,7 @@ void parse_clause_token(std::string_view token, std::size_t num_vars,
         const std::size_t plus_pos = body.find('+', term_start);
         const std::size_t term_length =
             plus_pos == std::string_view::npos ? body.size() - term_start : plus_pos - term_start;
-        push_variable(body.substr(term_start, term_length), token, num_vars, columns_out, origin,
+        push_variable(body.substr(term_start, term_length), token, num_vars, bits_out, origin,
                       line_number);
         if (plus_pos == std::string_view::npos) {
             break;
@@ -181,14 +181,14 @@ void parse_clause_token(std::string_view token, std::size_t num_vars,
     }
 
     if (rhs_is_zero) {
-        columns_out.push_back(num_vars);
+        bits_out.push_back(num_vars);
     }
 }
 
-Clause parse_clause_line(const std::string& line, std::size_t num_vars, Algebra backend,
-                         std::vector<std::size_t>& columns_scratch, std::string_view origin,
+Clause parse_clause_line(const std::string& line, std::size_t num_vars, EquationRepr repr,
+                         std::vector<std::size_t>& bits_scratch, std::string_view origin,
                          std::size_t line_number) {
-    Clause clause(backend, num_vars);
+    Clause clause(repr, num_vars);
     std::istringstream stream{line};
     std::string token;
     bool terminated = false;
@@ -198,8 +198,8 @@ Clause parse_clause_line(const std::string& line, std::size_t num_vars, Algebra 
             terminated = true;
             break;
         }
-        parse_clause_token(token, num_vars, columns_scratch, origin, line_number);
-        clause.add_row(Equation::from_columns(backend, num_vars, columns_scratch));
+        parse_clause_token(token, num_vars, bits_scratch, origin, line_number);
+        clause.add_row(Equation::from_bits(repr, num_vars, bits_scratch));
     }
 
     if (!terminated) {
@@ -223,7 +223,7 @@ DimacsError::DimacsError(std::string_view origin, std::size_t line_number,
                                    std::string{message}),
       line_number_(line_number) {}
 
-ParsedDimacs parse_dimacs(std::istream& input, Algebra backend, std::string_view origin) {
+ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_view origin) {
     std::string line;
     std::size_t line_number = 0;
     bool found_header = false;
@@ -248,15 +248,15 @@ ParsedDimacs parse_dimacs(std::istream& input, Algebra backend, std::string_view
     // a bogus allocation before the clause lines have been read.
     parsed.clauses.reserve(std::min<std::size_t>(header.num_clauses, 1u << 16));
 
-    std::vector<std::size_t> columns_scratch;
+    std::vector<std::size_t> bits_scratch;
     while (std::getline(input, line)) {
         ++line_number;
         trim_trailing_cr(line);
         if (is_blank_or_comment(line)) {
             continue;
         }
-        parsed.clauses.push_back(parse_clause_line(line, header.num_vars, backend,
-                                                   columns_scratch, origin, line_number));
+        parsed.clauses.push_back(parse_clause_line(line, header.num_vars, repr,
+                                                   bits_scratch, origin, line_number));
     }
 
     if (parsed.clauses.size() != header.num_clauses) {
@@ -267,18 +267,18 @@ ParsedDimacs parse_dimacs(std::istream& input, Algebra backend, std::string_view
     return parsed;
 }
 
-ParsedDimacs parse_dimacs_string(std::string_view text, Algebra backend,
+ParsedDimacs parse_dimacs_string(std::string_view text, EquationRepr repr,
                                  std::string_view origin) {
     std::istringstream stream{std::string{text}};
-    return parse_dimacs(stream, backend, origin);
+    return parse_dimacs(stream, repr, origin);
 }
 
-ParsedDimacs parse_dimacs_file(const std::filesystem::path& path, Algebra backend) {
+ParsedDimacs parse_dimacs_file(const std::filesystem::path& path, EquationRepr repr) {
     std::ifstream file{path};
     if (!file.is_open()) {
         throw DimacsError(path.string(), 0, "unable to open input file");
     }
-    return parse_dimacs(file, backend, path.string());
+    return parse_dimacs(file, repr, path.string());
 }
 
 } // namespace xorcle

@@ -53,8 +53,8 @@ void TrailSnapshot::learn(const Equation& eqn, std::optional<ClauseId> reason) {
 #endif
 }
 
-Trail::Trail(Algebra backend, std::size_t num_vars) {
-    snapshots_.emplace_back(backend, num_vars);
+Trail::Trail(EquationRepr repr, std::size_t num_vars) {
+    snapshots_.emplace_back(repr, num_vars);
 }
 
 void Trail::learn(const Equation& eqn, std::optional<ClauseId> reason) {

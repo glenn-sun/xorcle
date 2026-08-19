@@ -7,11 +7,11 @@ void apply_phase(Equation& eqn, DecisionPhase phase, const Equation& false_equat
         case DecisionPhase::falsify:
             return;
         case DecisionPhase::satisfy:
-            eqn.xor_assign(false_equation);
+            eqn.plus_assign(false_equation);
             return;
         case DecisionPhase::random:
             if (random_int(rng, 2) == 1) {
-                eqn.xor_assign(false_equation);
+                eqn.plus_assign(false_equation);
             }
             return;
     }

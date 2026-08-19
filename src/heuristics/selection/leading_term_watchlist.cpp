@@ -32,7 +32,7 @@ std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, EquationId row
     // a legal bucket, so both surviving cases name a real column. The bucket
     // array is sized for the *initial* variable space and never shrunk.
     assert(leading.kind != ReduceResult::Kind::eq_true && "clause row is the true equation");
-    const std::size_t bucket = leading.is_leading() ? leading.column : clause.cols() - 1;
+    const std::size_t bucket = leading.is_leading() ? leading.bit : clause.cols() - 1;
     assert(bucket < by_leading_term_.size() && "leading column out of bucket range");
     return bucket;
 }
@@ -129,12 +129,12 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
     const ReduceResult leading = reduced_eqn.classify();
     // The trail never learns the true equation, and the false equation is the
     // conflict the solver detects separately, so there is always a real column.
-    assert(leading.is_leading() && "learned equation has no leading column");
-    assert(leading.column < by_leading_term_.size() && "leading column out of bucket range");
+    assert(leading.is_leading() && "learned equation has no leading bit");
+    assert(leading.bit < by_leading_term_.size() && "leading column out of bucket range");
 
-    // Reduction can only lift a row's leading term up to `leading.column`, and
+    // Reduction can only lift a row's leading term up to `leading.bit`, and
     // only from a column that is itself a pivot; only those buckets need waking.
-    std::size_t pivots_below = trail.span().pivot_columns().count_below(leading.column);
+    std::size_t pivots_below = trail.span().pivot_columns().count_below(leading.bit);
     if (pivots_below != 0) {
         trail.span().pivot_columns().for_each_set([&](std::size_t column) {
             if (pivots_below == 0) {
@@ -144,7 +144,7 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
             append_bottom(by_leading_term_[column]);
         });
     }
-    append_top(by_leading_term_[leading.column]);
+    append_top(by_leading_term_[leading.bit]);
 }
 
 void LeadingTermWatchlist::update_with_new_watch(ClauseId id, EquationId old_watch, WatchType type,
