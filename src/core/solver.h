@@ -21,7 +21,7 @@
 
 namespace xorcle {
 
-/// @brief When the solver is allowed to compact the variable space.
+/// @brief When the solver is allowed to compact the variable numbering.
 struct CompactionConfig {
     bool enabled = true;
 
@@ -39,7 +39,7 @@ struct Solution {
 
 /// @brief The counters a run accumulates, named as `RunStats` names them.
 struct SolverCounters {
-    std::size_t num_attempt_props = 0; ///< Clauses handed to the propagation engine.
+    std::size_t num_attempt_props = 0; ///< Clauses handed to the propagator.
     std::size_t num_watch_updates = 0;
     std::size_t num_propagations = 0;  ///< Equations learned by propagation.
     std::size_t num_conflicts = 0;     ///< Root conflict included.
@@ -54,11 +54,12 @@ struct SolverCounters {
 /// store), which equation to decide to a `DecisionProcedure`, whether to restart
 /// to a `RestartPolicy`.
 ///
-/// `num_vars()` never changes: it is the input's variable count, the space every
-/// reported assignment and proof line is written in. `active_num_vars()` is the
-/// space the search runs in, which compaction shrinks; the trail, the propagation
-/// engine, the clause database, the decision procedure and the two preallocated
-/// equations all live there and are rewritten together whenever it changes.
+/// `num_vars()` never changes: it is the input's variable count, the variable
+/// numbering every reported assignment and proof line is written in.
+/// `active_num_vars()` is the numbering the search runs in, which compaction
+/// shrinks; the trail, the propagator, the clause database, the decision
+/// procedure and the two preallocated equations all live there and are rewritten
+/// together whenever it changes.
 ///
 /// @warning Statement order inside the loop is load-bearing beyond correctness.
 /// CSIDS in particular is sensitive to the order of
@@ -123,11 +124,12 @@ private:
 
     void make_decision_step();
 
-    /// @brief Compact if the trigger conditions hold; true if the active space
-    /// changed, in which case the caller must restart the loop rather than decide.
+    /// @brief Compact if the trigger conditions hold; true if the active variable
+    /// numbering changed, in which case the caller must restart the loop rather
+    /// than decide.
     bool maybe_compact_before_decision();
 
-    /// @brief Replace every piece of active-space state with a prepared plan.
+    /// @brief Replace every piece of active-numbering state with a prepared plan.
     ///
     /// @warning This discards the root trail for an empty one over the compacted
     /// variables. That is deliberate: the eliminated variables are exactly the
@@ -143,8 +145,8 @@ private:
     std::size_t active_num_vars_;
 
     /// @brief Active to original variable index. Composed across compactions
-    /// rather than replaced, so it always maps the *current* active space to the
-    /// original one however many steps happened.
+    /// rather than replaced, so it always maps the *current* active numbering to
+    /// the original one however many steps happened.
     std::vector<std::size_t> active_var_to_original_;
 
     std::vector<CompactionHistoryEntry> compaction_history_; ///< Oldest first.
@@ -157,7 +159,7 @@ private:
     std::unique_ptr<ClauseSelector> selector_;
     std::unique_ptr<DecisionProcedure> decisions_;
     std::unique_ptr<RestartPolicy> restarts_;
-    PropagationEngine propagation_;
+    Propagator propagation_;
 
     LrupLogger* proof_logger_; ///< Not owned; null for no proof.
 

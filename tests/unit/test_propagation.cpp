@@ -30,21 +30,21 @@ Clause make_clause(EquationRepr repr, std::size_t clause_num_vars,
     return clause;
 }
 
-/// @brief A `WatchObserver` that records every notification it receives.
-class RecordingObserver final : public WatchObserver {
+/// @brief A `WatchUpdateHandler` that records every notification it receives.
+class RecordingHandler final : public WatchUpdateHandler {
 public:
     struct Record {
         ClauseId id; ///< The clause whose watch moved.
-        EquationId old_watch; ///< The row the watch pointed at before the move.
+        ClauseRowIndex old_watch; ///< The row the watch pointed at before the move.
         WatchType type; ///< Which watch moved.
-        std::size_t watched0; ///< The clause's `watched0` as seen by the observer.
-        std::size_t watched1; ///< The clause's `watched1` as seen by the observer.
+        std::size_t watched0; ///< The clause's `watched0` as seen by the handler.
+        std::size_t watched1; ///< The clause's `watched1` as seen by the handler.
     };
 
     /// @brief Observe `clause`, so the recorded watches reflect the update order.
-    explicit RecordingObserver(const Clause& clause) : clause_(&clause) {}
+    explicit RecordingHandler(const Clause& clause) : clause_(&clause) {}
 
-    void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType type,
+    void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
                                const Trail&) override {
         records.push_back({id, old_watch, type, clause_->watched0, clause_->watched1});
     }
@@ -60,17 +60,17 @@ private:
 TEST_CASE_TEMPLATE("propagation: unit clause propagates its linear negation", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
-    IgnoreWatchUpdates observer;
+    IgnoreWatchUpdates handler;
     std::size_t num_watch_updates = 0;
 
     // The clause [x0 = 1] is stored as its linear negation [x0 = 0].
     Clause clause = make_clause(repr, default_num_vars, {{0}});
     REQUIRE(clause.rows() == 1);
 
-    Equation* implied = engine.unit_propagate_one_clause(0, clause, trail, std::nullopt,
-                                                         num_watch_updates, observer);
+    Equation* implied = propagator.unit_propagate_one_clause(0, clause, trail, std::nullopt,
+                                                             num_watch_updates, handler);
     REQUIRE(implied != nullptr);
     CHECK(bits_of(*implied) == std::vector<std::size_t>{0, default_num_vars});
     CHECK(num_watch_updates == 0);
@@ -78,25 +78,25 @@ TEST_CASE_TEMPLATE("propagation: unit clause propagates its linear negation", Ta
 
 TEST_CASE_TEMPLATE("propagation: unit clause already satisfied", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
-    IgnoreWatchUpdates observer;
+    IgnoreWatchUpdates handler;
     std::size_t num_watch_updates = 0;
 
     Clause clause = make_clause(repr, default_num_vars, {{0}});
     trail.learn(make_equation_with(repr, default_num_vars, {0, default_num_vars}), ClauseId{0});
 
     // The row reduces to 1, so its negation is 0: nothing to propagate.
-    CHECK(engine.unit_propagate_one_clause(0, clause, trail, std::nullopt, num_watch_updates,
-                                           observer) == nullptr);
+    CHECK(propagator.unit_propagate_one_clause(0, clause, trail, std::nullopt, num_watch_updates,
+                                               handler) == nullptr);
 }
 
 TEST_CASE_TEMPLATE("propagation: unit clause conflict is an implied false equation", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
-    IgnoreWatchUpdates observer;
+    IgnoreWatchUpdates handler;
     std::size_t num_watch_updates = 0;
 
     Clause clause = make_clause(repr, default_num_vars, {{0}});
@@ -104,8 +104,8 @@ TEST_CASE_TEMPLATE("propagation: unit clause conflict is an implied false equati
 
     // The row reduces to 0, so the clause implies 1: conflict and propagation
     // travel the same code path.
-    Equation* implied = engine.unit_propagate_one_clause(0, clause, trail, std::nullopt,
-                                                         num_watch_updates, observer);
+    Equation* implied = propagator.unit_propagate_one_clause(0, clause, trail, std::nullopt,
+                                                             num_watch_updates, handler);
     REQUIRE(implied != nullptr);
     CHECK(implied->is_eq_false());
 }
@@ -113,35 +113,35 @@ TEST_CASE_TEMPLATE("propagation: unit clause conflict is an implied false equati
 TEST_CASE_TEMPLATE("propagation: two-row clause with both watches alive", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
     Clause clause = make_clause(repr, default_num_vars, {{0}, {1}});
-    RecordingObserver observer(clause);
+    RecordingHandler handler(clause);
     std::size_t num_watch_updates = 0;
 
-    CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
-                                           observer) == nullptr);
+    CHECK(propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
+                                               handler) == nullptr);
     CHECK(clause.watched0 == 0);
     CHECK(clause.watched1 == 1);
     CHECK(num_watch_updates == 0);
-    CHECK(observer.records.empty());
+    CHECK(handler.records.empty());
 }
 
 TEST_CASE_TEMPLATE("propagation: two-row clause propagates its complement watch", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
     Clause clause = make_clause(repr, default_num_vars, {{0}, {1}});
-    RecordingObserver observer(clause);
+    RecordingHandler handler(clause);
     std::size_t num_watch_updates = 0;
 
     trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
 
     // Watch 0 died and there is no third row to move it to, so the clause
     // implies the negation of watch 1.
-    Equation* implied = engine.unit_propagate_one_clause(3, clause, trail, std::nullopt,
-                                                         num_watch_updates, observer);
+    Equation* implied = propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt,
+                                                             num_watch_updates, handler);
     REQUIRE(implied != nullptr);
     CHECK(bits_of(*implied) == std::vector<std::size_t>{1, default_num_vars});
     CHECK(num_watch_updates == 0);
@@ -152,10 +152,10 @@ TEST_CASE_TEMPLATE("propagation: two-row clause propagates its complement watch"
 TEST_CASE_TEMPLATE("propagation: clause satisfied through the complement watch", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
     Clause clause = make_clause(repr, default_num_vars, {{0}, {1}});
-    RecordingObserver observer(clause);
+    RecordingHandler handler(clause);
     std::size_t num_watch_updates = 0;
 
     trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
@@ -163,25 +163,25 @@ TEST_CASE_TEMPLATE("propagation: clause satisfied through the complement watch",
 
     // Watch 0 died, but watch 1 reduces to 1, so the clause is satisfied and
     // nothing is implied.
-    CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
-                                           observer) == nullptr);
+    CHECK(propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
+                                               handler) == nullptr);
     CHECK(num_watch_updates == 0);
-    CHECK(observer.records.empty());
+    CHECK(handler.records.empty());
 }
 
 TEST_CASE_TEMPLATE("propagation: a dead watch moves to a live row", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
     Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}});
-    RecordingObserver observer(clause);
+    RecordingHandler handler(clause);
     std::size_t num_watch_updates = 0;
 
     REQUIRE(clause.rows() == 3);
     trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
 
-    CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
-                                           observer) == nullptr);
+    CHECK(propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
+                                               handler) == nullptr);
     CHECK(clause.watched0 == 2);
     CHECK(clause.watched1 == 1);
     CHECK(num_watch_updates == 1);
@@ -189,23 +189,23 @@ TEST_CASE_TEMPLATE("propagation: a dead watch moves to a live row", Tag, DenseTa
     // The cyclic search resumes just past the row it settled on.
     CHECK(clause.next_watch_search_start == 0);
 
-    REQUIRE(observer.records.size() == 1);
-    CHECK(observer.records[0].id == 3);
-    CHECK(observer.records[0].old_watch == 0);
-    CHECK(observer.records[0].type == WatchType::zero);
-    // The clause is updated before the observer is called, so the observer sees
+    REQUIRE(handler.records.size() == 1);
+    CHECK(handler.records[0].id == 3);
+    CHECK(handler.records[0].old_watch == 0);
+    CHECK(handler.records[0].type == WatchType::zero);
+    // The clause is updated before the handler is called, so the handler sees
     // the new row while being handed the old one.
-    CHECK(observer.records[0].watched0 == 2);
-    CHECK(observer.records[0].watched1 == 1);
+    CHECK(handler.records[0].watched0 == 2);
+    CHECK(handler.records[0].watched1 == 1);
 }
 
 TEST_CASE_TEMPLATE("propagation: two tasks run against the already-updated watch", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
     Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}});
-    RecordingObserver observer(clause);
+    RecordingHandler handler(clause);
     std::size_t num_watch_updates = 0;
 
     trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
@@ -214,38 +214,38 @@ TEST_CASE_TEMPLATE("propagation: two tasks run against the already-updated watch
     // Both watches died, so two tasks are scheduled. The first moves watch 0 to
     // row 2; the second then finds no row left, because it runs against the
     // *updated* watch 0, and propagates the negation of row 2.
-    Equation* implied = engine.unit_propagate_one_clause(3, clause, trail, std::nullopt,
-                                                         num_watch_updates, observer);
+    Equation* implied = propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt,
+                                                             num_watch_updates, handler);
     REQUIRE(implied != nullptr);
     CHECK(bits_of(*implied) == std::vector<std::size_t>{2, default_num_vars});
     CHECK(clause.watched0 == 2);
     CHECK(clause.watched1 == 1);
     CHECK(num_watch_updates == 1);
 
-    REQUIRE(observer.records.size() == 1);
-    CHECK(observer.records[0].old_watch == 0);
-    CHECK(observer.records[0].type == WatchType::zero);
+    REQUIRE(handler.records.size() == 1);
+    CHECK(handler.records[0].old_watch == 0);
+    CHECK(handler.records[0].type == WatchType::zero);
 }
 
 TEST_CASE_TEMPLATE("propagation: watches must stay independent, not merely nonzero", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
 
     // Rows 1 and 2 are equal modulo the span once x1 + x2 = 0 is known, so row 2
     // is not a legal replacement for a watch paired with row 1 even though it
     // reduces to something nonzero. Row 3 is.
     Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}, {3}});
-    RecordingObserver observer(clause);
+    RecordingHandler handler(clause);
     std::size_t num_watch_updates = 0;
 
     REQUIRE(clause.rows() == 4);
     trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
     trail.learn(make_equation_with(repr, default_num_vars, {1, 2}), ClauseId{1});
 
-    CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
-                                           observer) == nullptr);
+    CHECK(propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
+                                               handler) == nullptr);
     CHECK(clause.watched0 == 3);
     CHECK(clause.watched1 == 1);
     CHECK(num_watch_updates == 1);
@@ -255,48 +255,48 @@ TEST_CASE_TEMPLATE("propagation: watches must stay independent, not merely nonze
 TEST_CASE_TEMPLATE("propagation: the cyclic search start persists across calls", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
+    Propagator propagator(repr, default_num_vars);
     Trail trail(repr, default_num_vars);
     Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}, {3}});
-    RecordingObserver observer(clause);
+    RecordingHandler handler(clause);
     std::size_t num_watch_updates = 0;
 
     trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
-    CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
-                                           observer) == nullptr);
+    CHECK(propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
+                                               handler) == nullptr);
     CHECK(clause.watched0 == 2);
     CHECK(clause.next_watch_search_start == 3);
 
     // Watch 1 now dies. The search starts from the persisted position rather
     // than from row 0, so it settles on row 3.
     trail.learn(make_equation_with(repr, default_num_vars, {1}), ClauseId{1});
-    CHECK(engine.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
-                                           observer) == nullptr);
+    CHECK(propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
+                                               handler) == nullptr);
     CHECK(clause.watched0 == 2);
     CHECK(clause.watched1 == 3);
     CHECK(clause.next_watch_search_start == 0);
     CHECK(num_watch_updates == 2);
 
-    REQUIRE(observer.records.size() == 2);
-    CHECK(observer.records[1].old_watch == 1);
-    CHECK(observer.records[1].type == WatchType::one);
+    REQUIRE(handler.records.size() == 2);
+    CHECK(handler.records[1].old_watch == 1);
+    CHECK(handler.records[1].type == WatchType::one);
 }
 
 TEST_CASE_TEMPLATE("propagation: reconfigure resizes the scratch", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    PropagationEngine engine(repr, default_num_vars);
-    CHECK(engine.num_vars() == default_num_vars);
+    Propagator propagator(repr, default_num_vars);
+    CHECK(propagator.num_vars() == default_num_vars);
 
-    engine.reconfigure(2);
-    CHECK(engine.num_vars() == 2);
+    propagator.reconfigure(2);
+    CHECK(propagator.num_vars() == 2);
 
     Trail trail(repr, 2);
-    IgnoreWatchUpdates observer;
+    IgnoreWatchUpdates handler;
     std::size_t num_watch_updates = 0;
     Clause clause = make_clause(repr, 2, {{1}});
 
-    Equation* implied = engine.unit_propagate_one_clause(0, clause, trail, std::nullopt,
-                                                         num_watch_updates, observer);
+    Equation* implied = propagator.unit_propagate_one_clause(0, clause, trail, std::nullopt,
+                                                             num_watch_updates, handler);
     REQUIRE(implied != nullptr);
     CHECK(implied->num_bits() == 3);
     CHECK(bits_of(*implied) == std::vector<std::size_t>{1, 2});

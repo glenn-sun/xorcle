@@ -96,7 +96,7 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
         CHECK(procedure.decision_stats().decisions == 0);
     }
 
-    SUBCASE("compaction reprojects the basis") {
+    SUBCASE("compaction rewrites the basis") {
         ColumnSet pivots(5);
         pivots.set(0);
         const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);

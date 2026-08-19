@@ -34,7 +34,7 @@ public:
 
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
 
-    /// @brief Project the literal basis into the compacted variable space.
+    /// @brief Compact the literal basis into the new variable numbering.
     void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
                                 const std::vector<Clause>& clauses,
                                 const std::vector<std::uint8_t>& clause_active) override;

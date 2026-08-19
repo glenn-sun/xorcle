@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "algebra/reduce_result.h"
-#include "heuristics/decisions/decision_utils.h"
+#include "heuristics/decisions/clause_sampling.h"
 
 namespace xorcle {
 
@@ -15,8 +15,8 @@ namespace {
 
 /// @brief Rewrite every key of an activity heap through a compaction.
 ///
-/// Projection is not injective: two literal equations can land on the same
-/// compacted equation, and their activities are then summed. A key projecting to
+/// Compaction is not injective: two literal equations can land on the same
+/// compacted equation, and their activities are then summed. A key compacting to
 /// @f$\mathbf{0}@f$ or @f$\mathbf{1}@f$ is dropped, neither being a legal
 /// decision. The heap and popped lists are filtered against what survives.
 void remap_vsids_heap(MaxHeap<Equation, EquationHash>& heap,
@@ -25,36 +25,36 @@ void remap_vsids_heap(MaxHeap<Equation, EquationHash>& heap,
     Snapshot old_snapshot = heap.snapshot();
     Snapshot next_snapshot;
 
-    std::unordered_map<Equation, double, EquationHash> activity_by_projected;
-    activity_by_projected.reserve(old_snapshot.activity.size());
+    std::unordered_map<Equation, double, EquationHash> activity_by_compacted;
+    activity_by_compacted.reserve(old_snapshot.activity.size());
     for (const auto& [equation, score] : old_snapshot.activity) {
-        Equation projected = equation.compact(transform);
-        if (!projected.classify().is_leading()) {
+        Equation compacted = equation.compact(transform);
+        if (!compacted.classify().is_leading()) {
             continue;
         }
-        activity_by_projected[std::move(projected)] += score;
+        activity_by_compacted[std::move(compacted)] += score;
     }
-    next_snapshot.activity.reserve(activity_by_projected.size());
-    for (const auto& [equation, score] : activity_by_projected) {
+    next_snapshot.activity.reserve(activity_by_compacted.size());
+    for (const auto& [equation, score] : activity_by_compacted) {
         next_snapshot.activity.emplace(equation, score);
     }
 
-    const auto project_list = [&](const std::vector<Equation>& source,
+    const auto compact_list = [&](const std::vector<Equation>& source,
                                   std::vector<Equation>& destination) {
         std::unordered_set<Equation, EquationHash> seen;
         seen.reserve(source.size());
         for (const Equation& equation : source) {
-            Equation projected = equation.compact(transform);
-            if (next_snapshot.activity.find(projected) == next_snapshot.activity.end()) {
+            Equation compacted = equation.compact(transform);
+            if (next_snapshot.activity.find(compacted) == next_snapshot.activity.end()) {
                 continue;
             }
-            if (seen.insert(projected).second) {
-                destination.push_back(std::move(projected));
+            if (seen.insert(compacted).second) {
+                destination.push_back(std::move(compacted));
             }
         }
     };
-    project_list(old_snapshot.heap, next_snapshot.heap);
-    project_list(old_snapshot.popped, next_snapshot.popped);
+    compact_list(old_snapshot.heap, next_snapshot.heap);
+    compact_list(old_snapshot.popped, next_snapshot.popped);
 
     heap.load_snapshot(std::move(next_snapshot));
 }
@@ -146,7 +146,7 @@ void VariableVsids::update_with_asserting_clause(const Clause& clause) {
 void VariableVsids::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                            const std::vector<Clause>&,
                                            const std::vector<std::uint8_t>&) {
-    unit_eqns_ = project_basis_keep_order(unit_eqns_, transform, repr());
+    unit_eqns_ = compact_basis_keep_order(unit_eqns_, transform, repr());
     set_num_vars(transform.new_num_vars());
     remap_vsids_heap(vsids_params_.activity_heap, transform);
     if (vsids_params_.activity_heap.empty()) {

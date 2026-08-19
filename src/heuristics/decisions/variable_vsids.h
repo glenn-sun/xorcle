@@ -55,7 +55,7 @@ public:
     /// @brief Bump every row of the asserting clause, then decay and rebuild.
     void update_with_asserting_clause(const Clause& clause) override;
 
-    /// @brief Project the literal basis and remap every heap key.
+    /// @brief Compact the literal basis and remap every heap key.
     void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
                                 const std::vector<Clause>& clauses,
                                 const std::vector<std::uint8_t>& clause_active) override;

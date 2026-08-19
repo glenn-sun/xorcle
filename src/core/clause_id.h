@@ -11,8 +11,9 @@ namespace xorcle {
 /// `heuristics/selection/`.
 using ClauseId = std::size_t;
 
-/// @brief Identifier of an equation within a clause: its row index, used for
-/// watch bookkeeping.
-using EquationId = std::size_t;
+/// @brief A row index into a clause, used for watch bookkeeping. Clause-relative
+/// because a row index into the trail span, which `order_map()` deals in, is a
+/// different quantity.
+using ClauseRowIndex = std::size_t;
 
 } // namespace xorcle

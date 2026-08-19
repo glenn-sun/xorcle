@@ -1,4 +1,4 @@
-/// @file test_stats_sink.cpp
+/// @file test_stats_writer.cpp
 /// @brief The console and CSV stats formats.
 ///
 /// The differential harness
@@ -18,18 +18,18 @@
 
 #include "util/column_set.h"
 #include "util/stats.h"
-#include "util/stats_sink.h"
+#include "util/stats_writer.h"
 
 namespace xorcle {
 
 namespace {
 
-/// @brief Capture what a console sink writes to stdout.
+/// @brief Capture what a console writer writes to stdout.
 std::string console_output(const RunStats& stats) {
     std::ostringstream captured;
     std::streambuf* saved = std::cout.rdbuf(captured.rdbuf());
-    ConsoleStatsSink sink;
-    sink.log(stats);
+    ConsoleStatsWriter writer;
+    writer.log(stats);
     std::cout.rdbuf(saved);
     return captured.str();
 }
@@ -102,7 +102,7 @@ TEST_CASE("to_string(SolveResult) uses the CSV spellings") {
     CHECK(to_string(SolveResult::unsat) == "UNSAT");
 }
 
-TEST_CASE("ConsoleStatsSink: the UNSAT format") {
+TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
     const std::string expected =
         "c File: tests/generated/random_kxnf_n/random_kxnf_n_n12_k2_s1.xnf\n"
         "c Variables: 12\n"
@@ -128,7 +128,7 @@ TEST_CASE("ConsoleStatsSink: the UNSAT format") {
     CHECK(console_output(sample_stats()) == expected);
 }
 
-TEST_CASE("ConsoleStatsSink: the CSIDS lines appear together or not at all") {
+TEST_CASE("ConsoleStatsWriter: the CSIDS lines appear together or not at all") {
     RunStats stats = sample_stats();
 
     SUBCASE("all three set") {
@@ -155,7 +155,7 @@ TEST_CASE("ConsoleStatsSink: the CSIDS lines appear together or not at all") {
     }
 }
 
-TEST_CASE("ConsoleStatsSink: the CSIDS lines print in default float format") {
+TEST_CASE("ConsoleStatsWriter: the CSIDS lines print in default float format") {
     RunStats stats = sample_stats();
     stats.csids_initial_activity = 0.000001234567;
     stats.csids_decay = 0.98;
@@ -168,7 +168,7 @@ TEST_CASE("ConsoleStatsSink: the CSIDS lines print in default float format") {
     CHECK(output.find("c Time: 0.013 s\n") != std::string::npos);
 }
 
-TEST_CASE("ConsoleStatsSink: zero denominators omit their ratio lines") {
+TEST_CASE("ConsoleStatsWriter: zero denominators omit their ratio lines") {
     RunStats stats;
     stats.file = "x.xnf";
     stats.result = SolveResult::unsat;
@@ -195,7 +195,7 @@ TEST_CASE("ConsoleStatsSink: zero denominators omit their ratio lines") {
     CHECK(console_output(stats) == expected);
 }
 
-TEST_CASE("ConsoleStatsSink: the SAT assignment lines") {
+TEST_CASE("ConsoleStatsWriter: the SAT assignment lines") {
     SUBCASE("20 literals per line, one trailing zero") {
         RunStats stats;
         stats.file = "x.xnf";
@@ -241,12 +241,12 @@ TEST_CASE("ConsoleStatsSink: the SAT assignment lines") {
     }
 }
 
-TEST_CASE("CsvStatsSink: header then rows, appended") {
+TEST_CASE("CsvStatsWriter: header then rows, appended") {
     const TempFile temp;
 
     {
-        CsvStatsSink sink(temp.path());
-        sink.log(sample_stats());
+        CsvStatsWriter writer(temp.path());
+        writer.log(sample_stats());
     }
 
     const std::string first = read_file(temp.path());
@@ -262,11 +262,11 @@ TEST_CASE("CsvStatsSink: header then rows, appended") {
     CHECK(first.find(",csids,,,,falsify,cyclic,12345,UNSAT,12,30,47,17,") != std::string::npos);
 
     {
-        // A second sink over the same path must not rewrite the header.
-        CsvStatsSink sink(temp.path());
+        // A second writer over the same path must not rewrite the header.
+        CsvStatsWriter writer(temp.path());
         RunStats stats = sample_stats();
         stats.result = SolveResult::sat;
-        sink.log(stats);
+        writer.log(stats);
     }
 
     const std::string second = read_file(temp.path());
@@ -274,26 +274,26 @@ TEST_CASE("CsvStatsSink: header then rows, appended") {
     CHECK(second.find("run_id,timestamp_utc", 1) == std::string::npos);
 }
 
-TEST_CASE("CsvStatsSink: fields containing separators are quoted") {
+TEST_CASE("CsvStatsWriter: fields containing separators are quoted") {
     const TempFile temp;
-    CsvStatsSink sink(temp.path());
+    CsvStatsWriter writer(temp.path());
 
     RunStats stats = sample_stats();
     stats.file = R"(a,b "quoted" path)";
     stats.csids_initial_activity = 1.0;
     stats.csids_decay = 0.98;
     stats.csids_bump = 1.0;
-    sink.log(stats);
+    writer.log(stats);
 
     const std::string written = read_file(temp.path());
     CHECK(written.find(R"("a,b ""quoted"" path")") != std::string::npos);
     CHECK(written.find(",1,0.98,1,") != std::string::npos);
 }
 
-TEST_CASE("CsvStatsSink: an unopenable path is a user-facing error") {
+TEST_CASE("CsvStatsWriter: an unopenable path is a user-facing error") {
     // Bad output paths come from the command line, so they throw rather than
     // assert.
-    CHECK_THROWS_AS(CsvStatsSink("/nonexistent-directory-for-xorcle-tests/out.csv"),
+    CHECK_THROWS_AS(CsvStatsWriter("/nonexistent-directory-for-xorcle-tests/out.csv"),
                     std::runtime_error);
 }
 

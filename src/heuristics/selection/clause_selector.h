@@ -18,7 +18,7 @@
 namespace xorcle {
 
 /// @brief A clause selected for propagation. A selector that tracks reductions
-/// itself can name the trigger that fired, sparing the propagation engine the
+/// itself can name the trigger that fired, sparing the propagator the
 /// recomputation; unit clauses carry no hint.
 struct ClauseSelection {
     ClauseId id;
@@ -36,11 +36,11 @@ enum class ClauseSelectorName {
 /// but adds clauses here, reads them back through `clause()`, and has compaction
 /// write rewritten clauses back the same way. A watchlist selector's indexes are
 /// a view of this storage, and splitting the two would let them drift. A
-/// selector is likewise the engine's `WatchObserver`, since a watchlist keyed on
-/// watched rows must hear of a move.
+/// selector is likewise the propagator's `WatchUpdateHandler`, since a watchlist
+/// keyed on watched rows must hear of a move.
 ///
 /// @pre Every accessor taking a clause id requires `id < num_clauses()`.
-class ClauseSelector : public WatchObserver {
+class ClauseSelector : public WatchUpdateHandler {
 public:
     ClauseSelector() = default;
 
@@ -53,7 +53,7 @@ public:
 
     const std::vector<Clause>& clauses() const noexcept { return clauses_; }
 
-    /// @note Mutable because the propagation engine moves the clause's watches.
+    /// @note Mutable because the propagator moves the clause's watches.
     Clause& clause(ClauseId id);
 
     const Clause& clause(ClauseId id) const;
@@ -87,10 +87,11 @@ public:
     virtual void update_with_decision_clause(std::optional<ClauseId> clause_id);
 
     /// @brief Note a watch move. The default ignores it; only a watchlist cares.
-    void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType type,
+    void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
                                const Trail& trail) override;
 
-    /// @brief Note that every clause was rewritten into a compacted space.
+    /// @brief Note that every clause was rewritten into a compacted variable
+    /// numbering.
     virtual void update_with_compaction(const CompactionTransform& transform, const Trail& trail);
 
 protected:

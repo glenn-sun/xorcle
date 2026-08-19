@@ -18,9 +18,9 @@ add_executable(xorcle_tests
     unit/reference_matrix.cpp
     unit/test_analysis.cpp
     unit/test_column_set.cpp
+    unit/test_clause_sampling.cpp
     unit/test_clause_selector.cpp
     unit/test_compaction.cpp
-    unit/test_decision_utils.cpp
     unit/test_decisions.cpp
     unit/test_dimacs.cpp
     unit/test_equation.cpp
@@ -32,7 +32,7 @@ add_executable(xorcle_tests
     unit/test_restart_policy.cpp
     unit/test_row_echelon_matrix.cpp
     unit/test_solver.cpp
-    unit/test_stats_sink.cpp
+    unit/test_stats_writer.cpp
     unit/test_trail.cpp
     unit/test_trail_basis.cpp)
 

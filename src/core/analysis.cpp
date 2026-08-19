@@ -176,9 +176,9 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     // Copied row by row, rather than converted, so the clause gets the default
     // watches a freshly built clause is supposed to have. The rows arrive already
     // in row-echelon order, so each `add_row()` inserts without reducing.
-    const RowSpace lifted = asserting_basis.to_RowSpace();
+    const RowSpace asserting_rows = asserting_basis.to_RowSpace();
     Clause asserting_clause(trail.repr(), trail.num_vars());
-    for (const Equation& row : lifted) {
+    for (const Equation& row : asserting_rows) {
         asserting_clause.add_row(row);
     }
     assert(asserting_clause.rows() == asserting_basis.rows());

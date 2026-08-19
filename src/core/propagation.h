@@ -23,9 +23,9 @@ namespace xorcle {
 /// @note The scratch equations are long-lived members refilled with
 /// `assign_from()`, never freshly constructed, which is why
 /// `unit_propagate_one_clause()` returns a pointer into that scratch.
-class PropagationEngine {
+class Propagator {
 public:
-    PropagationEngine(EquationRepr repr, std::size_t num_vars);
+    Propagator(EquationRepr repr, std::size_t num_vars);
 
     /// @brief Resize the internal scratch, after a compaction rewrites the
     /// problem into fewer variables.
@@ -36,18 +36,19 @@ public:
     /// @brief Attempt to propagate from a single clause, in its linear negation
     /// and with its watches possibly updated. `zero_watch_hint` is a trigger the
     /// selector already computed, if it tracks reductions itself; otherwise it is
-    /// empty and the engine recomputes. `num_watch_updates` is incremented and
-    /// `observer` notified once per watch moved.
+    /// empty and this recomputes it. `num_watch_updates` is incremented and
+    /// `handler` notified once per watch moved.
     ///
     /// @return A pointer to the implied equation, or `nullptr` if the clause
-    /// implies nothing right now. The equation is engine-owned scratch, valid
-    /// until the next call on this engine, and may be modified by the caller.
+    /// implies nothing right now. The equation is this propagator's own scratch,
+    /// valid until its next call, and may be modified by the caller.
     /// @pre A non-empty `zero_watch_hint` names a trigger that currently holds,
     /// and it is empty when the clause is unit. `WatchType::sum` hints are
     /// normalized to updating `watched1`.
     Equation* unit_propagate_one_clause(ClauseId id, Clause& clause, const Trail& trail,
                                         std::optional<WatchType> zero_watch_hint,
-                                        std::size_t& num_watch_updates, WatchObserver& observer);
+                                        std::size_t& num_watch_updates,
+                                        WatchUpdateHandler& handler);
 
 private:
 #ifndef NDEBUG

@@ -1,4 +1,4 @@
-#include "heuristics/compaction/original_space.h"
+#include "heuristics/compaction/original_variables.h"
 
 #include <cassert>
 #include <utility>
@@ -10,7 +10,7 @@ namespace xorcle {
 namespace {
 
 ColumnSet scatter_through_map(const ColumnSet& source, const std::vector<std::size_t>& index_map,
-                           std::size_t destination_width) {
+                              std::size_t destination_width) {
     assert(source.size() == index_map.size());
     ColumnSet destination(destination_width);
     for (std::size_t index = 0; index < index_map.size(); ++index) {
@@ -77,8 +77,8 @@ ColumnSet reconstruct_original_assignment(
     if (assignment.size() == original_num_vars) {
         return assignment;
     }
-    // No compaction ever ran, so the active space is the original space up to
-    // the variable map the solver has been carrying.
+    // No compaction ever ran, so the active variable numbering is the original
+    // one up to the variable map the solver has been carrying.
     assert(assignment.size() == active_var_to_original.size() &&
            "failed to recover the original assignment width");
     return scatter_through_map(assignment, active_var_to_original, original_num_vars);

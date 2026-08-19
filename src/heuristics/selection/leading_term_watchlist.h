@@ -48,7 +48,7 @@ public:
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
     /// @brief Move a clause between buckets when its watch moves.
-    void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType type,
+    void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
                                const Trail& trail) override;
 
     void update_with_compaction(const CompactionTransform& transform, const Trail& trail) override;
@@ -69,7 +69,7 @@ private:
     ClauseId pop();
 
     /// @brief The bucket a watched row belongs in, i.e. its leading column.
-    std::size_t bucket_of(const Clause& clause, EquationId row_id) const;
+    std::size_t bucket_of(const Clause& clause, ClauseRowIndex row_id) const;
 
     /// @brief Bucket a stored clause by both watched rows, or record it as a unit.
     void index_clause(ClauseId id);

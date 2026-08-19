@@ -1,4 +1,4 @@
-#include "heuristics/decisions/decision_utils.h"
+#include "heuristics/decisions/clause_sampling.h"
 
 #include <cassert>
 #include <cstdint>
@@ -109,35 +109,35 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
     return false;
 }
 
-std::vector<Equation> project_basis_keep_order(const std::vector<Equation>& basis,
+std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basis,
                                                const CompactionTransform& transform,
                                                EquationRepr repr) {
-    std::vector<Equation> projected_basis;
-    projected_basis.reserve(transform.new_num_vars());
+    std::vector<Equation> compacted_basis;
+    compacted_basis.reserve(transform.new_num_vars());
     std::vector<std::uint8_t> seen_literal(transform.new_num_vars(), 0);
 
     for (const Equation& basis_equation : basis) {
         assert(basis_equation.num_bits() == transform.old_num_vars() + 1);
-        Equation projected = basis_equation.compact(transform);
-        const ReduceResult classified = projected.classify();
+        Equation compacted = basis_equation.compact(transform);
+        const ReduceResult classified = compacted.classify();
         if (!classified.is_leading()) {
-            // The projection collapsed to 0 or to 1; neither is a decision.
+            // The compaction collapsed it to 0 or to 1; neither is a decision.
             continue;
         }
         if (seen_literal[classified.bit] != 0) {
             continue;
         }
         seen_literal[classified.bit] = 1;
-        projected_basis.push_back(std::move(projected));
+        compacted_basis.push_back(std::move(compacted));
     }
 
     for (std::size_t var = 0; var < transform.new_num_vars(); ++var) {
         if (seen_literal[var] == 0) {
-            projected_basis.push_back(Equation::from_bits(
+            compacted_basis.push_back(Equation::from_bits(
                 repr, transform.new_num_vars(), std::span<const std::size_t>(&var, 1)));
         }
     }
-    return projected_basis;
+    return compacted_basis;
 }
 
 bool sample_equation_from_clause(const Clause& clause, const RowSpace& trail_span, Rng& rng,

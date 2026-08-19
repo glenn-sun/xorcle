@@ -158,8 +158,8 @@ TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseT
         Clause& clause = selector.clause(0);
         REQUIRE(clause.rows() == 3);
 
-        // The engine writes the new watch first, then reports it.
-        const EquationId old_watch = clause.watched1;
+        // The propagator writes the new watch first, then reports it.
+        const ClauseRowIndex old_watch = clause.watched1;
         clause.watched1 = 2;
         selector.update_with_new_watch(0, old_watch, WatchType::one, trail);
 

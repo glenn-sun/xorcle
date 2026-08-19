@@ -32,7 +32,7 @@
 #include "io/dimacs.h"
 #include "io/lrup_logger.h"
 #include "util/stats.h"
-#include "util/stats_sink.h"
+#include "util/stats_writer.h"
 
 #ifndef XORCLE_VERSION
 #define XORCLE_VERSION "0.0.0"
@@ -190,13 +190,13 @@ int main(int argc, char* argv[]) {
         stats.timestamp_utc = timestamp_utc;
         stats.run_id = run_id_from_timestamp(timestamp_utc);
 
-        std::unique_ptr<StatsSink> sink;
+        std::unique_ptr<StatsWriter> writer;
         if (options->stats_file.empty()) {
-            sink = std::make_unique<ConsoleStatsSink>();
+            writer = std::make_unique<ConsoleStatsWriter>();
         } else {
-            sink = std::make_unique<CsvStatsSink>(options->stats_file);
+            writer = std::make_unique<CsvStatsWriter>(options->stats_file);
         }
-        sink->log(stats);
+        writer->log(stats);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Error: " << error.what() << std::endl;

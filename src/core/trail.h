@@ -28,7 +28,8 @@ namespace xorcle {
 /// present, the row created at trail step @f$t@f$ is @f$e_t@f$ plus a
 /// combination of @f$e_0, \dots, e_{t-1}@f$, so the change of basis between the
 /// raw trail equations and the stored rows is unitriangular in trail order --
-/// which is what makes trail-order arguments valid over row-echelon storage.
+/// which is what makes trail-order arguments valid over the row-echelon
+/// representation.
 class TrailSnapshot {
 public:
     TrailSnapshot(EquationRepr repr, std::size_t num_vars) : span_(repr, num_vars) {}

@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "core/clause_id.h"
-#include "heuristics/decisions/decision_utils.h"
+#include "heuristics/decisions/clause_sampling.h"
 
 namespace xorcle {
 
@@ -30,7 +30,7 @@ std::size_t first_distinct_row(std::size_t num_rows, std::size_t row_to_avoid) {
     return 0;
 }
 
-Equation project_old_row(const Clause& old_clause, std::size_t row_index,
+Equation compact_old_row(const Clause& old_clause, std::size_t row_index,
                          const RowSpace& trail_span, const CompactionTransform& transform) {
     assert(row_index < old_clause.rows());
     Equation reduced_row = old_clause.row(row_index);
@@ -40,7 +40,7 @@ Equation project_old_row(const Clause& old_clause, std::size_t row_index,
 
 /// @brief Re-establish a rewritten clause's watches and cyclic search cursor.
 ///
-/// Each old watch is projected and looked up by value; whichever lookups fail
+/// Each old watch is compacted and looked up by value; whichever lookups fail
 /// fall back to any legal pair. `next_watch_search_start` is persistent
 /// per-clause state, so it is carried across modulo the new row count.
 void rebuild_clause_watch_metadata(Clause& rewritten, const Clause& old_clause,
@@ -54,9 +54,9 @@ void rebuild_clause_watch_metadata(Clause& rewritten, const Clause& old_clause,
     }
 
     const std::optional<std::size_t> mapped_watched0 = find_row_index(
-        rewritten, project_old_row(old_clause, old_clause.watched0, trail_span, transform));
+        rewritten, compact_old_row(old_clause, old_clause.watched0, trail_span, transform));
     const std::optional<std::size_t> mapped_watched1 = find_row_index(
-        rewritten, project_old_row(old_clause, old_clause.watched1, trail_span, transform));
+        rewritten, compact_old_row(old_clause, old_clause.watched1, trail_span, transform));
 
     std::size_t watched0 = mapped_watched0.value_or(mapped_watched1.value_or(0));
     if (watched0 >= rewritten.rows()) {
@@ -75,29 +75,29 @@ void rebuild_clause_watch_metadata(Clause& rewritten, const Clause& old_clause,
 
 } // namespace
 
-bool should_compact_before_decision(const CompactionInputs& inputs) {
-    if (inputs.trail.size() != 1) {
+bool should_compact_before_decision(const CompactionState& state) {
+    if (state.trail.size() != 1) {
         return false; // compaction is only sound against the root trail
     }
-    if (inputs.trail.span().rows() < 1) {
+    if (state.trail.span().rows() < 1) {
         return false;
     }
-    if (inputs.has_compacted_once) {
+    if (state.has_compacted_once) {
         const std::size_t conflicts_since =
-            inputs.num_conflicts - inputs.conflicts_at_last_compaction;
-        if (conflicts_since < inputs.compaction_conflict_interval) {
+            state.num_conflicts - state.conflicts_at_last_compaction;
+        if (conflicts_since < state.compaction_conflict_interval) {
             return false;
         }
     }
-    if (inputs.active_num_vars == 0) {
+    if (state.active_num_vars == 0) {
         return false;
     }
 
-    const ColumnSet& pivots = inputs.trail.span().pivot_columns();
-    assert(pivots.size() == inputs.active_num_vars + 1 && "trail pivot width mismatch");
-    assert(!pivots.test(inputs.active_num_vars) &&
+    const ColumnSet& pivots = state.trail.span().pivot_columns();
+    assert(pivots.size() == state.active_num_vars + 1 && "trail pivot width mismatch");
+    assert(!pivots.test(state.active_num_vars) &&
            "the constant column cannot be a compaction pivot");
-    return pivots.count_below(inputs.active_num_vars) != 0;
+    return pivots.count_below(state.active_num_vars) != 0;
 }
 
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars) {
@@ -107,26 +107,26 @@ CompactionTransform build_compaction_transform(const Trail& trail, std::size_t a
     return CompactionTransform::from_pivots(active_num_vars, pivots);
 }
 
-CompactionPlan build_compaction_plan(const CompactionInputs& inputs,
+CompactionPlan build_compaction_plan(const CompactionState& state,
                                      const CompactionTransform& transform) {
-    const std::size_t num_clauses = inputs.clauses.size();
-    assert(inputs.clause_is_active.size() == num_clauses &&
+    const std::size_t num_clauses = state.clauses.size();
+    assert(state.clause_is_active.size() == num_clauses &&
            "clause active flags are desynchronized");
 
     CompactionPlan plan;
     plan.transform = transform;
     plan.rewritten_clauses.reserve(num_clauses);
-    plan.clause_is_active = inputs.clause_is_active;
+    plan.clause_is_active = state.clause_is_active;
 
-    const EquationRepr repr = inputs.trail.repr();
-    ClauseSatisfactionWorkspace satisfaction_workspace(repr, inputs.active_num_vars);
+    const EquationRepr repr = state.trail.repr();
+    ClauseSatisfactionWorkspace satisfaction_workspace(repr, state.active_num_vars);
     const Equation false_clause_row = Equation::eq_false(repr, transform.new_num_vars());
 
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
-        const Clause& active_clause = inputs.clauses[clause_id];
-        const bool was_active = inputs.clause_is_active[clause_id] != 0;
+        const Clause& active_clause = state.clauses[clause_id];
+        const bool was_active = state.clause_is_active[clause_id] != 0;
         const bool becomes_inactive =
-            !was_active || clause_satisfied_by_trail(inputs.trail.span(), active_clause,
+            !was_active || clause_satisfied_by_trail(state.trail.span(), active_clause,
                                                      satisfaction_workspace);
 
         Clause rewritten(repr, transform.new_num_vars());
@@ -143,19 +143,19 @@ CompactionPlan build_compaction_plan(const CompactionInputs& inputs,
 
         for (std::size_t row_index = 0; row_index < active_clause.rows(); ++row_index) {
             rewritten.add_row(
-                project_old_row(active_clause, row_index, inputs.trail.span(), transform));
+                compact_old_row(active_clause, row_index, state.trail.span(), transform));
         }
-        assert(rewritten.rows() != 0 && "an active clause projected to zero rows");
+        assert(rewritten.rows() != 0 && "an active clause compacted to zero rows");
 
-        rebuild_clause_watch_metadata(rewritten, active_clause, inputs.trail.span(), transform);
+        rebuild_clause_watch_metadata(rewritten, active_clause, state.trail.span(), transform);
         plan.clause_is_active[clause_id] = 1;
         plan.rewritten_clauses.push_back(std::move(rewritten));
     }
 
     plan.history_entry.transform = transform;
-    plan.history_entry.active_var_to_original_before = inputs.active_var_to_original;
-    plan.history_entry.trail_rows_before.reserve(inputs.trail.span().rows());
-    for (const Equation& row : inputs.trail.span()) {
+    plan.history_entry.active_var_to_original_before = state.active_var_to_original;
+    plan.history_entry.trail_rows_before.reserve(state.trail.span().rows());
+    for (const Equation& row : state.trail.span()) {
         plan.history_entry.trail_rows_before.push_back(row);
     }
     return plan;

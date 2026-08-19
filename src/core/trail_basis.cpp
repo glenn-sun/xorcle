@@ -83,20 +83,20 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
     assert(trail_maps_are_consistent(trail_));
 
     RowSpace row_space(trail_.repr(), trail_.num_vars());
-    Equation lifted_eqn(trail_.repr(), trail_.num_vars());
+    Equation row_space_eqn(trail_.repr(), trail_.num_vars());
     std::vector<std::size_t> coefficient_bits;
     const std::size_t coefficient_width = cols();
 
     for (const Equation& trail_basis_row : *this) {
         // Add up the selected subset of trail rows, dispatching at row
         // granularity: one `bits()` call, then one `plus_assign()` per row.
-        lifted_eqn.set_eq_true();
+        row_space_eqn.set_eq_true();
         trail_basis_row.bits(coefficient_bits);
         for (const std::size_t coefficient_bit : coefficient_bits) {
             const std::size_t trail_index = coefficient_width - coefficient_bit - 1;
-            lifted_eqn.plus_assign(trail_.span().row(trail_.order_map()[trail_index]));
+            row_space_eqn.plus_assign(trail_.span().row(trail_.order_map()[trail_index]));
         }
-        row_space.add_row(lifted_eqn);
+        row_space.add_row(row_space_eqn);
     }
 
     return row_space;
@@ -105,8 +105,8 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
 std::size_t TrailBasisSpace::asserting_level() const {
     assert(rows() > 0 && "asserting level of an empty trail-basis space");
 
-    // A single-row trail-basis space is a lifted unit clause: it asserts at the
-    // root, so every non-root level can be discarded.
+    // A single-row trail-basis space converts back to a unit clause: it asserts
+    // at the root, so every non-root level can be discarded.
     if (rows() == 1) {
         return 0;
     }

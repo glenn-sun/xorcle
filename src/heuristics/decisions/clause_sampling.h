@@ -1,8 +1,8 @@
 #pragma once
 
-/// @file decision_utils.h
+/// @file clause_sampling.h
 /// @brief Shared machinery the decision procedures build on: the clause
-/// satisfaction test, basis scanning and projection, and clause sampling.
+/// satisfaction test, basis scanning and compaction, and clause sampling.
 
 #include <cstddef>
 #include <vector>
@@ -62,12 +62,12 @@ const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowS
 bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
                                ClauseSatisfactionWorkspace& workspace);
 
-/// @brief Project a literal basis through a compaction, preserving basis order.
-/// @return The first projected equation for each new leading bit, in old basis
+/// @brief Compact a literal basis, preserving basis order.
+/// @return The first compacted equation for each new leading bit, in old basis
 /// order, then a unit equation for each new variable none covered.
 /// @pre Every equation in `basis` has width `transform.old_num_vars() + 1`.
 /// @post Exactly `transform.new_num_vars()` equations, one per leading bit.
-std::vector<Equation> project_basis_keep_order(const std::vector<Equation>& basis,
+std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basis,
                                                const CompactionTransform& transform,
                                                EquationRepr repr);
 

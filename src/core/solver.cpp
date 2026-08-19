@@ -9,7 +9,7 @@
 
 #include "algebra/reduce_result.h"
 #include "core/analysis.h"
-#include "heuristics/compaction/original_space.h"
+#include "heuristics/compaction/original_variables.h"
 
 namespace xorcle {
 
@@ -37,8 +37,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
            "proof emission with compaction on is not supported; see "
            "require_compaction_disabled_for_proof()");
     assert((proof_logger_ == nullptr || proof_logger_->num_vars() == original_num_vars_) &&
-           "the proof logger's variable space must be the instance's");
-    // The active space starts as the original one, so the map is the identity.
+           "the proof logger's variable numbering must be the instance's");
+    // The active numbering starts as the original one, so the map is the identity.
     std::iota(active_var_to_original_.begin(), active_var_to_original_.end(), std::size_t{0});
 }
 
@@ -79,7 +79,7 @@ bool Solver::propagate_until_conflict() {
         ++counters_.num_propagations;
         assert(propagated_eqn->num_bits() == active_num_vars_ + 1);
 
-        // Re-normalize: the engine reduced the clause row it propagated from,
+        // Re-normalize: the propagator reduced the clause row it propagated from,
         // not the negation it returns, so the result can still hold span rows.
         (void)trail_.span().partial_reduce(*propagated_eqn);
         trail_.learn(*propagated_eqn, selection->id);
@@ -179,7 +179,7 @@ void Solver::make_decision_step() {
 }
 
 bool Solver::maybe_compact_before_decision() {
-    const CompactionInputs inputs{
+    const CompactionState state{
         .trail = trail_,
         .clauses = selector_->clauses(),
         .clause_is_active = selector_->active_flags(),
@@ -190,7 +190,7 @@ bool Solver::maybe_compact_before_decision() {
         .conflicts_at_last_compaction = conflicts_at_last_compaction_,
         .compaction_conflict_interval = compaction_.conflict_interval,
     };
-    if (!should_compact_before_decision(inputs)) {
+    if (!should_compact_before_decision(state)) {
         return false;
     }
 
@@ -200,7 +200,7 @@ bool Solver::maybe_compact_before_decision() {
         return false;
     }
 
-    apply_compaction(build_compaction_plan(inputs, transform));
+    apply_compaction(build_compaction_plan(state, transform));
     return true;
 }
 
@@ -214,8 +214,8 @@ void Solver::apply_compaction(CompactionPlan plan) {
         selector_->set_clause_active(clause_id, plan.clause_is_active[clause_id] != 0);
     }
 
-    // Composed, not replaced: the new map runs from the compacted space to the
-    // original one through the space being retired.
+    // Composed, not replaced: the new map runs from the compacted numbering to
+    // the original one through the numbering being retired.
     const std::size_t new_num_vars = plan.transform.new_num_vars();
     std::vector<std::size_t> compacted_var_to_original(new_num_vars);
     for (std::size_t active_var = 0; active_var < new_num_vars; ++active_var) {
@@ -268,7 +268,7 @@ Solution Solver::solve() {
         }
 
         if (compaction_.enabled && maybe_compact_before_decision()) {
-            // The active space changed; re-propagate rather than deciding
+            // The active numbering changed; re-propagate rather than deciding
             // against state that no longer exists.
             continue;
         }

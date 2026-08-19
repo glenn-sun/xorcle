@@ -25,12 +25,12 @@ void debug_assert_non_unit_watches_valid(const Clause& clause) {
 LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars)
     : by_leading_term_(num_vars + 1) {}
 
-std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, EquationId row_id) const {
+std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex row_id) const {
     assert(row_id < clause.rows() && "watched row index out of range");
     const ReduceResult leading = clause.row(row_id).classify();
     // A stored clause row is never the true equation, and the constant column is
     // a legal bucket, so both surviving cases name a real column. The bucket
-    // array is sized for the *initial* variable space and never shrunk.
+    // array is sized for the *initial* variable numbering and never shrunk.
     assert(leading.kind != ReduceResult::Kind::eq_true && "clause row is the true equation");
     const std::size_t bucket = leading.is_leading() ? leading.bit : clause.cols() - 1;
     assert(bucket < by_leading_term_.size() && "leading column out of bucket range");
@@ -147,8 +147,8 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
     append_top(by_leading_term_[leading.bit]);
 }
 
-void LeadingTermWatchlist::update_with_new_watch(ClauseId id, EquationId old_watch, WatchType type,
-                                                 const Trail&) {
+void LeadingTermWatchlist::update_with_new_watch(ClauseId id, ClauseRowIndex old_watch,
+                                                WatchType type, const Trail&) {
     assert(id < clauses_.size() && id < in_queue_.size());
     assert(is_clause_active(id));
 
@@ -158,9 +158,9 @@ void LeadingTermWatchlist::update_with_new_watch(ClauseId id, EquationId old_wat
     std::vector<ClauseId>& old_bucket = by_leading_term_[bucket_of(moved, old_watch)];
     std::erase(old_bucket, id);
 
-    // The clause's watches were already updated by the propagation engine, so
-    // reading them here gives the row the watch moved *to*.
-    EquationId new_watch = 0;
+    // The clause's watches were already updated by the propagator, so reading
+    // them here gives the row the watch moved *to*.
+    ClauseRowIndex new_watch = 0;
     switch (type) {
         case WatchType::zero:
             new_watch = moved.watched0;

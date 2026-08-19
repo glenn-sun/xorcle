@@ -71,7 +71,7 @@ public:
     /// @brief The clause the last decision came from, for the selector to prioritize.
     virtual std::optional<ClauseId> decision_clause_hint() const;
 
-    /// @brief Remap procedure state into a compacted variable space. Not a
+    /// @brief Remap procedure state into a compacted variable numbering. Not a
     /// fresh-run reset; the default adopts the new active width and nothing else.
     virtual void update_with_compaction(const CompactionTransform& transform,
                                         const RowSpace& trail_span,

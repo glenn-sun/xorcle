@@ -23,23 +23,23 @@ enum class WatchType {
 /// @brief Receives the watch movements a propagation step performs: anything
 /// that indexes clauses by their watched rows -- the leading-term watchlist, in
 /// particular -- has to be told when a watch moves. Its own header so a selector
-/// can implement it without including the propagation engine.
-class WatchObserver {
+/// can implement it without including the propagator.
+class WatchUpdateHandler {
 public:
-    virtual ~WatchObserver() = default;
+    virtual ~WatchUpdateHandler() = default;
 
     /// @brief Report that a watch of clause `id` moved. Called *after*
     /// `watched0` / `watched1` are updated, so an implementation reads the clause
     /// for the new row and uses `old_watch` for the old one.
-    virtual void update_with_new_watch(ClauseId id, EquationId old_watch, WatchType type,
+    virtual void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
                                        const Trail& trail) = 0;
 };
 
-/// @brief A `WatchObserver` that ignores every watch movement: the default for
-/// selectors that do not index clauses by watched row, and for tests.
-class IgnoreWatchUpdates final : public WatchObserver {
+/// @brief A `WatchUpdateHandler` that ignores every watch movement: the default
+/// for selectors that do not index clauses by watched row, and for tests.
+class IgnoreWatchUpdates final : public WatchUpdateHandler {
 public:
-    void update_with_new_watch(ClauseId, EquationId, WatchType, const Trail&) override {}
+    void update_with_new_watch(ClauseId, ClauseRowIndex, WatchType, const Trail&) override {}
 };
 
 } // namespace xorcle

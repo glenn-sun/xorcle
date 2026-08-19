@@ -14,18 +14,18 @@ namespace {
 struct PropagationTask {
     std::size_t* update_ptr; ///< The watch to move.
     std::size_t* complem_ptr; ///< The other watch, whose row is propagated if no move is possible.
-    WatchType type; ///< Which watch is moving, as reported to the observer.
+    WatchType type; ///< Which watch is moving, as reported to the handler.
 };
 
 } // namespace
 
-PropagationEngine::PropagationEngine(EquationRepr repr, std::size_t num_vars)
+Propagator::Propagator(EquationRepr repr, std::size_t num_vars)
     : num_vars_(num_vars),
       working_eqn_(repr, num_vars),
       working_eqn2_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)) {}
 
-void PropagationEngine::reconfigure(std::size_t num_vars) {
+void Propagator::reconfigure(std::size_t num_vars) {
     num_vars_ = num_vars;
     working_eqn_.resize(num_vars);
     working_eqn2_.resize(num_vars);
@@ -38,8 +38,8 @@ void PropagationEngine::reconfigure(std::size_t num_vars) {
 }
 
 #ifndef NDEBUG
-void PropagationEngine::debug_assert_watch_hint_holds(const Clause& clause, const Trail& trail,
-                                                      WatchType hint) {
+void Propagator::debug_assert_watch_hint_holds(const Clause& clause, const Trail& trail,
+                                               WatchType hint) {
     working_eqn_.assign_from(clause.row(clause.watched0));
     working_eqn2_.assign_from(clause.row(clause.watched1));
     trail.span().reduce(working_eqn_);
@@ -68,11 +68,10 @@ void PropagationEngine::debug_assert_watch_hint_holds(const Clause& clause, cons
 }
 #endif
 
-Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clause,
-                                                       const Trail& trail,
-                                                       std::optional<WatchType> zero_watch_hint,
-                                                       std::size_t& num_watch_updates,
-                                                       WatchObserver& observer) {
+Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, const Trail& trail,
+                                                std::optional<WatchType> zero_watch_hint,
+                                                std::size_t& num_watch_updates,
+                                                WatchUpdateHandler& handler) {
     assert(clause.cols() == num_vars_ + 1);
     assert(clause.rows() >= 1);
     assert(trail.span().cols() == num_vars_ + 1);
@@ -169,14 +168,14 @@ Equation* PropagationEngine::unit_propagate_one_clause(ClauseId id, Clause& clau
 
         if (const std::optional<std::size_t> replacement =
                 find_replacement_cyclic(working_eqn_, working_eqn2_)) {
-            // The clause is updated before the observer is told: the observer
+            // The clause is updated before the handler is told: the handler
             // reads the clause for the watch's new row while being handed
             // `old_watch` for the old one. Reversing the two corrupts a
             // watchlist keyed on the watched rows.
-            const EquationId old_watch = *task.update_ptr;
+            const ClauseRowIndex old_watch = *task.update_ptr;
             *task.update_ptr = *replacement;
             ++num_watch_updates;
-            observer.update_with_new_watch(id, old_watch, task.type, trail);
+            handler.update_with_new_watch(id, old_watch, task.type, trail);
         } else {
             if (complement.kind == ReduceResult::Kind::eq_false) {
                 // Complement reduced to 1: satisfied. A second task still runs.

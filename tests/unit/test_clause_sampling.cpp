@@ -7,14 +7,14 @@
 #include "algebra/equation.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
-#include "heuristics/decisions/decision_utils.h"
+#include "heuristics/decisions/clause_sampling.h"
 #include "heuristics_test_support.h"
 #include "util/column_set.h"
 #include "util/random.h"
 
 namespace xorcle {
 
-TEST_CASE_TEMPLATE("decision utils: clause satisfaction", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause sampling: clause satisfaction", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     ClauseSatisfactionWorkspace workspace(repr, 4);
     CHECK(workspace.num_vars() == 4);
@@ -68,7 +68,7 @@ TEST_CASE_TEMPLATE("decision utils: clause satisfaction", Tag, DenseTag, SparseT
     }
 }
 
-TEST_CASE_TEMPLATE("decision utils: decide from a basis", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause sampling: decide from a basis", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     std::vector<Equation> basis;
     for (std::size_t var = 0; var < 4; ++var) {
@@ -96,7 +96,7 @@ TEST_CASE_TEMPLATE("decision utils: decide from a basis", Tag, DenseTag, SparseT
     }
 }
 
-TEST_CASE_TEMPLATE("decision utils: project a basis", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause sampling: compact a basis", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
     // Eliminate x1 out of four variables, so the survivors are x0, x2, x3.
@@ -111,15 +111,15 @@ TEST_CASE_TEMPLATE("decision utils: project a basis", Tag, DenseTag, SparseTag) 
             basis.push_back(make_equation_with(repr, 4, {var}));
         }
 
-        const std::vector<Equation> projected = project_basis_keep_order(basis, transform, repr);
-        REQUIRE(projected.size() == 3);
-        CHECK(bits_of(projected[0]) == std::vector<std::size_t>{0});
-        CHECK(bits_of(projected[1]) == std::vector<std::size_t>{1});
-        CHECK(bits_of(projected[2]) == std::vector<std::size_t>{2});
+        const std::vector<Equation> compacted = compact_basis_keep_order(basis, transform, repr);
+        REQUIRE(compacted.size() == 3);
+        CHECK(bits_of(compacted[0]) == std::vector<std::size_t>{0});
+        CHECK(bits_of(compacted[1]) == std::vector<std::size_t>{1});
+        CHECK(bits_of(compacted[2]) == std::vector<std::size_t>{2});
     }
 
     SUBCASE("collapsed and duplicated rows are replaced by fresh literals") {
-        // x1 projects to the true equation, and x1 + x2 collides with x2.
+        // x1 compacts to the true equation, and x1 + x2 collides with x2.
         std::vector<Equation> basis{
             make_equation_with(repr, 4, {1}),
             make_equation_with(repr, 4, {1, 2}),
@@ -127,17 +127,17 @@ TEST_CASE_TEMPLATE("decision utils: project a basis", Tag, DenseTag, SparseTag) 
             make_equation_with(repr, 4, {4}),
         };
 
-        const std::vector<Equation> projected = project_basis_keep_order(basis, transform, repr);
-        REQUIRE(projected.size() == 3);
+        const std::vector<Equation> compacted = compact_basis_keep_order(basis, transform, repr);
+        REQUIRE(compacted.size() == 3);
         // x1 + x2 survives as x2's compacted literal, in old basis order.
-        CHECK(bits_of(projected[0]) == std::vector<std::size_t>{1});
+        CHECK(bits_of(compacted[0]) == std::vector<std::size_t>{1});
         // Then the uncovered new variables, ascending.
-        CHECK(bits_of(projected[1]) == std::vector<std::size_t>{0});
-        CHECK(bits_of(projected[2]) == std::vector<std::size_t>{2});
+        CHECK(bits_of(compacted[1]) == std::vector<std::size_t>{0});
+        CHECK(bits_of(compacted[2]) == std::vector<std::size_t>{2});
     }
 }
 
-TEST_CASE_TEMPLATE("decision utils: sample an equation from a clause", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause sampling: sample an equation from a clause", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const RowSpace span(repr, 4);
     Equation candidate(repr, 4);

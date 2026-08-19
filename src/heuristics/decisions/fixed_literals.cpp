@@ -1,6 +1,6 @@
 #include "heuristics/decisions/fixed_literals.h"
 
-#include "heuristics/decisions/decision_utils.h"
+#include "heuristics/decisions/clause_sampling.h"
 
 namespace xorcle {
 
@@ -27,7 +27,7 @@ Equation FixedLiterals::make_decision(const RowSpace& trail_span, const std::vec
 void FixedLiterals::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                            const std::vector<Clause>&,
                                            const std::vector<std::uint8_t>&) {
-    decision_basis_ = project_basis_keep_order(decision_basis_, transform, repr());
+    decision_basis_ = compact_basis_keep_order(decision_basis_, transform, repr());
     set_num_vars(transform.new_num_vars());
     reduced_scratch_.resize(num_vars());
     reduced_scratch_.set_eq_true();

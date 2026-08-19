@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file stats_sink.h
+/// @file stats_writer.h
 
 #include <fstream>
 #include <mutex>
@@ -11,11 +11,11 @@
 
 namespace xorcle {
 
-/// @brief Thread-safe sink for solver statistics: `log()` synchronizes, derived
-/// sinks implement `log_impl()`.
-class StatsSink {
+/// @brief Thread-safe writer for solver statistics: `log()` synchronizes,
+/// derived writers implement `log_impl()`.
+class StatsWriter {
 public:
-    virtual ~StatsSink() = default;
+    virtual ~StatsWriter() = default;
 
     void log(const RunStats& stats);
 
@@ -28,16 +28,16 @@ private:
 
 /// @brief Log to stdout: the DIMACS-style `c` comment lines, the
 /// `s SATISFIABLE`/`s UNSATISFIABLE` verdict, and on SAT the `v` lines.
-class ConsoleStatsSink : public StatsSink {
+class ConsoleStatsWriter : public StatsWriter {
 protected:
     void log_impl(const RunStats& stats) override;
 };
 
 /// @brief Log solver statistics to a CSV file.
 /// @throws std::runtime_error If the output file cannot be opened.
-class CsvStatsSink : public StatsSink {
+class CsvStatsWriter : public StatsWriter {
 public:
-    explicit CsvStatsSink(std::string path);
+    explicit CsvStatsWriter(std::string path);
 
 protected:
     void log_impl(const RunStats& stats) override;

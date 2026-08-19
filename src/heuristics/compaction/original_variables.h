@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file original_space.h
+/// @file original_variables.h
 /// @brief The inverse of compaction: recovering an assignment over the input's
 /// own variables, so a SAT answer can be reported in the caller's terms.
 
@@ -12,10 +12,10 @@
 
 namespace xorcle {
 
-/// @brief Lift an assignment over the active variables back into the original
-/// space, one bit per original variable. `compaction_history` runs oldest first,
-/// and is undone one step at a time newest first: each step scatters the
-/// surviving variables back to their pre-compaction indices, then
+/// @brief Rewrite an assignment over the active variables back into the original
+/// variable numbering, one bit per original variable. `compaction_history` runs
+/// oldest first, and is undone one step at a time newest first: each step
+/// scatters the surviving variables back to their pre-compaction indices, then
 /// back-substitutes the eliminated ones from the trail rows that eliminated them
 /// — for a row with leading column @f$p@f$, @f$x_p@f$ is the row's constant bit
 /// plus the assignment of every other variable the row mentions.

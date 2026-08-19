@@ -133,7 +133,7 @@ std::optional<ClauseId> Csids::decision_clause_hint() const {
 void Csids::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                    const std::vector<Clause>& clauses,
                                    const std::vector<std::uint8_t>& clause_active) {
-    state_.unit_eqns = project_basis_keep_order(state_.unit_eqns, transform, repr());
+    state_.unit_eqns = compact_basis_keep_order(state_.unit_eqns, transform, repr());
 
     set_num_vars(transform.new_num_vars());
     clause_sat_workspace_.reconfigure(num_vars());

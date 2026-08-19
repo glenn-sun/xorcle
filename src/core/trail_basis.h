@@ -18,8 +18,8 @@ namespace xorcle {
 /// the row-echelon row trail step @f$m - 1 - c@f$ created, *not* the raw equation
 /// handed to `Trail::learn()`. The two differ by a change of basis that is
 /// unitriangular in trail order (see `TrailSnapshot`), which is why trail-order
-/// arguments -- above all `asserting_level()` -- stay valid over row-echelon
-/// storage.
+/// arguments -- above all `asserting_level()` -- stay valid over the
+/// row-echelon representation.
 ///
 /// Reverse order is what makes the basis useful: `add_row()` echelonizes, so
 /// rows come out in ascending leading-column order, which is *descending* trail
@@ -69,7 +69,7 @@ public:
     /// invert: `== trail.level()` means **nothing** can be discarded, the clause
     /// still depends on the current level (conflict analysis loops while that
     /// holds -- *not* while `== 0`); `== 0` means every non-root level can go,
-    /// and a single-row basis is a lifted unit clause and always returns 0.
+    /// and a single-row basis converts back to a unit clause and always returns 0.
     ///
     /// Unfolding the coordinate mapping gives a characterization easier to check
     /// by hand than the level walk the implementation does: with `c` the leading

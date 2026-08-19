@@ -1,4 +1,4 @@
-#include "util/stats_sink.h"
+#include "util/stats_writer.h"
 
 #include <filesystem>
 #include <iomanip>
@@ -60,13 +60,13 @@ void append_dimacs_assignment(std::ostringstream& output, const ColumnSet& assig
 } // namespace
 
 void
-StatsSink::log(const RunStats& stats) {
+StatsWriter::log(const RunStats& stats) {
     std::lock_guard<std::mutex> lock(mu_);
     log_impl(stats);
 }
 
 void
-ConsoleStatsSink::log_impl(const RunStats& stats) {
+ConsoleStatsWriter::log_impl(const RunStats& stats) {
     std::ostringstream output;
     output << "c File: " << stats.file << "\n";
     output << "c Variables: " << stats.num_vars << "\n";
@@ -115,15 +115,15 @@ ConsoleStatsSink::log_impl(const RunStats& stats) {
     std::cout << output.str() << std::flush;
 }
 
-CsvStatsSink::CsvStatsSink(std::string path) : path_(std::move(path)) {
+CsvStatsWriter::CsvStatsWriter(std::string path) : path_(std::move(path)) {
     file_.open(path_, std::ios::out | std::ios::app);
     if (!file_.is_open()) {
-        throw std::runtime_error("CsvStatsSink: cannot open CSV file: " + path_);
+        throw std::runtime_error("CsvStatsWriter: cannot open CSV file: " + path_);
     }
 }
 
 void
-CsvStatsSink::ensure_header() {
+CsvStatsWriter::ensure_header() {
     if (header_written_) {
         return;
     }
@@ -145,7 +145,7 @@ CsvStatsSink::ensure_header() {
                  "decisions,fallback_decisions,fallback_pct,"
                  "prop_per_conflict,attempts_per_prop_watch_conflict\n";
         if (!file_) {
-            throw std::runtime_error("CsvStatsSink::ensure_header: failed to write CSV header to " + path_);
+            throw std::runtime_error("CsvStatsWriter::ensure_header: failed to write CSV header to " + path_);
         }
     }
 
@@ -153,7 +153,7 @@ CsvStatsSink::ensure_header() {
 }
 
 std::string
-CsvStatsSink::csv_escape(const std::string& value) {
+CsvStatsWriter::csv_escape(const std::string& value) {
     const bool needs_quotes = value.find_first_of(",\"\n\r") != std::string::npos;
     if (!needs_quotes) {
         return value;
@@ -172,7 +172,7 @@ CsvStatsSink::csv_escape(const std::string& value) {
 }
 
 std::string
-CsvStatsSink::fmt_opt_double(const std::optional<double>& value) {
+CsvStatsWriter::fmt_opt_double(const std::optional<double>& value) {
     if (!value.has_value()) {
         return "";
     }
@@ -182,7 +182,7 @@ CsvStatsSink::fmt_opt_double(const std::optional<double>& value) {
 }
 
 void
-CsvStatsSink::log_impl(const RunStats& stats) {
+CsvStatsWriter::log_impl(const RunStats& stats) {
     ensure_header();
 
     file_ << csv_escape(stats.run_id) << ','

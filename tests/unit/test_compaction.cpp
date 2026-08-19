@@ -11,7 +11,7 @@
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "heuristics/compaction/compaction.h"
-#include "heuristics/compaction/original_space.h"
+#include "heuristics/compaction/original_variables.h"
 #include "heuristics_test_support.h"
 #include "util/column_set.h"
 
@@ -34,32 +34,32 @@ TEST_CASE_TEMPLATE("compaction: when it should run", Tag, DenseTag, SparseTag) {
     const std::vector<std::uint8_t> active;
     const std::vector<std::size_t> var_map{0, 1, 2, 3};
 
-    const auto inputs = [&](bool has_compacted_once, std::size_t num_conflicts,
-                            std::size_t last_conflicts) {
-        return CompactionInputs{trail, clauses, active, var_map, 4, has_compacted_once,
-                                num_conflicts, last_conflicts, 16};
+    const auto state = [&](bool has_compacted_once, std::size_t num_conflicts,
+                           std::size_t last_conflicts) {
+        return CompactionState{trail, clauses, active, var_map, 4, has_compacted_once,
+                               num_conflicts, last_conflicts, 16};
     };
 
     SUBCASE("an empty root trail has nothing to eliminate") {
-        CHECK_FALSE(should_compact_before_decision(inputs(false, 0, 0)));
+        CHECK_FALSE(should_compact_before_decision(state(false, 0, 0)));
     }
 
     SUBCASE("a pivoted root trail is compactable") {
         trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0});
-        CHECK(should_compact_before_decision(inputs(false, 0, 0)));
+        CHECK(should_compact_before_decision(state(false, 0, 0)));
     }
 
     SUBCASE("only the root level is compactable") {
         trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0});
         trail.learn(make_equation_with(repr, 4, {2}), std::nullopt);
         REQUIRE(trail.size() == 2);
-        CHECK_FALSE(should_compact_before_decision(inputs(false, 0, 0)));
+        CHECK_FALSE(should_compact_before_decision(state(false, 0, 0)));
     }
 
     SUBCASE("the conflict interval gates repeat compactions") {
         trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0});
-        CHECK_FALSE(should_compact_before_decision(inputs(true, 10, 0)));
-        CHECK(should_compact_before_decision(inputs(true, 16, 0)));
+        CHECK_FALSE(should_compact_before_decision(state(true, 10, 0)));
+        CHECK(should_compact_before_decision(state(true, 16, 0)));
     }
 }
 
@@ -91,11 +91,11 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
     const std::vector<std::uint8_t> active{1, 1, 1};
     const std::vector<std::size_t> var_map{0, 1, 2, 3};
 
-    const CompactionInputs inputs{trail, clauses, active, var_map, 4, false, 0, 0, 16};
+    const CompactionState state{trail, clauses, active, var_map, 4, false, 0, 0, 16};
     const CompactionTransform transform = build_compaction_transform(trail, 4);
     REQUIRE(transform.new_num_vars() == 3);
 
-    const CompactionPlan plan = build_compaction_plan(inputs, transform);
+    const CompactionPlan plan = build_compaction_plan(state, transform);
     REQUIRE(plan.rewritten_clauses.size() == 3);
     REQUIRE(plan.clause_is_active.size() == 3);
 
@@ -120,7 +120,7 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
         CHECK(rewritten.watched1 == 1);
     }
 
-    SUBCASE("rows are reduced by the trail before being projected") {
+    SUBCASE("rows are reduced by the trail before being compacted") {
         // x0 + x1 reduces to x1 + 1 against x0 = 1, and x0 is then eliminated.
         CHECK(plan.clause_is_active[2] == 1);
         const Clause& rewritten = plan.rewritten_clauses[2];
@@ -150,9 +150,9 @@ TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, De
     const std::vector<std::uint8_t> active{1};
     const std::vector<std::size_t> var_map{0, 1, 2, 3};
 
-    const CompactionInputs inputs{trail, clauses, active, var_map, 4, false, 0, 0, 16};
+    const CompactionState state{trail, clauses, active, var_map, 4, false, 0, 0, 16};
     const CompactionTransform transform = build_compaction_transform(trail, 4);
-    const CompactionPlan plan = build_compaction_plan(inputs, transform);
+    const CompactionPlan plan = build_compaction_plan(state, transform);
 
     const Clause& rewritten = plan.rewritten_clauses[0];
     CHECK(rewritten.rows() == 1);
@@ -181,9 +181,9 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         const std::vector<Clause> clauses;
         const std::vector<std::uint8_t> active;
         const std::vector<std::size_t> var_map{0, 1, 2, 3};
-        const CompactionInputs inputs{trail, clauses, active, var_map, 4, false, 0, 0, 16};
+        const CompactionState state{trail, clauses, active, var_map, 4, false, 0, 0, 16};
         const CompactionTransform transform = build_compaction_transform(trail, 4);
-        const CompactionPlan plan = build_compaction_plan(inputs, transform);
+        const CompactionPlan plan = build_compaction_plan(state, transform);
 
         std::vector<CompactionHistoryEntry> history;
         history.push_back(plan.history_entry);
@@ -205,9 +205,9 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         const std::vector<Clause> clauses;
         const std::vector<std::uint8_t> active;
         const std::vector<std::size_t> var_map{0, 1, 2, 3};
-        const CompactionInputs inputs{trail, clauses, active, var_map, 4, false, 0, 0, 16};
+        const CompactionState state{trail, clauses, active, var_map, 4, false, 0, 0, 16};
         const CompactionTransform transform = build_compaction_transform(trail, 4);
-        const CompactionPlan plan = build_compaction_plan(inputs, transform);
+        const CompactionPlan plan = build_compaction_plan(state, transform);
         REQUIRE(transform.new_num_vars() == 3);
 
         std::vector<CompactionHistoryEntry> history;
@@ -234,19 +234,19 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         const std::vector<Clause> clauses;
         const std::vector<std::uint8_t> active;
         const std::vector<std::size_t> first_map{0, 1, 2, 3};
-        const CompactionInputs first_inputs{first_trail, clauses, active, first_map, 4,
-                                            false,       0,       0,      16};
+        const CompactionState first_state{first_trail, clauses, active, first_map, 4,
+                                          false,       0,       0,      16};
         const CompactionTransform first_transform = build_compaction_transform(first_trail, 4);
-        const CompactionPlan first_plan = build_compaction_plan(first_inputs, first_transform);
+        const CompactionPlan first_plan = build_compaction_plan(first_state, first_transform);
 
         // After the first step the active variables are old x1, x2, x3.
         const std::vector<std::size_t> second_map{1, 2, 3};
         Trail second_trail(repr, 3);
         second_trail.learn(make_equation_with(repr, 3, {0, 1}), ClauseId{0}); // x1 + x2 = 0
-        const CompactionInputs second_inputs{second_trail, clauses, active, second_map, 3,
-                                             true,         16,      0,      16};
+        const CompactionState second_state{second_trail, clauses, active, second_map, 3,
+                                           true,         16,      0,      16};
         const CompactionTransform second_transform = build_compaction_transform(second_trail, 3);
-        const CompactionPlan second_plan = build_compaction_plan(second_inputs, second_transform);
+        const CompactionPlan second_plan = build_compaction_plan(second_state, second_transform);
         REQUIRE(second_transform.new_num_vars() == 2);
 
         std::vector<CompactionHistoryEntry> history;

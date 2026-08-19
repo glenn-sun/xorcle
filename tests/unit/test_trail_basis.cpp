@@ -263,16 +263,16 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace of the whole span is the full coo
     CHECK(spans_equal(basis.to_RowSpace(), whole_span));
 }
 
-TEST_CASE_TEMPLATE("trail basis: asserting level of a lifted unit clause is the root", Tag,
+TEST_CASE_TEMPLATE("trail basis: asserting level of a unit clause is the root", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const Trail trail = make_levelled_trail(repr);
     REQUIRE(trail.level() == 3);
 
-    // A single row is a lifted unit clause: it asserts at the root whatever it
-    // is made of, so every non-root level can be discarded. The discard-count
-    // convention reports `trail.size() - 1` here, which is 3 -- the opposite end
-    // of the range, which is why the two are easy to confuse.
+    // A single row converts back to a unit clause: it asserts at the root
+    // whatever it is made of, so every non-root level can be discarded. The
+    // discard-count convention reports `trail.size() - 1` here, which is 3 --
+    // the opposite end of the range, which is why the two are easy to confuse.
     for (const std::size_t column : {std::size_t{0}, std::size_t{3}, std::size_t{7}}) {
         const TrailBasisSpace basis = make_basis(trail, {{column}});
         REQUIRE(basis.rows() == 1);

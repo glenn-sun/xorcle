@@ -70,7 +70,7 @@ void ClauseSelector::update_with_decision(const Equation& reduced_eqn, const Tra
 
 void ClauseSelector::update_with_decision_clause(std::optional<ClauseId>) {}
 
-void ClauseSelector::update_with_new_watch(ClauseId, EquationId, WatchType, const Trail&) {}
+void ClauseSelector::update_with_new_watch(ClauseId, ClauseRowIndex, WatchType, const Trail&) {}
 
 void ClauseSelector::update_with_compaction(const CompactionTransform&, const Trail&) {}
 

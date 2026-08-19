@@ -356,12 +356,12 @@ TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTa
     CHECK(counters.num_attempt_props > 0);
     CHECK(counters.num_propagations > 0);
     CHECK(counters.num_conflicts > 0);
-    // A clause is only ever handed to the engine by the selector, and only a
+    // A clause is only ever handed to the propagator by the selector, and only a
     // handed-out clause can propagate or move a watch.
     CHECK(counters.num_attempt_props >= counters.num_propagations);
     CHECK(counters.num_attempt_props >= counters.num_watch_updates);
     // Watches really do move on this instance: every clause has three rows, so
-    // the engine has somewhere to move a watch to.
+    // the propagator has somewhere to move a watch to.
     CHECK(counters.num_watch_updates > 0);
     CHECK(counters.num_restarts == 0);
 

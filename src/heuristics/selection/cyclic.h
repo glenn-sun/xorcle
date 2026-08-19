@@ -26,7 +26,7 @@ namespace xorcle {
 /// quiescence early, and early gives wrong SAT answers, not a crash.
 class Cyclic final : public ClauseSelector {
 public:
-    /// @param num_vars Unused; cyclic order is independent of the variable space.
+    /// @param num_vars Unused; cyclic order is independent of the variable numbering.
     explicit Cyclic(std::size_t num_vars);
 
     /// @brief The next active clause in cyclic order, or `std::nullopt` at quiescence.

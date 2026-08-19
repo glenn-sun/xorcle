@@ -38,10 +38,10 @@ add_library(xorcle_core
     src/core/trail.cpp
     src/core/trail_basis.cpp
     src/heuristics/compaction/compaction.cpp
-    src/heuristics/compaction/original_space.cpp
+    src/heuristics/compaction/original_variables.cpp
+    src/heuristics/decisions/clause_sampling.cpp
     src/heuristics/decisions/csids.cpp
     src/heuristics/decisions/decision_procedure.cpp
-    src/heuristics/decisions/decision_utils.cpp
     src/heuristics/decisions/fixed_literals.cpp
     src/heuristics/decisions/phase.cpp
     src/heuristics/decisions/variable_vsids.cpp
@@ -56,7 +56,7 @@ add_library(xorcle_core
     src/util/column_set.cpp
     src/util/random.cpp
     src/util/stats.cpp
-    src/util/stats_sink.cpp)
+    src/util/stats_writer.cpp)
 
 target_link_libraries(xorcle_core PUBLIC gf2::gf2)
 target_include_directories(xorcle_core PUBLIC src)
