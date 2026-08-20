@@ -40,9 +40,19 @@ public:
     /// @return A pointer to the implied equation, or `nullptr` if the clause
     /// implies nothing right now. The equation is this propagator's own scratch,
     /// valid until its next call, and may be modified by the caller.
+    /// @pre `clause.cols() == trail.span().cols()`, matching this propagator's
+    /// own variable count, and `clause.repr() == trail.repr()`.
+    /// @pre `clause.rows() >= 1`; a non-unit clause has two distinct watches in
+    /// range and `next_watch_search_start < clause.rows()`.
     /// @pre A non-empty `zero_watch_hint` names a trigger that currently holds,
     /// and it is empty when the clause is unit. `WatchType::sum` hints are
     /// normalized to updating `watched1`.
+    ///
+    /// @note `num_watch_updates` is an accumulator the solver owns rather than a
+    /// returned count, and is the one out-parameter here that is genuinely on the
+    /// propagation path: on `random_kxnf_n_n18_k4_s5` this function runs
+    /// 1,595,421 times against 1,427 conflicts and 1,436 decisions, so it is
+    /// called roughly 1,100x more often than any conflict- or decision-scale work.
     Equation* unit_propagate_one_clause(ClauseId id, Clause& clause, const Trail& trail,
                                         std::optional<WatchType> zero_watch_hint,
                                         std::size_t& num_watch_updates,

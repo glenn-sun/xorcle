@@ -6,7 +6,8 @@ namespace xorcle {
 
 CompactionTransform CompactionTransform::from_dropped_columns(std::size_t old_num_vars,
                                                               const IndexSet& dropped_columns) {
-    assert(dropped_columns.size() == old_num_vars + 1);
+    assert(dropped_columns.size() == old_num_vars + 1 &&
+           "dropped_columns must be indexed by column, over old_num_vars + 1 columns");
     assert(!dropped_columns.test(old_num_vars) && "the constant column is never dropped");
 
     CompactionTransform out;
@@ -24,6 +25,8 @@ CompactionTransform CompactionTransform::from_dropped_columns(std::size_t old_nu
     }
     out.new_num_vars_ = out.new_to_old_.size();
 
+    // A postcondition, not a precondition: the two maps this builds must be
+    // mutual inverses on the surviving variables.
 #ifndef NDEBUG
     for (std::size_t old_index = 0; old_index < old_num_vars; ++old_index) {
         const std::size_t mapped = out.old_to_new_[old_index];

@@ -35,7 +35,7 @@ public:
 
     /// @pre `i < num_bits()`.
     bool get_bit(std::size_t i) const noexcept {
-        assert(i < num_bits_);
+        assert(i < num_bits_ && "get_bit index is out of range");
         return std::binary_search(bits_.begin(), bits_.end(), static_cast<Bit>(i));
     }
 
@@ -51,7 +51,9 @@ public:
     }
 
     /// @brief Get index of the first set bit strictly after `i`, or `std::nullopt`.
+    /// @pre `i < num_bits()`.
     std::optional<std::size_t> next_bit(std::size_t i) const noexcept {
+        assert(i < num_bits_ && "next_bit index is out of range");
         const auto it = std::upper_bound(bits_.begin(), bits_.end(), static_cast<Bit>(i));
         if (it == bits_.end()) {
             return std::nullopt;
@@ -60,9 +62,11 @@ public:
     }
 
     /// @brief Add another vector into this one over GF(2).
+    /// @pre `other.num_bits() == num_bits()`.
     void plus_assign(const SparseGF2Vector& other);
 
     /// @brief Overwrite from `other` without allocating.
+    /// @pre `other.num_bits() == num_bits()`.
     void assign_from(const SparseGF2Vector& other);
 
     bool equals(const SparseGF2Vector& other) const noexcept {

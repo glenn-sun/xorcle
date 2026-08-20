@@ -89,7 +89,8 @@ void require_compaction_disabled_for_proof(bool proof_enabled, bool compaction_e
 /// @pre The variable numbering never changes under the logger. Every clause logged
 /// must be over exactly `num_vars()` variables -- the count from the input
 /// header -- because the tokens and the input clause ids they refer to are only
-/// meaningful in that one numbering. Every logging call asserts it.
+/// meaningful in that one numbering. `log_learned_clause()` asserts it;
+/// `log_empty_clause()` writes no tokens and so has nothing to check.
 ///
 /// Compaction renumbers variables mid-solve and discards the root trail, which
 /// breaks both halves of that precondition. Nothing here bridges that gap; use
@@ -145,9 +146,6 @@ private:
     std::ofstream out_;
     std::size_t num_vars_;
     bool finalized_ = false;
-
-    /// @brief Reused buffer for one row's set bits, so logging does not allocate.
-    std::vector<std::size_t> bits_;
 
     /// @brief Write the trailing `0 <reason id> ... 0` of a line.
     void write_reasons(const std::vector<ClauseId>& reason_ids);

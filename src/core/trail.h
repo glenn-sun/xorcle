@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstddef>
 #include <optional>
 #include <vector>
@@ -38,7 +39,8 @@ public:
     /// @pre `eqn.num_bits() == span().cols()`, and `eqn` has been reduced by `span()`
     /// so it is not already in the span.
     /// @pre If `reason` is provided, then `eqn + `@f$\mathbf{1}@f$ belongs to that
-    /// reason clause.
+    /// reason clause. Not asserted: a snapshot holds no clause store to check it
+    /// against.
     void learn(const Equation& eqn, std::optional<ClauseId> reason);
 
     /// @brief The equations known to be true, i.e. @f$\mathrm{span}(U)@f$.
@@ -88,7 +90,10 @@ public:
 
     /// @brief The snapshot at the end of decision level `index`.
     /// @pre `index < size()`.
-    const TrailSnapshot& operator[](std::size_t index) const { return snapshots_[index]; }
+    const TrailSnapshot& operator[](std::size_t index) const {
+        assert(index < snapshots_.size() && "decision level is out of range");
+        return snapshots_[index];
+    }
 
     const TrailSnapshot& back() const noexcept { return snapshots_.back(); }
 

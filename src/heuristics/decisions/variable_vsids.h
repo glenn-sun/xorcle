@@ -21,7 +21,8 @@ struct VsidsParams {
     MaxHeap<Equation, EquationHash> activity_heap; ///< Literal equations, keyed by activity.
     double inc_amt = 1.0; ///< What one bump adds. Grows by @f$1/\alpha@f$ per conflict.
 
-    /// @brief @f$\alpha@f$, the decay factor. Must satisfy @f$0 < \alpha < 1@f$.
+    /// @brief @f$\alpha@f$, the decay factor.
+    /// @pre @f$0 < \alpha < 1@f$, checked when a `VariableVsids` is constructed.
     double decay = 0.98;
 
     /// @brief Bump one equation's activity, rescaling everything if it overflows.

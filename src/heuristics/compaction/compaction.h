@@ -49,12 +49,15 @@ struct CompactionState {
 };
 
 /// @brief True when the trail is at the root, the conflict interval has elapsed,
-/// and at least one variable can actually be eliminated.
+/// and at least one variable can actually be eliminated. Unlike the two below,
+/// a non-root trail is an ordinary `false` here rather than a violation.
+/// @pre The trail span's pivot column set has size `state.active_num_vars + 1`.
 bool should_compact_before_decision(const CompactionState& state);
 
 /// @brief Build the change of basis dropping every variable the span pivots on.
 /// @pre The trail is at the root level, and its span's pivot column set has size
-/// `active_num_vars + 1` and does not include the constant column.
+/// `active_num_vars + 1` and does not include the constant column. The pivot set
+/// is checked by `CompactionTransform::from_dropped_columns()`, which this calls.
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars);
 
 /// @brief Rewrite the active problem into the compacted variable numbering, as
@@ -71,6 +74,12 @@ CompactionTransform build_compaction_transform(const Trail& trail, std::size_t a
 /// what makes root-level units unrecoverable from the clause database alone —
 /// the reason proof emission and compaction are mutually exclusive. Do not try
 /// to preserve the trail across a compaction.
+///
+/// @pre `state.trail` is at the root level.
+/// @pre `state.clause_is_active` and `state.active_var_to_original` are sized by
+/// clause id and by active variable respectively, i.e. `state.clauses.size()` and
+/// `state.active_num_vars` entries.
+/// @pre `transform.old_num_vars() == state.active_num_vars`.
 CompactionPlan build_compaction_plan(const CompactionState& state,
                                      const CompactionTransform& transform);
 

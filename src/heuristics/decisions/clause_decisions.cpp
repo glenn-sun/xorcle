@@ -64,13 +64,15 @@ void ClauseSatisfactionWorkspace::clear_local_basis() {
     }
 }
 
-const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span,
-                                  Equation& reduced_scratch) {
+const Equation& decide_from_basis(const std::vector<Equation>& basis,
+                                  const RowSpace& trail_span) {
     assert(!basis.empty() && "decide_from_basis: empty basis");
+    // The per-candidate bit count and representation are checked one layer down,
+    // by `Equation::assign_from()`.
+    Equation reduced(trail_span.repr(), trail_span.num_vars());
     for (const Equation& candidate : basis) {
-        assert(candidate.num_bits() == trail_span.cols());
-        reduced_scratch.assign_from(candidate);
-        if (trail_span.partial_reduce(reduced_scratch).is_leading()) {
+        reduced.assign_from(candidate);
+        if (trail_span.partial_reduce(reduced).is_leading()) {
             return candidate;
         }
     }
@@ -80,8 +82,12 @@ const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowS
 
 bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
                                ClauseSatisfactionWorkspace& workspace) {
-    assert(workspace.num_vars_ + 1 == trail_span.cols());
-    assert(clause.cols() == trail_span.cols());
+    assert(workspace.num_vars_ + 1 == trail_span.cols() &&
+           "the workspace was configured for a different variable count");
+    assert(workspace.repr_ == trail_span.repr() &&
+           "the workspace was configured for a different representation");
+    assert(clause.cols() == trail_span.cols() &&
+           "clause and trail span disagree on the column count");
 
     workspace.clear_local_basis();
 
@@ -117,7 +123,9 @@ std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basi
     std::vector<std::uint8_t> seen_literal(transform.new_num_vars(), 0);
 
     for (const Equation& basis_equation : basis) {
-        assert(basis_equation.num_bits() == transform.old_num_vars() + 1);
+        assert(basis_equation.repr() == repr &&
+               "compact_basis_keep_order: basis and target representation disagree");
+        // The bit count is checked one layer down, by `Equation::compact()`.
         Equation compacted = basis_equation.compact(transform);
         const ReduceResult classified = compacted.classify();
         if (!classified.is_leading()) {
@@ -140,23 +148,26 @@ std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basi
     return compacted_basis;
 }
 
-bool sample_equation_from_clause(const Clause& clause, const RowSpace& trail_span, Rng& rng,
-                                 Equation& out_candidate, Equation& out_reduced) {
-    assert(clause.rows() > 0);
-    assert(clause.cols() == trail_span.cols());
-    assert(out_candidate.num_bits() == trail_span.cols());
-    assert(out_reduced.num_bits() == trail_span.cols());
+SampledDecision sample_equation_from_clause(const Clause& clause, const RowSpace& trail_span,
+                                            Rng& rng) {
+    assert(clause.rows() > 0 && "sample_equation_from_clause: empty clause");
+    assert(clause.cols() == trail_span.cols() &&
+           "sample_equation_from_clause: clause and trail span disagree on the column count");
+    assert(clause.repr() == trail_span.repr() &&
+           "sample_equation_from_clause: clause and trail span use different representations");
     assert(clause_admits_a_legal_decision(clause, trail_span) &&
            "sample_equation_from_clause: the clause is already decided or satisfied");
 
+    SampledDecision sample{Equation(trail_span.repr(), trail_span.num_vars()),
+                           Equation(trail_span.repr(), trail_span.num_vars())};
     while (true) {
         const IndexSet coefficients = random_nonzero_coefficients(clause.rows(), rng);
-        out_candidate.set_eq_true();
+        sample.candidate.set_eq_true();
         coefficients.for_each_set(
-            [&](std::size_t row_index) { out_candidate.plus_assign(clause.row(row_index)); });
-        out_reduced.assign_from(out_candidate);
-        if (trail_span.partial_reduce(out_reduced).is_leading()) {
-            return true;
+            [&](std::size_t row_index) { sample.candidate.plus_assign(clause.row(row_index)); });
+        sample.reduced.assign_from(sample.candidate);
+        if (trail_span.partial_reduce(sample.reduced).is_leading()) {
+            return sample;
         }
     }
 }

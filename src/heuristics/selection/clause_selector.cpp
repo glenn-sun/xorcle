@@ -16,7 +16,7 @@ Clause& ClauseSelector::clause(ClauseId id) {
 #ifndef NDEBUG
     debug_assert_database_synchronized();
 #endif
-    assert(id < clauses_.size());
+    assert(id < clauses_.size() && "clause id is out of range");
     return clauses_[id];
 }
 
@@ -24,7 +24,7 @@ const Clause& ClauseSelector::clause(ClauseId id) const {
 #ifndef NDEBUG
     debug_assert_database_synchronized();
 #endif
-    assert(id < clauses_.size());
+    assert(id < clauses_.size() && "clause id is out of range");
     return clauses_[id];
 }
 
@@ -32,7 +32,7 @@ bool ClauseSelector::is_clause_active(ClauseId id) const {
 #ifndef NDEBUG
     debug_assert_database_synchronized();
 #endif
-    assert(id < clauses_.size());
+    assert(id < clauses_.size() && "clause id is out of range");
     return clause_active_[id] != 0;
 }
 
@@ -40,7 +40,7 @@ void ClauseSelector::set_clause_active(ClauseId id, bool active) {
 #ifndef NDEBUG
     debug_assert_database_synchronized();
 #endif
-    assert(id < clauses_.size());
+    assert(id < clauses_.size() && "clause id is out of range");
     clause_active_[id] = active ? 1 : 0;
 }
 

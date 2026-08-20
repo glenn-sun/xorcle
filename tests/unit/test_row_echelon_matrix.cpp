@@ -152,8 +152,7 @@ TEST_CASE_TEMPLATE("row echelon: reduce records its coefficients", Tag, DenseTag
     Equation v = make_equation_with(repr, 5, {0, 2, 4});
     const Equation original = v;
 
-    IndexSet coefficients;
-    matrix.reduce(v, coefficients);
+    const IndexSet coefficients = matrix.reduce_get_coefficients(v);
     CHECK(coefficients.size() == matrix.rows());
 
     // The recorded rows must sum to exactly the change reduction made.

@@ -15,11 +15,13 @@
 
 namespace xorcle {
 
-/// @brief Reusable scratch for `clause_satisfied_by_trail()`. The small echelon
-/// basis and the two equations fed through it are the whole cost of that test,
-/// so they are refilled here rather than reallocated per call: it is passed by
-/// reference because `Csids::make_decision()` refills one member instance per
-/// clause it probes, and probes several per decision.
+/// @brief In-out scratch for `clause_satisfied_by_trail()`, not an out-parameter:
+/// the test reads and writes this object across calls and its contents are never
+/// a result the caller consumes. The small echelon basis and the two equations
+/// fed through it are the whole cost of the test, and `Csids::make_decision()`
+/// carries one instance as a member -- on `random_kxnf_n_n18_k4_s5` the test runs
+/// 5,102 times over 1,436 decisions -- so the basis keeps the storage it has
+/// grown into instead of being rebuilt per probe.
 class ClauseSatisfactionWorkspace {
 public:
     ClauseSatisfactionWorkspace(EquationRepr repr, std::size_t num_vars);
@@ -46,42 +48,46 @@ private:
 };
 
 /// @brief Choose the first basis equation, in order, the trail has not already
-/// decided; `reduced_scratch` takes each reduction in turn.
+/// decided.
 /// @return The first candidate whose reduction has a leading bit, i.e. is a
 /// legal decision. It points into `basis` and is *not* reduced.
-/// @pre Both have `trail_span.cols()` bits, and some legal decision remains.
-/// @note `reduced_scratch` is a caller-owned buffer rather than a local because
-/// both callers refill one long-lived member once per decision:
-/// `FixedLiterals::make_decision()` and the `Csids::make_decision()` fallback.
-const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span,
-                                  Equation& reduced_scratch);
+/// @pre `basis` is non-empty, every equation in it has `trail_span.cols()` bits
+/// and `trail_span`'s representation, and some legal decision remains.
+const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span);
 
 /// @brief Whether the trail already satisfies a clause, under every extension.
 /// A clause @f$\bigwedge_i g_i@f$ is *falsified* exactly when every @f$g_i \in
 /// \mathrm{span}(U)@f$, and *satisfied* exactly when @f$\mathbf{1} \in
 /// \mathrm{span}(U) + \langle g_1, \dots, g_k \rangle@f$; the second is computed
 /// incrementally, stopping as soon as it holds.
-/// @pre `workspace` was configured for `trail_span.cols() - 1` variables.
+/// @pre `clause.cols() == trail_span.cols()`, and `workspace` was configured for
+/// `trail_span.cols() - 1` variables in `trail_span`'s representation.
 bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
                                ClauseSatisfactionWorkspace& workspace);
 
 /// @brief Compact a literal basis, preserving basis order.
 /// @return The first compacted equation for each new leading bit, in old basis
 /// order, then a unit equation for each new variable none covered.
-/// @pre Every equation in `basis` has `transform.old_num_vars() + 1` bits.
+/// @pre Every equation in `basis` has `transform.old_num_vars() + 1` bits and
+/// the representation `repr` names; the result mixes compacted basis equations
+/// with fresh ones built in `repr`, so a mismatch yields a basis of two
+/// representations that only fails much later.
 /// @post Exactly `transform.new_num_vars()` equations, one per leading bit.
 std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basis,
                                                const CompactionTransform& transform,
                                                EquationRepr repr);
 
-/// @brief Sample a random combination of a clause's rows that is a legal
-/// decision, into `out_candidate` unreduced and `out_reduced` partially reduced.
-/// @pre `clause.rows() > 0`; the out-params have `trail_span.cols()` bits; and
-/// the clause is not satisfied by the trail, i.e. `clause_satisfied_by_trail()`
-/// returned false for it.
-/// @note Out-parameters rather than a returned pair because the only caller,
-/// `Csids::make_decision()`, refills the same two long-lived members
-/// (`candidate_` and `reduced_candidate_`) once per decision.
+/// @brief One sampled decision.
+struct SampledDecision {
+    Equation candidate; ///< The combination of clause rows drawn, unreduced.
+    Equation reduced; ///< `candidate` partially reduced by the trail span.
+};
+
+/// @brief Sample a random combination of a clause's rows that is a legal decision.
+/// @pre `clause.cols() == trail_span.cols()`, `clause.repr() == trail_span.repr()`
+/// and `clause.rows() > 0`.
+/// @pre The clause is not satisfied by the trail, i.e.
+/// `clause_satisfied_by_trail()` returned false for it.
 ///
 /// Rejection sampling, so the draw count is data-dependent;
 /// `random_nonzero_coefficients()` documents the per-attempt pattern. Only a
@@ -91,7 +97,7 @@ std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basi
 /// @f$\mathbf{1} \in \mathrm{span}(U) + \langle g_i \rangle@f$, exactly what the
 /// satisfaction precondition rules out; that precondition is also what makes the
 /// loop terminate, and debug builds check it.
-bool sample_equation_from_clause(const Clause& clause, const RowSpace& trail_span, Rng& rng,
-                                 Equation& out_candidate, Equation& out_reduced);
+SampledDecision sample_equation_from_clause(const Clause& clause, const RowSpace& trail_span,
+                                            Rng& rng);
 
 } // namespace xorcle

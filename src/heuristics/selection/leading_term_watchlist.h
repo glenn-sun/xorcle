@@ -45,9 +45,15 @@ public:
     void add_asserting_clause(Clause clause, const Trail& trail,
                               std::size_t removed_levels) override;
 
+    /// @pre `reduced_eqn` has a variable or constant leading column that this
+    /// watchlist has a bucket for, and `trail` is over the numbering the
+    /// watchlist was constructed with -- the bucket array is sized for the
+    /// *initial* variable count and never shrunk, so a wider trail would index
+    /// past it.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
     /// @brief Move a clause between buckets when its watch moves.
+    /// @pre `id` names an active clause and `old_watch < clause(id).rows()`.
     void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
                                const Trail& trail) override;
 
@@ -69,6 +75,7 @@ private:
     ClauseId pop();
 
     /// @brief The bucket a watched row belongs in, i.e. its leading column.
+    /// @pre `row_id < clause.rows()`, and that row is not the true equation.
     std::size_t bucket_of(const Clause& clause, ClauseRowIndex row_id) const;
 
     /// @brief Bucket a stored clause by both watched rows, or record it as a unit.

@@ -22,6 +22,11 @@ namespace xorcle {
 /// @pre `active_assignment` is indexed by active variable, over
 /// `compaction_history.back().transform.new_num_vars()` of them, or, when no
 /// compaction has run, `active_var_to_original.size()`.
+/// @pre Consecutive history entries chain, i.e. entry `i`'s
+/// `transform.new_num_vars()` is entry `i + 1`'s `transform.old_num_vars()`.
+/// @pre Every entry of `active_var_to_original` is `< original_num_vars`, and
+/// every row of every entry's `trail_rows_before` is non-zero with a variable
+/// (not constant) leading bit.
 ///
 /// @note The trail rows are walked **backwards**, and that is mandatory. They
 /// were recorded in row-echelon order, so reversing makes each eliminated

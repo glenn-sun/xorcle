@@ -1,10 +1,12 @@
 #include "util/index_set.h"
 
 #include <bit>
+#include <cassert>
 
 namespace xorcle {
 
 std::size_t IndexSet::count_below(std::size_t i) const noexcept {
+    assert(i <= size_ && "IndexSet::count_below index is out of range");
     const std::size_t full_words = i >> 6;
     std::size_t total = 0;
     for (std::size_t w = 0; w < full_words; ++w) {

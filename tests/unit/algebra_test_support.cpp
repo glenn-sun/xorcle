@@ -14,9 +14,7 @@ Equation make_equation_with(EquationRepr repr, std::size_t num_vars,
 }
 
 std::vector<std::size_t> bits_of(const Equation& equation) {
-    std::vector<std::size_t> out;
-    equation.bits(out);
-    return out;
+    return equation.bits();
 }
 
 void check_echelon_invariant(const RowEchelonMatrix& matrix) {

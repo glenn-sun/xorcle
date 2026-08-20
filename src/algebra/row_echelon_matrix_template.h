@@ -9,13 +9,48 @@
 
 #include "algebra/equation.h"
 #include "algebra/equation_repr.h"
-#include "algebra/equation_template.h"
 #include "algebra/gf2_vector.h"
 #include "algebra/reduce_result.h"
-#include "algebra/row_echelon_matrix.h"
 #include "util/index_set.h"
 
 namespace xorcle {
+
+/// @brief The abstract interface behind `RowEchelonMatrix`.
+/// Contains common functionality involving loops over rows, to avoid virtual
+/// dispatch at low levels.
+class RowEchelonMatrixInterface {
+public:
+    virtual ~RowEchelonMatrixInterface() = default;
+
+    virtual EquationRepr repr() const noexcept = 0;
+
+    virtual std::unique_ptr<RowEchelonMatrixInterface> clone() const = 0;
+
+    virtual std::size_t rows() const noexcept = 0;
+
+    virtual std::size_t num_vars() const noexcept = 0;
+
+    virtual const Equation& row(std::size_t index) const = 0;
+
+    virtual const IndexSet& pivot_columns() const noexcept = 0;
+
+    virtual std::optional<std::size_t> add_row_get_index(const Equation& v) = 0;
+
+    virtual void reduce(Equation& v) const = 0;
+
+    virtual IndexSet reduce_get_coefficients(Equation& v) const = 0;
+
+    virtual ReduceResult partial_reduce(Equation& v) const = 0;
+
+    virtual ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const = 0;
+
+    virtual Equation pop_first_row() = 0;
+
+    virtual void pop_last_row() = 0;
+
+    /// @brief The unique solution of the stored system, one bit per variable.
+    virtual IndexSet solution() const = 0;
+};
 
 /// @brief Implements `RowEchelonMatrixInterface` against any `GF2Vector`.
 ///
@@ -44,15 +79,15 @@ public:
 
     std::size_t num_vars() const noexcept override { return num_vars_; }
 
-    const Equation& row(std::size_t index) const override {
-        assert(index < rows_.size());
-        return rows_[index];
-    }
+    const Equation& row(std::size_t index) const override { return rows_[index]; }
 
     const IndexSet& pivot_columns() const noexcept override { return pivot_columns_; }
 
+    /// @note Reached from two public entries, `RowEchelonMatrix::add_row()` and
+    /// `add_row_get_index()`, so the argument check lives here rather than in both.
     std::optional<std::size_t> add_row_get_index(const Equation& v) override {
-        assert(v.num_bits() == cols() && v.repr() == V::repr);
+        assert(v.num_bits() == cols() && "add_row: bit count does not match the matrix");
+        assert(v.repr() == V::repr && "add_row: representation does not match the matrix");
 
         // Partially reduce a copy of `v` against the stored rows.
         Equation reduced = v;
@@ -85,7 +120,6 @@ public:
     }
 
     void reduce(Equation& v) const override {
-        assert(v.num_bits() == cols() && v.repr() == V::repr);
         V& row = gf2_vector_of<V>(v);
         // `v` is mutated while its set columns are being walked, so `next_bit`
         // must be re-evaluated against the live row each time.
@@ -96,21 +130,20 @@ public:
         }
     }
 
-    void reduce(Equation& v, IndexSet& coefficients_out) const override {
-        assert(v.num_bits() == cols() && v.repr() == V::repr);
-        coefficients_out.reset_size(rows_.size());
+    IndexSet reduce_get_coefficients(Equation& v) const override {
+        IndexSet coefficients(rows_.size());
         V& row = gf2_vector_of<V>(v);
         for (auto column = row.leading_bit(); column; column = row.next_bit(*column)) {
             if (pivot_columns_.test(*column)) {
                 const std::size_t row_index = column_to_row_[*column];
                 row.plus_assign(gf2_vector_of<V>(rows_[row_index]));
-                coefficients_out.set(row_index);
+                coefficients.set(row_index);
             }
         }
+        return coefficients;
     }
 
     ReduceResult partial_reduce(Equation& v) const override {
-        assert(v.num_bits() == cols() && v.repr() == V::repr);
         V& row = gf2_vector_of<V>(v);
         std::optional<std::size_t> column = row.leading_bit();
         while (true) {
@@ -126,14 +159,8 @@ public:
     }
 
     ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const override {
-        assert(v.num_bits() == cols() && v.repr() == V::repr);
-        assert(extra.num_bits() == cols() && extra.repr() == V::repr);
-
         const V& extra_row = gf2_vector_of<V>(extra);
         const std::optional<std::size_t> extra_leading = extra_row.leading_bit();
-        assert((!extra_leading || !pivot_columns_.test(*extra_leading)) &&
-               "extra must already be partially reduced by this matrix");
-
         V& row = gf2_vector_of<V>(v);
         std::optional<std::size_t> column = row.leading_bit();
         while (true) {
@@ -154,9 +181,10 @@ public:
     }
 
     Equation pop_first_row() override {
-        assert(!rows_.empty() && "pop_first_row on an empty matrix");
         Equation first_row = std::move(rows_.front());
         const std::optional<std::size_t> leading = gf2_vector_of<V>(first_row).leading_bit();
+        // Stronger than the caller's `rows() > 0`: a structural invariant of a
+        // row-echelon matrix, which never stores a zero row.
         assert(leading && "stored row has no pivot");
 
         rows_.erase(rows_.begin());
@@ -170,8 +198,8 @@ public:
     }
 
     void pop_last_row() override {
-        assert(!rows_.empty() && "pop_last_row on an empty matrix");
         const std::optional<std::size_t> leading = gf2_vector_of<V>(rows_.back()).leading_bit();
+        // Stronger than the caller's `rows() > 0`; see `pop_first_row()`.
         assert(leading && "stored row has no pivot");
 
         rows_.pop_back();
@@ -181,11 +209,14 @@ public:
     }
 
     IndexSet solution() const override {
-        assert(rows_.size() == num_vars_);
         IndexSet out(num_vars_);
         for (std::size_t i = num_vars_; i-- > 0;) {
             const V& row = gf2_vector_of<V>(rows_[i]);
-            assert(row.leading_bit() == std::optional<std::size_t>(i));
+            // Stronger than `RowSpace::unique_solution()`'s full-rank check:
+            // full rank forces one pivot per variable column, and this pins each
+            // one to its own row. A structural invariant, not a duplicate.
+            assert(row.leading_bit() == std::optional<std::size_t>(i) &&
+                   "a full-rank row space must have row i leading on column i");
             bool value = row.get_bit(num_vars_); // the row's constant bit
             for (auto column = row.next_bit(i); column && *column < num_vars_;
                  column = row.next_bit(*column)) {

@@ -26,6 +26,9 @@ LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars)
     : by_leading_term_(num_vars + 1) {}
 
 std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex row_id) const {
+    // Stronger than `RowEchelonMatrix::row()`'s own bound check below: this says
+    // the clause's *stored watch* is in range, which is the invariant that
+    // matters here and would otherwise fail with a less specific message.
     assert(row_id < clause.rows() && "watched row index out of range");
     const ReduceResult leading = clause.row(row_id).classify();
     // A stored clause row is never the true equation, and the constant column is
@@ -38,7 +41,7 @@ std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex
 }
 
 void LeadingTermWatchlist::push_top(ClauseId id) {
-    assert(id < in_queue_.size());
+    assert(id < in_queue_.size() && "clause id is out of range");
     if (!in_queue_[id]) {
         queue_.push_back(id);
         in_queue_[id] = true;
@@ -46,7 +49,7 @@ void LeadingTermWatchlist::push_top(ClauseId id) {
 }
 
 void LeadingTermWatchlist::push_bottom(ClauseId id) {
-    assert(id < in_queue_.size());
+    assert(id < in_queue_.size() && "clause id is out of range");
     if (!in_queue_[id]) {
         queue_.push_front(id);
         in_queue_[id] = true;
@@ -66,7 +69,7 @@ void LeadingTermWatchlist::append_bottom(const std::vector<ClauseId>& ids) {
 }
 
 ClauseId LeadingTermWatchlist::pop() {
-    assert(!queue_.empty());
+    assert(!queue_.empty() && "pop on an empty work queue");
     const ClauseId id = queue_.back();
     queue_.pop_back();
     in_queue_[id] = false;
@@ -99,7 +102,7 @@ void LeadingTermWatchlist::add_clause(Clause clause) {
            "queue membership flags are desynchronized from the clause database");
 
     const ClauseId new_id = clauses_.size();
-    debug_assert_non_unit_watches_valid(clause);
+    // The watch check runs in `index_clause()` below, on the stored clause.
     ClauseSelector::add_clause(std::move(clause));
     in_queue_.push_back(false);
 
@@ -141,6 +144,8 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
                 return; // ascending order, so every pivot below is already queued
             }
             --pivots_below;
+            assert(column < by_leading_term_.size() &&
+                   "the trail carries more columns than the watchlist was built for");
             append_bottom(by_leading_term_[column]);
         });
     }
@@ -149,8 +154,9 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
 
 void LeadingTermWatchlist::update_with_new_watch(ClauseId id, ClauseRowIndex old_watch,
                                                 WatchType type, const Trail&) {
-    assert(id < clauses_.size() && id < in_queue_.size());
-    assert(is_clause_active(id));
+    assert(id < in_queue_.size() && "clause id is out of range");
+    // The clause-database bound is checked by `is_clause_active()`.
+    assert(is_clause_active(id) && "a watch moved on an inactive clause");
 
     const Clause& moved = clauses_[id];
     debug_assert_non_unit_watches_valid(moved);

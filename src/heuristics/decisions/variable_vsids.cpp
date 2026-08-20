@@ -71,6 +71,8 @@ void VsidsParams::bump_activity(const Equation& eqn) {
 
 VariableVsids::VariableVsids(EquationRepr repr, std::size_t num_vars, Seed seed)
     : DecisionProcedure(repr, num_vars, seed) {
+    assert(vsids_params_.decay > 0.0 && vsids_params_.decay < 1.0 &&
+           "variable VSIDS requires 0 < alpha < 1");
     reinitialize();
 }
 
@@ -101,6 +103,7 @@ void VariableVsids::refill_decision_heap() {
     if (!vsids_params_.activity_heap.empty()) {
         return;
     }
+    assert(unit_eqns_.size() == num_vars() && "the literal basis is desynchronized");
     for (std::size_t var = 0; var < num_vars(); ++var) {
         const Equation& literal = unit_eqns_[var];
         if (vsids_params_.activity_heap.get_priority(literal) == 0.0) {
@@ -111,6 +114,12 @@ void VariableVsids::refill_decision_heap() {
 }
 
 Equation VariableVsids::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) {
+    assert(trail_span.cols() == num_vars() + 1 &&
+           "the trail span does not match the procedure's variable count");
+    // Not a formality: with no legal decision left, the loop below drains the
+    // heap, refills it and drains it again, forever.
+    assert(trail_span.rows() < num_vars() && "no legal decision remains");
+
     while (true) {
         std::optional<Equation> candidate = vsids_params_.activity_heap.extract_max();
         if (!candidate.has_value()) {
@@ -146,6 +155,8 @@ void VariableVsids::update_with_asserting_clause(const Clause& clause) {
 void VariableVsids::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                            const std::vector<Clause>&,
                                            const std::vector<std::uint8_t>&) {
+    assert(transform.old_num_vars() == num_vars() &&
+           "the transform was built for a different active variable numbering");
     unit_eqns_ = compact_basis_keep_order(unit_eqns_, transform, repr());
     set_num_vars(transform.new_num_vars());
     remap_vsids_heap(vsids_params_.activity_heap, transform);

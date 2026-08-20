@@ -11,13 +11,54 @@
 #include <vector>
 
 #include "algebra/compaction_transform.h"
-#include "algebra/equation.h"
 #include "algebra/equation_repr.h"
 #include "algebra/gf2_vector.h"
 #include "algebra/reduce_result.h"
 #include "util/print_mode.h"
 
 namespace xorcle {
+
+/// @brief The abstract interface behind `Equation`.
+/// Contains all functionality involving per-bit loops, to avoid virtual
+/// dispatch at low levels.
+class EquationInterface {
+public:
+    virtual ~EquationInterface() = default;
+
+    virtual EquationRepr repr() const noexcept = 0;
+
+    virtual std::unique_ptr<EquationInterface> clone() const = 0;
+
+    virtual std::size_t num_bits() const noexcept = 0;
+
+    virtual void resize(std::size_t num_bits) = 0;
+
+    virtual void set_eq_true() noexcept = 0;
+
+    virtual void assign_bits(std::span<const std::size_t> bits) = 0;
+
+    virtual std::optional<std::size_t> leading_bit() const noexcept = 0;
+
+    virtual ReduceResult classify() const noexcept = 0;
+
+    virtual void plus_assign(const EquationInterface& other) = 0;
+
+    virtual void assign_from(const EquationInterface& other) = 0;
+
+    virtual std::unique_ptr<EquationInterface> compact(const CompactionTransform& transform)
+        const = 0;
+
+    virtual std::unique_ptr<EquationInterface> uncompact(const CompactionTransform& transform)
+        const = 0;
+
+    virtual std::vector<std::size_t> bits() const = 0;
+
+    virtual bool equals(const EquationInterface& other) const noexcept = 0;
+
+    virtual std::size_t hash() const noexcept = 0;
+
+    virtual std::string to_string(const PrintMode& mode) const = 0;
+};
 
 /// @brief Implements `EquationInterface` against any `GF2Vector`.
 template <GF2Vector V>
@@ -99,8 +140,10 @@ public:
         return std::make_unique<EquationTemplate>(std::move(out));
     }
 
-    void bits(std::vector<std::size_t>& out) const override {
+    std::vector<std::size_t> bits() const override {
+        std::vector<std::size_t> out;
         vector_.for_each_set_bit([&](std::size_t bit) { out.push_back(bit); });
+        return out;
     }
 
     bool equals(const EquationInterface& other) const noexcept override {
@@ -152,31 +195,15 @@ public:
     }
 
 private:
+    /// @brief The public entries reaching here -- `Equation::plus_assign()`,
+    /// `Equation::assign_from()` and `Equation::operator==()` -- have each
+    /// already established that `interface` shares this template's
+    /// representation, so the downcast is not re-checked.
     static const EquationTemplate& cast(const EquationInterface& interface) noexcept {
-        assert(interface.repr() == V::repr && "representation mismatch in EquationTemplate");
         return static_cast<const EquationTemplate&>(interface);
     }
 
     V vector_;
 };
-
-/// @pre `!equation.is_null()` and `equation.repr() == V::repr`
-template <GF2Vector V>
-const V& gf2_vector_of(const Equation& equation) noexcept {
-    assert(!equation.is_null() && equation.repr() == V::repr);
-    return static_cast<const EquationTemplate<V>&>(equation.interface()).vector();
-}
-
-/// @pre `!equation.is_null()` and `equation.repr() == V::repr`
-template <GF2Vector V>
-V& gf2_vector_of(Equation& equation) noexcept {
-    assert(!equation.is_null() && equation.repr() == V::repr);
-    return static_cast<EquationTemplate<V>&>(equation.interface()).vector();
-}
-
-template <GF2Vector V>
-Equation make_equation_from_gf2_vector(V vec) {
-    return Equation(std::make_unique<EquationTemplate<V>>(std::move(vec)));
-}
 
 } // namespace xorcle

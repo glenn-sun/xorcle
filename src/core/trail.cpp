@@ -26,7 +26,12 @@ void debug_assert_snapshot_valid(const TrailSnapshot& snapshot) {
 } // namespace
 
 void TrailSnapshot::learn(const Equation& eqn, std::optional<ClauseId> reason) {
-    assert(eqn.num_bits() == span_.cols());
+    // Reached from both `TrailSnapshot::learn()` and `Trail::learn()`, so the
+    // argument check lives here rather than in both.
+    assert(eqn.num_bits() == span_.cols() &&
+           "learned equation does not match the snapshot's column count");
+    assert(eqn.repr() == span_.repr() &&
+           "learned equation does not match the snapshot's representation");
 
     const std::optional<std::size_t> maybe_inserted_index = span_.add_row_get_index(eqn);
     // A caller that learns an equation already in the span would leave the two
@@ -58,8 +63,7 @@ Trail::Trail(EquationRepr repr, std::size_t num_vars) {
 }
 
 void Trail::learn(const Equation& eqn, std::optional<ClauseId> reason) {
-    assert(!snapshots_.empty());
-    assert(eqn.num_bits() == span().cols());
+    assert(!snapshots_.empty() && "a trail always holds at least the root snapshot");
 
     if (!reason.has_value()) {
         // A decision opens a new level: a full copy, which is what makes
@@ -68,10 +72,6 @@ void Trail::learn(const Equation& eqn, std::optional<ClauseId> reason) {
         snapshots_.push_back(std::move(new_snapshot));
     }
     snapshots_.back().learn(eqn, reason);
-
-#ifndef NDEBUG
-    debug_assert_snapshot_valid(snapshots_.back());
-#endif
 }
 
 void Trail::resize(std::size_t num_levels) {

@@ -73,6 +73,7 @@ public:
     /// restarts); `proof_logger` is null for no proof and is not owned, so it must
     /// outlive the solver, and the caller finalizes it, since whether a proof is
     /// worth keeping depends on the result.
+    /// @pre `selector`, `decisions` and `restarts` are all non-null.
     /// @pre If `proof_logger` is non-null then `compaction.enabled` is false and
     /// `proof_logger->num_vars() == num_vars`. The CLI enforces the first with
     /// `require_compaction_disabled_for_proof()`.
@@ -85,6 +86,8 @@ public:
 
     /// @brief Add a clause from the input instance, in its linear negation.
     /// @pre No solving has happened yet and no compaction has run.
+    /// @pre `clause.cols() == num_vars() + 1` and `clause` uses the solver's
+    /// representation.
     /// @note The decision procedure is told about the clause *before* the
     /// selector stores it: with no pending learned activity recorded, every
     /// input clause enters at activity zero.

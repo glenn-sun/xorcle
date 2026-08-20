@@ -53,11 +53,14 @@ public:
     /// @brief Rewrite a row space into trail-basis coordinates, echelonized.
     /// @pre `trail.span()` is non-empty, its order maps are consistent, and
     /// every row of `rs` belongs to it.
+    /// @pre `rs.cols() == trail.span().cols()` and `rs.repr() == trail.repr()`.
     static TrailBasisSpace from_RowSpace(const RowSpace& rs, const Trail& trail);
 
     /// @brief Convert back out of trail-basis coordinates. Round-trips through
     /// `from_RowSpace()` preserve the *span*, not the individual rows: both
     /// directions echelonize what they build.
+    /// @pre The trail's order maps are still consistent, i.e. it has not been
+    /// learned into or backjumped since this basis was built.
     RowSpace to_RowSpace() const;
 
     /// @brief The decision level this clause asserts at: the lowest level `a`

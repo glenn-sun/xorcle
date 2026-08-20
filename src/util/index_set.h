@@ -1,6 +1,7 @@
 #pragma once
 
 #include <bit>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -39,12 +40,19 @@ public:
 
     /// @pre `i < size()`, here and in `set()` and `reset()`.
     bool test(std::size_t i) const noexcept {
+        assert(i < size_ && "IndexSet::test index is out of range");
         return (words_[i >> 6] >> (i & 63)) & 1u;
     }
 
-    void set(std::size_t i) noexcept { words_[i >> 6] |= std::uint64_t{1} << (i & 63); }
+    void set(std::size_t i) noexcept {
+        assert(i < size_ && "IndexSet::set index is out of range");
+        words_[i >> 6] |= std::uint64_t{1} << (i & 63);
+    }
 
-    void reset(std::size_t i) noexcept { words_[i >> 6] &= ~(std::uint64_t{1} << (i & 63)); }
+    void reset(std::size_t i) noexcept {
+        assert(i < size_ && "IndexSet::reset index is out of range");
+        words_[i >> 6] &= ~(std::uint64_t{1} << (i & 63));
+    }
 
     /// @brief Number of set indices strictly below `i`. This is how a row's
     /// insertion index into a row-echelon matrix is found: a row with leading

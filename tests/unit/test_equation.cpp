@@ -93,10 +93,8 @@ TEST_CASE_TEMPLATE("equation: bits and leading_bit", Tag, DenseTag, SparseTag) {
     CHECK(bits_of(equation) == std::vector<std::size_t>{0, 63, 64, 127, 199, 200});
     CHECK(equation.leading_bit() == std::optional<std::size_t>(0));
 
-    // `bits()` clears the caller's buffer first, so a reused buffer is safe.
-    std::vector<std::size_t> reused{99, 98, 97};
-    equation.bits(reused);
-    CHECK(reused == std::vector<std::size_t>{0, 63, 64, 127, 199, 200});
+    // A null handle has no bits at all.
+    CHECK(Equation().bits().empty());
 
     // `from_bits` is order-insensitive and tolerates duplicates.
     const std::vector<std::size_t> shuffled{200, 63, 0, 63, 199, 127, 64};

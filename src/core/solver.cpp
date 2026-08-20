@@ -30,9 +30,9 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       proof_logger_(proof_logger),
       conflict_check_eqn_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)) {
-    assert(selector_ != nullptr);
-    assert(decisions_ != nullptr);
-    assert(restarts_ != nullptr);
+    assert(selector_ != nullptr && "the clause selector must not be null");
+    assert(decisions_ != nullptr && "the decision procedure must not be null");
+    assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
     assert((proof_logger_ == nullptr || !compaction_.enabled) &&
            "proof emission with compaction on is not supported; see "
            "require_compaction_disabled_for_proof()");
@@ -44,7 +44,10 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
 
 void Solver::add_starting_clause(Clause clause) {
     assert(compaction_history_.empty() && "input clauses must be added before solving");
-    assert(clause.cols() == active_num_vars_ + 1);
+    assert(clause.cols() == active_num_vars_ + 1 &&
+           "a starting clause must be over the solver's variable count");
+    assert(clause.repr() == repr_ &&
+           "a starting clause must use the solver's representation");
 
     const ClauseId new_clause_id = selector_->num_clauses();
     // Before the selector stores it: with no pending learned activity recorded,

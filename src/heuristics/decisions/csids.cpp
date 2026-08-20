@@ -16,6 +16,9 @@ void CsidsParams::bump_activity(ClauseId id) {
 
 CsidsState::CsidsState(EquationRepr repr, std::size_t num_vars, const CsidsConfig& config)
     : initial_inc_amt(config.bump), repr(repr), num_vars(num_vars) {
+    assert(config.decay > 0.0 && config.decay < 1.0 && "CSIDS requires 0 < alpha < 1");
+    assert(config.initial_activity >= 0.0 && "CSIDS requires a non-negative A0");
+    assert(config.bump >= 0.0 && "CSIDS requires a non-negative bump");
     params.initial_activity = config.initial_activity;
     params.decay = config.decay;
     params.inc_amt = config.bump;
@@ -49,9 +52,7 @@ Csids::Csids(EquationRepr repr, std::size_t num_vars, Seed seed, const CsidsConf
     : DecisionProcedure(repr, num_vars, seed),
       state_(repr, num_vars, config),
       clause_sat_workspace_(repr, num_vars),
-      clause_equation_rng_(make_rng(seed, RngComponent::csids_equation)),
-      candidate_(repr, num_vars),
-      reduced_candidate_(repr, num_vars) {
+      clause_equation_rng_(make_rng(seed, RngComponent::csids_equation)) {
     reinitialize();
 }
 
@@ -63,6 +64,10 @@ void Csids::reinitialize() {
 }
 
 Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
+    assert(trail_span.cols() == num_vars() + 1 &&
+           "the trail span does not match the procedure's variable count");
+    assert(trail_span.rows() < num_vars() && "no legal decision remains");
+
     state_.ensure_unit_eqns();
     while (!state_.params.activity_heap.empty()) {
         const ClauseId id = state_.params.activity_heap.peek_max();
@@ -80,21 +85,19 @@ Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clau
 
         // The clause is not satisfied, which is exactly the precondition that
         // makes the rejection loop terminate.
-        const bool sampled = sample_equation_from_clause(clause, trail_span, clause_equation_rng_,
-                                                         candidate_, reduced_candidate_);
-        assert(sampled && "Csids: sampled no legal equation from an unsatisfied clause");
-        (void)sampled;
+        SampledDecision sample =
+            sample_equation_from_clause(clause, trail_span, clause_equation_rng_);
 
         record_decision(false);
         // The phase is applied to the *reduced* candidate, which is not the same
         // as applying it before reducing, so the reduced form is what is returned.
-        apply_decision_phase(reduced_candidate_);
-        return reduced_candidate_;
+        apply_decision_phase(sample.reduced);
+        return std::move(sample.reduced);
     }
 
     state_.last_decision_clause.reset();
     record_decision(true);
-    return decide_from_basis(state_.unit_eqns, trail_span, reduced_candidate_);
+    return decide_from_basis(state_.unit_eqns, trail_span);
 }
 
 void Csids::update_with_asserting_clause(const Clause&) {
@@ -104,6 +107,7 @@ void Csids::update_with_asserting_clause(const Clause&) {
 }
 
 void Csids::update_with_new_clause(const Clause&, ClauseId id) {
+    assert(id <= state_.num_clauses && "clause ids must be handed out consecutively");
     if (id < state_.num_clauses) {
         return;
     }
@@ -133,14 +137,12 @@ std::optional<ClauseId> Csids::decision_clause_hint() const {
 void Csids::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                    const std::vector<Clause>& clauses,
                                    const std::vector<std::uint8_t>& clause_active) {
+    assert(transform.old_num_vars() == num_vars() &&
+           "the transform was built for a different active variable numbering");
     state_.unit_eqns = compact_basis_keep_order(state_.unit_eqns, transform, repr());
 
     set_num_vars(transform.new_num_vars());
     clause_sat_workspace_.reconfigure(num_vars());
-    candidate_.resize(num_vars());
-    candidate_.set_eq_true();
-    reduced_candidate_.resize(num_vars());
-    reduced_candidate_.set_eq_true();
 
     state_.num_vars = num_vars();
     state_.num_clauses = static_cast<ClauseId>(clauses.size());

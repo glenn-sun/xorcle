@@ -15,7 +15,7 @@ void SparseGF2Vector::assign_bits(std::span<const std::size_t> bits) {
     bits_.clear();
     bits_.reserve(bits.size());
     for (const std::size_t bit : bits) {
-        assert(bit < num_bits_);
+        assert(bit < num_bits_ && "assign_bits index is out of range");
         bits_.push_back(static_cast<Bit>(bit));
     }
     std::sort(bits_.begin(), bits_.end());
@@ -23,7 +23,7 @@ void SparseGF2Vector::assign_bits(std::span<const std::size_t> bits) {
 }
 
 void SparseGF2Vector::set_bit(std::size_t i) {
-    assert(i < num_bits_);
+    assert(i < num_bits_ && "set_bit index is out of range");
     const Bit bit = static_cast<Bit>(i);
     const auto it = std::lower_bound(bits_.begin(), bits_.end(), bit);
     if (it == bits_.end() || *it != bit) {

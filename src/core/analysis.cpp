@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "algebra/equation.h"
+#include "algebra/reduce_result.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
@@ -29,10 +30,17 @@ Equation make_trail_basis_one(const Trail& trail) {
 }
 
 #ifndef NDEBUG
+/// @brief The real check behind the "the trail is conflicting" precondition:
+/// @f$\mathbf{1}@f$ reduces to @f$\mathbf{0}@f$ against the span. A cheaper
+/// stand-in -- a non-empty trail, say -- would pass on every ordinary trail and
+/// so give false confidence.
+bool trail_is_conflicting(const Trail& trail) {
+    Equation one = Equation::eq_false(trail.repr(), trail.num_vars());
+    return trail.span().partial_reduce(one).kind == ReduceResult::Kind::eq_true;
+}
+
 bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
-    std::vector<std::size_t> bits;
-    eqn.bits(bits);
-    return eqn.num_bits() == basis.cols() && bits == std::vector<std::size_t>{0};
+    return eqn.num_bits() == basis.cols() && eqn.bits() == std::vector<std::size_t>{0};
 }
 #endif
 
@@ -47,7 +55,9 @@ void resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
     assert(asserting_basis.rows() > 0 && "resolving against an empty basis");
     assert(asserting_basis.row(0).leading_bit() == std::optional<std::size_t>{pivot_column} &&
            "the pivot column is not the leading column of the first row");
-    assert(is_trail_basis_one(trail_basis_one, asserting_basis));
+    assert(is_trail_basis_one(trail_basis_one, asserting_basis) &&
+           "trail_basis_one is not the unit vector at column 0");
+    assert(trail_is_conflicting(trail) && "resolution step on a trail that does not contain 1");
 
     Equation asserting_row = asserting_basis.pop_first_row();
 
@@ -114,8 +124,9 @@ void resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
         asserting_basis.add_row(extra_reason_row);
     }
 
-    assert(reason_index < trail.order_map().size());
-    assert(trail.order_map()[reason_index] < trail.span().rows());
+    assert(reason_index < trail.order_map().size() && "trail order index is out of range");
+    assert(trail.order_map()[reason_index] < trail.span().rows() &&
+           "trail order map points outside the span");
     // Fires last, and on the row-echelon row rather than the raw trail equation
     // handed to `Trail::learn()`; the two differ by earlier rows.
     decisions.update_with_critical_equation(trail.span().row(trail.order_map()[reason_index]));
@@ -132,6 +143,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                                       std::vector<ClauseId>* reason_ids) {
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail.level() > 0 && "a root conflict is UNSAT and is not analysed");
+    assert(trail_is_conflicting(trail) && "conflict analysis on a trail that does not contain 1");
 
     // `reasons()` is indexed by trail order with one entry per span row, so its
     // last entry belongs to the equation that closed the conflict.
@@ -163,7 +175,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     while (asserting_basis.asserting_level() == trail.level()) {
         ++resolution_steps;
         assert(resolution_steps < asserting_basis.cols() && "conflict analysis did not terminate");
-        assert(asserting_basis.rows() > 0);
+        assert(asserting_basis.rows() > 0 && "resolution emptied the asserting basis");
         const std::optional<std::size_t> pivot_column = asserting_basis.row(0).leading_bit();
         assert(pivot_column.has_value() && "a stored row is zero");
         resolve_asserting_basis_with_reason(asserting_basis, *pivot_column, trail, clauses,
@@ -183,6 +195,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     }
     assert(asserting_clause.rows() == asserting_basis.rows());
     assert(asserting_clause.cols() == trail.span().cols());
+
     assert((asserting_clause.rows() != 1 || asserting_level == 0) &&
            "a unit asserting clause must assert at the root");
 

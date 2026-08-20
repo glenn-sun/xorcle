@@ -75,8 +75,9 @@ public:
         return top_value;
     }
 
-    /// @brief Multiply all priorities by k > 0. No heapify: a positive constant
+    /// @brief Multiply all priorities by `k`. No heapify: a positive constant
     /// preserves comparisons.
+    /// @pre `k > 0`.
     void rescale(double k) {
         assert(k > 0.0 && "rescale requires k > 0");
         for (auto& entry : activity_map_) entry.second *= k;
@@ -89,6 +90,8 @@ public:
         popped_.clear();
     }
 
+    /// @brief The highest-priority element still in the heap.
+    /// @pre `!empty()`.
     const T& peek_max() const {
         assert(!heap_.empty() && "peek_max on empty heap");
         return heap_.front();
@@ -120,6 +123,8 @@ public:
         }
     }
 
+    /// @brief Put an element into the heap; a no-op if it is already there.
+    /// @pre `element` has an activity entry, i.e. `set_activity()` has run for it.
     void insert(const T& element) {
         if (pos_map_.find(element) != pos_map_.end()) return;
         assert(activity_map_.find(element) != activity_map_.end() &&
@@ -193,6 +198,8 @@ private:
     static std::size_t left(std::size_t i) { return 2 * i + 1; }
     static std::size_t right(std::size_t i) { return 2 * i + 2; }
 
+    /// @brief Reached from `sift_up()` and `sift_down()` on every heap path, so
+    /// the entry check lives here rather than at each public entry.
     double activity_of(const T& element) const {
         auto it = activity_map_.find(element);
         assert(it != activity_map_.end() && "activity lookup missing");

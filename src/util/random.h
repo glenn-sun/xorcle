@@ -42,6 +42,7 @@ Seed derive_seed(Seed base_seed, RngComponent component, std::uint64_t salt = 0)
 Rng make_rng(Seed base_seed, RngComponent component, std::uint64_t salt = 0);
 
 /// @brief A uniform random integer in [0, upper_bound - 1].
+/// @pre `upper_bound > 0`.
 int random_int(Rng& rng, int upper_bound);
 
 /// @brief Sample a random non-zero GF(2) coefficient vector of `num_bits` bits,
@@ -55,6 +56,8 @@ int random_int(Rng& rng, int upper_bound);
 /// produces a different search from the same seed. Writing the fill over bit
 /// *indices* rather than storage words is what makes the sparse and dense
 /// representations consume the stream identically.
+/// @pre `num_bits > 0`; a zero-bit vector can never be non-zero, so the
+/// rejection loop would not terminate.
 IndexSet random_nonzero_coefficients(std::size_t num_bits, Rng& rng);
 
 } // namespace xorcle

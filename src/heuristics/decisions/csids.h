@@ -93,6 +93,10 @@ struct CsidsState {
 class Csids final : public DecisionProcedure {
 public:
     /// @brief The equation-sampling stream derives from `seed`.
+    /// @pre `config.decay` satisfies @f$0 < \alpha < 1@f$ and
+    /// `config.initial_activity` and `config.bump` are non-negative. The CLI
+    /// enforces this through the option table's `Ratio` and `Real` bounds; a
+    /// caller building a `CsidsConfig` by hand does not go through it.
     Csids(EquationRepr repr, std::size_t num_vars, Seed seed,
           const CsidsConfig& config = csids_default_config);
 
@@ -120,8 +124,6 @@ private:
     ClauseSatisfactionWorkspace clause_sat_workspace_;
 
     Rng clause_equation_rng_; ///< Stream for sampling a combination of a clause's rows.
-    Equation candidate_;
-    Equation reduced_candidate_; ///< The partial reduction of `candidate_`.
 };
 
 } // namespace xorcle

@@ -72,25 +72,27 @@ TEST_CASE_TEMPLATE("clause decisions: decide from a basis", Tag, DenseTag, Spars
     for (std::size_t var = 0; var < 4; ++var) {
         basis.push_back(make_equation_with(repr, 4, {var}));
     }
-    Equation scratch(repr, 4);
 
     SUBCASE("an empty trail decides the first basis row") {
         const RowSpace span(repr, 4);
-        CHECK(decide_from_basis(basis, span, scratch) == basis[0]);
+        CHECK(decide_from_basis(basis, span) == basis[0]);
     }
 
     SUBCASE("determined variables are skipped") {
         const RowSpace span = make_row_space(repr, 4, {{0, 4}, {1}});
-        CHECK(decide_from_basis(basis, span, scratch) == basis[2]);
+        CHECK(decide_from_basis(basis, span) == basis[2]);
     }
 
     SUBCASE("the returned row is the unreduced basis row") {
         // x0 is determined, and x1 is legal only after reducing to x2. The
         // caller gets x1 back, not its reduction, and re-reduces it itself.
         const RowSpace span = make_row_space(repr, 4, {{0}, {1, 2}});
-        const Equation& decision = decide_from_basis(basis, span, scratch);
+        const Equation& decision = decide_from_basis(basis, span);
         CHECK(bits_of(decision) == std::vector<std::size_t>{1});
-        CHECK(bits_of(scratch) == std::vector<std::size_t>{2});
+
+        Equation reduced = decision;
+        span.partial_reduce(reduced);
+        CHECK(bits_of(reduced) == std::vector<std::size_t>{2});
     }
 }
 
@@ -138,16 +140,14 @@ TEST_CASE_TEMPLATE("clause decisions: compact a basis", Tag, DenseTag, SparseTag
 TEST_CASE_TEMPLATE("clause decisions: sample an equation from a clause", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const RowSpace span(repr, 4);
-    Equation candidate(repr, 4);
-    Equation reduced(repr, 4);
     Rng rng = make_rng(7, RngComponent::csids_equation);
 
     SUBCASE("a unit clause always samples its only row") {
         const Clause clause = make_clause(repr, 4, {{1, 4}});
         for (int attempt = 0; attempt < 8; ++attempt) {
-            REQUIRE(sample_equation_from_clause(clause, span, rng, candidate, reduced));
-            CHECK(bits_of(candidate) == std::vector<std::size_t>{1, 4});
-            CHECK(candidate == reduced);
+            const SampledDecision sample = sample_equation_from_clause(clause, span, rng);
+            CHECK(bits_of(sample.candidate) == std::vector<std::size_t>{1, 4});
+            CHECK(sample.candidate == sample.reduced);
         }
     }
 
@@ -155,8 +155,8 @@ TEST_CASE_TEMPLATE("clause decisions: sample an equation from a clause", Tag, De
         const Clause clause = make_clause(repr, 4, {{0}, {1}});
         bool saw_sum = false;
         for (int attempt = 0; attempt < 64; ++attempt) {
-            REQUIRE(sample_equation_from_clause(clause, span, rng, candidate, reduced));
-            const std::vector<std::size_t> bits = bits_of(candidate);
+            const SampledDecision sample = sample_equation_from_clause(clause, span, rng);
+            const std::vector<std::size_t> bits = bits_of(sample.candidate);
             const bool is_row0 = bits == std::vector<std::size_t>{0};
             const bool is_row1 = bits == std::vector<std::size_t>{1};
             const bool is_sum = bits == std::vector<std::size_t>{0, 1};
@@ -172,8 +172,8 @@ TEST_CASE_TEMPLATE("clause decisions: sample an equation from a clause", Tag, De
         const RowSpace determined = make_row_space(repr, 4, {{0}});
         const Clause clause = make_clause(repr, 4, {{0}, {1}});
         for (int attempt = 0; attempt < 32; ++attempt) {
-            REQUIRE(sample_equation_from_clause(clause, determined, rng, candidate, reduced));
-            CHECK(bits_of(reduced) == std::vector<std::size_t>{1});
+            const SampledDecision sample = sample_equation_from_clause(clause, determined, rng);
+            CHECK(bits_of(sample.reduced) == std::vector<std::size_t>{1});
         }
     }
 
@@ -181,13 +181,10 @@ TEST_CASE_TEMPLATE("clause decisions: sample an equation from a clause", Tag, De
         const Clause clause = make_clause(repr, 4, {{0}, {1}, {2}});
         Rng first = make_rng(11, RngComponent::csids_equation);
         Rng second = make_rng(11, RngComponent::csids_equation);
-        Equation other_candidate(repr, 4);
-        Equation other_reduced(repr, 4);
         for (int attempt = 0; attempt < 16; ++attempt) {
-            REQUIRE(sample_equation_from_clause(clause, span, first, candidate, reduced));
-            REQUIRE(sample_equation_from_clause(clause, span, second, other_candidate,
-                                                other_reduced));
-            CHECK(candidate == other_candidate);
+            const SampledDecision sample = sample_equation_from_clause(clause, span, first);
+            const SampledDecision other = sample_equation_from_clause(clause, span, second);
+            CHECK(sample.candidate == other.candidate);
         }
     }
 }

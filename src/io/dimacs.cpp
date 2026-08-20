@@ -108,7 +108,7 @@ ParsedHeader parse_header_line(const std::string& line, std::string_view origin,
 }
 
 void push_variable(std::string_view term, std::string_view token, std::size_t num_vars,
-                   std::vector<std::size_t>& bits_out, std::string_view origin,
+                   std::vector<std::size_t>& bits, std::string_view origin,
                    std::size_t line_number) {
     if (term.empty()) {
         fail(origin, line_number, "empty variable in token: " + std::string{token});
@@ -120,21 +120,16 @@ void push_variable(std::string_view term, std::string_view token, std::size_t nu
     if (*variable == 0 || *variable > num_vars) {
         fail(origin, line_number, "variable out of range in token: " + std::string{token});
     }
-    bits_out.push_back(*variable - 1);
+    bits.push_back(*variable - 1);
 }
 
 /// @brief Decode one literal token into the set bits of its stored row.
 ///
 /// The stored row is the literal's linear negation, which is why a leading `-`
 /// (right-hand side 0) sets the constant bit and a bare token does not.
-///
-/// `bits_out` is an out-parameter, cleared and refilled here, because
-/// `parse_dimacs()` owns one buffer for the whole file and hands it down through
-/// `parse_clause_line()`, which calls this once per literal token of every clause.
-void parse_clause_token(std::string_view token, std::size_t num_vars,
-                        std::vector<std::size_t>& bits_out, std::string_view origin,
-                        std::size_t line_number) {
-    bits_out.clear();
+std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t num_vars,
+                                            std::string_view origin, std::size_t line_number) {
+    std::vector<std::size_t> bits;
 
     if (token.find('+') == std::string_view::npos) {
         const std::optional<long long> literal = parse_signed(token);
@@ -150,11 +145,11 @@ void parse_clause_token(std::string_view token, std::size_t num_vars,
         if (magnitude > num_vars) {
             fail(origin, line_number, "variable out of range in token: " + std::string{token});
         }
-        bits_out.push_back(static_cast<std::size_t>(magnitude) - 1);
+        bits.push_back(static_cast<std::size_t>(magnitude) - 1);
         if (*literal < 0) {
-            bits_out.push_back(num_vars);
+            bits.push_back(num_vars);
         }
-        return;
+        return bits;
     }
 
     const bool rhs_is_zero = token.front() == '-';
@@ -172,7 +167,7 @@ void parse_clause_token(std::string_view token, std::size_t num_vars,
         const std::size_t plus_pos = body.find('+', term_start);
         const std::size_t term_length =
             plus_pos == std::string_view::npos ? body.size() - term_start : plus_pos - term_start;
-        push_variable(body.substr(term_start, term_length), token, num_vars, bits_out, origin,
+        push_variable(body.substr(term_start, term_length), token, num_vars, bits, origin,
                       line_number);
         if (plus_pos == std::string_view::npos) {
             break;
@@ -185,13 +180,13 @@ void parse_clause_token(std::string_view token, std::size_t num_vars,
     }
 
     if (rhs_is_zero) {
-        bits_out.push_back(num_vars);
+        bits.push_back(num_vars);
     }
+    return bits;
 }
 
 Clause parse_clause_line(const std::string& line, std::size_t num_vars, EquationRepr repr,
-                         std::vector<std::size_t>& bits_scratch, std::string_view origin,
-                         std::size_t line_number) {
+                         std::string_view origin, std::size_t line_number) {
     Clause clause(repr, num_vars);
     std::istringstream stream{line};
     std::string token;
@@ -202,8 +197,9 @@ Clause parse_clause_line(const std::string& line, std::size_t num_vars, Equation
             terminated = true;
             break;
         }
-        parse_clause_token(token, num_vars, bits_scratch, origin, line_number);
-        clause.add_row(Equation::from_bits(repr, num_vars, bits_scratch));
+        const std::vector<std::size_t> bits =
+            parse_clause_token(token, num_vars, origin, line_number);
+        clause.add_row(Equation::from_bits(repr, num_vars, bits));
     }
 
     if (!terminated) {
@@ -251,15 +247,14 @@ ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_vi
     // a bogus allocation before the clause lines have been read.
     parsed.clauses.reserve(std::min<std::size_t>(header.num_clauses, 1u << 16));
 
-    std::vector<std::size_t> bits_scratch;
     while (std::getline(input, line)) {
         ++line_number;
         trim_trailing_cr(line);
         if (is_blank_or_comment(line)) {
             continue;
         }
-        parsed.clauses.push_back(parse_clause_line(line, header.num_vars, repr,
-                                                   bits_scratch, origin, line_number));
+        parsed.clauses.push_back(
+            parse_clause_line(line, header.num_vars, repr, origin, line_number));
     }
 
     if (parsed.clauses.size() != header.num_clauses) {

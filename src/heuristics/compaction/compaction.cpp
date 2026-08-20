@@ -32,7 +32,6 @@ std::size_t first_distinct_row(std::size_t num_rows, std::size_t row_to_avoid) {
 
 Equation compact_old_row(const Clause& old_clause, std::size_t row_index,
                          const RowSpace& trail_span, const CompactionTransform& transform) {
-    assert(row_index < old_clause.rows());
     Equation reduced_row = old_clause.row(row_index);
     trail_span.reduce(reduced_row);
     return reduced_row.compact(transform);
@@ -95,23 +94,27 @@ bool should_compact_before_decision(const CompactionState& state) {
 
     const IndexSet& pivots = state.trail.span().pivot_columns();
     assert(pivots.size() == state.active_num_vars + 1 && "trail pivot column count mismatch");
-    assert(!pivots.test(state.active_num_vars) &&
-           "the constant column cannot be dropped by compaction");
     return pivots.count_below(state.active_num_vars) != 0;
 }
 
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars) {
-    const IndexSet& pivots = trail.span().pivot_columns();
-    assert(pivots.size() == active_num_vars + 1 && "trail pivot column count mismatch");
-    assert(!pivots.test(active_num_vars) && "the constant column cannot be dropped by compaction");
-    return CompactionTransform::from_dropped_columns(active_num_vars, pivots);
+    assert(trail.size() == 1 && "compaction is only sound against the root trail");
+    // The pivot set's size and its constant column are checked one layer down, by
+    // `CompactionTransform::from_dropped_columns()`.
+    return CompactionTransform::from_dropped_columns(active_num_vars,
+                                                     trail.span().pivot_columns());
 }
 
 CompactionPlan build_compaction_plan(const CompactionState& state,
                                      const CompactionTransform& transform) {
     const std::size_t num_clauses = state.clauses.size();
+    assert(state.trail.size() == 1 && "compaction is only sound against the root trail");
     assert(state.clause_is_active.size() == num_clauses &&
            "clause active flags are desynchronized");
+    assert(state.active_var_to_original.size() == state.active_num_vars &&
+           "the active-to-original variable map is desynchronized");
+    assert(transform.old_num_vars() == state.active_num_vars &&
+           "the transform was built for a different active variable numbering");
 
     CompactionPlan plan;
     plan.transform = transform;

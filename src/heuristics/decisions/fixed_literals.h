@@ -41,7 +41,6 @@ public:
 
 private:
     std::vector<Equation> decision_basis_; ///< The literal basis, in variable order.
-    Equation reduced_scratch_; ///< The reduction of the candidate under test.
 };
 
 } // namespace xorcle

@@ -38,7 +38,10 @@ public:
     /// next budget; only `note_restart()` does that.
     virtual bool should_restart_after_conflict() = 0;
 
-    /// @brief Advance to the next budget. Call only after a real restart.
+    /// @brief Advance to the next budget.
+    /// @pre A restart has just happened. Nothing inside a policy can see the
+    /// solver, so this one is on the caller and is not asserted; calling it
+    /// without restarting silently skips a budget.
     virtual void note_restart() = 0;
 };
 

@@ -73,9 +73,13 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
                                                 std::optional<WatchType> zero_watch_hint,
                                                 std::size_t& num_watch_updates,
                                                 WatchUpdateHandler& handler) {
-    assert(clause.cols() == num_vars_ + 1);
-    assert(clause.rows() >= 1);
-    assert(trail.span().cols() == num_vars_ + 1);
+    assert(clause.cols() == num_vars_ + 1 &&
+           "clause column count does not match the propagator's variable count");
+    assert(trail.span().cols() == num_vars_ + 1 &&
+           "trail span column count does not match the propagator's variable count");
+    assert(clause.repr() == trail.repr() &&
+           "clause and trail use different representations");
+    assert(clause.rows() >= 1 && "propagating from a clause with no rows");
 
     // A unit clause has nothing to watch: conflict and propagation are the same
     // code path, and the caller tells them apart afterwards.
@@ -91,10 +95,11 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
         return &working_eqn_;
     }
 
-    assert(clause.watched0 < clause.rows());
-    assert(clause.watched1 < clause.rows());
-    assert(clause.watched0 != clause.watched1);
-    assert(clause.next_watch_search_start < clause.rows());
+    assert(clause.watched0 < clause.rows() && clause.watched1 < clause.rows() &&
+           "a watched row index is out of range");
+    assert(clause.watched0 != clause.watched1 && "both watches name the same row");
+    assert(clause.next_watch_search_start < clause.rows() &&
+           "the watch search start is out of range");
 
     // Overwrites `scratch`. `distinct_from` is an already reduced row, so a
     // replacement must be nonzero *and* independent of it modulo the span --

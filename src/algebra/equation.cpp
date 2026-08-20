@@ -34,17 +34,17 @@ Equation Equation::from_bits(EquationRepr repr, std::size_t num_vars,
 }
 
 EquationRepr Equation::repr() const noexcept {
-    assert(interface_ != nullptr);
+    assert(interface_ != nullptr && "repr() on a null equation handle");
     return interface_->repr();
 }
 
 std::size_t Equation::num_vars() const noexcept {
-    assert(interface_ != nullptr);
+    assert(interface_ != nullptr && "num_vars() on a null equation handle");
     return interface_->num_bits() - 1;
 }
 
 void Equation::resize(std::size_t num_vars) {
-    assert(interface_ != nullptr);
+    assert(interface_ != nullptr && "resize on a null equation handle");
     interface_->resize(num_vars + 1);
 }
 
@@ -55,7 +55,8 @@ void Equation::set_eq_true() noexcept {
 }
 
 void Equation::plus_assign(const Equation& other) {
-    assert(interface_ != nullptr && other.interface_ != nullptr);
+    assert(interface_ != nullptr && other.interface_ != nullptr &&
+           "plus_assign on a null equation handle");
     assert(interface_->repr() == other.interface_->repr() &&
            "representation mismatch in plus_assign");
     assert(interface_->num_bits() == other.interface_->num_bits() &&
@@ -64,7 +65,8 @@ void Equation::plus_assign(const Equation& other) {
 }
 
 void Equation::assign_from(const Equation& other) {
-    assert(interface_ != nullptr && other.interface_ != nullptr);
+    assert(interface_ != nullptr && other.interface_ != nullptr &&
+           "assign_from on a null equation handle");
     assert(interface_->repr() == other.interface_->repr() &&
            "representation mismatch in assign_from");
     assert(interface_->num_bits() == other.interface_->num_bits() &&
@@ -73,29 +75,29 @@ void Equation::assign_from(const Equation& other) {
 }
 
 Equation Equation::compact(const CompactionTransform& transform) const {
-    assert(interface_ != nullptr);
+    assert(interface_ != nullptr && "compact on a null equation handle");
     assert(interface_->num_bits() == transform.old_num_vars() + 1 &&
            "bit count mismatch in compact");
     return Equation(interface_->compact(transform));
 }
 
 Equation Equation::uncompact(const CompactionTransform& transform) const {
-    assert(interface_ != nullptr);
+    assert(interface_ != nullptr && "uncompact on a null equation handle");
     assert(interface_->num_bits() == transform.new_num_vars() + 1 &&
            "bit count mismatch in uncompact");
     return Equation(interface_->uncompact(transform));
 }
 
 void Equation::assign_bits(std::span<const std::size_t> bits) {
-    assert(interface_ != nullptr);
+    assert(interface_ != nullptr && "assign_bits on a null equation handle");
     interface_->assign_bits(bits);
 }
 
-void Equation::bits(std::vector<std::size_t>& out) const {
-    out.clear();
-    if (interface_) {
-        interface_->bits(out);
+std::vector<std::size_t> Equation::bits() const {
+    if (!interface_) {
+        return {};
     }
+    return interface_->bits();
 }
 
 bool Equation::operator==(const Equation& other) const noexcept {

@@ -38,7 +38,7 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
     assert(rs.cols() == trail.span().cols() &&
            "row space column count does not match the trail span");
     assert(rs.repr() == trail.repr() && "row space and trail use different representations");
-    assert(trail_maps_are_consistent(trail));
+    assert(trail_maps_are_consistent(trail) && "the trail's order maps are inconsistent");
 
     TrailBasisSpace trail_basis(trail);
 
@@ -50,15 +50,13 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
     // Preallocated scratch: nothing in the loop allocates after the first pass.
     Equation reduced_eqn(trail.repr(), trail.num_vars());
     Equation trail_basis_row(trail.repr(), trail_basis.num_vars());
-    IndexSet row_coefficients;
     std::vector<std::size_t> mapped_bits;
 
     for (const Equation& eqn : rs) {
-        assert(eqn.num_bits() == reduced_eqn.num_bits());
         reduced_eqn.assign_from(eqn);
         // `row_coefficients` is indexed by row index within the span, i.e.
         // row-echelon order, not trail order.
-        trail.span().reduce(reduced_eqn, row_coefficients);
+        const IndexSet row_coefficients = trail.span().reduce_get_coefficients(reduced_eqn);
         assert(reduced_eqn.is_eq_true() && "row space contains a row outside the trail span");
         assert(row_coefficients.size() == num_coefficients);
 
@@ -81,19 +79,17 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
 }
 
 RowSpace TrailBasisSpace::to_RowSpace() const {
-    assert(trail_maps_are_consistent(trail_));
+    assert(trail_maps_are_consistent(trail_) && "the trail's order maps are inconsistent");
 
     RowSpace row_space(trail_.repr(), trail_.num_vars());
     Equation row_space_eqn(trail_.repr(), trail_.num_vars());
-    std::vector<std::size_t> coefficient_bits;
     const std::size_t num_coefficients = cols();
 
     for (const Equation& trail_basis_row : *this) {
         // Add up the selected subset of trail rows, dispatching at row
         // granularity: one `bits()` call, then one `plus_assign()` per row.
         row_space_eqn.set_eq_true();
-        trail_basis_row.bits(coefficient_bits);
-        for (const std::size_t coefficient_bit : coefficient_bits) {
+        for (const std::size_t coefficient_bit : trail_basis_row.bits()) {
             const std::size_t trail_index = num_coefficients - coefficient_bit - 1;
             row_space_eqn.plus_assign(trail_.span().row(trail_.order_map()[trail_index]));
         }
