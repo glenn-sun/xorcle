@@ -1,10 +1,10 @@
-#include "util/column_set.h"
+#include "util/index_set.h"
 
 #include <bit>
 
 namespace xorcle {
 
-std::size_t ColumnSet::count_below(std::size_t i) const noexcept {
+std::size_t IndexSet::count_below(std::size_t i) const noexcept {
     const std::size_t full_words = i >> 6;
     std::size_t total = 0;
     for (std::size_t w = 0; w < full_words; ++w) {
@@ -18,7 +18,7 @@ std::size_t ColumnSet::count_below(std::size_t i) const noexcept {
     return total;
 }
 
-std::size_t ColumnSet::count() const noexcept {
+std::size_t IndexSet::count() const noexcept {
     std::size_t total = 0;
     for (const std::uint64_t word : words_) {
         total += static_cast<std::size_t>(std::popcount(word));
@@ -26,7 +26,7 @@ std::size_t ColumnSet::count() const noexcept {
     return total;
 }
 
-bool ColumnSet::none() const noexcept {
+bool IndexSet::none() const noexcept {
     for (const std::uint64_t word : words_) {
         if (word != 0) {
             return false;

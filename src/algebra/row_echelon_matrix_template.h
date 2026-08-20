@@ -13,12 +13,11 @@
 #include "algebra/gf2_vector.h"
 #include "algebra/reduce_result.h"
 #include "algebra/row_echelon_matrix.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
-/// @brief The one implementation of `RowEchelonMatrixInterface`, written against
-/// `GF2Vector`.
+/// @brief Implements `RowEchelonMatrixInterface` against any `GF2Vector`.
 ///
 /// Every reduction loop below is a direct, inlinable call chain on `V`; the
 /// caller pays exactly one virtual call for the whole loop.
@@ -50,14 +49,12 @@ public:
         return rows_[index];
     }
 
-    const ColumnSet& pivot_columns() const noexcept override { return pivot_columns_; }
+    const IndexSet& pivot_columns() const noexcept override { return pivot_columns_; }
 
     std::optional<std::size_t> add_row_get_index(const Equation& v) override {
         assert(v.num_bits() == cols() && v.repr() == V::repr);
 
-        // Partially reduce a copy of `v` against the stored rows. Driving the
-        // loop from `leading_bit()` / `next_bit()` visits only the set columns
-        // and reaches the same leading column a full scan would.
+        // Partially reduce a copy of `v` against the stored rows.
         Equation reduced = v;
         V& reduced_row = gf2_vector_of<V>(reduced);
         std::optional<std::size_t> leading = reduced_row.leading_bit();
@@ -70,8 +67,7 @@ public:
         }
 
         // Row-echelon order means the insertion index is the number of pivots
-        // strictly below the new leading column -- a popcount over the pivot
-        // column set, not a scan.
+        // strictly below the new leading column
         const std::size_t leading_column = *leading;
         const std::size_t insert_index = pivot_columns_.count_below(leading_column);
 
@@ -100,9 +96,9 @@ public:
         }
     }
 
-    void reduce(Equation& v, ColumnSet& coefficients_out) const override {
+    void reduce(Equation& v, IndexSet& coefficients_out) const override {
         assert(v.num_bits() == cols() && v.repr() == V::repr);
-        coefficients_out.reset_width(rows_.size());
+        coefficients_out.reset_size(rows_.size());
         V& row = gf2_vector_of<V>(v);
         for (auto column = row.leading_bit(); column; column = row.next_bit(*column)) {
             if (pivot_columns_.test(*column)) {
@@ -122,7 +118,7 @@ public:
                 return ReduceResult::eq_true();
             }
             if (!pivot_columns_.test(*column)) {
-                return classify_leading(*column);
+                return classify_column(*column);
             }
             row.plus_assign(gf2_vector_of<V>(rows_[column_to_row_[*column]]));
             column = row.next_bit(*column);
@@ -150,7 +146,7 @@ public:
                     column = row.next_bit(*column);
                     continue;
                 }
-                return classify_leading(*column);
+                return classify_column(*column);
             }
             row.plus_assign(gf2_vector_of<V>(rows_[column_to_row_[*column]]));
             column = row.next_bit(*column);
@@ -184,16 +180,13 @@ public:
         debug_assert_valid_representation();
     }
 
-    ColumnSet solution() const override {
-        // Every variable column is a pivot and the constant column is not, so
-        // rows() == num_vars and row `i` has leading column `i`. Back-substitute
-        // from the last row upward, row-wise only, never by column.
+    IndexSet solution() const override {
         assert(rows_.size() == num_vars_);
-        ColumnSet out(num_vars_);
+        IndexSet out(num_vars_);
         for (std::size_t i = num_vars_; i-- > 0;) {
             const V& row = gf2_vector_of<V>(rows_[i]);
             assert(row.leading_bit() == std::optional<std::size_t>(i));
-            bool value = row.test_bit(num_vars_); // the row's constant bit
+            bool value = row.get_bit(num_vars_); // the row's constant bit
             for (auto column = row.next_bit(i); column && *column < num_vars_;
                  column = row.next_bit(*column)) {
                 value ^= out.test(*column);
@@ -208,15 +201,12 @@ public:
 private:
     std::size_t cols() const noexcept { return num_vars_ + 1; }
 
-    /// @brief Turn an irreducible leading column into a `ReduceResult`. A
-    /// leading column equal to `num_vars_` is the constant column, and since it
-    /// is the last column nothing else can be set: the row is @f$\mathbf{1}@f$.
-    ReduceResult classify_leading(std::size_t column) const noexcept {
+    ReduceResult classify_column(std::size_t column) const noexcept {
         return column == num_vars_ ? ReduceResult::eq_false() : ReduceResult::leading(column);
     }
 
-    /// @brief Check the representation invariants documented on
-    /// `RowEchelonMatrix`. Compiled out under `NDEBUG`.
+    /// @brief Check representation invariants for `RowEchelonMatrix`.
+    /// Compiled out under `NDEBUG`.
     void debug_assert_valid_representation() const {
 #ifndef NDEBUG
         assert(pivot_columns_.size() == cols());
@@ -247,7 +237,7 @@ private:
     }
 
     std::vector<Equation> rows_;
-    ColumnSet pivot_columns_;
+    IndexSet pivot_columns_;
     std::vector<std::size_t> column_to_row_;
     std::size_t num_vars_;
 };

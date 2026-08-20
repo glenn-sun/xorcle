@@ -6,9 +6,6 @@
 
 namespace xorcle {
 
-// The shared templated algorithms, instantiated for the sparse representation.
-// Nothing here differs from dense_repr.cpp but the vector type: the algorithms
-// are written once.
 static_assert(GF2Vector<SparseGF2Vector>,
               "SparseGF2Vector must satisfy the GF2Vector concept");
 

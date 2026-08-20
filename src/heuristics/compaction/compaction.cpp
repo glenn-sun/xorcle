@@ -93,18 +93,18 @@ bool should_compact_before_decision(const CompactionState& state) {
         return false;
     }
 
-    const ColumnSet& pivots = state.trail.span().pivot_columns();
-    assert(pivots.size() == state.active_num_vars + 1 && "trail pivot width mismatch");
+    const IndexSet& pivots = state.trail.span().pivot_columns();
+    assert(pivots.size() == state.active_num_vars + 1 && "trail pivot column count mismatch");
     assert(!pivots.test(state.active_num_vars) &&
-           "the constant column cannot be a compaction pivot");
+           "the constant column cannot be dropped by compaction");
     return pivots.count_below(state.active_num_vars) != 0;
 }
 
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars) {
-    const ColumnSet& pivots = trail.span().pivot_columns();
-    assert(pivots.size() == active_num_vars + 1 && "trail pivot width mismatch");
-    assert(!pivots.test(active_num_vars) && "the constant column cannot be a compaction pivot");
-    return CompactionTransform::from_pivots(active_num_vars, pivots);
+    const IndexSet& pivots = trail.span().pivot_columns();
+    assert(pivots.size() == active_num_vars + 1 && "trail pivot column count mismatch");
+    assert(!pivots.test(active_num_vars) && "the constant column cannot be dropped by compaction");
+    return CompactionTransform::from_dropped_columns(active_num_vars, pivots);
 }
 
 CompactionPlan build_compaction_plan(const CompactionState& state,

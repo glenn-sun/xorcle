@@ -13,13 +13,13 @@
 #include "heuristics/compaction/compaction.h"
 #include "heuristics/compaction/original_variables.h"
 #include "heuristics_test_support.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
 namespace {
 
-std::vector<std::size_t> set_variables(const ColumnSet& assignment) {
+std::vector<std::size_t> set_variables(const IndexSet& assignment) {
     std::vector<std::size_t> out;
     assignment.for_each_set([&](std::size_t index) { out.push_back(index); });
     return out;
@@ -165,11 +165,11 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
     constexpr EquationRepr repr = Tag::value;
 
     SUBCASE("with no compaction the active space is the original space") {
-        ColumnSet assignment(2);
+        IndexSet assignment(2);
         assignment.set(0);
         const std::vector<CompactionHistoryEntry> history;
         const std::vector<std::size_t> var_map{2, 5};
-        const ColumnSet original = reconstruct_original_assignment(assignment, history, var_map, 6);
+        const IndexSet original = reconstruct_original_assignment(assignment, history, var_map, 6);
         CHECK(original.size() == 6);
         CHECK(set_variables(original) == std::vector<std::size_t>{2});
     }
@@ -190,10 +190,10 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
 
         // x1 and x3 are true in the compacted space; x0 comes back from the
         // trail row that eliminated it.
-        ColumnSet compacted(3);
+        IndexSet compacted(3);
         compacted.set(0);
         compacted.set(2);
-        const ColumnSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
+        const IndexSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
         CHECK(original.size() == 4);
         CHECK(set_variables(original) == std::vector<std::size_t>{0, 1, 3});
     }
@@ -214,15 +214,15 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         history.push_back(plan.history_entry);
 
         SUBCASE("x2 false leaves x0 false") {
-            const ColumnSet compacted(3);
-            const ColumnSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
+            const IndexSet compacted(3);
+            const IndexSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
             CHECK(set_variables(original).empty());
         }
 
         SUBCASE("x2 true forces x0 true") {
-            ColumnSet compacted(3);
+            IndexSet compacted(3);
             compacted.set(1); // new index 1 is old x2
-            const ColumnSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
+            const IndexSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
             CHECK(set_variables(original) == std::vector<std::size_t>{0, 2});
         }
     }
@@ -254,9 +254,9 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         history.push_back(second_plan.history_entry);
 
         // Set old x2, which is index 0 of the twice-compacted space.
-        ColumnSet compacted(2);
+        IndexSet compacted(2);
         compacted.set(0);
-        const ColumnSet original = reconstruct_original_assignment(compacted, history, second_map, 4);
+        const IndexSet original = reconstruct_original_assignment(compacted, history, second_map, 4);
         CHECK(original.size() == 4);
         // x0 = 1 from the first step, x2 set directly, x1 = x2 from the second.
         CHECK(set_variables(original) == std::vector<std::size_t>{0, 1, 2});

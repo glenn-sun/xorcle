@@ -14,7 +14,7 @@
 #include "heuristics/decisions/phase.h"
 #include "heuristics/decisions/variable_vsids.h"
 #include "heuristics_test_support.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 #include "util/random.h"
 
 namespace xorcle {
@@ -95,9 +95,9 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
     }
 
     SUBCASE("compaction rewrites the basis") {
-        ColumnSet pivots(5);
-        pivots.set(0);
-        const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
+        IndexSet dropped(5);
+        dropped.set(0);
+        const CompactionTransform transform = CompactionTransform::from_dropped_columns(4, dropped);
         procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, {});
         CHECK(procedure.num_vars() == 3);
 
@@ -137,9 +137,9 @@ TEST_CASE_TEMPLATE("variable vsids: activity drives the choice", Tag, DenseTag, 
     SUBCASE("compaction remaps the heap and keeps a legal decision available") {
         procedure.update_with_asserting_clause(make_clause(repr, 4, {{2}}));
 
-        ColumnSet pivots(5);
-        pivots.set(0);
-        const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
+        IndexSet dropped(5);
+        dropped.set(0);
+        const CompactionTransform transform = CompactionTransform::from_dropped_columns(4, dropped);
         procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, {});
         CHECK(procedure.num_vars() == 3);
 
@@ -213,14 +213,14 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         CHECK(procedure.decision_stats().decisions == 1);
     }
 
-    SUBCASE("compaction adopts the new width and forgets a dropped decision clause") {
+    SUBCASE("compaction adopts the new variable count and forgets a dropped decision clause") {
         procedure.update_with_resolved_clause(1);
         (void)procedure.make_decision(empty, clauses);
         REQUIRE(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
 
-        ColumnSet pivots(5);
-        pivots.set(0);
-        const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
+        IndexSet dropped(5);
+        dropped.set(0);
+        const CompactionTransform transform = CompactionTransform::from_dropped_columns(4, dropped);
         const std::vector<std::uint8_t> clause_active{1, 0, 1};
         procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, clause_active);
 

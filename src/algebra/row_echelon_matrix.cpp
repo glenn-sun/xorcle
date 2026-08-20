@@ -6,23 +6,23 @@
 namespace xorcle {
 
 RowEchelonMatrix::RowEchelonMatrix(EquationRepr repr, std::size_t num_vars)
-    : storage_(make_row_echelon_matrix_interface(repr, num_vars)) {}
+    : interface_(make_row_echelon_matrix_interface(repr, num_vars)) {}
 
 RowEchelonMatrix::RowEchelonMatrix(const RowEchelonMatrix& other)
-    : storage_(other.storage_->clone()) {}
+    : interface_(other.interface_->clone()) {}
 
 RowEchelonMatrix& RowEchelonMatrix::operator=(const RowEchelonMatrix& other) {
     if (this != &other) {
-        storage_ = other.storage_->clone();
+        interface_ = other.interface_->clone();
     }
     return *this;
 }
 
-ColumnSet RowSpace::unique_solution() const {
+IndexSet RowSpace::unique_solution() const {
     assert(rows() + 1 == cols() && "row space is not full-rank");
     assert(!pivot_columns().test(cols() - 1) && "row space contains the false equation");
 
-    return storage().solution();
+    return interface().solution();
 }
 
 std::string Clause::to_string(const PrintMode& mode) const {

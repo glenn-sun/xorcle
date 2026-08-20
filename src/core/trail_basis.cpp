@@ -5,7 +5,7 @@
 #include <optional>
 #include <vector>
 
-#include "util/column_set.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -35,21 +35,22 @@ bool trail_maps_are_consistent(const Trail& trail) {
 
 TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail) {
     assert(trail.span().rows() != 0 && "trail span is empty");
-    assert(rs.cols() == trail.span().cols() && "row space width does not match the trail span");
+    assert(rs.cols() == trail.span().cols() &&
+           "row space column count does not match the trail span");
     assert(rs.repr() == trail.repr() && "row space and trail use different representations");
     assert(trail_maps_are_consistent(trail));
 
     TrailBasisSpace trail_basis(trail);
 
-    // The span's row count is both the coefficient width and this matrix's
+    // The span's row count is both the coefficient bit count and this matrix's
     // column count -- the point of the `m - 1` in the constructor.
-    const std::size_t coefficient_width = trail.span().rows();
-    assert(trail_basis.cols() == coefficient_width);
+    const std::size_t num_coefficients = trail.span().rows();
+    assert(trail_basis.cols() == num_coefficients);
 
     // Preallocated scratch: nothing in the loop allocates after the first pass.
     Equation reduced_eqn(trail.repr(), trail.num_vars());
     Equation trail_basis_row(trail.repr(), trail_basis.num_vars());
-    ColumnSet row_coefficients;
+    IndexSet row_coefficients;
     std::vector<std::size_t> mapped_bits;
 
     for (const Equation& eqn : rs) {
@@ -59,7 +60,7 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
         // row-echelon order, not trail order.
         trail.span().reduce(reduced_eqn, row_coefficients);
         assert(reduced_eqn.is_eq_true() && "row space contains a row outside the trail span");
-        assert(row_coefficients.size() == coefficient_width);
+        assert(row_coefficients.size() == num_coefficients);
 
         // Rewriting into trail-basis coordinates permutes the bit vector by a
         // fixed index map: span row index -> trail order (`reverse_order_map`)
@@ -67,7 +68,7 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
         // layer in a single `assign_bits()` dispatch.
         mapped_bits.clear();
         row_coefficients.for_each_set([&](std::size_t row_index) {
-            mapped_bits.push_back(coefficient_width - trail.reverse_order_map()[row_index] - 1);
+            mapped_bits.push_back(num_coefficients - trail.reverse_order_map()[row_index] - 1);
         });
         trail_basis_row.assign_bits(mapped_bits);
 
@@ -85,7 +86,7 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
     RowSpace row_space(trail_.repr(), trail_.num_vars());
     Equation row_space_eqn(trail_.repr(), trail_.num_vars());
     std::vector<std::size_t> coefficient_bits;
-    const std::size_t coefficient_width = cols();
+    const std::size_t num_coefficients = cols();
 
     for (const Equation& trail_basis_row : *this) {
         // Add up the selected subset of trail rows, dispatching at row
@@ -93,7 +94,7 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
         row_space_eqn.set_eq_true();
         trail_basis_row.bits(coefficient_bits);
         for (const std::size_t coefficient_bit : coefficient_bits) {
-            const std::size_t trail_index = coefficient_width - coefficient_bit - 1;
+            const std::size_t trail_index = num_coefficients - coefficient_bit - 1;
             row_space_eqn.plus_assign(trail_.span().row(trail_.order_map()[trail_index]));
         }
         row_space.add_row(row_space_eqn);
@@ -126,13 +127,13 @@ std::size_t TrailBasisSpace::asserting_level() const {
 
         // Equations learned strictly after `candidate_level` occupy trail steps
         // `[trail_[candidate_level].span().rows(), span_rows)`, i.e. columns
-        // `[0, current_level_width)` of this matrix.
-        const std::size_t current_level_width =
+        // `[0, columns_after_level)` of this matrix.
+        const std::size_t columns_after_level =
             span_rows - trail_[candidate_level].span().rows();
 
         // Row 1 reaches into a level proposed for discarding, so the clause
         // asserts one level above `candidate_level`.
-        if (*second_row_leading < current_level_width) {
+        if (*second_row_leading < columns_after_level) {
             return candidate_level + 1;
         }
     }

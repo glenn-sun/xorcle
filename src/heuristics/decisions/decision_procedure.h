@@ -50,7 +50,7 @@ public:
     /// @brief Reset for a fresh run — not a refill, not the compaction remap.
     virtual void reinitialize() = 0;
 
-    /// @brief Choose the next decision equation, of width `num_vars() + 1`.
+    /// @brief Choose the next decision equation, of `num_vars() + 1` bits.
     /// @pre At least one legal decision remains, i.e. `trail_span.rows() < num_vars()`.
     virtual Equation make_decision(const RowSpace& trail_span,
                                    const std::vector<Clause>& clauses) = 0;
@@ -72,7 +72,7 @@ public:
     virtual std::optional<ClauseId> decision_clause_hint() const;
 
     /// @brief Remap procedure state into a compacted variable numbering. Not a
-    /// fresh-run reset; the default adopts the new active width and nothing else.
+    /// fresh-run reset; the default adopts the new active variable count and nothing else.
     virtual void update_with_compaction(const CompactionTransform& transform,
                                         const RowSpace& trail_span,
                                         const std::vector<Clause>& clauses,

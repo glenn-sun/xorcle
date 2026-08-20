@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-#include "util/column_set.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -45,8 +45,8 @@ struct RunStats {
     std::size_t num_restarts = 0;
     std::size_t decisions = 0;
     std::size_t fallback_decisions = 0;      ///< Decisions that used fallback logic.
-    /// @brief In the original variable numbering, when available.
-    std::optional<ColumnSet> sat_assignment;
+    /// @brief One bit per variable, in the original numbering, when available.
+    std::optional<IndexSet> sat_assignment;
 };
 
 /// @brief `SAT`/`UNSAT`, the CSV spelling. The console sink writes

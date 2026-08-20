@@ -2,13 +2,6 @@
 
 namespace xorcle {
 
-namespace {
-
-/// @brief Fibonacci hashing multiplier.
-constexpr std::uint64_t hash_multiplier = 11400714819323198485ull;
-
-} // namespace
-
 void SparseGF2Vector::resize(std::size_t num_bits) {
     if (num_bits < num_bits_) {
         const auto first_dropped =
@@ -39,10 +32,8 @@ void SparseGF2Vector::set_bit(std::size_t i) {
 }
 
 void SparseGF2Vector::plus_assign(const SparseGF2Vector& other) {
-    assert(num_bits_ == other.num_bits_ && "width mismatch in plus_assign");
-
-    // Symmetric difference of two ascending index lists, merged into a
-    // long-lived buffer so the common case does not allocate.
+    assert(num_bits_ == other.num_bits_ && "bit count mismatch in plus_assign");
+    // Symmetric difference of two ascending index lists
     scratch_.clear();
     std::size_t i = 0;
     std::size_t j = 0;
@@ -66,20 +57,17 @@ void SparseGF2Vector::plus_assign(const SparseGF2Vector& other) {
 }
 
 void SparseGF2Vector::assign_from(const SparseGF2Vector& other) {
-    assert(num_bits_ == other.num_bits_ && "width mismatch in assign_from");
-    // `assign` reuses the existing buffer whenever its capacity suffices, which
-    // it always does once a scratch equation has been filled to its high-water
-    // mark. A sparse vector's storage grows with its weight, not its width, so
-    // freedom from allocation here is a property of the reuse discipline.
+    assert(num_bits_ == other.num_bits_ && "bit count mismatch in assign_from");
     bits_.assign(other.bits_.begin(), other.bits_.end());
 }
 
 std::size_t SparseGF2Vector::hash() const noexcept {
     std::uint64_t value = num_bits_;
-    value *= hash_multiplier;
+    // Fibonacci hash
+    value *= 11400714819323198485ull;
     for (const Bit bit : bits_) {
         value ^= bit;
-        value *= hash_multiplier;
+        value *= 11400714819323198485ull;
     }
     return static_cast<std::size_t>(value);
 }

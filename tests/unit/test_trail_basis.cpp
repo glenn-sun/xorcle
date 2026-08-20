@@ -36,11 +36,11 @@ std::size_t jumpable_levels_reference(const TrailBasisSpace& basis, const Trail&
     while (removable_levels < trail.size()) {
         const std::size_t earlier_trail_rows =
             trail[trail.size() - 1 - removable_levels].span().rows();
-        const std::size_t current_level_width = trail.span().rows() - earlier_trail_rows;
+        const std::size_t columns_after_level = trail.span().rows() - earlier_trail_rows;
 
         bool second_row_suffix_any = false;
         for (const std::size_t column : second_row) {
-            if (column < current_level_width) {
+            if (column < columns_after_level) {
                 second_row_suffix_any = true;
                 break;
             }
@@ -165,7 +165,7 @@ Trail make_random_trail(EquationRepr repr, TestRandom& rng, std::size_t num_vars
 
 } // namespace
 
-TEST_CASE_TEMPLATE("trail basis: width bookkeeping and the fake constant column", Tag, DenseTag,
+TEST_CASE_TEMPLATE("trail basis: bit-count bookkeeping and the fake constant column", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const Trail trail = make_levelled_trail(repr);
@@ -188,7 +188,7 @@ TEST_CASE_TEMPLATE("trail basis: width bookkeeping and the fake constant column"
     check_echelon_invariant(oldest_only);
 }
 
-TEST_CASE_TEMPLATE("trail basis: an empty trail span gives a width-zero basis", Tag, DenseTag,
+TEST_CASE_TEMPLATE("trail basis: an empty trail span gives a zero-column basis", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const Trail trail(repr, 4);
@@ -287,7 +287,7 @@ TEST_CASE_TEMPLATE("trail basis: asserting level with a hand-computed answer", T
     const Trail trail = make_levelled_trail(repr);
     REQUIRE(trail.level() == 3);
 
-    // `make_levelled_trail()` gives level widths (equations learned strictly
+    // `make_levelled_trail()` gives level column counts (equations learned strictly
     // after level k) of 0, 3, 5, 7 for k = 3, 2, 1, 0, so the leading column of
     // row 1 lands as follows:
     //

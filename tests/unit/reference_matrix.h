@@ -11,7 +11,7 @@
 
 namespace xorcle {
 
-/// @brief A row as a plain vector of bits, of width `num_vars + 1`.
+/// @brief A row as a plain vector of bits, of `num_vars + 1` bits.
 using Bits = std::vector<bool>;
 
 std::optional<std::size_t> first_set(const Bits& bits);

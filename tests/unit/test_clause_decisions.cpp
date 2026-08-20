@@ -9,7 +9,7 @@
 #include "algebra_test_support.h"
 #include "heuristics/decisions/clause_decisions.h"
 #include "heuristics_test_support.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 #include "util/random.h"
 
 namespace xorcle {
@@ -53,7 +53,7 @@ TEST_CASE_TEMPLATE("clause decisions: clause satisfaction", Tag, DenseTag, Spars
         CHECK(clause_satisfied_by_trail(span, clause, workspace));
     }
 
-    SUBCASE("the workspace is reusable across calls and widths") {
+    SUBCASE("the workspace is reusable across calls and variable counts") {
         const RowSpace wide_span = make_row_space(repr, 4, {{0, 4}});
         const Clause wide_clause = make_clause(repr, 4, {{0}, {1}});
         CHECK(clause_satisfied_by_trail(wide_span, wide_clause, workspace));
@@ -98,9 +98,9 @@ TEST_CASE_TEMPLATE("clause decisions: compact a basis", Tag, DenseTag, SparseTag
     constexpr EquationRepr repr = Tag::value;
 
     // Eliminate x1 out of four variables, so the survivors are x0, x2, x3.
-    ColumnSet pivots(5);
-    pivots.set(1);
-    const CompactionTransform transform = CompactionTransform::from_pivots(4, pivots);
+    IndexSet dropped(5);
+    dropped.set(1);
+    const CompactionTransform transform = CompactionTransform::from_dropped_columns(4, dropped);
     REQUIRE(transform.new_num_vars() == 3);
 
     SUBCASE("a literal basis stays one equation per new leading bit") {

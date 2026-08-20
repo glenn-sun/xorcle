@@ -68,7 +68,7 @@ struct CsidsParams {
 struct CsidsState {
     CsidsState(EquationRepr repr, std::size_t num_vars, const CsidsConfig& config);
 
-    /// @brief Rebuild the literal fallback basis if the active width changed.
+    /// @brief Rebuild the literal fallback basis if the active variable count changed.
     void ensure_unit_eqns();
     void reset_activity();
 

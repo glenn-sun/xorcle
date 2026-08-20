@@ -8,7 +8,7 @@ namespace {
 
 /// @brief Bits consumed from the RNG per draw. Not the digit count of some
 /// storage word: this is part of the reproducibility contract, not a property of
-/// how `ColumnSet` happens to be laid out.
+/// how `IndexSet` happens to be laid out.
 constexpr std::size_t bits_per_draw = 64;
 
 /// @brief SplitMix64 finalizer, with the gamma increment applied first.
@@ -39,13 +39,13 @@ random_int(Rng& rng, int upper_bound) {
     return dist(rng);
 }
 
-ColumnSet
+IndexSet
 random_nonzero_coefficients(std::size_t num_bits, Rng& rng) {
-    assert(num_bits > 0 && "random_nonzero_coefficients needs a positive width");
+    assert(num_bits > 0 && "random_nonzero_coefficients needs a positive bit count");
 
     const std::size_t draws_per_attempt = (num_bits + bits_per_draw - 1) / bits_per_draw;
 
-    ColumnSet coefficients(num_bits);
+    IndexSet coefficients(num_bits);
     do {
         coefficients.clear();
         for (std::size_t draw = 0; draw < draws_per_attempt; ++draw) {
@@ -53,8 +53,8 @@ random_nonzero_coefficients(std::size_t num_bits, Rng& rng) {
             const std::size_t first_bit = draw * bits_per_draw;
             // Bits at or beyond `num_bits` are dropped, expressed as a bound on
             // the index so that it does not depend on any storage layout.
-            const std::size_t width = std::min(bits_per_draw, num_bits - first_bit);
-            for (std::size_t offset = 0; offset < width; ++offset) {
+            const std::size_t bits_this_draw = std::min(bits_per_draw, num_bits - first_bit);
+            for (std::size_t offset = 0; offset < bits_this_draw; ++offset) {
                 if ((word >> offset) & 1ULL) {
                     coefficients.set(first_bit + offset);
                 }

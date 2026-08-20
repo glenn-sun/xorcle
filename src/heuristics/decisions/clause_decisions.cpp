@@ -6,7 +6,7 @@
 #include <utility>
 
 #include "algebra/reduce_result.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -150,7 +150,7 @@ bool sample_equation_from_clause(const Clause& clause, const RowSpace& trail_spa
            "sample_equation_from_clause: the clause is already decided or satisfied");
 
     while (true) {
-        const ColumnSet coefficients = random_nonzero_coefficients(clause.rows(), rng);
+        const IndexSet coefficients = random_nonzero_coefficients(clause.rows(), rng);
         out_candidate.set_eq_true();
         coefficients.for_each_set(
             [&](std::size_t row_index) { out_candidate.plus_assign(clause.row(row_index)); });

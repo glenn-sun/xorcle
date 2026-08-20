@@ -22,7 +22,7 @@ namespace xorcle {
 namespace {
 
 /// @brief Render a coefficient column set as '0'/'1' in ascending index order.
-std::string to_bit_string(const ColumnSet& columns) {
+std::string to_bit_string(const IndexSet& columns) {
     std::string bits;
     bits.reserve(columns.size());
     for (std::size_t i = 0; i < columns.size(); ++i) {
@@ -119,7 +119,7 @@ TEST_CASE("random: random_int reproduces its reference phase draws") {
 TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") {
     // First eight samples off a fresh csids_equation stream, as bit strings in
     // ascending index order.
-    SUBCASE("seed 0, width 1") {
+    SUBCASE("seed 0, num_bits 1") {
         Rng rng = make_rng(0, RngComponent::csids_equation);
         // Rejection sampling on a single bit: every accepted sample is "1".
         for (int i = 0; i < 8; ++i) {
@@ -127,7 +127,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, width 3") {
+    SUBCASE("seed 0, num_bits 3") {
         const std::vector<std::string> expected = {"101", "010", "011", "010",
                                                    "101", "110", "010", "101"};
         Rng rng = make_rng(0, RngComponent::csids_equation);
@@ -136,7 +136,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 42, width 2") {
+    SUBCASE("seed 42, num_bits 2") {
         const std::vector<std::string> expected = {"11", "10", "10", "10",
                                                    "10", "01", "11", "11"};
         Rng rng = make_rng(42, RngComponent::csids_equation);
@@ -145,7 +145,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, width 64 -- exactly one draw per attempt") {
+    SUBCASE("seed 0, num_bits 64 -- exactly one draw per attempt") {
         const std::vector<std::string> expected = {
             "0001100100010100010101101110100100101111011100100101011000010000",
             "1010100100101001100010110010100001011001110001100011111010000011",
@@ -158,7 +158,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 42, width 63 -- one draw per attempt, top bit dropped") {
+    SUBCASE("seed 42, num_bits 63 -- one draw per attempt, top bit dropped") {
         const std::vector<std::string> expected = {
             "111110011011010010111111000001110001111100011011111111101001111",
             "100010110010111101000111001100111110100001000011100110100011100",
@@ -170,9 +170,9 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, width 65 -- two draws per attempt, tail masked") {
+    SUBCASE("seed 0, num_bits 65 -- two draws per attempt, tail masked") {
         // Each sample's first 64 bits are one whole draw, so sample k here uses
-        // draws 2k-1 and 2k of the same stream the width-64 case walks one draw
+        // draws 2k-1 and 2k of the same stream the num_bits-64 case walks one draw
         // at a time.
         const std::vector<std::string> expected = {
             "0001100100010100010101101110100100101111011100100101011000010000"
@@ -190,7 +190,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, width 100 -- the high 28 bits of the second draw are dropped") {
+    SUBCASE("seed 0, num_bits 100 -- the high 28 bits of the second draw are dropped") {
         const std::vector<std::string> expected = {
             "0001100100010100010101101110100100101111011100100101011000010000"
             "101010010010100110001011001010000101",
@@ -203,7 +203,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, width 129 -- three draws per attempt") {
+    SUBCASE("seed 0, num_bits 129 -- three draws per attempt") {
         const std::vector<std::string> expected = {
             "0001100100010100010101101110100100101111011100100101011000010000"
             "1010100100101001100010110010100001011001110001100011111010000011"
@@ -258,7 +258,7 @@ TEST_CASE("random: random_nonzero_coefficients postconditions") {
                                  std::size_t{65}, std::size_t{200}}) {
         CAPTURE(num_bits);
         for (int trial = 0; trial < 32; ++trial) {
-            const ColumnSet coefficients = random_nonzero_coefficients(num_bits, rng);
+            const IndexSet coefficients = random_nonzero_coefficients(num_bits, rng);
             CHECK(coefficients.size() == num_bits);
             CHECK_FALSE(coefficients.none());
             CHECK(coefficients.count() <= num_bits);

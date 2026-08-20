@@ -16,7 +16,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "util/column_set.h"
+#include "util/index_set.h"
 #include "util/stats.h"
 #include "util/stats_writer.h"
 
@@ -200,7 +200,7 @@ TEST_CASE("ConsoleStatsWriter: the SAT assignment lines") {
         RunStats stats;
         stats.file = "x.xnf";
         stats.result = SolveResult::sat;
-        ColumnSet assignment(25);
+        IndexSet assignment(25);
         assignment.set(0);
         assignment.set(4);
         assignment.set(24);
@@ -216,18 +216,18 @@ TEST_CASE("ConsoleStatsWriter: the SAT assignment lines") {
         RunStats stats;
         stats.file = "x.xnf";
         stats.result = SolveResult::sat;
-        stats.sat_assignment = ColumnSet(20);
+        stats.sat_assignment = IndexSet(20);
 
         const std::string output = console_output(stats);
         CHECK(output.find("v -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 "
                           "-11 -12 -13 -14 -15 -16 -17 -18 -19 -20 0\n") != std::string::npos);
     }
 
-    SUBCASE("a zero-width assignment prints exactly `v 0`") {
+    SUBCASE("a zero-variable assignment prints exactly `v 0`") {
         RunStats stats;
         stats.file = "x.xnf";
         stats.result = SolveResult::sat;
-        stats.sat_assignment = ColumnSet(0);
+        stats.sat_assignment = IndexSet(0);
         CHECK(console_output(stats).find("s SATISFIABLE\nv 0\n") != std::string::npos);
     }
 

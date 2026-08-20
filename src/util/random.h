@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <random>
 
-#include "util/column_set.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -44,8 +44,9 @@ Rng make_rng(Seed base_seed, RngComponent component, std::uint64_t salt = 0);
 /// @brief A uniform random integer in [0, upper_bound - 1].
 int random_int(Rng& rng, int upper_bound);
 
-/// @brief Sample a random non-zero GF(2) coefficient vector of width `num_bits`,
-/// by rejection sampling: draw a full vector, retry while it is zero.
+/// @brief Sample a random non-zero GF(2) coefficient vector of `num_bits` bits,
+/// indexed by clause row, by rejection sampling: draw a full vector, retry while
+/// it is zero.
 ///
 /// @warning The draw pattern is fixed by the reproducibility contract. Each
 /// attempt consumes exactly `ceil(num_bits / 64)` calls to `rng()`, filling bits
@@ -54,6 +55,6 @@ int random_int(Rng& rng, int upper_bound);
 /// produces a different search from the same seed. Writing the fill over bit
 /// *indices* rather than storage words is what makes the sparse and dense
 /// representations consume the stream identically.
-ColumnSet random_nonzero_coefficients(std::size_t num_bits, Rng& rng);
+IndexSet random_nonzero_coefficients(std::size_t num_bits, Rng& rng);
 
 } // namespace xorcle

@@ -17,13 +17,13 @@ add_executable(xorcle_tests
     unit/main.cpp
     unit/reference_matrix.cpp
     unit/test_analysis.cpp
-    unit/test_column_set.cpp
     unit/test_clause_decisions.cpp
     unit/test_clause_selector.cpp
     unit/test_compaction.cpp
     unit/test_decisions.cpp
     unit/test_dimacs.cpp
     unit/test_equation.cpp
+    unit/test_index_set.cpp
     unit/test_lrup_logger.cpp
     unit/test_max_heap.cpp
     unit/test_options.cpp

@@ -21,10 +21,10 @@ namespace {
 /// @brief The trail-basis coordinate vector of @f$\mathbf{1}@f$: the unit vector
 /// at column 0, per the derivation in `resolve_asserting_basis_with_reason()`.
 Equation make_trail_basis_one(const Trail& trail) {
-    const std::size_t coefficient_width = trail.span().rows();
-    assert(coefficient_width > 0 && "conflict analysis on an empty trail span");
+    const std::size_t num_coefficients = trail.span().rows();
+    assert(num_coefficients > 0 && "conflict analysis on an empty trail span");
     const std::array<std::size_t, 1> bits{0};
-    return Equation::from_bits(trail.repr(), coefficient_width - 1,
+    return Equation::from_bits(trail.repr(), num_coefficients - 1,
                                std::span<const std::size_t>(bits));
 }
 
@@ -146,8 +146,8 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     TrailBasisSpace asserting_basis =
         TrailBasisSpace::from_RowSpace(clauses[*conflict_clause_id], trail);
 
-    // Preallocated once per conflict: its width is the trail span's row count,
-    // which cannot change here, since analysis never learns into the trail.
+    // Preallocated once per conflict: its bit count is the trail span's row
+    // count, which cannot change here, since analysis never learns into the trail.
     const Equation trail_basis_one = make_trail_basis_one(trail);
 
     // Resolve while no level can be discarded, which is

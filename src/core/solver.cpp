@@ -260,8 +260,8 @@ Solution Solver::solve() {
         // Quiescent at full rank over the variable columns: every variable is
         // determined and the trail is a total assignment.
         if (trail_.span().rows() == active_num_vars_) {
-            const ColumnSet active_assignment = trail_.span().unique_solution();
-            ColumnSet original_assignment = reconstruct_original_assignment(
+            const IndexSet active_assignment = trail_.span().unique_solution();
+            IndexSet original_assignment = reconstruct_original_assignment(
                 active_assignment, compaction_history_, active_var_to_original_,
                 original_num_vars_);
             return Solution{SolveResult::sat, std::move(original_assignment)};

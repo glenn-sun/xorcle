@@ -53,7 +53,7 @@ add_library(xorcle_core
     src/heuristics/selection/leading_term_watchlist.cpp
     src/io/dimacs.cpp
     src/io/lrup_logger.cpp
-    src/util/column_set.cpp
+    src/util/index_set.cpp
     src/util/random.cpp
     src/util/stats.cpp
     src/util/stats_writer.cpp)

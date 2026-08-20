@@ -20,7 +20,7 @@
 #include "heuristics/selection/clause_selector.h"
 #include "heuristics/selection/cyclic.h"
 #include "io/dimacs.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 #include "util/random.h"
 
 namespace xorcle {
@@ -81,7 +81,7 @@ constexpr std::string_view compaction_sat_instance = "p cnf 5 5\n"
 
 /// @brief Whether an assignment satisfies one stored clause row, which is the
 /// equation @f$\sum_{c} x_c + b = 0@f$ with `b` the bit at index `num_vars`.
-bool row_holds(const Equation& row, const ColumnSet& assignment) {
+bool row_holds(const Equation& row, const IndexSet& assignment) {
     bool parity = false;
     for (const std::size_t bit : bits_of(row)) {
         parity ^= bit == assignment.size() ? true : assignment.test(bit);
@@ -93,7 +93,7 @@ bool row_holds(const Equation& row, const ColumnSet& assignment) {
 /// A clause is stored in its linear negation -- row @f$i@f$ is @f$f_i +
 /// \mathbf{1}@f$ -- so literal @f$f_i@f$ holds exactly where its row does *not*,
 /// and the disjunction is satisfied as soon as one row fails.
-bool clause_is_satisfied(const Clause& clause, const ColumnSet& assignment) {
+bool clause_is_satisfied(const Clause& clause, const IndexSet& assignment) {
     for (const Equation& row : clause) {
         if (!row_holds(row, assignment)) {
             return true;

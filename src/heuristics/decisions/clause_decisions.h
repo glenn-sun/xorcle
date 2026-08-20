@@ -49,7 +49,7 @@ private:
 /// decided; `reduced_scratch` takes each reduction in turn.
 /// @return The first candidate whose reduction has a leading bit, i.e. is a
 /// legal decision. It points into `basis` and is *not* reduced.
-/// @pre Both have width `trail_span.cols()`, and some legal decision remains.
+/// @pre Both have `trail_span.cols()` bits, and some legal decision remains.
 /// @note `reduced_scratch` is a caller-owned buffer rather than a local because
 /// both callers refill one long-lived member once per decision:
 /// `FixedLiterals::make_decision()` and the `Csids::make_decision()` fallback.
@@ -68,7 +68,7 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
 /// @brief Compact a literal basis, preserving basis order.
 /// @return The first compacted equation for each new leading bit, in old basis
 /// order, then a unit equation for each new variable none covered.
-/// @pre Every equation in `basis` has width `transform.old_num_vars() + 1`.
+/// @pre Every equation in `basis` has `transform.old_num_vars() + 1` bits.
 /// @post Exactly `transform.new_num_vars()` equations, one per leading bit.
 std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basis,
                                                const CompactionTransform& transform,
@@ -76,7 +76,7 @@ std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basi
 
 /// @brief Sample a random combination of a clause's rows that is a legal
 /// decision, into `out_candidate` unreduced and `out_reduced` partially reduced.
-/// @pre `clause.rows() > 0`; the out-params have width `trail_span.cols()`; and
+/// @pre `clause.rows() > 0`; the out-params have `trail_span.cols()` bits; and
 /// the clause is not satisfied by the trail, i.e. `clause_satisfied_by_trail()`
 /// returned false for it.
 /// @note Out-parameters rather than a returned pair because the only caller,

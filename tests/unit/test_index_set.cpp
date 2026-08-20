@@ -3,12 +3,12 @@
 #include <vector>
 
 #include "algebra_test_support.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
-TEST_CASE("column_set: construction and basic access") {
-    ColumnSet columns(200);
+TEST_CASE("index_set: construction and basic access") {
+    IndexSet columns(200);
     CHECK(columns.size() == 200);
     CHECK(columns.none());
     CHECK(columns.count() == 0);
@@ -33,13 +33,13 @@ TEST_CASE("column_set: construction and basic access") {
     CHECK(columns.none());
     CHECK(columns.size() == 200);
 
-    columns.reset_width(10);
+    columns.reset_size(10);
     CHECK(columns.size() == 10);
     CHECK(columns.none());
 }
 
-TEST_CASE("column_set: count_below gives row-echelon insertion indices") {
-    ColumnSet columns(300);
+TEST_CASE("index_set: count_below gives row-echelon insertion indices") {
+    IndexSet columns(300);
     const std::vector<std::size_t> set_columns{2, 5, 63, 64, 128, 200, 299};
     for (const std::size_t column : set_columns) {
         columns.set(column);
@@ -59,8 +59,8 @@ TEST_CASE("column_set: count_below gives row-echelon insertion indices") {
     CHECK(columns.count_below(columns.size()) == columns.count());
 }
 
-TEST_CASE("column_set: for_each_set visits set columns in ascending order") {
-    ColumnSet columns(400);
+TEST_CASE("index_set: for_each_set visits set columns in ascending order") {
+    IndexSet columns(400);
     const std::vector<std::size_t> expected{0, 1, 64, 65, 191, 256, 399};
     for (const std::size_t column : expected) {
         columns.set(column);
@@ -71,14 +71,14 @@ TEST_CASE("column_set: for_each_set visits set columns in ascending order") {
     CHECK(seen == expected);
 }
 
-TEST_CASE("column_set: equality and randomized agreement with a reference") {
+TEST_CASE("index_set: equality and randomized agreement with a reference") {
     TestRandom random(555);
-    constexpr std::size_t width = 260;
+    constexpr std::size_t num_columns = 260;
 
     for (int trial = 0; trial < 100; ++trial) {
-        ColumnSet columns(width);
-        std::vector<bool> reference(width, false);
-        for (std::size_t column = 0; column < width; ++column) {
+        IndexSet columns(num_columns);
+        std::vector<bool> reference(num_columns, false);
+        for (std::size_t column = 0; column < num_columns; ++column) {
             if (random.chance(3)) {
                 columns.set(column);
                 reference[column] = true;
@@ -86,7 +86,7 @@ TEST_CASE("column_set: equality and randomized agreement with a reference") {
         }
 
         std::size_t expected_count = 0;
-        for (std::size_t column = 0; column < width; ++column) {
+        for (std::size_t column = 0; column < num_columns; ++column) {
             REQUIRE(columns.test(column) == reference[column]);
             if (reference[column]) {
                 ++expected_count;
@@ -97,7 +97,7 @@ TEST_CASE("column_set: equality and randomized agreement with a reference") {
         CHECK(columns.count() == expected_count);
         CHECK(columns.none() == (expected_count == 0));
 
-        const ColumnSet copy = columns;
+        const IndexSet copy = columns;
         CHECK(copy == columns);
     }
 }

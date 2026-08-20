@@ -6,8 +6,6 @@
 
 namespace xorcle {
 
-// Instantiates the shared templated algorithms for the dense representation.
-// Everything gf2 touches is confined here and in dense_gf2_vector.{h,cpp}.
 static_assert(GF2Vector<DenseGF2Vector>,
               "DenseGF2Vector must satisfy the GF2Vector concept");
 

@@ -12,7 +12,7 @@
 #include "algebra/reduce_result.h"
 #include "algebra_test_support.h"
 #include "allocation_counter.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 #include "util/print_mode.h"
 
 #if !defined(NDEBUG) && (defined(__APPLE__) || defined(__unix__))
@@ -23,7 +23,7 @@
 
 namespace xorcle {
 
-TEST_CASE_TEMPLATE("equation: construction and width", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("equation: construction and bit count", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
     Equation null_handle;
@@ -129,7 +129,7 @@ TEST_CASE_TEMPLATE("equation: set_eq_true", Tag, DenseTag, SparseTag) {
     Equation equation = make_equation_with(repr, 70, {0, 40, 70});
     equation.set_eq_true();
     CHECK(equation.is_eq_true());
-    CHECK(equation.num_bits() == 71); // width unchanged
+    CHECK(equation.num_bits() == 71); // bit count unchanged
 }
 
 TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, DenseTag, SparseTag) {
@@ -159,10 +159,10 @@ TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, Dens
 }
 
 #ifdef XORCLE_HAS_DEATH_TESTS
-TEST_CASE_TEMPLATE("equation: assign_from rejects a width mismatch", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("equation: assign_from rejects a bit-count mismatch", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    // A same-width copy is an internal invariant, so a mismatch asserts rather
+    // A same-bit-count copy is an internal invariant, so a mismatch asserts rather
     // than silently failing. That can only be observed by watching a child
     // process die, and it is compiled out of release builds along with the
     // assertion itself.
@@ -227,11 +227,12 @@ TEST_CASE_TEMPLATE("equation: compact and uncompact round-trip", Tag, DenseTag, 
     constexpr std::size_t old_num_vars = 8;
 
     // Eliminate variables 1, 3 and 6; survivors 0,2,4,5,7 renumber to 0..4.
-    ColumnSet pivots(old_num_vars + 1);
-    pivots.set(1);
-    pivots.set(3);
-    pivots.set(6);
-    const CompactionTransform transform = CompactionTransform::from_pivots(old_num_vars, pivots);
+    IndexSet dropped(old_num_vars + 1);
+    dropped.set(1);
+    dropped.set(3);
+    dropped.set(6);
+    const CompactionTransform transform =
+        CompactionTransform::from_dropped_columns(old_num_vars, dropped);
     REQUIRE(transform.new_num_vars() == 5);
 
     SUBCASE("compaction drops eliminated variables and keeps the constant") {

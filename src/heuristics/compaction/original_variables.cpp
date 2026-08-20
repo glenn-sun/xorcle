@@ -9,13 +9,13 @@ namespace xorcle {
 
 namespace {
 
-ColumnSet scatter_through_map(const ColumnSet& source, const std::vector<std::size_t>& index_map,
-                              std::size_t destination_width) {
+IndexSet scatter_through_map(const IndexSet& source, const std::vector<std::size_t>& index_map,
+                             std::size_t destination_num_vars) {
     assert(source.size() == index_map.size());
-    ColumnSet destination(destination_width);
+    IndexSet destination(destination_num_vars);
     for (std::size_t index = 0; index < index_map.size(); ++index) {
         if (source.test(index)) {
-            assert(index_map[index] < destination_width);
+            assert(index_map[index] < destination_num_vars);
             destination.set(index_map[index]);
         }
     }
@@ -25,13 +25,13 @@ ColumnSet scatter_through_map(const ColumnSet& source, const std::vector<std::si
 /// @brief Undo one compaction step in place. `bit_scratch` is passed in rather
 /// than made local because `reconstruct_original_assignment()` owns one buffer
 /// across every history entry, and `Equation::bits()` refills it per trail row.
-void undo_one_compaction(ColumnSet& assignment, const CompactionHistoryEntry& entry,
+void undo_one_compaction(IndexSet& assignment, const CompactionHistoryEntry& entry,
                          std::vector<std::size_t>& bit_scratch) {
     const std::size_t old_num_vars = entry.transform.old_num_vars();
     assert(assignment.size() == entry.transform.new_num_vars() &&
-           "compaction history does not line up with the assignment width");
+           "compaction history does not line up with the assignment's variable count");
 
-    ColumnSet before(old_num_vars);
+    IndexSet before(old_num_vars);
     for (std::size_t new_index = 0; new_index < entry.transform.new_num_vars(); ++new_index) {
         if (assignment.test(new_index)) {
             before.set(entry.transform.to_old(new_index));
@@ -41,23 +41,24 @@ void undo_one_compaction(ColumnSet& assignment, const CompactionHistoryEntry& en
     for (auto row = entry.trail_rows_before.rbegin(); row != entry.trail_rows_before.rend();
          ++row) {
         // One coarse call per row: the set bits come back ascending, so the
-        // first is the pivot variable and the last is the constant bit when the
-        // row has one.
+        // first is the eliminated variable and the last is the constant bit when
+        // the row has one.
         row->bits(bit_scratch);
         assert(!bit_scratch.empty() && "compaction history holds a zero trail row");
-        const std::size_t pivot_var = bit_scratch.front();
-        assert(pivot_var < old_num_vars && "compaction history holds an invalid trail pivot");
+        const std::size_t eliminated_var = bit_scratch.front();
+        assert(eliminated_var < old_num_vars &&
+               "compaction history holds an invalid eliminated variable");
 
-        bool pivot_value = false;
+        bool eliminated_value = false;
         for (std::size_t i = 1; i < bit_scratch.size(); ++i) {
             const std::size_t bit = bit_scratch[i];
-            pivot_value ^= (bit == old_num_vars) ? true : before.test(bit);
+            eliminated_value ^= (bit == old_num_vars) ? true : before.test(bit);
         }
 
-        if (pivot_value) {
-            before.set(pivot_var);
+        if (eliminated_value) {
+            before.set(eliminated_var);
         } else {
-            before.reset(pivot_var);
+            before.reset(eliminated_var);
         }
     }
 
@@ -66,11 +67,11 @@ void undo_one_compaction(ColumnSet& assignment, const CompactionHistoryEntry& en
 
 } // namespace
 
-ColumnSet reconstruct_original_assignment(
-    const ColumnSet& active_assignment,
+IndexSet reconstruct_original_assignment(
+    const IndexSet& active_assignment,
     const std::vector<CompactionHistoryEntry>& compaction_history,
     const std::vector<std::size_t>& active_var_to_original, std::size_t original_num_vars) {
-    ColumnSet assignment = active_assignment;
+    IndexSet assignment = active_assignment;
     std::vector<std::size_t> bit_scratch;
 
     for (auto entry = compaction_history.rbegin(); entry != compaction_history.rend(); ++entry) {
@@ -83,7 +84,7 @@ ColumnSet reconstruct_original_assignment(
     // No compaction ever ran, so the active variable numbering is the original
     // one up to the variable map the solver has been carrying.
     assert(assignment.size() == active_var_to_original.size() &&
-           "failed to recover the original assignment width");
+           "failed to recover the original assignment's variable count");
     return scatter_through_map(assignment, active_var_to_original, original_num_vars);
 }
 

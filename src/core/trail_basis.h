@@ -25,8 +25,8 @@ namespace xorcle {
 /// rows come out in ascending leading-column order, which is *descending* trail
 /// order. Row 0 therefore involves the most recently learned equation, and
 /// `pop_first_row()` peels off exactly the row conflict analysis resolves next.
-/// Rows are coefficient vectors over trail rows, so their width is @f$m@f$ and
-/// has nothing to do with the number of variables.
+/// Rows are coefficient vectors over trail rows, so their bit count is @f$m@f$
+/// and has nothing to do with the number of variables.
 ///
 /// @warning The inherited "constant column" is **not a constant here.** A
 /// `RowEchelonMatrix` over `num_vars` variables reserves its last column for the

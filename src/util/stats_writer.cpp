@@ -35,7 +35,7 @@ std::optional<double> attempts_per_event(const RunStats& stats) {
                                                  stats.num_conflicts));
 }
 
-void append_dimacs_assignment(std::ostringstream& output, const ColumnSet& assignment) {
+void append_dimacs_assignment(std::ostringstream& output, const IndexSet& assignment) {
     if (assignment.size() == 0) {
         output << "v 0\n";
         return;

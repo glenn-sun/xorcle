@@ -9,7 +9,7 @@
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
 #include "reference_matrix.h"
-#include "util/column_set.h"
+#include "util/index_set.h"
 #include "util/print_mode.h"
 
 namespace xorcle {
@@ -152,7 +152,7 @@ TEST_CASE_TEMPLATE("row echelon: reduce records its coefficients", Tag, DenseTag
     Equation v = make_equation_with(repr, 5, {0, 2, 4});
     const Equation original = v;
 
-    ColumnSet coefficients;
+    IndexSet coefficients;
     matrix.reduce(v, coefficients);
     CHECK(coefficients.size() == matrix.rows());
 
@@ -364,7 +364,7 @@ TEST_CASE_TEMPLATE("row space: unique_solution", Tag, DenseTag, SparseTag) {
         check_echelon_invariant(space);
         REQUIRE_FALSE(space.pivot_columns().test(num_vars));
 
-        const ColumnSet solution = space.unique_solution();
+        const IndexSet solution = space.unique_solution();
         REQUIRE(solution.size() == num_vars);
         for (std::size_t i = 0; i < num_vars; ++i) {
             CHECK(solution.test(i) == target[i]);

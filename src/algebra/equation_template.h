@@ -19,14 +19,7 @@
 
 namespace xorcle {
 
-/// @brief The one implementation of `EquationInterface`, written against
-/// `GF2Vector`.
-///
-/// Instantiated once per representation, in that representation's own
-/// translation unit. Every per-bit loop -- compaction, uncompaction, bit
-/// collection, formatting -- lives here, inside the virtual boundary: a single
-/// dispatch from the caller's point of view and a fully inlined direct call from
-/// `V`'s.
+/// @brief Implements `EquationInterface` against any `GF2Vector`.
 template <GF2Vector V>
 class EquationTemplate final : public EquationInterface {
 public:
@@ -48,7 +41,7 @@ public:
 
     void resize(std::size_t num_bits) override { vector_.resize(num_bits); }
 
-    void set_eq_true() noexcept override { vector_.zero(); }
+    void set_eq_true() noexcept override { vector_.set_zero(); }
 
     void assign_bits(std::span<const std::size_t> bits) override { vector_.assign_bits(bits); }
 
@@ -56,7 +49,18 @@ public:
         return vector_.leading_bit();
     }
 
-    ReduceResult classify() const noexcept override { return vector_.classify(); }
+    /// @brief The last bit is the constant bit, so a vector leading on it has no
+    /// other bit set.
+    ReduceResult classify() const noexcept override {
+        const std::optional<std::size_t> leading = vector_.leading_bit();
+        if (!leading) {
+            return ReduceResult::eq_true();
+        }
+        if (*leading + 1 == vector_.num_bits()) {
+            return ReduceResult::eq_false();
+        }
+        return ReduceResult::leading(*leading);
+    }
 
     void plus_assign(const EquationInterface& other) override {
         vector_.plus_assign(cast(other).vector_);
@@ -71,7 +75,7 @@ public:
         V out(transform.new_num_vars() + 1);
         const std::size_t old_constant_bit = transform.old_num_vars();
         const std::size_t new_constant_bit = transform.new_num_vars();
-        vector_.for_each_bit([&](std::size_t old_bit) {
+        vector_.for_each_set_bit([&](std::size_t old_bit) {
             if (old_bit == old_constant_bit) {
                 out.set_bit(new_constant_bit);
                 return;
@@ -89,14 +93,14 @@ public:
         V out(transform.old_num_vars() + 1);
         const std::size_t old_constant_bit = transform.old_num_vars();
         const std::size_t new_constant_bit = transform.new_num_vars();
-        vector_.for_each_bit([&](std::size_t new_bit) {
+        vector_.for_each_set_bit([&](std::size_t new_bit) {
             out.set_bit(new_bit == new_constant_bit ? old_constant_bit : transform.to_old(new_bit));
         });
         return std::make_unique<EquationTemplate>(std::move(out));
     }
 
     void bits(std::vector<std::size_t>& out) const override {
-        vector_.for_each_bit([&](std::size_t bit) { out.push_back(bit); });
+        vector_.for_each_set_bit([&](std::size_t bit) { out.push_back(bit); });
     }
 
     bool equals(const EquationInterface& other) const noexcept override {
@@ -108,7 +112,7 @@ public:
     std::string to_string(const PrintMode& mode) const override {
         std::ostringstream oss;
         const std::size_t constant_bit = vector_.num_bits() - 1;
-        vector_.for_each_bit([&](std::size_t bit) {
+        vector_.for_each_set_bit([&](std::size_t bit) {
             if (bit == constant_bit) {
                 return;
             }
@@ -118,7 +122,7 @@ public:
             oss << "x" << (bit + 1);
         });
 
-        bool constant = vector_.test_bit(constant_bit);
+        bool constant = vector_.get_bit(constant_bit);
         if (mode.clause_mode == ClausePrintMode::as_clause) {
             constant = !constant;
         }
@@ -148,30 +152,28 @@ public:
     }
 
 private:
-    static const EquationTemplate& cast(const EquationInterface& storage) noexcept {
-        assert(storage.repr() == V::repr && "representation mismatch in EquationTemplate");
-        return static_cast<const EquationTemplate&>(storage);
+    static const EquationTemplate& cast(const EquationInterface& interface) noexcept {
+        assert(interface.repr() == V::repr && "representation mismatch in EquationTemplate");
+        return static_cast<const EquationTemplate&>(interface);
     }
 
     V vector_;
 };
 
-/// @brief Reach the concrete GF(2) vector behind an `Equation` handle.
-/// @pre `!equation.is_null()` and `equation.repr() == V::repr`; likewise for the
-/// mutable overload below.
+/// @pre `!equation.is_null()` and `equation.repr() == V::repr`
 template <GF2Vector V>
 const V& gf2_vector_of(const Equation& equation) noexcept {
     assert(!equation.is_null() && equation.repr() == V::repr);
-    return static_cast<const EquationTemplate<V>&>(equation.storage()).vector();
+    return static_cast<const EquationTemplate<V>&>(equation.interface()).vector();
 }
 
+/// @pre `!equation.is_null()` and `equation.repr() == V::repr`
 template <GF2Vector V>
 V& gf2_vector_of(Equation& equation) noexcept {
     assert(!equation.is_null() && equation.repr() == V::repr);
-    return static_cast<EquationTemplate<V>&>(equation.storage()).vector();
+    return static_cast<EquationTemplate<V>&>(equation.interface()).vector();
 }
 
-/// @brief Wrap a concrete GF(2) vector in an `Equation` handle.
 template <GF2Vector V>
 Equation make_equation_from_gf2_vector(V vec) {
     return Equation(std::make_unique<EquationTemplate<V>>(std::move(vec)));

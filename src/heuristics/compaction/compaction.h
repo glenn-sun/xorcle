@@ -1,8 +1,8 @@
 #pragma once
 
 /// @file compaction.h
-/// @brief Variable compaction: eliminate the variables the root trail pivoted on
-/// and rewrite the whole problem over the survivors.
+/// @brief Variable compaction: eliminate the variables the root trail span
+/// pivots on and rewrite the whole problem over the survivors.
 
 #include <cstddef>
 #include <cstdint>
@@ -52,9 +52,9 @@ struct CompactionState {
 /// and at least one variable can actually be eliminated.
 bool should_compact_before_decision(const CompactionState& state);
 
-/// @brief Build the change of basis eliminating every pivoted variable.
-/// @pre The trail is at the root level, and its span's pivot columns have width
-/// `active_num_vars + 1` and do not include the constant column.
+/// @brief Build the change of basis dropping every variable the span pivots on.
+/// @pre The trail is at the root level, and its span's pivot column set has size
+/// `active_num_vars + 1` and does not include the constant column.
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars);
 
 /// @brief Rewrite the active problem into the compacted variable numbering, as
