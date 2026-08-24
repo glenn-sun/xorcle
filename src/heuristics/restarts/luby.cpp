@@ -1,5 +1,6 @@
 #include "heuristics/restarts/luby.h"
 
+#include <cassert>
 #include <limits>
 
 namespace xorcle {
@@ -44,6 +45,7 @@ luby_value(std::size_t index) {
 }
 
 Luby::Luby(const RestartConfig& config) : unit_conflicts_(config.luby_unit_conflicts) {
+    assert(config.luby_unit_conflicts != 0 && "Luby unit budget must be non-zero");
     refresh_budget();
 }
 
@@ -67,11 +69,7 @@ Luby::note_restart() {
 
 void
 Luby::refresh_budget() {
-    const std::size_t unit = unit_conflicts_ == 0 ? 1 : unit_conflicts_;
-    current_budget_ = clamp_product(unit, luby_value(luby_index_));
-    if (current_budget_ == 0) {
-        current_budget_ = 1;
-    }
+    current_budget_ = clamp_product(unit_conflicts_, luby_value(luby_index_));
 }
 
 } // namespace xorcle

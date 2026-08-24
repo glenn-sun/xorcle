@@ -5,8 +5,8 @@
 
 namespace xorcle {
 
-RowEchelonMatrix::RowEchelonMatrix(EquationRepr repr, std::size_t num_vars)
-    : interface_(make_row_echelon_matrix_interface(repr, num_vars)) {}
+RowEchelonMatrix::RowEchelonMatrix(EquationRepr repr, std::size_t cols)
+    : interface_(make_row_echelon_matrix_interface(repr, cols)) {}
 
 RowEchelonMatrix::RowEchelonMatrix(const RowEchelonMatrix& other)
     : interface_(other.interface_->clone()) {}

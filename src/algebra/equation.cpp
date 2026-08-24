@@ -5,7 +5,7 @@
 namespace xorcle {
 
 Equation::Equation(EquationRepr repr, std::size_t num_vars)
-    : interface_(make_equation_interface(repr, num_vars)) {}
+    : interface_(make_equation_interface(repr, num_vars + 1)) {}
 
 Equation::Equation(const Equation& other)
     : interface_(other.interface_ ? other.interface_->clone() : nullptr) {}
@@ -15,6 +15,10 @@ Equation& Equation::operator=(const Equation& other) {
         interface_ = other.interface_ ? other.interface_->clone() : nullptr;
     }
     return *this;
+}
+
+Equation Equation::with_num_bits(EquationRepr repr, std::size_t num_bits) {
+    return Equation(make_equation_interface(repr, num_bits));
 }
 
 Equation Equation::eq_true(EquationRepr repr, std::size_t num_vars) {
@@ -49,9 +53,13 @@ void Equation::resize(std::size_t num_vars) {
 }
 
 void Equation::set_eq_true() noexcept {
-    if (interface_) {
-        interface_->set_eq_true();
-    }
+    assert(interface_ != nullptr && "set_eq_true on a null equation handle");
+    interface_->set_eq_true();
+}
+
+void Equation::set_eq_false() noexcept {
+    assert(interface_ != nullptr && "set_eq_false on a null equation handle");
+    interface_->set_eq_false();
 }
 
 void Equation::plus_assign(const Equation& other) {

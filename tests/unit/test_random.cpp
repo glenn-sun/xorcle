@@ -6,8 +6,7 @@
 /// `random_nonzero_coefficients`, not by running the code under test, so these
 /// are real fixtures rather than a snapshot of current behaviour. The
 /// differential harness requires identical conflict counts from matching seeds,
-/// which requires identical streams; this file is what makes that a checked
-/// property rather than an intention.
+/// which requires identical streams.
 
 #include <doctest/doctest.h>
 
@@ -119,7 +118,7 @@ TEST_CASE("random: random_int reproduces its reference phase draws") {
 TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") {
     // First eight samples off a fresh csids_equation stream, as bit strings in
     // ascending index order.
-    SUBCASE("seed 0, num_bits 1") {
+    SUBCASE("seed 0, num_rows 1") {
         Rng rng = make_rng(0, RngComponent::csids_equation);
         // Rejection sampling on a single bit: every accepted sample is "1".
         for (int i = 0; i < 8; ++i) {
@@ -127,7 +126,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, num_bits 3") {
+    SUBCASE("seed 0, num_rows 3") {
         const std::vector<std::string> expected = {"101", "010", "011", "010",
                                                    "101", "110", "010", "101"};
         Rng rng = make_rng(0, RngComponent::csids_equation);
@@ -136,7 +135,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 42, num_bits 2") {
+    SUBCASE("seed 42, num_rows 2") {
         const std::vector<std::string> expected = {"11", "10", "10", "10",
                                                    "10", "01", "11", "11"};
         Rng rng = make_rng(42, RngComponent::csids_equation);
@@ -145,7 +144,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, num_bits 64 -- exactly one draw per attempt") {
+    SUBCASE("seed 0, num_rows 64 -- exactly one draw per attempt") {
         const std::vector<std::string> expected = {
             "0001100100010100010101101110100100101111011100100101011000010000",
             "1010100100101001100010110010100001011001110001100011111010000011",
@@ -158,7 +157,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 42, num_bits 63 -- one draw per attempt, top bit dropped") {
+    SUBCASE("seed 42, num_rows 63 -- one draw per attempt, top index dropped") {
         const std::vector<std::string> expected = {
             "111110011011010010111111000001110001111100011011111111101001111",
             "100010110010111101000111001100111110100001000011100110100011100",
@@ -170,9 +169,9 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, num_bits 65 -- two draws per attempt, tail masked") {
-        // Each sample's first 64 bits are one whole draw, so sample k here uses
-        // draws 2k-1 and 2k of the same stream the num_bits-64 case walks one draw
+    SUBCASE("seed 0, num_rows 65 -- two draws per attempt, tail indices dropped") {
+        // Each sample's first 64 indices are one whole draw, so sample k here uses
+        // draws 2k-1 and 2k of the same stream the num_rows-64 case walks one draw
         // at a time.
         const std::vector<std::string> expected = {
             "0001100100010100010101101110100100101111011100100101011000010000"
@@ -190,7 +189,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, num_bits 100 -- the high 28 bits of the second draw are dropped") {
+    SUBCASE("seed 0, num_rows 100 -- the high 28 indices of the second draw are dropped") {
         const std::vector<std::string> expected = {
             "0001100100010100010101101110100100101111011100100101011000010000"
             "101010010010100110001011001010000101",
@@ -203,7 +202,7 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
         }
     }
 
-    SUBCASE("seed 0, num_bits 129 -- three draws per attempt") {
+    SUBCASE("seed 0, num_rows 129 -- three draws per attempt") {
         const std::vector<std::string> expected = {
             "0001100100010100010101101110100100101111011100100101011000010000"
             "1010100100101001100010110010100001011001110001100011111010000011"
@@ -221,11 +220,9 @@ TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") 
 
 TEST_CASE("random: the number of draws consumed matches the reference stream") {
     // The state of the shared stream after eight samples is what the
-    // differential harness actually depends on -- a reimplementation that draws
-    // per bit, or draws 32-bit words, diverges here even when the coefficient
-    // vectors happen to agree.
+    // differential harness depends on.
     struct Case {
-        std::size_t num_bits;
+        std::size_t num_rows;
         std::uint64_t next_draw;
     };
 
@@ -243,10 +240,10 @@ TEST_CASE("random: the number of draws consumed matches the reference stream") {
     };
 
     for (const Case& c : cases) {
-        CAPTURE(c.num_bits);
+        CAPTURE(c.num_rows);
         Rng rng = make_rng(0, RngComponent::csids_equation);
         for (int i = 0; i < 8; ++i) {
-            (void)random_nonzero_coefficients(c.num_bits, rng);
+            (void)random_nonzero_coefficients(c.num_rows, rng);
         }
         CHECK(rng() == c.next_draw);
     }
@@ -254,14 +251,14 @@ TEST_CASE("random: the number of draws consumed matches the reference stream") {
 
 TEST_CASE("random: random_nonzero_coefficients postconditions") {
     Rng rng = make_rng(7, RngComponent::csids_equation);
-    for (std::size_t num_bits : {std::size_t{1}, std::size_t{2}, std::size_t{17}, std::size_t{64},
+    for (std::size_t num_rows : {std::size_t{1}, std::size_t{2}, std::size_t{17}, std::size_t{64},
                                  std::size_t{65}, std::size_t{200}}) {
-        CAPTURE(num_bits);
+        CAPTURE(num_rows);
         for (int trial = 0; trial < 32; ++trial) {
-            const IndexSet coefficients = random_nonzero_coefficients(num_bits, rng);
-            CHECK(coefficients.size() == num_bits);
+            const IndexSet coefficients = random_nonzero_coefficients(num_rows, rng);
+            CHECK(coefficients.size() == num_rows);
             CHECK_FALSE(coefficients.none());
-            CHECK(coefficients.count() <= num_bits);
+            CHECK(coefficients.count() <= num_rows);
         }
     }
 }

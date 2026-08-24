@@ -6,7 +6,7 @@
 
 namespace xorcle {
 
-void CsidsParams::bump_activity(ClauseId id) {
+void CsidsActivity::bump_activity(ClauseId id) {
     activity_heap.increase_key(id, inc_amt);
     if (activity_heap.get_priority(id) > 1e100) {
         activity_heap.rescale(1e-100);
@@ -16,12 +16,12 @@ void CsidsParams::bump_activity(ClauseId id) {
 
 CsidsState::CsidsState(EquationRepr repr, std::size_t num_vars, const CsidsConfig& config)
     : initial_inc_amt(config.bump), repr(repr), num_vars(num_vars) {
-    assert(config.decay > 0.0 && config.decay < 1.0 && "CSIDS requires 0 < alpha < 1");
+    assert(config.decay >= 0.0 && config.decay <= 1.0 && "CSIDS requires 0 <= decay <= 1");
     assert(config.initial_activity >= 0.0 && "CSIDS requires a non-negative A0");
     assert(config.bump >= 0.0 && "CSIDS requires a non-negative bump");
-    params.initial_activity = config.initial_activity;
-    params.decay = config.decay;
-    params.inc_amt = config.bump;
+    activity.initial_activity = config.initial_activity;
+    activity.decay = config.decay;
+    activity.inc_amt = config.bump;
 }
 
 void CsidsState::ensure_unit_eqns() {
@@ -37,13 +37,13 @@ void CsidsState::ensure_unit_eqns() {
 }
 
 void CsidsState::reset_activity() {
-    params.activity_heap.reset();
+    activity.activity_heap.reset();
     ensure_unit_eqns();
     for (ClauseId id = 0; id < num_clauses; ++id) {
-        params.activity_heap.set_activity(id, 0.0);
-        params.activity_heap.insert(id);
+        activity.activity_heap.set_activity(id, 0.0);
+        activity.activity_heap.insert(id);
     }
-    params.inc_amt = initial_inc_amt;
+    activity.inc_amt = initial_inc_amt;
     last_decision_clause.reset();
     pending_learned_priority.reset();
 }
@@ -66,31 +66,29 @@ void Csids::reinitialize() {
 Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
+    assert(trail_span.repr() == repr() &&
+           "the trail span does not match the procedure's representation");
     assert(trail_span.rows() < num_vars() && "no legal decision remains");
 
     state_.ensure_unit_eqns();
-    while (!state_.params.activity_heap.empty()) {
-        const ClauseId id = state_.params.activity_heap.peek_max();
+    while (!state_.activity.activity_heap.empty()) {
+        const ClauseId id = state_.activity.activity_heap.peek_max();
         if (id >= clauses.size()) {
             // A stale id left over from before a compaction shrank the database.
-            state_.params.activity_heap.extract_max();
+            state_.activity.activity_heap.extract_max();
             continue;
         }
         const Clause& clause = clauses[id];
         if (clause_satisfied_by_trail(trail_span, clause, clause_sat_workspace_)) {
-            state_.params.activity_heap.extract_max();
+            state_.activity.activity_heap.extract_max();
             continue;
         }
         state_.last_decision_clause = id;
 
-        // The clause is not satisfied, which is exactly the precondition that
-        // makes the rejection loop terminate.
         SampledDecision sample =
             sample_equation_from_clause(clause, trail_span, clause_equation_rng_);
 
         record_decision(false);
-        // The phase is applied to the *reduced* candidate, which is not the same
-        // as applying it before reducing, so the reduced form is what is returned.
         apply_decision_phase(sample.reduced);
         return std::move(sample.reduced);
     }
@@ -101,9 +99,15 @@ Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clau
 }
 
 void Csids::update_with_asserting_clause(const Clause&) {
-    state_.pending_learned_priority = state_.params.initial_activity * state_.params.inc_amt;
-    state_.params.inc_amt *= (1.0 / state_.params.decay);
-    state_.params.activity_heap.rebuild();
+    state_.pending_learned_priority = state_.activity.initial_activity * state_.activity.inc_amt;
+    if (state_.activity.decay == 0.0) {
+        // Growing the increment is the lazy form of decaying every activity. At
+        // zero the increment would have to be infinite, so decay them directly.
+        state_.activity.activity_heap.rescale(0.0);
+    } else {
+        state_.activity.inc_amt *= (1.0 / state_.activity.decay);
+    }
+    state_.activity.activity_heap.rebuild();
 }
 
 void Csids::update_with_new_clause(const Clause&, ClauseId id) {
@@ -117,8 +121,8 @@ void Csids::update_with_new_clause(const Clause&, ClauseId id) {
         if (learned_priority.has_value() && next_id == id) {
             priority = *learned_priority;
         }
-        state_.params.activity_heap.set_activity(next_id, priority);
-        state_.params.activity_heap.insert(next_id);
+        state_.activity.activity_heap.set_activity(next_id, priority);
+        state_.activity.activity_heap.insert(next_id);
     }
     state_.num_clauses = id + 1;
     state_.pending_learned_priority.reset();
@@ -126,7 +130,7 @@ void Csids::update_with_new_clause(const Clause&, ClauseId id) {
 
 void Csids::update_with_resolved_clause(ClauseId id) {
     if (id < state_.num_clauses) {
-        state_.params.bump_activity(id);
+        state_.activity.bump_activity(id);
     }
 }
 

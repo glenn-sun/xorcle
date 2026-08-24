@@ -1,32 +1,9 @@
 #include "reference_matrix.h"
 
+#include <cassert>
 #include <span>
 
 namespace xorcle {
-
-std::optional<std::size_t> first_set(const Bits& bits) {
-    for (std::size_t i = 0; i < bits.size(); ++i) {
-        if (bits[i]) {
-            return i;
-        }
-    }
-    return std::nullopt;
-}
-
-std::optional<std::size_t> next_set(const Bits& bits, std::size_t after) {
-    for (std::size_t i = after + 1; i < bits.size(); ++i) {
-        if (bits[i]) {
-            return i;
-        }
-    }
-    return std::nullopt;
-}
-
-void plus_into(Bits& target, const Bits& source) {
-    for (std::size_t i = 0; i < target.size(); ++i) {
-        target[i] = target[i] != source[i];
-    }
-}
 
 std::vector<std::size_t> set_bits(const Bits& bits) {
     std::vector<std::size_t> out;
@@ -68,6 +45,31 @@ ReduceResult expected_result(const std::optional<std::size_t>& leading, std::siz
 }
 
 namespace {
+
+std::optional<std::size_t> first_set(const Bits& bits) {
+    for (std::size_t i = 0; i < bits.size(); ++i) {
+        if (bits[i]) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+/// @brief First set bit of `bits` strictly after `after`, or `std::nullopt`.
+std::optional<std::size_t> next_set(const Bits& bits, std::size_t after) {
+    for (std::size_t i = after + 1; i < bits.size(); ++i) {
+        if (bits[i]) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+void plus_into(Bits& target, const Bits& source) {
+    for (std::size_t i = 0; i < target.size(); ++i) {
+        target[i] = target[i] != source[i];
+    }
+}
 
 bool none_set(const Bits& bits) { return !first_set(bits).has_value(); }
 
@@ -137,6 +139,7 @@ std::optional<std::size_t> ReferenceMatrix::partial_reduce(Bits& v) const {
 }
 
 Bits ReferenceMatrix::pop_first_row() {
+    assert(rows() > 0 && "pop_first_row on an empty matrix");
     const Bits first = rows_.front();
     const std::size_t leading = *first_set(first);
     rows_.erase(rows_.begin());
@@ -150,6 +153,7 @@ Bits ReferenceMatrix::pop_first_row() {
 }
 
 void ReferenceMatrix::pop_last_row() {
+    assert(rows() > 0 && "pop_last_row on an empty matrix");
     const std::size_t leading = *first_set(rows_.back());
     rows_.pop_back();
     pivot_[leading] = false;

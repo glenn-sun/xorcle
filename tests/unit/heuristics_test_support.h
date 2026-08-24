@@ -11,9 +11,8 @@ namespace xorcle {
 /// @brief Build a clause from its rows, each given as a list of set bits in the
 /// linear negation, where bit `num_vars` is the constant bit.
 ///
-/// The watch fields keep `Clause`'s own defaults, which is what a parsed clause
-/// gets: `watched0 = 0` and `watched1 = 1`, the latter deliberately out of range
-/// for a unit clause.
+/// The watch fields keep `Clause`'s own defaults: `watched0 = 0` and
+/// `watched1 = 1`.
 Clause make_clause(EquationRepr repr, std::size_t num_vars,
                    std::initializer_list<std::initializer_list<std::size_t>> rows);
 

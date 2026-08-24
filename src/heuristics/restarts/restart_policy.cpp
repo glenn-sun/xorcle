@@ -1,5 +1,7 @@
 #include "heuristics/restarts/restart_policy.h"
 
+#include <cassert>
+
 #include "heuristics/restarts/geometric.h"
 #include "heuristics/restarts/luby.h"
 
@@ -28,6 +30,7 @@ make_restart_policy(const RestartConfig& config) {
         case RestartMethod::luby:
             return std::make_unique<Luby>(config);
     }
+    assert(false && "unhandled restart method");
     return std::make_unique<NoRestarts>();
 }
 

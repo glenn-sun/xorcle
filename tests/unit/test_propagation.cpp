@@ -1,7 +1,6 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
-#include <initializer_list>
 #include <optional>
 #include <vector>
 
@@ -11,6 +10,7 @@
 #include "core/clause_id.h"
 #include "core/propagation.h"
 #include "core/trail.h"
+#include "heuristics_test_support.h"
 
 namespace xorcle {
 
@@ -19,16 +19,6 @@ namespace {
 /// @brief Number of variables every clause in this file is built over, unless
 /// the test says otherwise.
 constexpr std::size_t default_num_vars = 4;
-
-/// @brief Build a clause from the set bits of each of its linear-negation rows.
-Clause make_clause(EquationRepr repr, std::size_t clause_num_vars,
-                   std::initializer_list<std::initializer_list<std::size_t>> rows) {
-    Clause clause(repr, clause_num_vars);
-    for (const std::initializer_list<std::size_t>& row : rows) {
-        clause.add_row(make_equation_with(repr, clause_num_vars, row));
-    }
-    return clause;
-}
 
 /// @brief A `WatchUpdateHandler` that records every notification it receives.
 class RecordingHandler final : public WatchUpdateHandler {
@@ -102,8 +92,7 @@ TEST_CASE_TEMPLATE("propagation: unit clause conflict is an implied false equati
     Clause clause = make_clause(repr, default_num_vars, {{0}});
     trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0});
 
-    // The row reduces to 0, so the clause implies 1: conflict and propagation
-    // travel the same code path.
+    // The row reduces to 0, so the clause implies 1.
     Equation* implied = propagator.unit_propagate_one_clause(0, clause, trail, std::nullopt,
                                                              num_watch_updates, handler);
     REQUIRE(implied != nullptr);

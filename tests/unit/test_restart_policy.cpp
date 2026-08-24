@@ -91,16 +91,6 @@ TEST_CASE("Luby: a unit of 1 reproduces the sequence directly") {
     CHECK(observed_budgets(policy, expected.size()) == expected);
 }
 
-TEST_CASE("Luby: a zero unit is clamped up to one") {
-    RestartConfig config;
-    config.method = RestartMethod::luby;
-    config.luby_unit_conflicts = 0;
-
-    Luby policy(config);
-    const std::vector<std::size_t> expected = {1, 1, 2, 1, 1, 2, 4};
-    CHECK(observed_budgets(policy, expected.size()) == expected);
-}
-
 TEST_CASE("Luby: an enormous unit saturates rather than wrapping") {
     RestartConfig config;
     config.method = RestartMethod::luby;
@@ -151,29 +141,15 @@ TEST_CASE("Geometric: a multiplier of 1 gives a constant budget") {
     CHECK(observed_budgets(policy, expected.size()) == expected);
 }
 
-TEST_CASE("Geometric: degenerate configurations clamp to one") {
-    SUBCASE("zero initial budget") {
-        RestartConfig config;
-        config.method = RestartMethod::geometric;
-        config.geometric_initial_conflicts = 0;
-        config.geometric_multiplier = 1.5;
+TEST_CASE("Geometric: a shrinking multiplier never reaches zero") {
+    RestartConfig config;
+    config.method = RestartMethod::geometric;
+    config.geometric_initial_conflicts = 4;
+    config.geometric_multiplier = 0.5;
 
-        Geometric policy(config);
-        // ceil(1 * 1.5) = 2, then 3, then ceil(4.5) = 5.
-        const std::vector<std::size_t> expected = {1, 2, 3, 5};
-        CHECK(observed_budgets(policy, expected.size()) == expected);
-    }
-
-    SUBCASE("a shrinking multiplier never reaches zero") {
-        RestartConfig config;
-        config.method = RestartMethod::geometric;
-        config.geometric_initial_conflicts = 4;
-        config.geometric_multiplier = 0.5;
-
-        Geometric policy(config);
-        const std::vector<std::size_t> expected = {4, 2, 1, 1, 1};
-        CHECK(observed_budgets(policy, expected.size()) == expected);
-    }
+    Geometric policy(config);
+    const std::vector<std::size_t> expected = {4, 2, 1, 1, 1};
+    CHECK(observed_budgets(policy, expected.size()) == expected);
 }
 
 TEST_CASE("Geometric: growth saturates instead of overflowing") {

@@ -17,12 +17,9 @@
 
 namespace xorcle {
 
-/// @brief A clause selected for propagation. A selector that tracks reductions
-/// itself can name the trigger that fired, sparing the propagator the
-/// recomputation; unit clauses carry no hint.
 struct ClauseSelection {
     ClauseId id;
-    std::optional<WatchType> zero_watch_hint; ///< The trigger, if the selector knows it.
+    std::optional<WatchType> trigger_hint;
 };
 
 enum class ClauseSelectorName {
@@ -30,14 +27,10 @@ enum class ClauseSelectorName {
     leading_term_watchlist ///< Work queue driven by the leading terms of watched rows.
 };
 
-/// @brief Decides which clause the solver tries to propagate from next;
-/// `core/propagation.h` propagates the clause this picks. It is also the
-/// **authoritative clause store**: the solver keeps no clause vector of its own
-/// but adds clauses here, reads them back through `clause()`, and has compaction
-/// write rewritten clauses back the same way. A watchlist selector's indexes are
-/// a view of this storage, and splitting the two would let them drift. A
-/// selector is likewise the propagator's `WatchUpdateHandler`, since a watchlist
-/// keyed on watched rows must hear of a move.
+/// @brief Decides which clause the solver tries to propagate from next.
+///
+/// It is also the **authoritative clause store**: the solver keeps no clause vector of its
+/// own, and a watchlist selector's indexes are a view of this one.
 ///
 /// @pre Every accessor taking a clause id requires `id < num_clauses()`.
 class ClauseSelector : public WatchUpdateHandler {
@@ -53,7 +46,6 @@ public:
 
     const std::vector<Clause>& clauses() const noexcept { return clauses_; }
 
-    /// @note Mutable because the propagator moves the clause's watches.
     Clause& clause(ClauseId id);
 
     const Clause& clause(ClauseId id) const;
@@ -69,29 +61,26 @@ public:
 
     virtual void add_starting_clause(Clause clause); ///< Takes the next id.
 
-    /// @brief Add a learned asserting clause under the next id; `trail` already
-    /// reflects the backjump.
-    /// @note `removed_levels` really is the number of decision levels just
-    /// *discarded*, not the asserting level and not its complement: after a
-    /// restart the solver discards every non-root level regardless of where the
-    /// clause asserts, so the two differ.
+    /// @brief Add a learned asserting clause under the next id; `trail` already reflects
+    /// the backjump.
+    /// @note `removed_levels` is the number of decision levels just *discarded*, which
+    /// after a restart is neither the asserting level nor its complement.
     virtual void add_asserting_clause(Clause clause, const Trail& trail,
                                       std::size_t removed_levels);
 
-    /// @brief Note an equation learned by propagation, already reduced by the
-    /// span it was added to and already on `trail`. Decisions are the same.
+    /// @brief Note an equation learned by propagation, already reduced by the span it was
+    /// added to and already on `trail`.
     virtual void update_with_propagation(const Equation& reduced_eqn, const Trail& trail);
 
     virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail);
 
     virtual void update_with_decision_clause(std::optional<ClauseId> clause_id);
 
-    /// @brief Note a watch move. The default ignores it; only a watchlist cares.
+    /// @brief Note a watch move, which the default ignores.
     void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
                                const Trail& trail) override;
 
-    /// @brief Note that every clause was rewritten into a compacted variable
-    /// numbering.
+    /// @brief Note that every clause was rewritten into a compacted variable numbering.
     virtual void update_with_compaction(const CompactionTransform& transform, const Trail& trail);
 
 protected:
@@ -105,8 +94,8 @@ protected:
     void debug_assert_database_synchronized() const;
 #endif
 
-    std::vector<Clause> clauses_; ///< The clause database; a clause's id is its index.
-    std::vector<std::uint8_t> clause_active_; ///< Active flags, parallel to `clauses_`.
+    std::vector<Clause> clauses_; ///< A clause's id is its index.
+    std::vector<std::uint8_t> clause_active_;
 };
 
 } // namespace xorcle

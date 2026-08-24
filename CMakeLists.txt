@@ -63,8 +63,7 @@ target_include_directories(xorcle_core PUBLIC src)
 
 # gf2 gates its bounds checks on `gf2_debug_assert`, which is a no-op unless
 # DEBUG is defined -- and neither CMake's Debug build type nor gf2's own
-# FetchContent-consumed CMakeLists defines it. Without this line a Debug build
-# gets no bounds checking from gf2 at all.
+# FetchContent-consumed CMakeLists defines it.
 target_compile_definitions(xorcle_core PRIVATE $<$<CONFIG:Debug>:DEBUG>)
 
 add_executable(xorcle src/cli/main.cpp)

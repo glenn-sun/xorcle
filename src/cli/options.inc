@@ -3,29 +3,20 @@
 /// @file options.inc
 /// @brief The option table: one row per command-line option.
 ///
-/// Including this file with the four macros below defined generates, from the
-/// same rows, the options struct, the "was it given?" struct, the `--name=value`
-/// parser, the bounds checks, the enum value tables and `--help`.
-/// `src/cli/options.h` does each in turn; nothing else includes this file.
+/// `src/cli/options.h` includes it once per macro.
 ///
-/// ## The macros
-///
-/// - `XORCLE_OPTION(name, kind, default, lo, hi, help)` — a scalar option.
-///   `name` is the table name; the command line spells it with dashes, so
-///   `compact_every` is `--compact-every`. `kind` is one of the `OptionKind`
-///   tags: `Bool`, `U64`, `Size`, `Real` (bounds inclusive), `Ratio` (a double
-///   with **exclusive** bounds) or `Text` (unbounded, so `lo` and `hi` are
-///   empty).
+/// - `XORCLE_OPTION(name, kind, default, lo, hi, help)` — a scalar option. The
+///   command line spells `name` with dashes, so `compact_every` is
+///   `--compact-every`. `kind` is one of the `OptionKind` tags: `Bool`, `U64`,
+///   `Size`, `Real` (all four have inclusive bounds) or `Text` (unbounded, so
+///   `lo` and `hi` are empty).
 /// - `XORCLE_ENUM_OPTION(name, type, default, help)` — an option whose value is
 ///   one of a fixed set of names.
 /// - `XORCLE_ENUM_VALUE(option, spelling, enumerator)` — one accepted spelling
 ///   of one enum option. The **first** spelling naming a given enumerator is the
 ///   one the statistics output labels it with.
-/// - `XORCLE_PRESET(spelling, config)` — a `--decisions=` spelling that fixes
-///   the whole CSIDS triple.
-///
-/// Undefined macros expand to nothing, so an includer defines only the ones it
-/// needs. All four are undefined again at the bottom.
+/// - `XORCLE_PRESET(spelling, config)` — a `--decisions=` spelling that also
+///   fixes the CSIDS parameters.
 
 #ifndef XORCLE_OPTION
 #define XORCLE_OPTION(name, kind, default_value, lo, hi, help)
@@ -40,10 +31,10 @@
 #define XORCLE_PRESET(spelling, config)
 #endif
 
-// --- Storage and reproducibility -------------------------------------------
+// --- Representation and reproducibility ------------------------------------
 
 XORCLE_ENUM_OPTION(equation_repr, EquationRepr, EquationRepr::dense,
-                   "storage representation for equations")
+                   "representation for equations")
 XORCLE_ENUM_VALUE(equation_repr, "dense", EquationRepr::dense)
 XORCLE_ENUM_VALUE(equation_repr, "sparse", EquationRepr::sparse)
 
@@ -69,7 +60,7 @@ XORCLE_PRESET(cmtf, csids_cmtf_config)
 
 XORCLE_OPTION(csids_initial, Real, 1.0, 0.0, INFINITY, "A0: activity a new asserting clause enters at")
 XORCLE_OPTION(csids_bump, Real, 1.0, 0.0, INFINITY, "delta: activity bump per resolution step")
-XORCLE_OPTION(csids_decay, Ratio, 0.98, 0.0, 1.0, "alpha: activity decay per conflict")
+XORCLE_OPTION(csids_decay, Real, 0.98, 0.0, 1.0, "alpha: activity decay per conflict")
 
 XORCLE_ENUM_OPTION(phase, DecisionPhase, default_decision_phase,
                    "which side of a sampled clause row to decide")
@@ -85,10 +76,6 @@ XORCLE_ENUM_VALUE(selection, "cyclic", ClauseSelectorName::cyclic)
 XORCLE_ENUM_VALUE(selection, "leading_term_watchlist", ClauseSelectorName::leading_term_watchlist)
 
 // --- Restarts --------------------------------------------------------------
-//
-// Marked EXPERIMENTAL in `--help`: restarts are not yet fully integrated with
-// the rest of the search, and these schedules have not been tuned against any
-// benchmark set.
 
 XORCLE_ENUM_OPTION(restart, RestartMethod, RestartMethod::none, "EXPERIMENTAL: restart schedule")
 XORCLE_ENUM_VALUE(restart, "none", RestartMethod::none)
@@ -104,7 +91,7 @@ XORCLE_OPTION(restart_luby_unit, Size, 100, 1, SIZE_MAX,
 
 // --- Output ----------------------------------------------------------------
 
-XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(+) proof here; requires --compact=false")
+XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(⊕) proof here; requires --compact=false")
 XORCLE_OPTION(stats_file, Text, "", "", "", "append CSV statistics here instead of printing them")
 
 #undef XORCLE_OPTION

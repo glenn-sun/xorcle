@@ -1,8 +1,5 @@
 /// @file test_options.cpp
 /// @brief Tests for the X-macro option table and the command line it generates.
-///
-/// The parser is header-only (`cli/options.h`), so it links into this binary
-/// directly instead of needing a shell-driven test around the executable.
 
 #include <doctest/doctest.h>
 
@@ -123,10 +120,12 @@ TEST_CASE("options: values outside the table's bounds are rejected") {
         CHECK(contains(rejection_message<CliError>({"--restart-geometric-factor=0.5"}),
                        "must be at least 1"));
     }
-    SUBCASE("a ratio's bounds are exclusive") {
-        CHECK(contains(rejection_message<CliError>({"--csids-decay=0"}), "0 < value < 1"));
-        CHECK(contains(rejection_message<CliError>({"--csids-decay=1"}), "0 < value < 1"));
-        CHECK(contains(rejection_message<CliError>({"--csids-decay=1.5"}), "0 < value < 1"));
+    SUBCASE("the decay admits both of its bounds") {
+        CHECK(contains(rejection_message<CliError>({"--csids-decay=1.5"}), "must be in 0..1"));
+        CHECK(contains(rejection_message<CliError>({"--csids-decay=-0.1"}), "must be in 0..1"));
+        // `1` never decays; `0` keeps only the newest activity.
+        CHECK(parse_with_input({"--csids-decay=1"}).csids_decay == doctest::Approx(1.0));
+        CHECK(parse_with_input({"--csids-decay=0"}).csids_decay == doctest::Approx(0.0));
         CHECK(parse_with_input({"--csids-decay=0.999"}).csids_decay == doctest::Approx(0.999));
     }
     SUBCASE("non-numeric and signed text") {
@@ -159,10 +158,9 @@ TEST_CASE("options: malformed command lines are rejected") {
 }
 
 TEST_CASE("options: the CSIDS presets set the whole triple") {
-    // Taken from `csids_berkmin_config` and `csids_cmtf_config` rather than
-    // retyped: the triple is usually written (A0, delta, alpha) while
-    // `CsidsConfig` declares it as (A0, alpha, delta), so a positional copy
-    // would silently swap the bump and the decay.
+    // The triple is conventionally written (A0, delta, alpha) while
+    // `CsidsConfig` declares it as (A0, alpha, delta), so these check the
+    // members by name.
     SUBCASE("berkmin: A0 = 1, delta = 0, alpha = 0.5") {
         const Options options = parse_with_input({"--decisions=berkmin"});
         CHECK(options.decisions == DecisionProcedureName::csids);
@@ -180,9 +178,37 @@ TEST_CASE("options: the CSIDS presets set the whole triple") {
         CHECK(options.csids_bump == doctest::Approx(1.0));
         CHECK(options.csids_decay == doctest::Approx(0.25));
     }
-    SUBCASE("a later --decisions clears the preset") {
+}
+
+TEST_CASE("options: with --decisions repeated, the last preset named wins") {
+    // Presets are recorded during the argument loop and applied once afterwards,
+    // so an earlier preset leaves nothing of its triple behind.
+    SUBCASE("a plain procedure after a preset restores the defaults") {
         const Options options = parse_with_input({"--decisions=berkmin", "--decisions=csids"});
+        CHECK(options.decisions == DecisionProcedureName::csids);
         CHECK(options.csids_preset.empty());
+        CHECK(options.csids_decay == doctest::Approx(0.98));
+        CHECK(options.csids_bump == doctest::Approx(1.0));
+    }
+    SUBCASE("a preset after a plain procedure takes effect") {
+        const Options options = parse_with_input({"--decisions=csids", "--decisions=berkmin"});
+        CHECK(options.csids_preset == "berkmin");
+        CHECK(options.csids_decay == doctest::Approx(0.5));
+        CHECK(options.csids_bump == doctest::Approx(0.0));
+    }
+    SUBCASE("a preset after another preset replaces the whole triple") {
+        const Options options = parse_with_input({"--decisions=berkmin", "--decisions=cmtf"});
+        CHECK(options.csids_preset == "cmtf");
+        CHECK(options.csids_decay == doctest::Approx(0.25));
+        CHECK(options.csids_bump == doctest::Approx(1.0));
+    }
+    SUBCASE("a manual override is refused or accepted by the preset finally in force") {
+        CHECK(contains(rejection_message<CliError>({"--decisions=berkmin", "--csids-decay=0.7"}),
+                       "is a preset"));
+        const Options options = parse_with_input(
+            {"--decisions=berkmin", "--decisions=csids", "--csids-decay=0.7"});
+        CHECK(options.csids_preset.empty());
+        CHECK(options.csids_decay == doctest::Approx(0.7));
     }
 }
 
@@ -235,7 +261,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--compact-every=N"));
     CHECK(contains(text, "[default: 16; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
-    CHECK(contains(text, "[default: 0.98; range 0 < value < 1]"));
+    CHECK(contains(text, "[default: 0.98; range 0..1]"));
     CHECK(contains(text, "--decisions=csids|variable_vsids|fixed_literals|berkmin|cmtf"));
     CHECK(contains(text, "--phase=falsify|satisfy|random"));
     CHECK(contains(text, "--selection=cyclic|leading_term_watchlist"));

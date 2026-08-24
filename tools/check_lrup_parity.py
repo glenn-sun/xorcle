@@ -33,12 +33,7 @@ class Basis:
         if row == 0:
             return False
         pivot = row.bit_length() - 1
-        if pivot in self.rows:
-            # Should not happen if reduce is correct, but guard anyway.
-            row ^= self.rows[pivot]
-            if row == 0:
-                return False
-            pivot = row.bit_length() - 1
+        assert pivot not in self.rows, "reduce left a row on an existing pivot"
         self.rows[pivot] = row
         # Insert pivot in descending order.
         idx = 0
@@ -55,7 +50,7 @@ def parse_header(lines: List[str]) -> Tuple[int, int, int]:
             continue
         if stripped.startswith("p"):
             parts = stripped.split()
-            if len(parts) < 4 or parts[1] != "cnf":
+            if len(parts) < 4 or parts[1] not in {"cnf", "xnf"}:
                 raise ValueError(f"Invalid header: {stripped}")
             try:
                 nvars = int(parts[2])
@@ -125,8 +120,7 @@ def parse_xnf_file(path: str) -> Tuple[int, Dict[int, List[int]]]:
         else:
             current.append(tok)
     if current:
-        rows = [parse_clause_token(t, nvars) for t in current]
-        clauses[clause_id] = rows
+        raise ValueError("Last clause missing trailing 0")
     return nvars, clauses
 
 

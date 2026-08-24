@@ -8,17 +8,8 @@
 
 namespace xorcle {
 
-/// @brief A bit-packed set of indices drawn from `[0, size())`. The index domain
-/// is whatever the holder says it is -- columns, matrix rows or variables -- so
-/// each use site documents its own. A plain concrete container, not part of the
-/// algebra dispatch surface (see `algebra/equation.h`): per-bit access on it is a
-/// direct inlined call and carries none of the cost that motivates the coarse
-/// algebra interface.
-///
-/// @note Bit packing is not an optimization here but a requirement. Every
-/// `Clause` carries a pivot column set of `num_vars + 1` indices, so a
-/// byte-per-index representation would cost eight times as much across the
-/// clause database.
+/// @brief A bit-packed set of indices drawn from `[0, size())`, whose index
+/// domain -- columns, matrix rows or variables -- is documented by each holder.
 class IndexSet {
 public:
     explicit IndexSet(std::size_t size = 0) : size_(size), words_(word_count(size), 0) {}
@@ -31,7 +22,7 @@ public:
         words_.assign(word_count(size), 0);
     }
 
-    /// @brief Clear every bit, leaving the size unchanged.
+    /// @brief Remove every index, leaving the size unchanged.
     void clear() noexcept {
         for (std::uint64_t& word : words_) {
             word = 0;
@@ -54,9 +45,7 @@ public:
         words_[i >> 6] &= ~(std::uint64_t{1} << (i & 63));
     }
 
-    /// @brief Number of set indices strictly below `i`. This is how a row's
-    /// insertion index into a row-echelon matrix is found: a row with leading
-    /// column `c` is inserted at `count_below(c)`.
+    /// @brief Number of set indices strictly below `i`.
     /// @pre `i <= size()`.
     std::size_t count_below(std::size_t i) const noexcept;
 
@@ -70,8 +59,8 @@ public:
         for (std::size_t w = 0; w < words_.size(); ++w) {
             std::uint64_t word = words_[w];
             while (word != 0) {
-                const std::size_t bit = static_cast<std::size_t>(std::countr_zero(word));
-                f((w << 6) + bit);
+                const std::size_t offset = static_cast<std::size_t>(std::countr_zero(word));
+                f((w << 6) + offset);
                 word &= word - 1;
             }
         }

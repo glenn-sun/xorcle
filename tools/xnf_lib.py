@@ -87,8 +87,7 @@ def negate_equation(eq: Equation) -> Equation:
     return Equation(vars=eq.vars, rhs=1 - eq.rhs)
 
 
-def xor_compose_equations(lhs: Equation, rhs: Equation) -> Equation:
-    # XOR literals by parity over variable multiplicities and affine-constant adjustment.
+def add_equations(lhs: Equation, rhs: Equation) -> Equation:
     parity: Dict[int, int] = {}
     for v in lhs.vars:
         parity[v] = parity.get(v, 0) ^ 1
@@ -96,7 +95,7 @@ def xor_compose_equations(lhs: Equation, rhs: Equation) -> Equation:
         parity[v] = parity.get(v, 0) ^ 1
     vars_out = sorted(v for v, bit in parity.items() if bit == 1)
     if not vars_out:
-        raise ValueError("xor composition produced an empty equation")
+        raise ValueError("equation sum is empty")
     rhs_out = 1 ^ lhs.rhs ^ rhs.rhs
     return Equation(vars=tuple(vars_out), rhs=rhs_out)
 
@@ -106,26 +105,6 @@ def equation_to_token(eq: Equation) -> str:
         raise ValueError("cannot format empty equation")
     body = "+".join(str(v) for v in eq.vars)
     return body if eq.rhs == 1 else "-" + body
-
-
-def xor_to_cnf_direct(vars_: Iterable[int], rhs: int) -> List[List[int]]:
-    vars_list = list(vars_)
-    k = len(vars_list)
-    if k == 0:
-        return [[]] if rhs == 1 else []
-    if k > 24:
-        raise ValueError("Direct XOR encoding only supports up to 24 variables")
-    clauses: List[List[int]] = []
-    for mask in range(1 << k):
-        parity = 0
-        clause: List[int] = []
-        for i, v in enumerate(vars_list):
-            bit = (mask >> i) & 1
-            parity ^= bit
-            clause.append(-v if bit else v)
-        if parity != rhs:
-            clauses.append(clause)
-    return clauses
 
 
 def _xor_equiv_clauses(z: int, x: int, y: int, negate: bool) -> List[List[int]]:
@@ -144,47 +123,28 @@ def _xor_equiv_clauses(z: int, x: int, y: int, negate: bool) -> List[List[int]]:
     ]
 
 
-def encode_equation_with_output(vars_: Iterable[int], rhs: int, f_var: int, next_var: int) -> Tuple[List[List[int]], List[int], int]:
+def encode_equation_with_output(vars_: Iterable[int], rhs: int, f_var: int, next_var: int) -> Tuple[List[List[int]], int]:
     vars_list = list(vars_)
     cnf: List[List[int]] = []
-    t_vars: List[int] = []
 
     if len(vars_list) == 1:
         lit = vars_list[0] if rhs == 1 else -vars_list[0]
         cnf.append([-f_var, lit])
         cnf.append([f_var, -lit])
-        return cnf, t_vars, next_var
+        return cnf, next_var
 
     if len(vars_list) == 2:
         cnf.extend(_xor_equiv_clauses(f_var, vars_list[0], vars_list[1], rhs == 0))
-        return cnf, t_vars, next_var
+        return cnf, next_var
 
     prev = vars_list[0]
     for v in vars_list[1:-1]:
         t = next_var
         next_var += 1
-        t_vars.append(t)
         cnf.extend(_xor_equiv_clauses(t, prev, v, False))
         prev = t
     cnf.extend(_xor_equiv_clauses(f_var, prev, vars_list[-1], rhs == 0))
-    return cnf, t_vars, next_var
-
-
-def split_xor_t_translation(vars_: Iterable[int], rhs: int, next_var: int) -> Tuple[List[Tuple[List[int], int]], int]:
-    vars_list = list(vars_)
-    if len(vars_list) <= 2:
-        return [([v for v in vars_list], rhs)], next_var
-    constraints: List[Tuple[List[int], int]] = []
-    y_prev = next_var
-    next_var += 1
-    constraints.append(([vars_list[0], vars_list[1], y_prev], 0))
-    for v in vars_list[2:-1]:
-        y = next_var
-        next_var += 1
-        constraints.append(([y_prev, v, y], 0))
-        y_prev = y
-    constraints.append(([y_prev, vars_list[-1]], rhs))
-    return constraints, next_var
+    return cnf, next_var
 
 
 def convert_xnf_to_cnf(nvars: int, clauses: List[Clause]) -> Tuple[List[List[int]], Dict[Equation, int], int]:
@@ -199,7 +159,7 @@ def convert_xnf_to_cnf(nvars: int, clauses: List[Clause]) -> Tuple[List[List[int
                 f_var = next_var
                 next_var += 1
                 eq_to_f[eq] = f_var
-                cnf, _, next_var = encode_equation_with_output(eq.vars, eq.rhs, f_var, next_var)
+                cnf, next_var = encode_equation_with_output(eq.vars, eq.rhs, f_var, next_var)
                 cnf_clauses.extend(cnf)
             f_vars.append(eq_to_f[eq])
         cnf_clauses.append(f_vars)
@@ -309,8 +269,8 @@ def convert_xnf_to_2xnf(nvars: int, clauses: List[Clause]) -> Tuple[int, List[Cl
             current = [yi] + rest
             out.append(Clause(equations=[yi, negate_equation(l2)]))
 
-            yi_xor_l1 = xor_compose_equations(yi, l1)
-            out.append(Clause(equations=[negate_equation(yi_xor_l1), l2]))
+            yi_plus_l1 = add_equations(yi, l1)
+            out.append(Clause(equations=[negate_equation(yi_plus_l1), l2]))
 
         out.append(Clause(equations=current))
 

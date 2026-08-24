@@ -7,6 +7,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace xorcle {
 
@@ -19,6 +20,20 @@ std::filesystem::path make_temp_path(const std::filesystem::path& final_path) {
     name << final_path.filename().string() << ".tmp." << now;
     return final_path.parent_path() / name.str();
 }
+
+#ifndef NDEBUG
+/// @brief Whether some row of `clause` sets no variable bit.
+bool has_constant_only_row(const Clause& clause, std::size_t num_vars) {
+    for (const Equation& row : clause) {
+        const std::vector<std::size_t> bits = row.bits();
+        const bool rhs_is_zero = !bits.empty() && bits.back() == num_vars;
+        if (bits.size() == (rhs_is_zero ? 1u : 0u)) {
+            return true;
+        }
+    }
+    return false;
+}
+#endif
 
 } // namespace
 
@@ -48,13 +63,11 @@ LrupLogger::~LrupLogger() {
 }
 
 void LrupLogger::write_token(const Equation& row) {
-    // The row width follows from `log_learned_clause()`'s check on the clause.
     const std::vector<std::size_t> bits = row.bits();
 
     // `bits()` is ascending, so the constant bit is last if it is set at all.
     const bool rhs_is_zero = !bits.empty() && bits.back() == num_vars_;
     const std::size_t variable_count = bits.size() - (rhs_is_zero ? 1u : 0u);
-    assert(variable_count > 0 && "constant-only rows are not valid proof tokens");
 
     if (rhs_is_zero) {
         out_ << '-';
@@ -80,6 +93,8 @@ void LrupLogger::log_learned_clause(ClauseId new_id, const Clause& clause,
     assert(!finalized_ && "the proof is closed");
     assert(clause.num_vars() == num_vars_ &&
            "the variable numbering must not change under the logger");
+    assert(!has_constant_only_row(clause, num_vars_) &&
+           "constant-only rows are not valid proof tokens");
 
     out_ << (new_id + 1);
     for (const Equation& row : clause) {

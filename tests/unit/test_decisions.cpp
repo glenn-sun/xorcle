@@ -21,8 +21,7 @@ namespace xorcle {
 
 TEST_CASE("csids: the presets carry their documented values") {
     // The declaration order is (A0, alpha, delta), while the triple is usually
-    // written (A0, delta, alpha). These check the members by name, which is the
-    // only way the two orders cannot be confused.
+    // written (A0, delta, alpha), so these check the members by name.
     CHECK(csids_default_config.initial_activity == doctest::Approx(1.0));
     CHECK(csids_default_config.bump == doctest::Approx(1.0));
     CHECK(csids_default_config.decay == doctest::Approx(0.98));
@@ -242,8 +241,8 @@ TEST_CASE_TEMPLATE("csids: decay makes later bumps worth more", Tag, DenseTag, S
     procedure.update_with_new_clause(clauses[1], 1);
 
     // Rather than decaying every score per conflict, the increment grows by
-    // 1/alpha. A bump on either side of a conflict is the observable
-    // consequence: the later one is worth strictly more.
+    // 1/alpha, so of two bumps either side of a conflict the later is worth
+    // strictly more.
     procedure.update_with_resolved_clause(0);
     procedure.update_with_asserting_clause(clauses[2]);
     procedure.update_with_new_clause(clauses[2], 2);

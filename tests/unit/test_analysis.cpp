@@ -22,9 +22,7 @@ namespace xorcle {
 namespace {
 
 /// @brief A decision procedure that only records, in order, the notifications
-/// conflict analysis makes. The two calls are order-sensitive and feed CSIDS, so
-/// getting them wrong changes conflict counts without changing correctness --
-/// the kind of bug a "did we learn something" test never catches.
+/// conflict analysis makes.
 class RecordingDecisions final : public DecisionProcedure {
 public:
     struct Event {
@@ -75,9 +73,8 @@ RecordingDecisions::Event critical(std::vector<std::size_t> bits) {
                                      std::move(bits)};
 }
 
-/// @brief The rows of `clause` that do not lie in `span`. A clause is asserting
-/// exactly when this is 1: every row but one is falsified, so the last is
-/// implied.
+/// @brief The rows of `clause` that do not lie in `span`; the clause is
+/// asserting exactly when this is 1.
 std::size_t rows_outside_span(const Clause& clause, const RowSpace& span) {
     std::size_t outside = 0;
     for (const Equation& row : clause) {
@@ -90,11 +87,8 @@ std::size_t rows_outside_span(const Clause& clause, const RowSpace& span) {
     return outside;
 }
 
-/// @brief Check the learned clause really asserts where it says it does,
-/// independently of how `asserting_level()` is computed: backjump a copy of the
-/// trail and count falsified rows directly. At the asserting level exactly one
-/// row survives; one level lower at least two do, or the clause would assert
-/// lower still.
+/// @brief Check the learned clause asserts at `learned.asserting_level` and at
+/// no lower level, by backjumping a copy of the trail.
 void check_asserts_at(const AssertingClause& learned, const Trail& trail) {
     Trail backjumped = trail;
     backjumped.resize(learned.asserting_level + 1);
@@ -131,13 +125,11 @@ struct Conflict {
 /// | 0 | `[x0 = 0]` | decision | 1 |
 /// | 1 | `[x1 = 1]` | clause 0 | 1 |
 /// | 2 | `[x2 = 1]` | clause 1 | 1 |
-/// | 3 | @f$\mathbf{1}@f$ | clause 2 | 1 |
+/// | 3 | `0 = 1` | clause 2 | 1 |
 ///
-/// Clause 2 is `[x1 = 0] v [x2 = 0]`, both literals falsified. Resolving it
-/// against clause 1 = `[x1 = 0] v [x2 = 1]` on @f$x_2@f$ gives the unit clause
-/// `[x1 = 0]`, which asserts at the root. Every equation is learned in the form
-/// the solver learns it in -- already reduced by the span -- so step 3 is
-/// @f$\mathbf{1}@f$ rather than the raw `[x1 = 0]` the clause implied.
+/// Clause 2 is `[x1 = 0] v [x2 = 0]`, both equations falsified. Every equation
+/// is learned in the form the solver learns it in -- already reduced by the
+/// span -- so step 3 is `0 = 1` rather than the `[x1 = 0]` clause 2 implied.
 Conflict make_one_step_conflict(EquationRepr repr) {
     constexpr std::size_t num_vars = 3;
     std::vector<Clause> clauses;
@@ -154,8 +146,9 @@ Conflict make_one_step_conflict(EquationRepr repr) {
 }
 
 /// @brief A conflict over two decision levels, needing two resolution steps.
-/// Six variables: level 1 fixes @f$x_5 = 1@f$, level 2 derives a chain
-/// @f$x_2 \to x_3, x_4@f$ that the conflicting clause closes.
+///
+/// Six variables: level 1 fixes `[x5 = 1]`, level 2 derives a chain
+/// x2 -> x3, x4 that the conflicting clause closes.
 ///
 /// | step | equation | reason | level | span row | basis column |
 /// |---|---|---|---|---|---|
@@ -165,12 +158,11 @@ Conflict make_one_step_conflict(EquationRepr repr) {
 /// | 3 | `[x2 = 1]` | clause 1 | 2 | 2 | 3 |
 /// | 4 | `[x3 = 1]` | clause 2 | 2 | 3 | 2 |
 /// | 5 | `[x4 = 1]` | clause 3 | 2 | 4 | 1 |
-/// | 6 | @f$\mathbf{1}@f$ | `conflict_clause_id` | 2 | 6 | 0 |
+/// | 6 | `0 = 1` | `conflict_clause_id` | 2 | 6 | 0 |
 ///
-/// Row-echelon order and trail order deliberately disagree (step 1 lands at span
-/// row 5), so the column arithmetic really has to go through `order_map()`.
-/// `conflict_clause_id` picks clause 4, whose analysis takes two resolution
-/// steps, or clause 5, which is already asserting.
+/// Row-echelon order and trail order deliberately disagree: step 1 lands at
+/// span row 5. `conflict_clause_id` picks clause 4, whose analysis takes two
+/// resolution steps, or clause 5, which is already asserting.
 Conflict make_two_level_conflict(EquationRepr repr, ClauseId conflict_clause_id) {
     constexpr std::size_t num_vars = 6;
     std::vector<Clause> clauses;
@@ -200,14 +192,13 @@ void check_conflicting(const Conflict& conflict) {
     REQUIRE(trail.level() > 0);
     REQUIRE(trail.span().rows() == trail.reasons().size());
 
-    // The conflict: 1 lies in the span, and the row that put it there is the most
-    // recent one. Everything in `analysis.cpp` rests on this.
+    // The conflict: 1 lies in the span, and the row that put it there is the
+    // most recent one.
     REQUIRE(bits_of(trail.span().row(trail.span().rows() - 1)) ==
             std::vector<std::size_t>{trail.num_vars()});
     REQUIRE(trail.order_map()[trail.span().rows() - 1] == trail.span().rows() - 1);
 
-    // Every reason clause's rows lie in the span, which is what lets conflict
-    // analysis rewrite them into trail-basis coordinates at all.
+    // Every reason clause's rows lie in the span.
     for (const std::optional<ClauseId>& reason : trail.reasons()) {
         if (reason.has_value()) {
             CHECK(rows_outside_span(conflict.clauses[*reason], trail.span()) == 0);
@@ -238,10 +229,9 @@ TEST_CASE_TEMPLATE("analysis: a conflict resolved in one step", Tag, DenseTag, S
     constexpr EquationRepr repr = Tag::value;
     const Conflict conflict = make_one_step_conflict(repr);
     RecordingDecisions decisions(repr, conflict.trail.num_vars());
-    std::vector<ClauseId> reason_ids;
 
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, &reason_ids);
+        find_asserting_clause(conflict.trail, conflict.clauses, decisions);
 
     // Resolving [x1 = 0] v [x2 = 0] against [x1 = 0] v [x2 = 1] on x2 leaves the
     // unit clause [x1 = 0], stored as its linear negation [x1 = 1] = {1, 3}.
@@ -254,7 +244,7 @@ TEST_CASE_TEMPLATE("analysis: a conflict resolved in one step", Tag, DenseTag, S
     check_asserts_at(learned, conflict.trail);
 
     // Derivation order: the conflicting clause first, then the one reason.
-    CHECK(reason_ids == std::vector<ClauseId>{2, 1});
+    CHECK(learned.reason_ids == std::vector<ClauseId>{2, 1});
 
     // Clause 1 propagated trail step 2, whose span row is [x2 = 1] = {2, 3}.
     CHECK(decisions.events ==
@@ -266,10 +256,9 @@ TEST_CASE_TEMPLATE("analysis: a conflict needing several resolution steps", Tag,
     constexpr EquationRepr repr = Tag::value;
     const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
     RecordingDecisions decisions(repr, conflict.trail.num_vars());
-    std::vector<ClauseId> reason_ids;
 
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, &reason_ids);
+        find_asserting_clause(conflict.trail, conflict.clauses, decisions);
 
     // Clause 4 = [x3 + x4 = 1] v [x2 = 0] v [x5 = 0]. Resolving away x4 (reason
     // clause 3) and then x3 (reason clause 2) leaves [x2 = 0] v [x5 = 0], whose
@@ -281,7 +270,7 @@ TEST_CASE_TEMPLATE("analysis: a conflict needing several resolution steps", Tag,
     CHECK(learned.asserting_level == 1);
     check_asserts_at(learned, conflict.trail);
 
-    CHECK(reason_ids == std::vector<ClauseId>{4, 3, 2});
+    CHECK(learned.reason_ids == std::vector<ClauseId>{4, 3, 2});
 
     // Clause 3 propagated trail step 5 ([x4 = 1], span row 4); clause 2
     // propagated trail step 4 ([x3 = 1], span row 3).
@@ -294,45 +283,18 @@ TEST_CASE_TEMPLATE("analysis: an already-asserting conflict clause is learned un
     constexpr EquationRepr repr = Tag::value;
     const Conflict conflict = make_two_level_conflict(repr, ClauseId{5});
     RecordingDecisions decisions(repr, conflict.trail.num_vars());
-    std::vector<ClauseId> reason_ids;
 
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, &reason_ids);
+        find_asserting_clause(conflict.trail, conflict.clauses, decisions);
 
-    // Clause 5 = [x3 + x4 = 1] v [x5 = 0] already reaches only one decision
-    // level beyond its assertion point, so the loop body never runs. Its first
-    // row spans two current-level trail rows at once, which is the case that has
-    // no literal-level analogue: a single parity "literal" can straddle the whole
-    // level and still leave the clause asserting.
+    // Clause 5 = [x3 + x4 = 1] v [x5 = 0] is already asserting -- its first row
+    // spans two current-level trail rows at once -- so the loop body never runs.
     CHECK(rows_of(learned.clause) == rows_of(conflict.clauses[5]));
     CHECK(learned.asserting_level == 1);
     check_asserts_at(learned, conflict.trail);
 
-    CHECK(reason_ids == std::vector<ClauseId>{5});
+    CHECK(learned.reason_ids == std::vector<ClauseId>{5});
     CHECK(decisions.events.empty());
-}
-
-TEST_CASE_TEMPLATE("analysis: reason ids are collected in derivation order", Tag, DenseTag,
-                   SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
-    const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
-    RecordingDecisions decisions(repr, conflict.trail.num_vars());
-
-    // The buffer is appended to, never cleared, and the caller reverses it once
-    // to obtain proof order: the reversed sequence ends with the conflicting
-    // clause and begins with the last reason resolved.
-    std::vector<ClauseId> reason_ids{99};
-    const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, &reason_ids);
-    CHECK(reason_ids == std::vector<ClauseId>{99, 4, 3, 2});
-
-    // And the buffer really is optional.
-    RecordingDecisions other_decisions(repr, conflict.trail.num_vars());
-    const AssertingClause without_ids =
-        find_asserting_clause(conflict.trail, conflict.clauses, other_decisions, nullptr);
-    CHECK(rows_of(without_ids.clause) == rows_of(learned.clause));
-    CHECK(without_ids.asserting_level == learned.asserting_level);
-    CHECK(other_decisions.events == decisions.events);
 }
 
 TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", Tag, DenseTag,
@@ -352,13 +314,11 @@ TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", T
 
     // The coordinate vector of 1: the unit vector at column 0, because the most
     // recently learned trail row is 1 itself on a conflicting trail.
-    const Equation trail_basis_one =
-        make_equation_with(repr, basis.num_vars(), {0});
+    const Equation trail_basis_one = make_equation_with_num_bits(repr, basis.cols(), {0});
     REQUIRE(trail_basis_one.num_bits() == basis.cols());
 
-    std::vector<ClauseId> reason_ids;
-    resolve_asserting_basis_with_reason(basis, 1, trail, conflict.clauses, decisions,
-                                        trail_basis_one, &reason_ids);
+    const ClauseId reason_id = resolve_asserting_basis_with_reason(
+        basis, 1, trail, conflict.clauses, decisions, trail_basis_one);
 
     // Column 1 is trail step 5, propagated by clause 3 = [x2 = 0] v [x4 = 1].
     // Its own basis rows are {0, 1} (the propagated row [x4 = 0], which carries
@@ -366,12 +326,9 @@ TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", T
     //
     //   new row = {1, 2} + {0, 1} + {0} = {2},
     //
-    // and the reason's remaining row {3} joins the basis. Without the + 1 term
-    // the result would be {0, 2}, a row leading on column 0 -- whose "reason" is
-    // the conflicting clause itself, so the next step would resolve clause 4
-    // against itself instead of terminating.
+    // and the reason's remaining row {3} joins the basis.
     CHECK(rows_of(basis) == std::vector<std::vector<std::size_t>>{{2}, {3}, {5}});
-    CHECK(reason_ids == std::vector<ClauseId>{3});
+    CHECK(reason_id == ClauseId{3});
     CHECK(decisions.events ==
           std::vector<RecordingDecisions::Event>{resolved(3), critical({4, 6})});
 }
@@ -383,13 +340,11 @@ TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the cur
     const Trail& trail = conflict.trail;
     RecordingDecisions decisions(repr, trail.num_vars());
 
-    // Walk the same loop by hand, checking the condition's sign at every step.
-    // The loop condition is `asserting_level() == trail.level()`, not `== 0`:
-    // here the initial basis has asserting level 2 and the final one 1, so
-    // testing against 0 would exit before doing anything, while testing against
-    // `trail.level()` keeps going for exactly two steps.
+    // Walk the same loop by hand. The condition is
+    // `asserting_level() == trail.level()`, not `== 0`: the initial basis
+    // asserts at level 2 and the final one at level 1.
     TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(conflict.clauses[4], trail);
-    const Equation trail_basis_one = make_equation_with(repr, basis.num_vars(), {0});
+    const Equation trail_basis_one = make_equation_with_num_bits(repr, basis.cols(), {0});
 
     std::vector<std::size_t> asserting_levels{basis.asserting_level()};
     std::size_t steps = 0;
@@ -397,9 +352,8 @@ TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the cur
         const std::optional<std::size_t> pivot_column = basis.row(0).leading_bit();
         REQUIRE(pivot_column.has_value());
         resolve_asserting_basis_with_reason(basis, *pivot_column, trail, conflict.clauses,
-                                            decisions, trail_basis_one, nullptr);
-        // Each step strictly advances the pivot column, which is why the loop
-        // terminates at all.
+                                            decisions, trail_basis_one);
+        // Each step strictly advances the pivot column.
         REQUIRE(basis.row(0).leading_bit() > pivot_column);
         asserting_levels.push_back(basis.asserting_level());
         ++steps;

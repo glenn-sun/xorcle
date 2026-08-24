@@ -11,16 +11,11 @@ namespace xorcle {
 
 /// @brief Restart on a geometrically growing conflict budget.
 ///
-/// The first budget is `RestartConfig::geometric_initial_conflicts`; each
-/// restart multiplies it by `RestartConfig::geometric_multiplier` and rounds up.
-/// With the defaults (100, 1.5) the budgets run 100, 150, 225, 338, 507, ...
-/// Budgets saturate at `SIZE_MAX` and never fall below 1, so the schedule is
-/// well defined for any finite multiplier.
-///
-/// @note Experimental; see `RestartPolicy`.
+/// Each restart multiplies the budget by `RestartConfig::geometric_multiplier` and rounds
+/// up. Budgets saturate at `SIZE_MAX`, and a multiplier below 1 clamps to 1.
 class Geometric final : public RestartPolicy {
 public:
-    /// @param config Restart configuration; only the `geometric_*` fields are read.
+    /// @pre `config.geometric_initial_conflicts != 0`.
     explicit Geometric(const RestartConfig& config = {});
 
     bool enabled() const override;
@@ -28,10 +23,10 @@ public:
     void note_restart() override;
 
 private:
-    double multiplier_;                     ///< Growth factor between budgets.
-    std::size_t initial_conflicts_;         ///< First budget, before any growth.
-    std::size_t conflicts_since_restart_ = 0; ///< Conflicts counted against the active budget.
-    std::size_t current_budget_ = 0;        ///< The active budget; 0 only before the first refresh.
+    double multiplier_;
+    std::size_t initial_conflicts_;
+    std::size_t conflicts_since_restart_ = 0;
+    std::size_t current_budget_ = 0;
 
     void refresh_budget();
 };

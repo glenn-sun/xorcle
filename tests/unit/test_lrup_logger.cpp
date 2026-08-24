@@ -187,8 +187,6 @@ TEST_CASE("lrup logger: proofs and compaction are mutually exclusive") {
         // The message has to name the fix.
         CHECK(std::string{error.what()}.find("--compact=false") != std::string::npos);
     }
-
-    CHECK(default_proof_path == "out.lrup");
 }
 
 } // namespace xorcle

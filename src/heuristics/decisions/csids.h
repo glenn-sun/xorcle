@@ -20,46 +20,32 @@
 
 namespace xorcle {
 
-/// @brief Tunable CSIDS parameters: @f$(A_0, \alpha, \Delta)@f$.
-///
-/// @warning **Always initialize this by member name.** The members are declared
-/// @f$(A_0, \alpha, \Delta)@f$, but a CSIDS triple is conventionally written
-/// @f$(A_0, \Delta, \alpha)@f$, so transcribing one positionally silently swaps
-/// the bump and the decay. Designated initializers make that impossible; the
-/// presets below use them, as should every construction site.
+/// @brief Tunable CSIDS parameters.
 struct CsidsConfig {
-    /// @brief @f$A_0@f$: an asserting clause enters at this multiple of the increment.
+    /// @brief An asserting clause enters at this multiple of the increment.
     double initial_activity = 1.0;
 
-    double decay = 0.98; ///< @f$\alpha@f$: the decay factor. Must satisfy @f$0 < \alpha < 1@f$.
-    double bump = 1.0; ///< @f$\Delta@f$: the initial activity increment.
+    double decay = 0.98; ///< `1` never decays, `0` keeps only the newest activity.
+    double bump = 1.0; ///< The initial activity increment.
 };
 
-/// @brief The CSIDS defaults: @f$A_0 = 1@f$, @f$\Delta = 1@f$, @f$\alpha = 0.98@f$.
 inline constexpr CsidsConfig csids_default_config{
     .initial_activity = 1.0, .decay = 0.98, .bump = 1.0};
 
-/// @brief The `berkmin` preset: @f$A_0 = 1@f$, @f$\Delta = 0@f$, @f$\alpha = 0.5@f$.
-///
-/// @f$\Delta = 0@f$ is what makes it BerkMin-style: a clause's activity is
-/// whatever it had on entry and resolution never changes it. @f$\Delta@f$ also
-/// seeds the increment, so @f$A_0 \cdot \mathrm{inc}@f$ is zero and the decay
-/// has nothing to act on.
+/// @brief `bump = 0` leaves every clause at activity zero, never bumped.
 inline constexpr CsidsConfig csids_berkmin_config{
     .initial_activity = 1.0, .decay = 0.5, .bump = 0.0};
 
-/// @brief The `cmtf` preset: @f$A_0 = 1@f$, @f$\Delta = 1@f$, @f$\alpha = 0.25@f$.
-///
-/// A decay below @f$1/2@f$ makes a newly learned clause outrank every older one
-/// however often they were bumped: clause move-to-front.
+/// @brief A decay below `1/2` makes a newly learned clause outrank every older
+/// one however often they were bumped: clause move-to-front.
 inline constexpr CsidsConfig csids_cmtf_config{
     .initial_activity = 1.0, .decay = 0.25, .bump = 1.0};
 
-struct CsidsParams {
-    MaxHeap<ClauseId> activity_heap; ///< Clause ids, keyed by activity.
-    double inc_amt = 1.0; ///< What one bump adds. Grows by @f$1/\alpha@f$ per conflict.
-    double initial_activity = 1.0; ///< @f$A_0@f$, from the configuration.
-    double decay = 0.98; ///< @f$\alpha@f$, from the configuration.
+struct CsidsActivity {
+    MaxHeap<ClauseId> activity_heap;
+    double inc_amt = 1.0; ///< What one bump adds. Grows by `1 / decay` per conflict.
+    double initial_activity = 1.0;
+    double decay = 0.98;
 
     /// @brief Bump one clause's activity, rescaling everything if it overflows.
     void bump_activity(ClauseId id);
@@ -72,31 +58,27 @@ struct CsidsState {
     void ensure_unit_eqns();
     void reset_activity();
 
-    CsidsParams params;
+    CsidsActivity activity;
     std::vector<Equation> unit_eqns; ///< Literal basis used by the fallback path.
     std::optional<ClauseId> last_decision_clause;
     std::optional<double> pending_learned_priority; ///< Activity awaiting the next new clause.
     ClauseId num_clauses = 0;
-    double initial_inc_amt = 1.0; ///< @f$\Delta@f$, for restoring `inc_amt` on reset.
+    double initial_inc_amt = 1.0; ///< For restoring `inc_amt` on reset.
     EquationRepr repr;
     std::size_t num_vars;
 };
 
 /// @brief Decides from the highest-activity clause the trail has not satisfied.
 ///
-/// Clause activity, not variable activity, is what decays: a clause is bumped
-/// each time conflict analysis resolves through it, and a new asserting clause
-/// enters at @f$A_0@f$ times the current increment. The decision is a uniformly
-/// random non-zero combination of the chosen clause's rows with the configured
-/// phase applied. When the heap runs dry the procedure scans the literal basis
-/// instead, counted separately as a fallback.
+/// Activity is per clause: bumped each time conflict analysis resolves through
+/// it, decayed at every conflict. See arXiv:2605.15002 for details. When the
+/// heap runs dry the procedure scans the literal basis instead, counted
+/// separately as a fallback.
 class Csids final : public DecisionProcedure {
 public:
     /// @brief The equation-sampling stream derives from `seed`.
-    /// @pre `config.decay` satisfies @f$0 < \alpha < 1@f$ and
-    /// `config.initial_activity` and `config.bump` are non-negative. The CLI
-    /// enforces this through the option table's `Ratio` and `Real` bounds; a
-    /// caller building a `CsidsConfig` by hand does not go through it.
+    /// @pre `config.decay` satisfies `0 <= decay <= 1` and
+    /// `config.initial_activity` and `config.bump` are non-negative.
     Csids(EquationRepr repr, std::size_t num_vars, Seed seed,
           const CsidsConfig& config = csids_default_config);
 

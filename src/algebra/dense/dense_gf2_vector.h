@@ -89,6 +89,9 @@ public:
     /// @brief Add another vector into this one over GF(2).
     /// Custom reimplementation of `gf2::operator^=()` for efficiency.
     /// @pre `other.num_bits() == num_bits()`.
+    ///
+    /// gf2's `operator^=` writes through `set_word`, which re-cleans the tail
+    /// word on every call; a plain word loop does not.
     void plus_assign(const DenseGF2Vector& other) noexcept {
         assert(bits_.size() == other.bits_.size() && "bit count mismatch in plus_assign");
         Word* lhs = bits_.store();

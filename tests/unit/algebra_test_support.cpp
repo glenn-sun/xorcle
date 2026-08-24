@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cassert>
 #include <optional>
 #include <span>
 
@@ -11,6 +12,14 @@ Equation make_equation_with(EquationRepr repr, std::size_t num_vars,
                             std::initializer_list<std::size_t> bits) {
     const std::vector<std::size_t> listed(bits);
     return Equation::from_bits(repr, num_vars, std::span<const std::size_t>(listed));
+}
+
+Equation make_equation_with_num_bits(EquationRepr repr, std::size_t num_bits,
+                                     std::initializer_list<std::size_t> bits) {
+    const std::vector<std::size_t> listed(bits);
+    Equation out = Equation::with_num_bits(repr, num_bits);
+    out.assign_bits(std::span<const std::size_t>(listed));
+    return out;
 }
 
 std::vector<std::size_t> bits_of(const Equation& equation) {
@@ -48,13 +57,15 @@ void check_echelon_invariant(const RowEchelonMatrix& matrix) {
 }
 
 std::size_t TestRandom::next(std::size_t bound) noexcept {
+    assert(bound > 0 && "TestRandom::next needs a positive bound");
+
     // splitmix64
     state_ += 0x9e3779b97f4a7c15ull;
     std::uint64_t z = state_;
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
     z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
     z ^= z >> 31;
-    return bound == 0 ? 0 : static_cast<std::size_t>(z % bound);
+    return static_cast<std::size_t>(z % bound);
 }
 
 } // namespace xorcle

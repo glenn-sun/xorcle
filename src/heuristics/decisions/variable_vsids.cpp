@@ -17,8 +17,8 @@ namespace {
 ///
 /// Compaction is not injective: two literal equations can land on the same
 /// compacted equation, and their activities are then summed. A key compacting to
-/// @f$\mathbf{0}@f$ or @f$\mathbf{1}@f$ is dropped, neither being a legal
-/// decision. The heap and popped lists are filtered against what survives.
+/// `0 = 0` or `0 = 1` is dropped, neither being a legal decision. The heap and
+/// popped lists are filtered against what survives.
 void remap_vsids_heap(MaxHeap<Equation, EquationHash>& heap,
                       const CompactionTransform& transform) {
     using Snapshot = MaxHeap<Equation, EquationHash>::StateSnapshot;
@@ -116,8 +116,8 @@ void VariableVsids::refill_decision_heap() {
 Equation VariableVsids::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
-    // Not a formality: with no legal decision left, the loop below drains the
-    // heap, refills it and drains it again, forever.
+    assert(trail_span.repr() == repr() &&
+           "the trail span does not match the procedure's representation");
     assert(trail_span.rows() < num_vars() && "no legal decision remains");
 
     while (true) {

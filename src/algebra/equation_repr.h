@@ -5,8 +5,8 @@
 
 namespace xorcle {
 
-/// @brief Storage representation of equations, affecting performance but not
-/// behaviour. Selected at runtime via `--equation-repr=`.
+/// @brief Which representation equations use, affecting performance but not
+/// behaviour; selected at runtime via `--equation-repr=`.
 enum class EquationRepr {
     dense,
     sparse

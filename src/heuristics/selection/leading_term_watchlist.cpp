@@ -27,8 +27,7 @@ LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars)
 
 std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex row_id) const {
     // Stronger than `RowEchelonMatrix::row()`'s own bound check below: this says
-    // the clause's *stored watch* is in range, which is the invariant that
-    // matters here and would otherwise fail with a less specific message.
+    // the clause's *stored watch* is in range.
     assert(row_id < clause.rows() && "watched row index out of range");
     const ReduceResult leading = clause.row(row_id).classify();
     // A stored clause row is never the true equation, and the constant column is

@@ -1,10 +1,6 @@
 #!/bin/sh
 # Solve an UNSAT instance with --proof and verify the proof with the
-# independently written LRUP(oplus) checker.
-#
-# The check is strong precisely because tools/check_lrup_parity.py shares no
-# code with the solver: it replays the refutation from the instance and the
-# proof alone, so a solver bug and a checker bug would have to agree to pass.
+# independently written LRUP(⊕) checker.
 #
 # Usage: check_proof_roundtrip.sh <repository root> <xorcle binary>
 # Exit:  0 pass, 1 fail, 77 skipped (no usable python3)
@@ -35,8 +31,7 @@ proof="$work/proof.lrup"
 "$python" "$root/tools/generate_xnf_tests.py" \
     --family random_kxnf_n --params 'n=12;k=2' --seed 4 --out "$instance"
 
-# Compaction must be off: proof emission with compaction is not supported, and
-# the binary refuses the combination rather than silently disabling it.
+# --proof requires --compact=false.
 "$xorcle" --compact=false --proof="$proof" "$instance" > "$work/solve.out" 2>&1 || {
     echo "check_proof_roundtrip: solver failed" >&2
     cat "$work/solve.out" >&2

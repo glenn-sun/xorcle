@@ -28,7 +28,7 @@ public:
 
     virtual std::size_t rows() const noexcept = 0;
 
-    virtual std::size_t num_vars() const noexcept = 0;
+    virtual std::size_t cols() const noexcept = 0;
 
     virtual const Equation& row(std::size_t index) const = 0;
 
@@ -40,34 +40,29 @@ public:
 
     virtual IndexSet reduce_get_coefficients(Equation& v) const = 0;
 
+    /// @brief Reduce `v` in place only until its leading column is not a pivot,
+    /// reading the last column as the constant.
     virtual ReduceResult partial_reduce(Equation& v) const = 0;
 
+    /// @brief Partially reduce `v` against this matrix augmented with `extra`,
+    /// reading the last column as the constant.
     virtual ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const = 0;
 
     virtual Equation pop_first_row() = 0;
 
     virtual void pop_last_row() = 0;
 
-    /// @brief The unique solution of the stored system, one bit per variable.
+    /// @brief The unique solution of the stored system, one bit per column but
+    /// the last, which is read as the constant.
     virtual IndexSet solution() const = 0;
 };
 
 /// @brief Implements `RowEchelonMatrixInterface` against any `GF2Vector`.
-///
-/// Every reduction loop below is a direct, inlinable call chain on `V`; the
-/// caller pays exactly one virtual call for the whole loop.
-///
-/// The rows are held in an ordinary `std::vector`, not a matrix type: insertion
-/// at an arbitrary index and removal of the first row are ordinary vector
-/// operations that a packed bit-matrix cannot express. The element type is
-/// `Equation` rather than `V` so that `row()` can hand out a `const Equation&`
-/// without copying; each element owns exactly one `V` via an
-/// `EquationTemplate<V>`.
 template <GF2Vector V>
 class RowEchelonMatrixTemplate final : public RowEchelonMatrixInterface {
 public:
-    explicit RowEchelonMatrixTemplate(std::size_t num_vars)
-        : pivot_columns_(num_vars + 1), column_to_row_(num_vars + 1, 0), num_vars_(num_vars) {}
+    explicit RowEchelonMatrixTemplate(std::size_t cols)
+        : pivot_columns_(cols), column_to_row_(cols, 0), cols_(cols) {}
 
     EquationRepr repr() const noexcept override { return V::repr; }
 
@@ -77,18 +72,13 @@ public:
 
     std::size_t rows() const noexcept override { return rows_.size(); }
 
-    std::size_t num_vars() const noexcept override { return num_vars_; }
+    std::size_t cols() const noexcept override { return cols_; }
 
     const Equation& row(std::size_t index) const override { return rows_[index]; }
 
     const IndexSet& pivot_columns() const noexcept override { return pivot_columns_; }
 
-    /// @note Reached from two public entries, `RowEchelonMatrix::add_row()` and
-    /// `add_row_get_index()`, so the argument check lives here rather than in both.
     std::optional<std::size_t> add_row_get_index(const Equation& v) override {
-        assert(v.num_bits() == cols() && "add_row: bit count does not match the matrix");
-        assert(v.repr() == V::repr && "add_row: representation does not match the matrix");
-
         // Partially reduce a copy of `v` against the stored rows.
         Equation reduced = v;
         V& reduced_row = gf2_vector_of<V>(reduced);
@@ -209,16 +199,17 @@ public:
     }
 
     IndexSet solution() const override {
-        IndexSet out(num_vars_);
-        for (std::size_t i = num_vars_; i-- > 0;) {
+        const std::size_t constant_column = cols_ - 1;
+        IndexSet out(constant_column);
+        for (std::size_t i = constant_column; i-- > 0;) {
             const V& row = gf2_vector_of<V>(rows_[i]);
             // Stronger than `RowSpace::unique_solution()`'s full-rank check:
             // full rank forces one pivot per variable column, and this pins each
-            // one to its own row. A structural invariant, not a duplicate.
+            // one to its own row.
             assert(row.leading_bit() == std::optional<std::size_t>(i) &&
                    "a full-rank row space must have row i leading on column i");
-            bool value = row.get_bit(num_vars_); // the row's constant bit
-            for (auto column = row.next_bit(i); column && *column < num_vars_;
+            bool value = row.get_bit(constant_column);
+            for (auto column = row.next_bit(i); column && *column < constant_column;
                  column = row.next_bit(*column)) {
                 value ^= out.test(*column);
             }
@@ -230,14 +221,11 @@ public:
     }
 
 private:
-    std::size_t cols() const noexcept { return num_vars_ + 1; }
-
     ReduceResult classify_column(std::size_t column) const noexcept {
-        return column == num_vars_ ? ReduceResult::eq_false() : ReduceResult::leading(column);
+        return column + 1 == cols_ ? ReduceResult::eq_false() : ReduceResult::leading(column);
     }
 
     /// @brief Check representation invariants for `RowEchelonMatrix`.
-    /// Compiled out under `NDEBUG`.
     void debug_assert_valid_representation() const {
 #ifndef NDEBUG
         assert(pivot_columns_.size() == cols());
@@ -270,7 +258,7 @@ private:
     std::vector<Equation> rows_;
     IndexSet pivot_columns_;
     std::vector<std::size_t> column_to_row_;
-    std::size_t num_vars_;
+    std::size_t cols_;
 };
 
 } // namespace xorcle

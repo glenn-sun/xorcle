@@ -1,5 +1,6 @@
 #include "heuristics/restarts/geometric.h"
 
+#include <cassert>
 #include <cmath>
 #include <limits>
 
@@ -8,6 +9,8 @@ namespace xorcle {
 Geometric::Geometric(const RestartConfig& config)
     : multiplier_(config.geometric_multiplier),
       initial_conflicts_(config.geometric_initial_conflicts) {
+    assert(config.geometric_initial_conflicts != 0 &&
+           "geometric initial budget must be non-zero");
     refresh_budget();
 }
 
@@ -33,7 +36,7 @@ Geometric::refresh_budget() {
     // A zero budget only occurs before the first refresh, so the constructor's
     // call establishes the initial budget and every later one grows it.
     if (current_budget_ == 0) {
-        current_budget_ = initial_conflicts_ == 0 ? 1 : initial_conflicts_;
+        current_budget_ = initial_conflicts_;
         return;
     }
 

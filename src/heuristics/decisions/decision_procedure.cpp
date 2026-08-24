@@ -58,9 +58,8 @@ void DecisionProcedure::apply_decision_phase(Equation& eqn) const {
 
 void DecisionProcedure::set_num_vars(std::size_t num_vars) {
     num_vars_ = num_vars;
-    const std::size_t constant_bit = num_vars;
     false_equation_.resize(num_vars);
-    false_equation_.assign_bits(std::span<const std::size_t>(&constant_bit, 1));
+    false_equation_.set_eq_false();
 }
 
 Equation DecisionProcedure::unit_equation(std::size_t var) const {

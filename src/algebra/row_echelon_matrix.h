@@ -15,12 +15,13 @@
 
 namespace xorcle {
 
-/// @brief A matrix over GF(2) in row-echelon form. Rows are guaranteed
-/// linearly independent. Wraps a `RowEchelonMatrixInterface` pointer
-/// to allow value semantics.
+/// @brief A matrix over GF(2) in row-echelon form.
+///
+/// Rows are guaranteed linearly independent. Wraps a
+/// `RowEchelonMatrixInterface` pointer to allow value semantics.
 class RowEchelonMatrix {
 public:
-    RowEchelonMatrix(EquationRepr repr, std::size_t num_vars);
+    RowEchelonMatrix(EquationRepr repr, std::size_t cols);
 
     RowEchelonMatrix(const RowEchelonMatrix& other);
     RowEchelonMatrix(RowEchelonMatrix&& other) noexcept = default;
@@ -33,10 +34,7 @@ public:
     /// @brief Number of stored rows, i.e. the rank.
     std::size_t rows() const noexcept { return interface_->rows(); }
 
-    /// @brief Number of columns, i.e. `num_vars() + 1`.
-    std::size_t cols() const noexcept { return interface_->num_vars() + 1; }
-
-    std::size_t num_vars() const noexcept { return interface_->num_vars(); }
+    std::size_t cols() const noexcept { return interface_->cols(); }
 
     /// @brief Equation at row `index`, in row-echelon order.
     /// @pre `index < rows()`.
@@ -49,12 +47,14 @@ public:
     const IndexSet& pivot_columns() const noexcept { return interface_->pivot_columns(); }
 
     /// @brief Does nothing if `v` is already in the span.
-    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`.
-    void add_row(const Equation& v) { interface_->add_row_get_index(v); }
+    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`, here and in
+    /// `add_row_get_index()`.
+    void add_row(const Equation& v) { add_row_get_index(v); }
 
     /// @brief The inserted index, or `std::nullopt` if `v` was already in the span.
-    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`.
     std::optional<std::size_t> add_row_get_index(const Equation& v) {
+        assert(v.num_bits() == cols() && "add_row: bit count does not match the matrix");
+        assert(v.repr() == repr() && "add_row: representation does not match the matrix");
         return interface_->add_row_get_index(v);
     }
 
@@ -76,28 +76,6 @@ public:
         assert(v.repr() == repr() &&
                "reduce_get_coefficients: representation does not match the matrix");
         return interface_->reduce_get_coefficients(v);
-    }
-
-    /// @brief Reduce `v` in place only until its leading column is not a pivot.
-    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`.
-    ReduceResult partial_reduce(Equation& v) const {
-        assert(v.num_bits() == cols() && "partial_reduce: bit count does not match the matrix");
-        assert(v.repr() == repr() &&
-               "partial_reduce: representation does not match the matrix");
-        return interface_->partial_reduce(v);
-    }
-
-    /// @brief Partially reduce `v` against this matrix augmented with `extra`.
-    /// @pre `v` and `extra` each have `cols()` bits and this matrix's representation.
-    /// @pre `extra`'s leading column is not a pivot of this matrix, or `extra` is `0 = 0`.
-    ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const {
-        assert(v.num_bits() == cols() && extra.num_bits() == cols() &&
-               "partial_reduce_with_extra: bit count does not match the matrix");
-        assert(v.repr() == repr() && extra.repr() == repr() &&
-               "partial_reduce_with_extra: representation does not match the matrix");
-        assert((!extra.leading_bit() || !pivot_columns().test(*extra.leading_bit())) &&
-               "extra must already be partially reduced by this matrix");
-        return interface_->partial_reduce_with_extra(v, extra);
     }
 
     /// @pre `rows() > 0`.
@@ -136,30 +114,52 @@ public:
     iterator end() const noexcept { return iterator(this, rows()); }
 
 protected:
-    /// @brief Access the underlying interface. For use inside `src/algebra/` only.
+    /// @brief For use inside `src/algebra/` only.
     RowEchelonMatrixInterface& interface() const noexcept { return *interface_; }
 
 private:
     std::unique_ptr<RowEchelonMatrixInterface> interface_;
 };
 
-/// @brief Represents a subspace of the space of linear equations over GF(2).
-/// Contrast with TrailBasisSpace, which is also backed by a matrix but has a
-/// change of basis applied.
+/// @brief A subspace of the space of linear equations over GF(2), whose last
+/// column is the constant.
 class RowSpace : public RowEchelonMatrix {
 public:
-    using RowEchelonMatrix::RowEchelonMatrix;
+    RowSpace(EquationRepr repr, std::size_t num_vars) : RowEchelonMatrix(repr, num_vars + 1) {}
+
+    std::size_t num_vars() const noexcept { return cols() - 1; }
+
+    /// @brief Reduce `v` in place only until its leading column is not a pivot.
+    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`.
+    ReduceResult partial_reduce(Equation& v) const {
+        assert(v.num_bits() == cols() && "partial_reduce: bit count does not match the matrix");
+        assert(v.repr() == repr() &&
+               "partial_reduce: representation does not match the matrix");
+        return interface().partial_reduce(v);
+    }
+
+    /// @brief Partially reduce `v` against this matrix augmented with `extra`.
+    /// @pre `v` and `extra` each have `cols()` bits and this matrix's representation.
+    /// @pre `extra`'s leading column is not a pivot of this matrix, or `extra` is `0 = 0`.
+    ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const {
+        assert(v.num_bits() == cols() && extra.num_bits() == cols() &&
+               "partial_reduce_with_extra: bit count does not match the matrix");
+        assert(v.repr() == repr() && extra.repr() == repr() &&
+               "partial_reduce_with_extra: representation does not match the matrix");
+        assert((!extra.leading_bit() || !pivot_columns().test(*extra.leading_bit())) &&
+               "extra must already be partially reduced by this matrix");
+        return interface().partial_reduce_with_extra(v, extra);
+    }
 
     /// @brief The unique satisfying assignment, indexed by variable.
     /// @pre `rows() + 1 == cols()` and the false equation is not in the matrix.
     IndexSet unique_solution() const;
 };
 
-/// @brief A clause in its linear negation: the conjunction of the linear
-/// equations whose common solutions are exactly where the clause is false.
-/// A clause @f$\bigvee_i f_i@f$ is stored as @f$\mathrm{span}(f_i +
-/// \mathbf{1})@f$, so `[x1 + x2 = 1] v [x3 = 0]` is stored as
-/// `[x1 + x2 = 0] ^ [x3 = 1]`.
+/// @brief A clause stored as its linear negation.
+///
+/// A clause `f1 v ... v fk` is the span of the `fi + [0 = 1]`, so
+/// `[x1 + x2 = 1] v [x3 = 0]` is stored as `[x1 + x2 = 0], [x3 = 1]`.
 class Clause : public RowSpace {
 public:
     using RowSpace::RowSpace;
@@ -174,8 +174,8 @@ public:
 };
 
 std::unique_ptr<RowEchelonMatrixInterface> make_row_echelon_matrix_interface(
-    EquationRepr repr, std::size_t num_vars);
+    EquationRepr repr, std::size_t cols);
 
-RowEchelonMatrix make_row_echelon_matrix(EquationRepr repr, std::size_t num_vars);
+RowEchelonMatrix make_row_echelon_matrix(EquationRepr repr, std::size_t cols);
 
 } // namespace xorcle

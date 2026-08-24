@@ -44,7 +44,7 @@ TEST_CASE_TEMPLATE("compaction: when it should run", Tag, DenseTag, SparseTag) {
         CHECK_FALSE(should_compact_before_decision(state(false, 0, 0)));
     }
 
-    SUBCASE("a pivoted root trail is compactable") {
+    SUBCASE("a non-empty root trail is compactable") {
         trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0});
         CHECK(should_compact_before_decision(state(false, 0, 0)));
     }

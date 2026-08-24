@@ -15,12 +15,6 @@ enum class SolveResult {
 };
 
 /// @brief Per-run solver statistics and configuration metadata.
-///
-/// The three configuration labels are plain strings rather than the heuristic
-/// enums: `util/` sits below `heuristics/`, so it cannot name
-/// `DecisionProcedureName`, `DecisionPhase` or `ClauseSelectorName` without
-/// inverting the dependency. The CLI, which owns the enum-to-name tables, fills
-/// them in and the sinks print them verbatim.
 struct RunStats {
     std::string run_id;
     std::string timestamp_utc;
@@ -29,8 +23,9 @@ struct RunStats {
     std::string decision_phase;
     std::string clause_selector;
     std::uint64_t seed = 0;                 ///< Reproduces the run exactly.
-    std::optional<double> csids_initial_activity; ///< CSIDS A0, alpha and delta,
-    std::optional<double> csids_decay;      ///< present only when CSIDS is in use.
+    /// @brief The CSIDS activity parameters, present only when CSIDS is in use.
+    std::optional<double> csids_initial_activity;
+    std::optional<double> csids_decay;
     std::optional<double> csids_bump;
 
     SolveResult result = SolveResult::unsat;
@@ -44,13 +39,16 @@ struct RunStats {
     std::size_t num_watch_updates = 0;
     std::size_t num_restarts = 0;
     std::size_t decisions = 0;
-    std::size_t fallback_decisions = 0;      ///< Decisions that used fallback logic.
-    /// @brief One bit per variable, in the original numbering, when available.
+    std::size_t fallback_decisions = 0;
+    /// @brief The satisfying assignment, indexed by variable in the original
+    /// numbering; set only on SAT.
     std::optional<IndexSet> sat_assignment;
 };
 
-/// @brief `SAT`/`UNSAT`, the CSV spelling. The console sink writes
-/// `SATISFIABLE`/`UNSATISFIABLE` and does not go through this.
+/// @brief `SAT`/`UNSAT`, the CSV spelling.
+///
+/// `ConsoleStatsWriter` writes `SATISFIABLE`/`UNSATISFIABLE` and does not go
+/// through this.
 std::string to_string(SolveResult result);
 
 /// @brief Number of clauses learned during the run, floored at zero.

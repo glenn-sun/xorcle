@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file fixed_literals.h
-/// @brief The fixed-literal decision procedure: a debug baseline.
+/// @brief The fixed-literal decision procedure.
 
 #include <cstddef>
 #include <cstdint>
@@ -18,14 +18,8 @@ namespace xorcle {
 
 /// @brief Decides the first variable the trail has not yet determined.
 ///
-/// The basis is @f$x_0, x_1, \dots, x_{n-1}@f$ in variable order, scanned from
-/// the front on every decision. No activity, no randomness, no clause
-/// involvement, so a run is a deterministic function of the input alone.
-///
-/// @warning **This is a debug baseline, not a serious heuristic.** It is kept
-/// only because a decision order that never changes makes divergences between
-/// builds, or between the dense and sparse representations, instantly
-/// attributable.
+/// The literal basis is scanned from the front on every decision, and the phase
+/// is not applied, so decisions depend on neither clause activity nor the seed.
 class FixedLiterals final : public DecisionProcedure {
 public:
     FixedLiterals(EquationRepr repr, std::size_t num_vars, Seed seed);
@@ -34,13 +28,12 @@ public:
 
     Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
 
-    /// @brief Compact the literal basis into the new variable numbering.
     void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
                                 const std::vector<Clause>& clauses,
                                 const std::vector<std::uint8_t>& clause_active) override;
 
 private:
-    std::vector<Equation> decision_basis_; ///< The literal basis, in variable order.
+    std::vector<Equation> decision_basis_; ///< In variable order.
 };
 
 } // namespace xorcle

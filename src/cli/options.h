@@ -5,16 +5,10 @@
 /// `cli/options.inc`.
 ///
 /// One X-macro table generates the options struct, the `--name=value` parser,
-/// the bounds checks and `--help`, following CaDiCaL and Kissat. Enum-valued
-/// choices use a parallel name-to-enumerator table, so they validate and
-/// self-document the same way.
-///
-/// Header-only, so the parser links into the unit-test binary as well as the
-/// executable.
-///
-/// Everything here reports user error by throwing `CliError`; `main` catches it,
-/// prints it, and exits non-zero. Nothing here asserts on input.
+/// the bounds checks and `--help`. Enum-valued choices use a parallel
+/// name-to-enumerator table, so they validate and self-document the same way.
 
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -53,16 +47,11 @@ public:
 
 /// @brief Tag types naming the value kinds the option table's `kind` column can
 /// hold.
-///
-/// Tags rather than storage types: `Real` and `Ratio` are both `double` and
-/// differ only in whether their bounds are inclusive, so they have to be
-/// distinct types for overload resolution to tell them apart.
 struct OptionKind {
     struct Bool {};  ///< `true`/`false`, also accepting `on`/`off`, `1`/`0`, `yes`/`no`.
     struct U64 {};   ///< Unsigned 64-bit integer; bounds inclusive.
     struct Size {};  ///< `std::size_t`; bounds inclusive.
     struct Real {};  ///< Finite double; bounds inclusive.
-    struct Ratio {}; ///< Finite double; bounds **exclusive**, as @f$0 < \alpha < 1@f$ needs.
     struct Text {};  ///< Free-form string, e.g. a path. Unbounded.
 };
 
@@ -87,10 +76,6 @@ struct OptionValue<OptionKind::Real> {
     using type = double;
 };
 template <>
-struct OptionValue<OptionKind::Ratio> {
-    using type = double;
-};
-template <>
 struct OptionValue<OptionKind::Text> {
     using type = std::string;
 };
@@ -108,9 +93,6 @@ struct Options {
     std::string input_path;
 
     /// @brief The `--decisions=` preset in force, or empty.
-    ///
-    /// Presets fix the whole CSIDS triple, so an accompanying manual override is
-    /// rejected rather than silently losing.
     std::string csids_preset;
 };
 
@@ -125,9 +107,8 @@ struct OptionSeen {
 
 /// @brief One accepted spelling of one enum-valued option.
 ///
-/// Flat rather than one array per option, because a single array cannot hold
-/// several enumeration types; the enumerator travels as its underlying value and
-/// is cast back at the one place that knows the type.
+/// The enumerator travels as its underlying value, cast back at the one place
+/// that knows the type.
 struct EnumOptionValue {
     std::string_view option;   ///< The option's table name, e.g. `"decisions"`.
     std::string_view spelling; ///< The accepted value, e.g. `"berkmin"`.
@@ -176,8 +157,8 @@ inline std::string cli_spelling(std::string_view table_name) {
 
 /// @brief The table name of a command-line option name, `--` already stripped.
 ///
-/// Dashes and underscores are interchangeable in an option name, as in CaDiCaL,
-/// so `--compact-every` and `--compact_every` are the same option. The dashed
+/// Dashes and underscores are interchangeable in an option name, so
+/// `--compact-every` and `--compact_every` are the same option. The dashed
 /// form is the one `--help` and the error messages use.
 inline std::string table_name_of(std::string_view spelling) {
     std::string out;
@@ -213,6 +194,7 @@ inline std::string enum_option_label(std::string_view option, int value) {
             return std::string(row.spelling);
         }
     }
+    assert(false && "no spelling in the option table for this enum value");
     return {};
 }
 
@@ -316,17 +298,6 @@ inline double parse_option_value(OptionKind::Real, std::string_view option, cons
     return value;
 }
 
-/// @brief A finite double strictly inside its bounds.
-inline double parse_option_value(OptionKind::Ratio, std::string_view option,
-                                 const std::string& text, double lo, double hi) {
-    const double value = parse_real(option, text);
-    if (value <= lo || value >= hi) {
-        throw CliError(std::string(option) + " must satisfy " + format_real(lo) + " < value < " +
-                       format_real(hi) + ", got '" + text + "'");
-    }
-    return value;
-}
-
 inline std::string parse_option_value(OptionKind::Text, std::string_view, const std::string& text,
                                       std::string_view, std::string_view) {
     return text;
@@ -351,7 +322,6 @@ inline std::string option_syntax(OptionKind::Bool) { return "true|false"; }
 inline std::string option_syntax(OptionKind::U64) { return "N"; }
 inline std::string option_syntax(OptionKind::Size) { return "N"; }
 inline std::string option_syntax(OptionKind::Real) { return "X"; }
-inline std::string option_syntax(OptionKind::Ratio) { return "X"; }
 inline std::string option_syntax(OptionKind::Text) { return "PATH"; }
 
 /// @brief How the help text shows a default value.
@@ -367,17 +337,11 @@ inline std::string format_option_default(OptionKind::Size, std::size_t value) {
 inline std::string format_option_default(OptionKind::Real, double value) {
     return format_real(value);
 }
-inline std::string format_option_default(OptionKind::Ratio, double value) {
-    return format_real(value);
-}
 inline std::string format_option_default(OptionKind::Text, std::string_view value) {
     return value.empty() ? "unset" : std::string(value);
 }
 
 /// @brief How the help text states an option's bounds.
-///
-/// A bound at the type's maximum is shown as a minimum instead of printing
-/// `18446744073709551615`, which says nothing a reader wants.
 inline std::string format_option_bounds(OptionKind::Bool, bool, bool) { return ""; }
 inline std::string format_option_bounds(OptionKind::U64, std::uint64_t lo, std::uint64_t hi) {
     if (hi == std::numeric_limits<std::uint64_t>::max()) {
@@ -396,9 +360,6 @@ inline std::string format_option_bounds(OptionKind::Real, double lo, double hi) 
         return "minimum " + format_real(lo);
     }
     return "range " + format_real(lo) + ".." + format_real(hi);
-}
-inline std::string format_option_bounds(OptionKind::Ratio, double lo, double hi) {
-    return "range " + format_real(lo) + " < value < " + format_real(hi);
 }
 inline std::string format_option_bounds(OptionKind::Text, std::string_view, std::string_view) {
     return "";
@@ -442,10 +403,8 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
         << "  whole CSIDS triple, so combining one with a --csids-* option is an\n"
         << "  error rather than a silent override.\n"
         << "\n"
-        << "  --proof requires --compact=false, and does not turn compaction off for\n"
-        << "  you: it refuses instead. Compaction changes the search rather than only\n"
-        << "  its bookkeeping, so a run that silently disabled it would answer a\n"
-        << "  different question than the one asked.\n"
+        << "  --proof requires --compact=false: it refuses rather than turning\n"
+        << "  compaction off for you.\n"
         << "\n"
         << "  The restart options are EXPERIMENTAL and untuned.\n";
 }
@@ -476,25 +435,10 @@ inline void apply_option(Options& options, OptionSeen& seen, const std::string& 
     throw CliError("unknown option '" + spelling + "'");
 }
 
-/// @brief Apply the `--decisions=` preset, if the given spelling is one.
-///
-/// Called after `apply_option` has already resolved the enumerator, so this only
-/// has to overwrite the CSIDS triple and record which preset is in force. The
-/// values are copied from `csids_berkmin_config` and `csids_cmtf_config` by
-/// member name rather than retyped: `CsidsConfig` declares the triple as
-/// @f$(A_0, \alpha, \Delta)@f$ and the literature usually writes it as
-/// @f$(A_0, \Delta, \alpha)@f$, so a positional copy would silently swap the
-/// bump and the decay.
+/// @brief Record which `--decisions=` preset is in force, or none if the given
+/// spelling is not a preset.
 inline void apply_decisions_preset(Options& options, const std::string& value) {
-    const CsidsPreset* preset = find_csids_preset(value);
-    if (preset == nullptr) {
-        options.csids_preset.clear();
-        return;
-    }
-    options.csids_preset = value;
-    options.csids_initial = preset->config.initial_activity;
-    options.csids_decay = preset->config.decay;
-    options.csids_bump = preset->config.bump;
+    options.csids_preset = find_csids_preset(value) != nullptr ? value : std::string{};
 }
 
 /// @brief Check the constraints that span more than one option.
@@ -507,7 +451,6 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
                        " is a preset that fixes A0, alpha and delta; it does not accept "
                        "--csids-initial, --csids-decay or --csids-bump");
     }
-    // Refuse rather than silently flipping --compact. The message names the fix.
     require_compaction_disabled_for_proof(!options.proof.empty(), options.compact);
 }
 
@@ -533,15 +476,11 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
             print_help(help_out, program_name, version);
             return std::nullopt;
         }
-        // Single-dash arguments are rejected outright: silently counting them as
-        // extra positionals would turn a typo into "expected exactly one input".
         if (argument.starts_with("-") && !argument.starts_with("--")) {
             throw CliError("'" + argument +
                            "' is not an option; every option has the form --name=value, "
                            "listed by --help");
         }
-        // A bare positional token is the input path and nothing else; there is no
-        // sniffing of trailing parameters and no path-shaped heuristic.
         if (!argument.starts_with("--")) {
             positionals.push_back(argument);
             continue;
@@ -564,6 +503,12 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
                        " [options] <input>");
     }
     options.input_path = positionals.front();
+
+    if (const CsidsPreset* preset = find_csids_preset(options.csids_preset)) {
+        options.csids_initial = preset->config.initial_activity;
+        options.csids_decay = preset->config.decay;
+        options.csids_bump = preset->config.bump;
+    }
 
     validate_options(options, seen);
     return options;

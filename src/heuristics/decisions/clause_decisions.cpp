@@ -14,8 +14,9 @@ namespace {
 
 #ifndef NDEBUG
 /// @brief Whether some combination of a clause's rows reduces to a legal
-/// decision, by echelonizing the rows after reduction by the trail span. This is
-/// `sample_equation_from_clause()`'s precondition, checked directly.
+/// decision, by echelonizing the rows after reduction by the trail span.
+///
+/// This is `sample_equation_from_clause()`'s precondition, checked directly.
 bool clause_admits_a_legal_decision(const Clause& clause, const RowSpace& trail_span) {
     RowSpace reduced_clause_space(clause.repr(), clause.num_vars());
     Equation reduced_row(clause.repr(), clause.num_vars());
@@ -46,9 +47,8 @@ ClauseSatisfactionWorkspace::ClauseSatisfactionWorkspace(EquationRepr repr, std:
 void ClauseSatisfactionWorkspace::reconfigure(std::size_t num_vars) {
     num_vars_ = num_vars;
 
-    const std::size_t constant_bit = num_vars;
     false_equation_.resize(num_vars);
-    false_equation_.assign_bits(std::span<const std::size_t>(&constant_bit, 1));
+    false_equation_.set_eq_false();
 
     scratch_false_.resize(num_vars);
     scratch_false_.set_eq_true();

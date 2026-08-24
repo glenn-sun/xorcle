@@ -1,8 +1,7 @@
 #pragma once
 
 /// @file compaction.h
-/// @brief Variable compaction: eliminate the variables the root trail span
-/// pivots on and rewrite the whole problem over the survivors.
+/// @brief Eliminating the variables the root trail span pivots on.
 
 #include <cstddef>
 #include <cstdint>
@@ -15,71 +14,52 @@
 
 namespace xorcle {
 
-/// @brief One committed compaction step, kept so an assignment found later can
-/// be recovered in the pre-compaction variable numbering.
-///
-/// @note `trail_rows_before` is in **row-echelon order**, not trail order, which
-/// is what back-substitution needs: walking it backwards solves each variable
-/// after everything to its right.
+/// @brief One committed compaction step, enough to undo it on an assignment.
 struct CompactionHistoryEntry {
     CompactionTransform transform;
     std::vector<std::size_t> active_var_to_original_before;
-    std::vector<Equation> trail_rows_before; ///< The root trail span, in row-echelon order.
+    std::vector<Equation> trail_rows_before;
 };
 
-/// @brief Everything one compaction produces, built before any solver state changes.
 struct CompactionPlan {
     CompactionTransform transform;
-    std::vector<Clause> rewritten_clauses; ///< Every clause, rewritten, in clause-id order.
-    std::vector<std::uint8_t> clause_is_active; ///< The new active flags, in clause-id order.
-    CompactionHistoryEntry history_entry; ///< What to record for later recovery.
+    std::vector<Clause> rewritten_clauses;
+    std::vector<std::uint8_t> clause_is_active;
+    CompactionHistoryEntry history_entry;
 };
 
 /// @brief A read-only view of the solver state a compaction is planned against.
 struct CompactionState {
-    const Trail& trail; ///< The current trail; must be at the root level.
-    const std::vector<Clause>& clauses; ///< The clause database, in clause-id order.
-    const std::vector<std::uint8_t>& clause_is_active; ///< Current active flags.
-    const std::vector<std::size_t>& active_var_to_original; ///< Active to original variable map.
+    const Trail& trail;
+    const std::vector<Clause>& clauses;
+    const std::vector<std::uint8_t>& clause_is_active;
+    const std::vector<std::size_t>& active_var_to_original;
     std::size_t active_num_vars;
-    bool has_compacted_once; ///< Whether a compaction has already happened this run.
+    bool has_compacted_once;
     std::size_t num_conflicts;
     std::size_t conflicts_at_last_compaction;
-    std::size_t compaction_conflict_interval; ///< Conflicts required between compactions.
+    std::size_t compaction_conflict_interval;
 };
 
 /// @brief True when the trail is at the root, the conflict interval has elapsed,
-/// and at least one variable can actually be eliminated. Unlike the two below,
-/// a non-root trail is an ordinary `false` here rather than a violation.
+/// and at least one variable can be eliminated.
 /// @pre The trail span's pivot column set has size `state.active_num_vars + 1`.
 bool should_compact_before_decision(const CompactionState& state);
 
 /// @brief Build the change of basis dropping every variable the span pivots on.
 /// @pre The trail is at the root level, and its span's pivot column set has size
-/// `active_num_vars + 1` and does not include the constant column. The pivot set
-/// is checked by `CompactionTransform::from_dropped_columns()`, which this calls.
+/// `active_num_vars + 1` and does not include the constant column.
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars);
 
-/// @brief Rewrite the active problem into the compacted variable numbering, as
-/// one plan.
+/// @brief Rewrite the active problem into the compacted numbering, in clause-id order.
 ///
-/// Every clause is reduced by the root trail span and then compacted. Because
-/// compaction is followed by `add_row()`, which echelonizes and deduplicates, a
-/// rewritten clause can have **fewer rows** than the original — which is why
-/// watch metadata is rebuilt by matching row values, not by keeping indices. A
-/// clause the trail satisfies becomes a single @f$\mathbf{1}@f$ row, inactive.
+/// A clause the trail satisfies becomes a single inactive `0 = 1` row, so clause ids stay
+/// stable. Applying the plan replaces the root trail with an empty one, so root-level units
+/// are not recoverable from the clause database afterwards.
 ///
-/// @warning Applying this plan **deliberately discards the root trail**: the
-/// solver replaces it with an empty one over the compacted variables. That is
-/// what makes root-level units unrecoverable from the clause database alone —
-/// the reason proof emission and compaction are mutually exclusive. Do not try
-/// to preserve the trail across a compaction.
-///
-/// @pre `state.trail` is at the root level.
-/// @pre `state.clause_is_active` and `state.active_var_to_original` are sized by
-/// clause id and by active variable respectively, i.e. `state.clauses.size()` and
-/// `state.active_num_vars` entries.
-/// @pre `transform.old_num_vars() == state.active_num_vars`.
+/// @pre `state.trail` is at the root level, `state.clause_is_active` and
+/// `state.active_var_to_original` are sized by clause id and by active variable, and
+/// `transform.old_num_vars() == state.active_num_vars`.
 CompactionPlan build_compaction_plan(const CompactionState& state,
                                      const CompactionTransform& transform);
 

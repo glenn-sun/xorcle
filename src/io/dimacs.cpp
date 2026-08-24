@@ -174,7 +174,6 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
         }
         term_start = plus_pos + 1;
         if (term_start == body.size()) {
-            // A trailing '+' names an empty variable.
             fail(origin, line_number, "empty variable in token: " + std::string{token});
         }
     }
@@ -206,8 +205,6 @@ Clause parse_clause_line(const std::string& line, std::size_t num_vars, Equation
         fail(origin, line_number, "clause line is missing its terminating 0: " + line);
     }
     if (stream >> token) {
-        // Rejected rather than dropped: `tools/xnf_lib.py` reads the body as one
-        // token stream and would start a second clause here.
         fail(origin, line_number, "unexpected token after the clause terminator: " + token);
     }
     return clause;
@@ -243,8 +240,6 @@ ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_vi
 
     ParsedDimacs parsed;
     parsed.num_vars = header.num_vars;
-    // Capped, because the header is untrusted: a bogus count must not turn into
-    // a bogus allocation before the clause lines have been read.
     parsed.clauses.reserve(std::min<std::size_t>(header.num_clauses, 1u << 16));
 
     while (std::getline(input, line)) {

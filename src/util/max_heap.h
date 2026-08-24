@@ -14,11 +14,9 @@ namespace xorcle {
 /// @brief Max-heap keyed by activity values stored externally.
 ///
 /// The activity map outlives the heap: an element removed by `extract_max()`
-/// keeps its score and can be put back by `rebuild()`, which is what lets the
-/// VSIDS-family decision procedures walk down the heap discarding candidates the
-/// trail has already satisfied, then restore them for the next decision. Ties
-/// are broken by heap position, so the insertion order of equal-activity
-/// elements is observable in the solver's search order.
+/// keeps its score and can be put back by `rebuild()`. Ties are broken by heap
+/// position, so the insertion order of equal-activity elements is observable in
+/// the solver's search order.
 template <typename T, typename Hash = std::hash<T>, typename KeyEqual = std::equal_to<T>>
 class MaxHeap {
 public:
@@ -27,7 +25,8 @@ public:
     static_assert(std::is_copy_constructible<T>::value || std::is_move_constructible<T>::value,
                   "T must be copyable or movable");
 
-    /// @brief A negative delta does nothing. @pre Element has an activity entry.
+    /// @brief Add `delta` to the activity of `element`; a negative `delta` does nothing.
+    /// @pre `element` has an activity entry.
     void increase_key(const T& element, double delta) {
         if (delta < 0.0) return;
         auto act_it = activity_map_.find(element);
@@ -47,6 +46,7 @@ public:
         }
     }
 
+    /// @brief The activity of `element`, or `0` if it has no activity entry.
     double get_priority(const T& element) const {
         auto it = activity_map_.find(element);
         if (it == activity_map_.end()) return 0.0;
@@ -75,11 +75,10 @@ public:
         return top_value;
     }
 
-    /// @brief Multiply all priorities by `k`. No heapify: a positive constant
-    /// preserves comparisons.
-    /// @pre `k > 0`.
+    /// @brief Multiply all priorities by `k`.
+    /// @pre `k >= 0`.
     void rescale(double k) {
-        assert(k > 0.0 && "rescale requires k > 0");
+        assert(k >= 0.0 && "rescale requires k >= 0");
         for (auto& entry : activity_map_) entry.second *= k;
     }
 
@@ -144,8 +143,7 @@ public:
         popped_.clear();
     }
 
-    /// @brief State for remapping by callers: compaction rewrites every key,
-    /// which the heap cannot do itself, so the caller snapshots, remaps, reloads.
+    /// @brief A copy of the heap's state, for callers that remap the keys.
     struct StateSnapshot {
         std::vector<T> heap;                                    ///< Live elements, in heap order.
         std::vector<T> popped;                                  ///< Awaiting `rebuild()`.
@@ -160,9 +158,8 @@ public:
         return out;
     }
 
-    /// @brief Replace heap/activity state. Keys without an activity entry, and
-    /// duplicate keys, are dropped: remapping can collapse two distinct keys
-    /// onto one, so this is expected rather than an invariant violation.
+    /// @brief Replace the heap's state, dropping duplicate keys and keys without
+    /// an activity entry.
     void load_snapshot(StateSnapshot state) {
         heap_.clear();
         popped_.clear();
@@ -198,10 +195,11 @@ private:
     static std::size_t left(std::size_t i) { return 2 * i + 1; }
     static std::size_t right(std::size_t i) { return 2 * i + 2; }
 
-    /// @brief Reached from `sift_up()` and `sift_down()` on every heap path, so
-    /// the entry check lives here rather than at each public entry.
+    /// @brief The activity of an element held in the heap.
     double activity_of(const T& element) const {
         auto it = activity_map_.find(element);
+        // Stronger than any documented precondition: every element in the heap
+        // has an activity entry.
         assert(it != activity_map_.end() && "activity lookup missing");
         return it->second;
     }

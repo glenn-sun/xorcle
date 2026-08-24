@@ -24,6 +24,8 @@ void FixedLiterals::reinitialize() {
 Equation FixedLiterals::make_decision(const RowSpace& trail_span, const std::vector<Clause>&) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
+    assert(trail_span.repr() == repr() &&
+           "the trail span does not match the procedure's representation");
     assert(trail_span.rows() < num_vars() && "no legal decision remains");
 
     record_decision(false);

@@ -26,14 +26,16 @@ struct SparseTag {
 Equation make_equation_with(EquationRepr repr, std::size_t num_vars,
                             std::initializer_list<std::size_t> bits);
 
+/// @brief Build a coefficient vector of `num_bits` bits with exactly the
+/// listed bits set.
+Equation make_equation_with_num_bits(EquationRepr repr, std::size_t num_bits,
+                                     std::initializer_list<std::size_t> bits);
+
 /// @brief The set bits of an equation, ascending.
 std::vector<std::size_t> bits_of(const Equation& equation);
 
-/// @brief Assert every representation invariant of a row-echelon matrix.
-///
-/// This mirrors the algebra-internal `debug_assert_valid_representation()` but
-/// runs through the public interface, so it holds the matrix to its stated
-/// invariants in release builds too.
+/// @brief Assert every representation invariant of a row-echelon matrix,
+/// through its public interface, in every build.
 void check_echelon_invariant(const RowEchelonMatrix& matrix);
 
 /// @brief A small deterministic generator, so failures are reproducible.
@@ -42,6 +44,7 @@ public:
     explicit TestRandom(std::uint64_t seed) noexcept : state_(seed | 1u) {}
 
     /// @brief Next value in `[0, bound)`.
+    /// @pre `bound > 0`.
     std::size_t next(std::size_t bound) noexcept;
 
     /// @brief A coin flip that comes up true with probability `1 / odds`.

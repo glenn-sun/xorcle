@@ -12,9 +12,6 @@ namespace xorcle {
 namespace {
 
 #ifndef NDEBUG
-/// @brief `Trail` asserts its order maps as it builds them; the check is
-/// repeated at the point of *use* because every column index below is computed
-/// through them.
 bool trail_maps_are_consistent(const Trail& trail) {
     const std::size_t trail_rows = trail.span().rows();
     if (trail.order_map().size() != trail_rows || trail.reverse_order_map().size() != trail_rows ||
@@ -42,36 +39,28 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
 
     TrailBasisSpace trail_basis(trail);
 
-    // The span's row count is both the coefficient bit count and this matrix's
-    // column count -- the point of the `m - 1` in the constructor.
-    const std::size_t num_coefficients = trail.span().rows();
-    assert(trail_basis.cols() == num_coefficients);
+    const std::size_t num_coefficients = trail_basis.cols();
 
-    // Preallocated scratch: nothing in the loop allocates after the first pass.
     Equation reduced_eqn(trail.repr(), trail.num_vars());
-    Equation trail_basis_row(trail.repr(), trail_basis.num_vars());
+    Equation trail_basis_row = Equation::with_num_bits(trail.repr(), num_coefficients);
     std::vector<std::size_t> mapped_bits;
 
     for (const Equation& eqn : rs) {
         reduced_eqn.assign_from(eqn);
-        // `row_coefficients` is indexed by row index within the span, i.e.
-        // row-echelon order, not trail order.
+        // Indexed by row-echelon order within the span, not trail order.
         const IndexSet row_coefficients = trail.span().reduce_get_coefficients(reduced_eqn);
         assert(reduced_eqn.is_eq_true() && "row space contains a row outside the trail span");
         assert(row_coefficients.size() == num_coefficients);
 
-        // Rewriting into trail-basis coordinates permutes the bit vector by a
-        // fixed index map: span row index -> trail order (`reverse_order_map`)
-        // -> reversed (`m - 1 - t`), collected once and handed to the algebra
-        // layer in a single `assign_bits()` dispatch.
+        // Span row index -> trail order (`reverse_order_map`) -> reversed.
         mapped_bits.clear();
         row_coefficients.for_each_set([&](std::size_t row_index) {
             mapped_bits.push_back(num_coefficients - trail.reverse_order_map()[row_index] - 1);
         });
         trail_basis_row.assign_bits(mapped_bits);
 
-        // `add_row()` echelonizes into ascending leading-column order, i.e. most
-        // recent trail equation first.
+        // Echelonized into ascending leading-column order, i.e. most recent
+        // trail equation first.
         trail_basis.add_row(trail_basis_row);
     }
 
@@ -86,8 +75,6 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
     const std::size_t num_coefficients = cols();
 
     for (const Equation& trail_basis_row : *this) {
-        // Add up the selected subset of trail rows, dispatching at row
-        // granularity: one `bits()` call, then one `plus_assign()` per row.
         row_space_eqn.set_eq_true();
         for (const std::size_t coefficient_bit : trail_basis_row.bits()) {
             const std::size_t trail_index = num_coefficients - coefficient_bit - 1;
@@ -102,18 +89,13 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
 std::size_t TrailBasisSpace::asserting_level() const {
     assert(rows() > 0 && "asserting level of an empty trail-basis space");
 
-    // A single-row trail-basis space converts back to a unit clause: it asserts
-    // at the root, so every non-root level can be discarded.
+    // A single-row basis converts back to a unit clause, which asserts at the root.
     if (rows() == 1) {
         return 0;
     }
 
-    // Only row 1 is ever examined. Row 0 is about to be resolved away, and rows
-    // are stored in strictly increasing leading-column order, so if row 1 has no
-    // set column below some limit then neither do rows 2, 3, ... . Row 1 alone
-    // therefore decides how far back the remaining basis reaches. And for a
-    // single row, "has a set column below the limit" is exactly
-    // `leading_bit() < limit`, so no sub-vector need be materialized.
+    // Row 0 is about to be resolved away, and rows are in strictly increasing
+    // leading-column order, so row 1 alone decides how far back the basis reaches.
     const std::optional<std::size_t> second_row_leading = row(1).leading_bit();
     assert(second_row_leading && "a stored row is zero");
 
@@ -121,20 +103,16 @@ std::size_t TrailBasisSpace::asserting_level() const {
     for (std::size_t candidate_level = trail_.level(); candidate_level > 0;) {
         --candidate_level;
 
-        // Equations learned strictly after `candidate_level` occupy trail steps
-        // `[trail_[candidate_level].span().rows(), span_rows)`, i.e. columns
+        // Equations learned strictly after `candidate_level` occupy columns
         // `[0, columns_after_level)` of this matrix.
         const std::size_t columns_after_level =
             span_rows - trail_[candidate_level].span().rows();
 
-        // Row 1 reaches into a level proposed for discarding, so the clause
-        // asserts one level above `candidate_level`.
         if (*second_row_leading < columns_after_level) {
             return candidate_level + 1;
         }
     }
 
-    // Row 1 never reached past the root, so every non-root level goes.
     return 0;
 }
 

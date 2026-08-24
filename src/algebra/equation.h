@@ -18,8 +18,9 @@
 
 namespace xorcle {
 
-/// @brief An affine equation over GF(2). Wraps an `EquationInterface` pointer
-/// to allow value semantics.
+/// @brief An affine equation over GF(2).
+///
+/// Wraps an `EquationInterface` pointer to allow value semantics.
 class Equation {
 public:
     /// @brief A null handle
@@ -37,6 +38,10 @@ public:
     Equation& operator=(const Equation& other);
     Equation& operator=(Equation&& other) noexcept = default;
     ~Equation() = default;
+
+    /// @brief The all-zero vector of `num_bits` bits, for a coefficient vector
+    /// that carries no constant bit.
+    static Equation with_num_bits(EquationRepr repr, std::size_t num_bits);
 
     static Equation eq_true(EquationRepr repr, std::size_t num_vars);
 
@@ -62,7 +67,12 @@ public:
     void resize(std::size_t num_vars);
 
     /// @brief Set all bits to zero, representing `0 = 0`.
+    /// @pre `!is_null()`.
     void set_eq_true() noexcept;
+
+    /// @brief Set only the constant bit, representing `0 = 1`.
+    /// @pre `!is_null()`.
+    void set_eq_false() noexcept;
 
     /// @brief Get index of the first set bit, or `std::nullopt` if none are set.
     /// @pre `!is_null()`, here and in `classify()`, `is_eq_true()` and `is_eq_false()`.
@@ -86,15 +96,13 @@ public:
     void plus_assign(const Equation& other);
 
     /// @brief Overwrite this equation's contents from `other`, without
-    /// allocating. Use this instead of default copy assignment for
-    /// efficiency.
+    /// allocating. Use this instead of default copy assignment for efficiency.
     /// @pre Neither handle is null, and `other` shares this equation's
     /// representation and bit count.
     void assign_from(const Equation& other);
 
-    /// @brief Overwrite this equation to have exactly the given bits set.
-    /// This is the in-place counterpart of `from_bits`, which should be used
-    /// instead of `from_bits` + copy, for efficiency.
+    /// @brief Overwrite this equation to have exactly the given bits set,
+    /// without allocating. Use this instead of `from_bits` + copy, for efficiency.
     /// @param bits Bits to set; need not be sorted or distinct, may include the
     /// constant bit `num_vars()`, and must each be `< num_bits()`.
     /// @pre `!is_null()`.
@@ -141,7 +149,7 @@ struct EquationHash {
 };
 
 std::unique_ptr<EquationInterface> make_equation_interface(EquationRepr repr,
-                                                           std::size_t num_vars);
+                                                           std::size_t num_bits);
 
 /// @brief Build the true equation `0 = 0` in the chosen representation.
 Equation make_equation(EquationRepr repr, std::size_t num_vars);

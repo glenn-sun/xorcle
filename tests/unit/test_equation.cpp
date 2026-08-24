@@ -62,9 +62,7 @@ TEST_CASE_TEMPLATE("equation: eq_true, eq_false and classify", Tag, DenseTag, Sp
     CHECK(eq_false.leading_bit() == std::optional<std::size_t>(num_vars));
 
     SUBCASE("classify covers every shape of the final word") {
-        // A three-way classification composed from separate emptiness and
-        // constant-bit queries is easy to get wrong for equations whose final
-        // word holds a variable bit. Each shape below is one such case.
+        // Each shape below has a variable bit in the final word.
 
         // Only a variable bit set, in the final block.
         const Equation only_variable = make_equation_with(repr, num_vars, {129});
@@ -142,8 +140,7 @@ TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, Dens
     CHECK(bits_of(scratch) == bits_of(source));
 
     // The sparse buffer is now at its high-water mark, so from here on both
-    // representations must refill in place. This is the property the whole
-    // preallocated-scratch discipline rests on.
+    // representations must refill in place.
     scratch.set_eq_true();
     const std::size_t before = allocation_count();
     scratch.assign_from(source);
@@ -160,10 +157,8 @@ TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, Dens
 TEST_CASE_TEMPLATE("equation: assign_from rejects a bit-count mismatch", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    // A same-bit-count copy is an internal invariant, so a mismatch asserts rather
-    // than silently failing. That can only be observed by watching a child
-    // process die, and it is compiled out of release builds along with the
-    // assertion itself.
+    // A same-bit-count copy is an internal invariant, so a mismatch asserts. That
+    // can only be observed by watching a child process die.
     const pid_t child = ::fork();
     REQUIRE(child >= 0);
     if (child == 0) {

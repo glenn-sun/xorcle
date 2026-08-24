@@ -1,5 +1,6 @@
 #include "util/stats_writer.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -77,10 +78,8 @@ ConsoleStatsWriter::log_impl(const RunStats& stats) {
     output << "c Clause selector: " << stats.clause_selector << "\n";
     output << "c Decision phase: " << stats.decision_phase << "\n";
     output << "c Seed: " << stats.seed << "\n";
-    // The three CSIDS lines appear together or not at all, and use bare
-    // `setprecision(6)` -- no `std::fixed` -- so they print in default float
-    // format. Every other formatted line sets its own flags immediately before
-    // its value, so sticky stream state never leaks between lines.
+    // The three CSIDS lines appear together or not at all, and print in default
+    // float format.
     if (stats.csids_initial_activity.has_value() && stats.csids_decay.has_value() &&
         stats.csids_bump.has_value()) {
         output << "c CSIDS initial activity: " << std::setprecision(6) << *stats.csids_initial_activity << "\n";
@@ -128,16 +127,14 @@ CsvStatsWriter::ensure_header() {
         return;
     }
 
-    bool need_header = true;
     std::error_code ec;
-    if (std::filesystem::exists(path_, ec)) {
-        const auto size = std::filesystem::file_size(path_, ec);
-        if (!ec && size > 0) {
-            need_header = false;
-        }
+    const std::uintmax_t size = std::filesystem::file_size(path_, ec);
+    if (ec) {
+        throw std::runtime_error("CsvStatsWriter::ensure_header: cannot determine the size of " +
+                                 path_ + ": " + ec.message());
     }
 
-    if (need_header) {
+    if (size == 0) {
         file_ << "run_id,timestamp_utc,file,decision_procedure,csids_initial_activity,csids_decay,csids_bump,"
                  "decision_phase,clause_selector,seed,result,"
                  "num_vars,start_clauses,final_clauses,learned_clauses,"
@@ -212,6 +209,9 @@ CsvStatsWriter::log_impl(const RunStats& stats) {
           << fmt_opt_double(propagations_per_conflict(stats)) << ','
           << fmt_opt_double(attempts_per_event(stats)) << "\n";
     file_.flush();
+    if (!file_) {
+        throw std::runtime_error("CsvStatsWriter::log_impl: failed to write a CSV row to " + path_);
+    }
 }
 
 } // namespace xorcle

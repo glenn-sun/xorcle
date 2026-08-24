@@ -1,11 +1,8 @@
 /// @file main.cpp
 /// @brief The `xorcle` executable: parse a command line, solve one instance,
 /// report.
-///
-/// Thin by design. Every option lives in `cli/options.inc` and everything that
-/// reads it lives in `cli/options.h`, so what is left here is the
-/// enum-to-object mapping, the run itself, and the error boundary around both.
 
+#include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <exception>
@@ -43,9 +40,6 @@ namespace xorcle {
 namespace {
 
 // --- Building the heuristics -----------------------------------------------
-//
-// The enum-to-object mapping belongs beside the option table that names the
-// enumerators.
 
 std::unique_ptr<DecisionProcedure> make_decision_procedure(const Options& options,
                                                            std::size_t num_vars) {
@@ -76,6 +70,7 @@ std::unique_ptr<ClauseSelector> make_clause_selector(const Options& options,
         case ClauseSelectorName::leading_term_watchlist:
             return std::make_unique<LeadingTermWatchlist>(num_vars);
     }
+    assert(false && "make_clause_selector: unknown clause selector name");
     return std::make_unique<Cyclic>(num_vars);
 }
 
@@ -122,14 +117,11 @@ RunStats run_once(const Options& options) {
     const std::chrono::duration<double> elapsed = std::chrono::high_resolution_clock::now() - start;
 
     if (proof_logger) {
-        // A proof of a satisfiable instance proves nothing, so it is discarded.
         proof_logger->finalize(solution.result == SolveResult::unsat);
     }
 
     RunStats stats;
     stats.file = options.input_path;
-    // The labels are the table's own spellings, so `--decisions=berkmin` reports
-    // `csids`: the first spelling naming an enumerator is its label.
     stats.decision_procedure = enum_option_label("decisions", static_cast<int>(options.decisions));
     stats.decision_phase = enum_option_label("phase", static_cast<int>(options.phase));
     stats.clause_selector = enum_option_label("selection", static_cast<int>(options.selection));

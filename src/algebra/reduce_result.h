@@ -6,14 +6,12 @@ namespace xorcle {
 
 /// @brief The outcome of classifying or reducing an equation.
 ///
-/// An equation over @f$n@f$ variables is either the true equation @f$\mathbf{0}
-/// = [0 = 0]@f$, the false equation @f$\mathbf{1} = [0 = 1]@f$, or a real
-/// equation with a leading bit. These three cases are always carried in this
-/// type, never in a `std::size_t` sentinel a caller has to remember to decode.
+/// An equation is either the true equation `0 = 0`, the false equation
+/// `0 = 1`, or a real equation with a leading bit.
 struct ReduceResult {
     enum class Kind {
-        eq_true, ///< @f$\mathbf{0}@f$: no bit is set.
-        eq_false, ///< @f$\mathbf{1}@f$: only the constant bit is set.
+        eq_true, ///< `0 = 0`: no bit is set.
+        eq_false, ///< `0 = 1`: only the constant bit is set.
         leading ///< A real equation; `bit` is its leading bit.
     };
 

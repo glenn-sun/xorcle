@@ -35,6 +35,8 @@ public:
 
     virtual void set_eq_true() noexcept = 0;
 
+    virtual void set_eq_false() noexcept = 0;
+
     virtual void assign_bits(std::span<const std::size_t> bits) = 0;
 
     virtual std::optional<std::size_t> leading_bit() const noexcept = 0;
@@ -84,14 +86,19 @@ public:
 
     void set_eq_true() noexcept override { vector_.set_zero(); }
 
+    void set_eq_false() noexcept override {
+        vector_.set_zero();
+        vector_.set_bit(vector_.num_bits() - 1);
+    }
+
     void assign_bits(std::span<const std::size_t> bits) override { vector_.assign_bits(bits); }
 
     std::optional<std::size_t> leading_bit() const noexcept override {
         return vector_.leading_bit();
     }
 
-    /// @brief The last bit is the constant bit, so a vector leading on it has no
-    /// other bit set.
+    /// @brief Whether the equation is `0 = 0`, `0 = 1`, or a real equation with a
+    /// leading bit.
     ReduceResult classify() const noexcept override {
         const std::optional<std::size_t> leading = vector_.leading_bit();
         if (!leading) {
@@ -195,10 +202,7 @@ public:
     }
 
 private:
-    /// @brief The public entries reaching here -- `Equation::plus_assign()`,
-    /// `Equation::assign_from()` and `Equation::operator==()` -- have each
-    /// already established that `interface` shares this template's
-    /// representation, so the downcast is not re-checked.
+    /// @brief Downcast an interface whose representation the caller has already checked.
     static const EquationTemplate& cast(const EquationInterface& interface) noexcept {
         return static_cast<const EquationTemplate&>(interface);
     }

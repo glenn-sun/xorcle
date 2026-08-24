@@ -31,52 +31,35 @@ struct CompactionConfig {
 struct Solution {
     SolveResult result = SolveResult::unsat;
 
-    /// @brief One bit per *original* variable, present exactly when
-    /// `result == SolveResult::sat`. Compaction is already undone: the solver
-    /// searches over the compacted variables but reports over the input's.
+    /// @brief One bit per *original* variable, with compaction already undone,
+    /// present exactly when `result == SolveResult::sat`.
     std::optional<IndexSet> assignment;
 };
 
-/// @brief The counters a run accumulates, named as `RunStats` names them.
+/// @brief The counters a run accumulates.
 struct SolverCounters {
     std::size_t num_attempt_props = 0; ///< Clauses handed to the propagator.
     std::size_t num_watch_updates = 0;
-    std::size_t num_propagations = 0;  ///< Equations learned by propagation.
+    std::size_t num_propagations = 0;
     std::size_t num_conflicts = 0;     ///< Root conflict included.
     std::size_t num_restarts = 0;
 };
 
-/// @brief The CDCL(@f$\oplus@f$) solver.
+/// @brief The CDCL(⊕) solver.
 ///
 /// The loop is propagate, then either analyse a conflict, report SAT, compact,
-/// or decide. Everything the algorithm leaves open is delegated: which clause to
-/// propagate from to a `ClauseSelector` (which is also the authoritative clause
-/// store), which equation to decide to a `DecisionProcedure`, whether to restart
-/// to a `RestartPolicy`.
-///
-/// `num_vars()` never changes: it is the input's variable count, the variable
-/// numbering every reported assignment and proof line is written in.
-/// The *active* variable count is the numbering the search runs in, which
-/// compaction shrinks; the trail, the propagator, the clause database, the decision
-/// procedure and the two preallocated equations all live there and are rewritten
-/// together whenever it changes.
-///
-/// @warning Statement order inside the loop is load-bearing beyond correctness.
-/// CSIDS in particular is sensitive to the order of
-/// `update_with_asserting_clause()` and `update_with_new_clause()`. Reordering
-/// any of it changes the search, and therefore the conflict count, without
-/// changing the answer.
+/// or decide. The `ClauseSelector` is also the authoritative clause store.
 class Solver {
 public:
-    /// @brief Construct a solver over an empty clause database. `selector`,
-    /// `decisions` and `restarts` are never null (use `NoRestarts` to disable
-    /// restarts); `proof_logger` is null for no proof and is not owned, so it must
-    /// outlive the solver, and the caller finalizes it, since whether a proof is
-    /// worth keeping depends on the result.
-    /// @pre `selector`, `decisions` and `restarts` are all non-null.
+    /// @brief Construct a solver over an empty clause database.
+    ///
+    /// `proof_logger` is null for no proof and is not owned, so it must outlive
+    /// the solver, and the caller finalizes it.
+    ///
+    /// @pre `selector`, `decisions` and `restarts` are all non-null; use
+    /// `NoRestarts` to disable restarts.
     /// @pre If `proof_logger` is non-null then `compaction.enabled` is false and
-    /// `proof_logger->num_vars() == num_vars`. The CLI enforces the first with
-    /// `require_compaction_disabled_for_proof()`.
+    /// `proof_logger->num_vars() == num_vars`.
     Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
            LrupLogger* proof_logger = nullptr, const CompactionConfig& compaction = {});
@@ -89,12 +72,12 @@ public:
     /// @pre `clause.cols() == num_vars() + 1` and `clause` uses the solver's
     /// representation.
     /// @note The decision procedure is told about the clause *before* the
-    /// selector stores it: with no pending learned activity recorded, every
-    /// input clause enters at activity zero.
+    /// selector stores it, so every input clause enters at activity zero.
     void add_starting_clause(Clause clause);
 
     Solution solve();
 
+    /// @brief Original variable count, before compaction.
     std::size_t num_vars() const noexcept { return original_num_vars_; }
 
     std::size_t num_clauses() const noexcept { return selector_->num_clauses(); }
@@ -106,15 +89,7 @@ public:
     DecisionProcedure::DecisionStats decision_stats() const { return decisions_->decision_stats(); }
 
 private:
-    /// @brief Propagate to quiescence; true if the trail now holds
-    /// @f$\mathbf{1}@f$.
-    ///
-    /// @warning The order inside is **learn, then check for conflict**, and it
-    /// cannot be swapped. `core/analysis.h`'s resolution step is valid only
-    /// because the most recent trail row is @f$\mathbf{1}@f$ at conflict time,
-    /// and that is exactly what this ordering establishes: the equation that
-    /// closes the conflict is learned first, so it is the row the conflict check
-    /// then finds.
+    /// @brief Propagate to quiescence; true if the trail now holds `0 = 1`.
     bool propagate_until_conflict();
 
     /// @brief Analyse, backjump or restart, and learn.
@@ -132,12 +107,8 @@ private:
 
     /// @brief Replace every piece of active-numbering state with a prepared plan.
     ///
-    /// @warning This discards the root trail for an empty one over the compacted
-    /// variables. That is deliberate: the eliminated variables are exactly the
-    /// ones the root trail determined, so keeping it would mean carrying rows
-    /// that no longer typecheck. It is also what makes root-level units
-    /// unrecoverable from the clause database, hence why proofs and compaction
-    /// are mutually exclusive.
+    /// @warning This discards the root trail, so root-level units become
+    /// unrecoverable from the clause database.
     void apply_compaction(CompactionPlan plan);
 
     EquationRepr repr_;
@@ -145,15 +116,16 @@ private:
     const std::size_t original_num_vars_;
     std::size_t active_num_vars_;
 
-    /// @brief Active to original variable index. Composed across compactions
-    /// rather than replaced, so it always maps the *current* active numbering to
-    /// the original one however many steps happened.
+    /// @brief Active to original variable index, composed across compactions.
     std::vector<std::size_t> active_var_to_original_;
 
     std::vector<CompactionHistoryEntry> compaction_history_; ///< Oldest first.
 
     CompactionConfig compaction_;
     bool has_compacted_once_ = false;
+#ifndef NDEBUG
+    bool has_solved_ = false;
+#endif
     std::size_t conflicts_at_last_compaction_ = 0;
 
     Trail trail_;
@@ -164,12 +136,12 @@ private:
 
     LrupLogger* proof_logger_; ///< Not owned; null for no proof.
 
-    /// @brief The next proof clause id for a line no solver clause backs; the id
-    /// space is shared with the clause database, so it tracks that database.
+    /// @brief The next proof clause id for a line no solver clause backs, from
+    /// the id space shared with the clause database.
     ClauseId next_proof_clause_id_ = 0;
 
-    Equation conflict_check_eqn_; ///< Scratch for the conflict test.
-    Equation false_equation_;     ///< A preallocated @f$\mathbf{1}@f$.
+    Equation conflict_check_eqn_;
+    Equation false_equation_; ///< A preallocated `0 = 1`.
 
     SolverCounters counters_;
 };

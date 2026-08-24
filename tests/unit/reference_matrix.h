@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstddef>
 #include <optional>
 #include <vector>
@@ -11,15 +12,8 @@
 
 namespace xorcle {
 
-/// @brief A row as a plain vector of bits, of `num_vars + 1` bits.
+/// @brief A row as a plain vector of `num_vars + 1` bits.
 using Bits = std::vector<bool>;
-
-std::optional<std::size_t> first_set(const Bits& bits);
-
-/// @brief First set bit of `bits` strictly after `after`, or `std::nullopt`.
-std::optional<std::size_t> next_set(const Bits& bits, std::size_t after);
-
-void plus_into(Bits& target, const Bits& source);
 
 std::vector<std::size_t> set_bits(const Bits& bits);
 
@@ -32,18 +26,11 @@ Bits random_bits(TestRandom& random, std::size_t num_vars, std::size_t density);
 
 /// @brief Translate a partial-reduction sentinel into a `ReduceResult`.
 ///
-/// `leading` is `std::nullopt` for @f$\mathbf{0}@f$, otherwise the leading
-/// column, where `num_vars` -- the constant column index -- means
-/// @f$\mathbf{1}@f$.
+/// `leading` is `std::nullopt` for `0 = 0`, otherwise the leading column, where
+/// `num_vars` -- the constant column index -- means `0 = 1`.
 ReduceResult expected_result(const std::optional<std::size_t>& leading, std::size_t num_vars);
 
 /// @brief A deliberately naive row-echelon matrix, used as an oracle.
-///
-/// Written the obvious way rather than the fast way -- in particular
-/// `add_row_get_index` walks every column from 0 to `num_vars` one at a time,
-/// rather than jumping between set columns -- so that `RowEchelonMatrix`, which
-/// is free to be clever, can be checked against it for identical results and
-/// identical insertion indices.
 class ReferenceMatrix {
 public:
     explicit ReferenceMatrix(std::size_t num_vars)
@@ -52,20 +39,29 @@ public:
     std::size_t rows() const { return rows_.size(); }
 
     /// @brief Row `index`, in row-echelon order.
-    const Bits& row(std::size_t index) const { return rows_[index]; }
+    /// @pre `index < rows()`.
+    const Bits& row(std::size_t index) const {
+        assert(index < rows() && "row index is out of range");
+        return rows_[index];
+    }
 
-    bool is_pivot(std::size_t column) const { return pivot_[column]; }
+    /// @pre `column < num_vars + 1`.
+    bool is_pivot(std::size_t column) const {
+        assert(column < pivot_.size() && "pivot column index is out of range");
+        return pivot_[column];
+    }
 
     std::optional<std::size_t> add_row_get_index(const Bits& v);
 
     void reduce(Bits& v) const;
 
-    /// @brief Reduce, reporting through a sentinel: `std::nullopt` for the true
-    /// equation, otherwise the leading column, where `num_vars` means false.
+    /// @brief Reduce, reporting through the sentinel `expected_result()` takes.
     std::optional<std::size_t> partial_reduce(Bits& v) const;
 
+    /// @pre `rows() > 0`.
     Bits pop_first_row();
 
+    /// @pre `rows() > 0`.
     void pop_last_row();
 
 private:

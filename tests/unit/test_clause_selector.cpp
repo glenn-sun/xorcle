@@ -132,8 +132,6 @@ TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseT
         trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0});
         selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
 
-        // A stack would push both buckets to the same end and yield 1, 0, 2
-        // instead, which is what makes this ordering discriminating.
         CHECK(drain(selector) == std::vector<ClauseId>{1, 2, 0});
     }
 

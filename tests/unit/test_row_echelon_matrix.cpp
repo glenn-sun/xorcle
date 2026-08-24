@@ -30,21 +30,26 @@ void check_matches_reference(const RowEchelonMatrix& matrix, const ReferenceMatr
 
 TEST_CASE_TEMPLATE("row echelon: empty matrix", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const RowEchelonMatrix matrix(repr, 7);
+    const RowEchelonMatrix matrix(repr, 8);
 
     CHECK(matrix.repr() == repr);
     CHECK(matrix.rows() == 0);
-    CHECK(matrix.num_vars() == 7);
     CHECK(matrix.cols() == 8);
     CHECK(matrix.pivot_columns().size() == 8);
     CHECK(matrix.pivot_columns().none());
     CHECK(matrix.begin() == matrix.end());
     check_echelon_invariant(matrix);
+
+    // A row space over `n` variables reserves the last of its `n + 1` columns
+    // for the constant.
+    const RowSpace space(repr, 7);
+    CHECK(space.num_vars() == 7);
+    CHECK(space.cols() == 8);
 }
 
 TEST_CASE_TEMPLATE("row echelon: add_row insertion positions", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    RowEchelonMatrix matrix(repr, 6);
+    RowSpace matrix(repr, 6);
 
     // Insert in an order that forces every kind of insertion: at the end, in
     // the middle, and at the front.
@@ -74,7 +79,7 @@ TEST_CASE_TEMPLATE("row echelon: add_row insertion positions", Tag, DenseTag, Sp
 TEST_CASE_TEMPLATE("row echelon: add_row is idempotent on in-span rows", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    RowEchelonMatrix matrix(repr, 5);
+    RowSpace matrix(repr, 5);
 
     const Equation a = make_equation_with(repr, 5, {0, 2});
     const Equation b = make_equation_with(repr, 5, {1, 5});
@@ -105,7 +110,7 @@ TEST_CASE_TEMPLATE("row echelon: add_row is idempotent on in-span rows", Tag, De
 
 TEST_CASE_TEMPLATE("row echelon: reduce and partial_reduce", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    RowEchelonMatrix matrix(repr, 4);
+    RowSpace matrix(repr, 4);
     matrix.add_row(make_equation_with(repr, 4, {0, 2}));
     matrix.add_row(make_equation_with(repr, 4, {1, 4}));
 
@@ -133,7 +138,7 @@ TEST_CASE_TEMPLATE("row echelon: reduce and partial_reduce", Tag, DenseTag, Spar
     }
 
     SUBCASE("a reduction to the false equation is reported as eq_false") {
-        RowEchelonMatrix contradictory(repr, 4);
+        RowSpace contradictory(repr, 4);
         contradictory.add_row(make_equation_with(repr, 4, {0, 4}));
         Equation v = make_equation_with(repr, 4, {0});
         CHECK(contradictory.partial_reduce(v) == ReduceResult::eq_false());
@@ -143,7 +148,7 @@ TEST_CASE_TEMPLATE("row echelon: reduce and partial_reduce", Tag, DenseTag, Spar
 
 TEST_CASE_TEMPLATE("row echelon: reduce records its coefficients", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    RowEchelonMatrix matrix(repr, 5);
+    RowSpace matrix(repr, 5);
     matrix.add_row(make_equation_with(repr, 5, {0, 3}));
     matrix.add_row(make_equation_with(repr, 5, {1, 4, 5}));
     matrix.add_row(make_equation_with(repr, 5, {2, 5}));
@@ -169,7 +174,7 @@ TEST_CASE_TEMPLATE("row echelon: partial_reduce_with_extra matches an augmented 
     TestRandom random(4242);
 
     for (int trial = 0; trial < 100; ++trial) {
-        RowEchelonMatrix matrix(repr, num_vars);
+        RowSpace matrix(repr, num_vars);
         for (int i = 0; i < 4; ++i) {
             matrix.add_row(to_equation(repr, random_bits(random, num_vars, 3)));
         }
@@ -181,7 +186,7 @@ TEST_CASE_TEMPLATE("row echelon: partial_reduce_with_extra matches an augmented 
             continue;
         }
 
-        RowEchelonMatrix augmented = matrix;
+        RowSpace augmented = matrix;
         REQUIRE(augmented.add_row_get_index(extra).has_value());
         check_echelon_invariant(augmented);
 
@@ -199,7 +204,7 @@ TEST_CASE_TEMPLATE("row echelon: partial_reduce_with_extra matches an augmented 
 TEST_CASE_TEMPLATE("row echelon: partial_reduce_with_extra tolerates a zero extra", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    RowEchelonMatrix matrix(repr, 4);
+    RowSpace matrix(repr, 4);
     matrix.add_row(make_equation_with(repr, 4, {0, 2}));
 
     const Equation zero_extra = Equation::eq_true(repr, 4);
@@ -211,7 +216,7 @@ TEST_CASE_TEMPLATE("row echelon: partial_reduce_with_extra tolerates a zero extr
 
 TEST_CASE_TEMPLATE("row echelon: pop_first_row and pop_last_row", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    RowEchelonMatrix matrix(repr, 6);
+    RowSpace matrix(repr, 6);
     matrix.add_row(make_equation_with(repr, 6, {0, 6}));
     matrix.add_row(make_equation_with(repr, 6, {2}));
     matrix.add_row(make_equation_with(repr, 6, {4, 5}));
@@ -243,7 +248,7 @@ TEST_CASE_TEMPLATE("row echelon: matches the reference matrix", Tag, DenseTag, S
     TestRandom random(987654321);
 
     for (int trial = 0; trial < 60; ++trial) {
-        RowEchelonMatrix matrix(repr, num_vars);
+        RowSpace matrix(repr, num_vars);
         ReferenceMatrix reference(num_vars);
 
         for (int step = 0; step < 40; ++step) {
@@ -287,14 +292,12 @@ TEST_CASE_TEMPLATE("row echelon: matches the reference matrix", Tag, DenseTag, S
 
 TEST_CASE_TEMPLATE("row echelon: a reduced row never leads on a pivot column", Tag, DenseTag,
                    SparseTag) {
-    // A random equation reduced against a random echelon basis must have a
-    // leading column that is not a pivot column of that basis.
     constexpr EquationRepr repr = Tag::value;
     constexpr std::size_t num_vars = 24;
     TestRandom random(31337);
 
     for (int trial = 0; trial < 300; ++trial) {
-        RowEchelonMatrix matrix(repr, num_vars);
+        RowSpace matrix(repr, num_vars);
         const std::size_t basis_size = random.next(num_vars);
         for (std::size_t i = 0; i < basis_size; ++i) {
             matrix.add_row(to_equation(repr, random_bits(random, num_vars, 3)));
@@ -326,7 +329,7 @@ TEST_CASE_TEMPLATE("row echelon: a reduced row never leads on a pivot column", T
         }
         CHECK(fully.classify() == result);
 
-        RowEchelonMatrix extended = matrix;
+        RowSpace extended = matrix;
         CHECK(extended.add_row_get_index(original).has_value() ==
               (result.kind != ReduceResult::Kind::eq_true));
     }
@@ -399,15 +402,15 @@ TEST_CASE_TEMPLATE("clause: to_string", Tag, DenseTag, SparseTag) {
 
 TEST_CASE_TEMPLATE("row echelon: copy is deep", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    RowEchelonMatrix original(repr, 5);
+    RowSpace original(repr, 5);
     original.add_row(make_equation_with(repr, 5, {0, 5}));
 
-    RowEchelonMatrix copy = original;
+    RowSpace copy = original;
     copy.add_row(make_equation_with(repr, 5, {2}));
     CHECK(original.rows() == 1);
     CHECK(copy.rows() == 2);
 
-    RowEchelonMatrix assigned(repr, 5);
+    RowSpace assigned(repr, 5);
     assigned = copy;
     CHECK(assigned.rows() == 2);
     assigned.pop_last_row();
@@ -421,8 +424,8 @@ TEST_CASE("row echelon: the two representations agree") {
     constexpr std::size_t num_vars = 29;
     TestRandom random(2718281828);
 
-    RowEchelonMatrix dense(EquationRepr::dense, num_vars);
-    RowEchelonMatrix sparse(EquationRepr::sparse, num_vars);
+    RowSpace dense(EquationRepr::dense, num_vars);
+    RowSpace sparse(EquationRepr::sparse, num_vars);
 
     for (int step = 0; step < 400; ++step) {
         const Bits candidate = random_bits(random, num_vars, 4);

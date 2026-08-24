@@ -1,5 +1,7 @@
 #include "util/stats.h"
 
+#include <cassert>
+
 namespace xorcle {
 
 std::string
@@ -10,6 +12,7 @@ to_string(const SolveResult result) {
         case SolveResult::unsat:
             return "UNSAT";
     }
+    assert(false && "to_string: not a solve result");
     return "unknown";
 }
 

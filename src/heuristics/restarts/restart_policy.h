@@ -10,48 +10,41 @@
 namespace xorcle {
 
 enum class RestartMethod {
-    none,      ///< Disable restarts.
-    geometric, ///< Geometric conflict-budget growth.
-    luby       ///< Luby-sequence conflict budgets.
+    none,
+    geometric,
+    luby
 };
 
 struct RestartConfig {
-    RestartMethod method = RestartMethod::none;    ///< Which schedule to run.
-    double geometric_multiplier = 1.5;             ///< Growth factor between geometric budgets.
-    std::size_t geometric_initial_conflicts = 100; ///< First geometric budget.
-    std::size_t luby_unit_conflicts = 100;         ///< Budget for a Luby value of 1.
+    RestartMethod method = RestartMethod::none;
+    double geometric_multiplier = 1.5;
+    std::size_t geometric_initial_conflicts = 100;
+    std::size_t luby_unit_conflicts = 100; ///< The budget for a Luby value of 1.
 };
 
-/// @brief Stateful restart scheduler driven by conflict counts. `core/` performs
-/// the restart; this decides whether to.
+/// @brief Stateful restart scheduler driven by conflict counts.
 ///
-/// @warning **Restarts are experimental.** The schedules here are untuned, the
-/// CLI marks `--restart=` accordingly, and the default is `RestartMethod::none`.
+/// @warning Restarts are experimental and the schedules here are untuned.
 class RestartPolicy {
 public:
     virtual ~RestartPolicy() = default;
 
     virtual bool enabled() const = 0;
 
-    /// @brief Record one non-root conflict; true exactly when it exhausts the
-    /// active restart budget. Consumes a conflict but does not advance to the
-    /// next budget; only `note_restart()` does that.
+    /// @brief Record one non-root conflict; true exactly when it exhausts the active budget.
+    ///
+    /// Consumes a conflict but does not advance to the next budget.
     virtual bool should_restart_after_conflict() = 0;
 
     /// @brief Advance to the next budget.
-    /// @pre A restart has just happened. Nothing inside a policy can see the
-    /// solver, so this one is on the caller and is not asserted; calling it
-    /// without restarting silently skips a budget.
+    /// @pre A restart has just happened.
     virtual void note_restart() = 0;
 };
 
-/// @brief The `RestartMethod::none` policy: never restart. A null object, so the
-/// solver can hold a non-null `RestartPolicy` unconditionally.
 class NoRestarts final : public RestartPolicy {
 public:
     bool enabled() const override;
 
-    /// @brief Always false; no budget is ever consumed.
     bool should_restart_after_conflict() override;
 
     void note_restart() override;

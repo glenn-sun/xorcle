@@ -6,9 +6,7 @@
 namespace xorcle {
 namespace {
 
-/// @brief Bits consumed from the RNG per draw. Not the digit count of some
-/// storage word: this is part of the reproducibility contract, not a property of
-/// how `IndexSet` happens to be laid out.
+/// @brief Bits consumed from the RNG per draw.
 constexpr std::size_t bits_per_draw = 64;
 
 /// @brief SplitMix64 finalizer, with the gamma increment applied first.
@@ -40,23 +38,21 @@ random_int(Rng& rng, int upper_bound) {
 }
 
 IndexSet
-random_nonzero_coefficients(std::size_t num_bits, Rng& rng) {
-    assert(num_bits > 0 && "random_nonzero_coefficients needs a positive bit count");
+random_nonzero_coefficients(std::size_t num_rows, Rng& rng) {
+    assert(num_rows > 0 && "random_nonzero_coefficients needs a positive row count");
 
-    const std::size_t draws_per_attempt = (num_bits + bits_per_draw - 1) / bits_per_draw;
+    const std::size_t draws_per_attempt = (num_rows + bits_per_draw - 1) / bits_per_draw;
 
-    IndexSet coefficients(num_bits);
+    IndexSet coefficients(num_rows);
     do {
         coefficients.clear();
         for (std::size_t draw = 0; draw < draws_per_attempt; ++draw) {
             const std::uint64_t word = rng();
-            const std::size_t first_bit = draw * bits_per_draw;
-            // Bits at or beyond `num_bits` are dropped, expressed as a bound on
-            // the index so that it does not depend on any storage layout.
-            const std::size_t bits_this_draw = std::min(bits_per_draw, num_bits - first_bit);
-            for (std::size_t offset = 0; offset < bits_this_draw; ++offset) {
+            const std::size_t first_index = draw * bits_per_draw;
+            const std::size_t indices_this_draw = std::min(bits_per_draw, num_rows - first_index);
+            for (std::size_t offset = 0; offset < indices_this_draw; ++offset) {
                 if ((word >> offset) & 1ULL) {
-                    coefficients.set(first_bit + offset);
+                    coefficients.set(first_index + offset);
                 }
             }
         }

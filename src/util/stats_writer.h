@@ -11,8 +11,7 @@
 
 namespace xorcle {
 
-/// @brief Thread-safe writer for solver statistics: `log()` synchronizes,
-/// derived writers implement `log_impl()`.
+/// @brief Thread-safe writer for solver statistics.
 class StatsWriter {
 public:
     virtual ~StatsWriter() = default;
@@ -34,7 +33,7 @@ protected:
 };
 
 /// @brief Log solver statistics to a CSV file.
-/// @throws std::runtime_error If the output file cannot be opened.
+/// @throws std::runtime_error If the output file cannot be opened or written.
 class CsvStatsWriter : public StatsWriter {
 public:
     explicit CsvStatsWriter(std::string path);
