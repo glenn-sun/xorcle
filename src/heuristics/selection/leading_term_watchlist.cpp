@@ -25,11 +25,11 @@ void debug_assert_non_unit_watches_valid(const Clause& clause) {
 LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars)
     : by_leading_term_(num_vars + 1) {}
 
-std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex row_id) const {
+std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex row_idx) const {
     // Stronger than `RowEchelonMatrix::row()`'s own bound check below: this says
     // the clause's *stored watch* is in range.
-    assert(row_id < clause.rows() && "watched row index out of range");
-    const ReduceResult leading = clause.row(row_id).classify();
+    assert(row_idx < clause.rows() && "watched row index out of range");
+    const ReduceResult leading = clause.row(row_idx).classify();
     // A stored clause row is never the true equation, and the constant column is
     // a legal bucket, so both surviving cases name a real column. The bucket
     // array is sized for the *initial* variable numbering and never shrunk.

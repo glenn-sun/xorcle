@@ -23,6 +23,7 @@ concept GF2Vector = requires(V v, const V cv, std::size_t i, std::span<const std
     { cv.leading_bit() } -> std::same_as<std::optional<std::size_t>>;
     { cv.next_bit(i) } -> std::same_as<std::optional<std::size_t>>; // strictly after `i`
     { v.plus_assign(cv) } -> std::same_as<void>;
+    { v.plus_assign_and_next_bit(cv, i) } -> std::same_as<std::optional<std::size_t>>;
     { v.assign_from(cv) } -> std::same_as<void>; // no allocation
     { cv.equals(cv) } -> std::same_as<bool>;
     { cv.hash() } -> std::same_as<std::size_t>;

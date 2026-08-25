@@ -65,6 +65,15 @@ public:
     /// @pre `other.num_bits() == num_bits()`.
     void plus_assign(const SparseGF2Vector& other);
 
+    /// @brief Add `other` in and return the first set bit after `i`.
+    /// @pre Neither vector has a set bit below `i`, `other.num_bits() ==
+    /// num_bits()`, and `i < num_bits()`.
+    std::optional<std::size_t> plus_assign_and_next_bit(const SparseGF2Vector& other,
+                                                        std::size_t i) {
+        plus_assign(other);
+        return next_bit(i);
+    }
+
     /// @brief Overwrite from `other` without allocating.
     /// @pre `other.num_bits() == num_bits()`.
     void assign_from(const SparseGF2Vector& other);

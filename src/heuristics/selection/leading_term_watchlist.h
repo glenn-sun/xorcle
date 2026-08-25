@@ -61,8 +61,8 @@ private:
     /// @pre The queue is not empty.
     ClauseId pop();
 
-    /// @pre `row_id < clause.rows()`, and that row is not the true equation.
-    std::size_t bucket_of(const Clause& clause, ClauseRowIndex row_id) const;
+    /// @pre `row_idx < clause.rows()`, and that row is not the true equation.
+    std::size_t bucket_of(const Clause& clause, ClauseRowIndex row_idx) const;
 
     /// @brief Bucket a clause by both watched rows, or record it as a unit.
     void index_clause(ClauseId id);

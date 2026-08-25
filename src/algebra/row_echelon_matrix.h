@@ -49,13 +49,13 @@ public:
     /// @brief Does nothing if `v` is already in the span.
     /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`, here and in
     /// `add_row_get_index()`.
-    void add_row(const Equation& v) { add_row_get_index(v); }
+    void add_row(Equation v) { add_row_get_index(std::move(v)); }
 
     /// @brief The inserted index, or `std::nullopt` if `v` was already in the span.
-    std::optional<std::size_t> add_row_get_index(const Equation& v) {
+    std::optional<std::size_t> add_row_get_index(Equation v) {
         assert(v.num_bits() == cols() && "add_row: bit count does not match the matrix");
         assert(v.repr() == repr() && "add_row: representation does not match the matrix");
-        return interface_->add_row_get_index(v);
+        return interface_->add_row_get_index(std::move(v));
     }
 
     /// @brief Reduce `v` in place by every stored row whose pivot it carries.

@@ -66,6 +66,26 @@ public:
 template <GF2Vector V>
 class EquationTemplate final : public EquationInterface {
 public:
+    /// @brief Recycle the object's storage rather than returning it to malloc.
+    /// Reducing allocates and frees an equation for every row a matrix gains or
+    /// loses, all of them this size.
+    static void* operator new(std::size_t size) {
+        if (free_list_.empty()) {
+            return ::operator new(size);
+        }
+        void* block = free_list_.back();
+        free_list_.pop_back();
+        return block;
+    }
+
+    static void operator delete(void* block) noexcept {
+        if (free_list_.size() >= free_list_cap) {
+            ::operator delete(block);
+            return;
+        }
+        free_list_.push_back(block);
+    }
+
     explicit EquationTemplate(std::size_t num_bits) : vector_(num_bits) {}
 
     explicit EquationTemplate(V vec) : vector_(std::move(vec)) {}
@@ -206,6 +226,9 @@ private:
     static const EquationTemplate& cast(const EquationInterface& interface) noexcept {
         return static_cast<const EquationTemplate&>(interface);
     }
+
+    static constexpr std::size_t free_list_cap = 1 << 16;
+    static inline std::vector<void*> free_list_;
 
     V vector_;
 };

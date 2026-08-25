@@ -102,6 +102,37 @@ public:
         }
     }
 
+    /// @brief Add `other` in and return the first set bit after `i`, in one pass
+    /// over the words.
+    /// @pre Neither vector has a set bit below `i`, `other.num_bits() ==
+    /// num_bits()`, and `i < num_bits()`.
+    std::optional<std::size_t> plus_assign_and_next_bit(const DenseGF2Vector& other,
+                                                        std::size_t i) noexcept {
+        assert(bits_.size() == other.bits_.size() && "bit count mismatch in plus_assign");
+        assert(i < bits_.size() && "plus_assign_and_next_bit index is out of range");
+        assert(no_set_bit_below(i) && other.no_set_bit_below(i) &&
+               "plus_assign_and_next_bit starts below a set bit");
+        Word* lhs = bits_.store();
+        const Word* rhs = other.bits_.store();
+        const std::size_t num_words = bits_.words();
+        // Words below `i` are zero in both vectors, so the add can start there.
+        const std::size_t first = i >> word_shift;
+        const std::size_t next = i + 1;
+        std::optional<std::size_t> found;
+        for (std::size_t w = first; w < num_words; ++w) {
+            const Word word = (lhs[w] ^= rhs[w]);
+            if (found) {
+                continue;
+            }
+            const Word above =
+                (next >> word_shift) == w ? word & (~Word{0} << (next & word_mask)) : word;
+            if (above != 0) {
+                found = (w << word_shift) + static_cast<std::size_t>(std::countr_zero(above));
+            }
+        }
+        return found;
+    }
+
     /// @brief Overwrite from `other` without allocating.
     /// @pre `other.num_bits() == num_bits()`.
     void assign_from(const DenseGF2Vector& other) noexcept;
@@ -119,6 +150,14 @@ public:
     }
 
 private:
+#ifndef NDEBUG
+    /// @brief Whether every bit below `i` is zero, for the fused add's precondition.
+    bool no_set_bit_below(std::size_t i) const noexcept {
+        const std::optional<std::size_t> first = leading_bit();
+        return !first || *first >= i;
+    }
+#endif
+
     static constexpr std::size_t bits_per_word = sizeof(Word) * 8;
 
     /// @brief `log2(bits_per_word)`: shifts a bit index down to its word index.
