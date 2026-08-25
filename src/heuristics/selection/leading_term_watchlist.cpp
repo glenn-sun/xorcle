@@ -129,14 +129,16 @@ void LeadingTermWatchlist::add_asserting_clause(Clause clause, const Trail&, std
 void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
                                                     const Trail& trail) {
     const ReduceResult leading = reduced_eqn.classify();
-    // The trail never learns the true equation, and the false equation is the
-    // conflict the solver detects separately, so there is always a real column.
-    assert(leading.is_leading() && "learned equation has no leading bit");
-    assert(leading.bit < by_leading_term_.size() && "leading column out of bucket range");
+    // The trail never learns the true equation; the false equation is the
+    // conflicting propagation, and buckets to the constant column as a row does.
+    assert(leading.kind != ReduceResult::Kind::eq_true &&
+           "learned equation is the true equation");
+    const std::size_t bucket = leading.is_leading() ? leading.bit : reduced_eqn.num_bits() - 1;
+    assert(bucket < by_leading_term_.size() && "leading column out of bucket range");
 
-    // Reduction can only lift a row's leading term up to `leading.bit`, and
-    // only from a column that is itself a pivot; only those buckets need waking.
-    std::size_t pivots_below = trail.span().pivot_columns().count_below(leading.bit);
+    // Reduction can only lift a row's leading term up to `bucket`, and only
+    // from a column that is itself a pivot; only those buckets need waking.
+    std::size_t pivots_below = trail.span().pivot_columns().count_below(bucket);
     if (pivots_below != 0) {
         trail.span().pivot_columns().for_each_set([&](std::size_t column) {
             if (pivots_below == 0) {
@@ -148,7 +150,7 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
             append_bottom(by_leading_term_[column]);
         });
     }
-    append_top(by_leading_term_[leading.bit]);
+    append_top(by_leading_term_[bucket]);
 }
 
 void LeadingTermWatchlist::update_with_new_watch(ClauseId id, ClauseRowIndex old_watch,

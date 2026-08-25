@@ -37,8 +37,8 @@ public:
     void add_asserting_clause(Clause clause, const Trail& trail,
                               std::size_t removed_levels) override;
 
-    /// @pre `reduced_eqn` has a leading column this watchlist has a bucket for, and `trail`
-    /// is over the numbering it was constructed with.
+    /// @pre `reduced_eqn` is not the true equation, and `trail` is over the numbering it
+    /// was constructed with.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
     /// @pre `id` names an active clause and `old_watch < clause(id).rows()`.
