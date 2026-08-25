@@ -252,7 +252,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK_FALSE(parse_options({"--help"}, help, "xorcle", "0.0.0-test").has_value());
     const std::string text = help.str();
 
-    CHECK(contains(text, "Usage: xorcle [options] <input>"));
+    CHECK(contains(text, "Usage: xorcle [options] <instance>"));
     CHECK(contains(text, "--equation-repr=dense|sparse"));
     CHECK(contains(text, "[default: dense]"));
     CHECK(contains(text, "--seed=N"));

@@ -380,7 +380,7 @@ inline void append_option_help(std::ostream& out, std::string_view table_name,
 /// @brief Print the usage line and every option, from the table.
 inline void print_help(std::ostream& out, std::string_view program_name, std::string_view version) {
     out << "xorcle " << version << "\n"
-        << "Usage: " << program_name << " [options] <input>\n"
+        << "Usage: " << program_name << " [options] <instance>\n"
         << "\n"
         << "Solves an XNF instance: a conjunction of clauses, each a disjunction\n"
         << "of linear equations modulo 2.\n"
@@ -500,7 +500,7 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     if (positionals.size() != 1) {
         throw CliError("expected exactly one input file, got " +
                        std::to_string(positionals.size()) + "; usage: " + std::string(program_name) +
-                       " [options] <input>");
+                       " [options] <instance>");
     }
     options.input_path = positionals.front();
 
