@@ -349,12 +349,12 @@ TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the cur
     std::vector<std::size_t> asserting_levels{basis.asserting_level()};
     std::size_t steps = 0;
     while (basis.asserting_level() == trail.level()) {
-        const std::optional<std::size_t> pivot_column = basis.row(0).leading_bit();
-        REQUIRE(pivot_column.has_value());
-        resolve_asserting_basis_with_reason(basis, *pivot_column, trail, conflict.clauses,
+        const std::optional<std::size_t> pivot_col_idx = basis.row(0).leading_bit();
+        REQUIRE(pivot_col_idx.has_value());
+        resolve_asserting_basis_with_reason(basis, *pivot_col_idx, trail, conflict.clauses,
                                             decisions, trail_basis_one);
         // Each step strictly advances the pivot column.
-        REQUIRE(basis.row(0).leading_bit() > pivot_column);
+        REQUIRE(basis.row(0).leading_bit() > pivot_col_idx);
         asserting_levels.push_back(basis.asserting_level());
         ++steps;
         REQUIRE(steps <= trail.span().rows());

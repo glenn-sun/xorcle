@@ -142,8 +142,8 @@ void VariableVsids::update_with_critical_equation(const Equation& eqn) {
 }
 
 void VariableVsids::update_with_asserting_clause(const Clause& clause) {
-    for (std::size_t row_index = 0; row_index < clause.rows(); ++row_index) {
-        const ReduceResult leading = clause.row(row_index).classify();
+    for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
+        const ReduceResult leading = clause.row(row_idx).classify();
         assert(leading.is_leading() && leading.bit < unit_eqns_.size() &&
                "asserting clause row has no variable leading bit");
         vsids_params_.bump_activity(unit_eqns_[leading.bit]);

@@ -34,8 +34,8 @@ std::size_t removable_levels_reference(const TrailBasisSpace& basis, const Trail
         const std::size_t columns_after_level = trail.span().rows() - earlier_trail_rows;
 
         bool second_row_suffix_any = false;
-        for (const std::size_t column : second_row) {
-            if (column < columns_after_level) {
+        for (const std::size_t col_idx : second_row) {
+            if (col_idx < columns_after_level) {
                 second_row_suffix_any = true;
                 break;
             }
@@ -105,9 +105,9 @@ const std::vector<std::size_t>& levelled_trail_step_levels() {
 TrailBasisSpace make_basis(const Trail& trail,
                            const std::vector<std::vector<std::size_t>>& rows) {
     TrailBasisSpace basis(trail);
-    for (const std::vector<std::size_t>& columns : rows) {
+    for (const std::vector<std::size_t>& col_idxs : rows) {
         Equation row = Equation::with_num_bits(trail.repr(), basis.cols());
-        row.assign_bits(std::span<const std::size_t>(columns));
+        row.assign_bits(std::span<const std::size_t>(col_idxs));
         basis.add_row(row);
     }
     return basis;
@@ -149,12 +149,12 @@ RandomTrail make_random_trail(EquationRepr repr, TestRandom& rng, std::size_t nu
     for (std::size_t step = 0; step < num_vars; ++step) {
         // Every equation is a unit on a variable no earlier step touched, so the
         // span never absorbs one and each step really does add a row.
-        std::vector<std::size_t> columns{variables[step]};
+        std::vector<std::size_t> col_idxs{variables[step]};
         if (rng.chance(2)) {
-            columns.push_back(num_vars);
+            col_idxs.push_back(num_vars);
         }
         Equation eqn(repr, num_vars);
-        eqn.assign_bits(std::span<const std::size_t>(columns));
+        eqn.assign_bits(std::span<const std::size_t>(col_idxs));
 
         const bool decide = rng.chance(2);
         trail.learn(eqn, decide ? std::optional<ClauseId>{} : std::optional<ClauseId>{step});
@@ -267,8 +267,8 @@ TEST_CASE_TEMPLATE("trail basis: asserting level of a unit clause is the root", 
     // A single row converts back to a unit clause, so it asserts at the root
     // whatever it is made of. The reference counts levels discarded instead,
     // which is 3 here -- the opposite end of the same range.
-    for (const std::size_t column : {std::size_t{0}, std::size_t{3}, std::size_t{7}}) {
-        const TrailBasisSpace basis = make_basis(trail, {{column}});
+    for (const std::size_t col_idx : {std::size_t{0}, std::size_t{3}, std::size_t{7}}) {
+        const TrailBasisSpace basis = make_basis(trail, {{col_idx}});
         REQUIRE(basis.rows() == 1);
         CHECK(basis.asserting_level() == 0);
         check_asserting_level(basis, trail, levelled_trail_step_levels());
@@ -357,17 +357,17 @@ TEST_CASE_TEMPLATE("trail basis: asserting level agrees with the reference arith
         TrailBasisSpace basis(trail);
         const std::size_t attempts = 1 + rng.next(4);
         for (std::size_t attempt = 0; attempt < attempts; ++attempt) {
-            std::vector<std::size_t> columns;
-            for (std::size_t column = 0; column < basis.cols(); ++column) {
+            std::vector<std::size_t> col_idxs;
+            for (std::size_t col_idx = 0; col_idx < basis.cols(); ++col_idx) {
                 if (rng.chance(3)) {
-                    columns.push_back(column);
+                    col_idxs.push_back(col_idx);
                 }
             }
-            if (columns.empty()) {
+            if (col_idxs.empty()) {
                 continue;
             }
             Equation row = Equation::with_num_bits(repr, basis.cols());
-            row.assign_bits(std::span<const std::size_t>(columns));
+            row.assign_bits(std::span<const std::size_t>(col_idxs));
             basis.add_row(row);
         }
         if (basis.rows() == 0) {

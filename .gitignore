@@ -36,6 +36,7 @@ __pycache__/
 # Proofs and profiling artifacts
 *.lrup
 *.dSYM/
+profile.json
 perf.data*
 *.profraw
 *.profdata

@@ -65,6 +65,15 @@ add_library(xorcle_core
 target_link_libraries(xorcle_core PUBLIC gf2::gf2)
 target_include_directories(xorcle_core PUBLIC src)
 
+# Frame pointers, which a sampling profiler needs to walk the stack and the
+# optimizer otherwise drops. RelWithDebInfo is the profiling configuration.
+if(MSVC)
+    target_compile_options(xorcle_core PUBLIC $<$<CONFIG:RelWithDebInfo>:/Oy->)
+else()
+    target_compile_options(xorcle_core PUBLIC
+        $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer;-fno-optimize-sibling-calls>)
+endif()
+
 # gf2 gates its bounds checks on `gf2_debug_assert`, which is a no-op unless
 # DEBUG is defined -- and neither CMake's Debug build type nor gf2's own
 # FetchContent-consumed CMakeLists defines it.

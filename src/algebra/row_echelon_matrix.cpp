@@ -20,7 +20,7 @@ RowEchelonMatrix& RowEchelonMatrix::operator=(const RowEchelonMatrix& other) {
 
 IndexSet RowSpace::unique_solution() const {
     assert(rows() + 1 == cols() && "row space is not full-rank");
-    assert(!pivot_columns().test(cols() - 1) && "row space contains the false equation");
+    assert(!pivot_col_idxs().test(cols() - 1) && "row space contains the false equation");
 
     return interface().solution();
 }

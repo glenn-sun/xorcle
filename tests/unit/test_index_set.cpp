@@ -8,66 +8,66 @@
 namespace xorcle {
 
 TEST_CASE("index_set: construction and basic access") {
-    IndexSet columns(200);
-    CHECK(columns.size() == 200);
-    CHECK(columns.none());
-    CHECK(columns.count() == 0);
+    IndexSet col_idxs(200);
+    CHECK(col_idxs.size() == 200);
+    CHECK(col_idxs.none());
+    CHECK(col_idxs.count() == 0);
 
-    columns.set(0);
-    columns.set(63);
-    columns.set(64);
-    columns.set(199);
-    CHECK_FALSE(columns.none());
-    CHECK(columns.count() == 4);
-    CHECK(columns.test(0));
-    CHECK(columns.test(63));
-    CHECK(columns.test(64));
-    CHECK(columns.test(199));
-    CHECK_FALSE(columns.test(1));
+    col_idxs.set(0);
+    col_idxs.set(63);
+    col_idxs.set(64);
+    col_idxs.set(199);
+    CHECK_FALSE(col_idxs.none());
+    CHECK(col_idxs.count() == 4);
+    CHECK(col_idxs.test(0));
+    CHECK(col_idxs.test(63));
+    CHECK(col_idxs.test(64));
+    CHECK(col_idxs.test(199));
+    CHECK_FALSE(col_idxs.test(1));
 
-    columns.reset(64);
-    CHECK_FALSE(columns.test(64));
-    CHECK(columns.count() == 3);
+    col_idxs.reset(64);
+    CHECK_FALSE(col_idxs.test(64));
+    CHECK(col_idxs.count() == 3);
 
-    columns.clear();
-    CHECK(columns.none());
-    CHECK(columns.size() == 200);
+    col_idxs.clear();
+    CHECK(col_idxs.none());
+    CHECK(col_idxs.size() == 200);
 
-    columns.reset_size(10);
-    CHECK(columns.size() == 10);
-    CHECK(columns.none());
+    col_idxs.reset_size(10);
+    CHECK(col_idxs.size() == 10);
+    CHECK(col_idxs.none());
 }
 
 TEST_CASE("index_set: count_below gives row-echelon insertion indices") {
-    IndexSet columns(300);
+    IndexSet col_idxs(300);
     const std::vector<std::size_t> set_columns{2, 5, 63, 64, 128, 200, 299};
-    for (const std::size_t column : set_columns) {
-        columns.set(column);
+    for (const std::size_t col_idx : set_columns) {
+        col_idxs.set(col_idx);
     }
 
     // count_below(i) must equal the number of set columns strictly below i,
     // which is exactly where a row leading on column i is inserted.
-    for (std::size_t i = 0; i <= columns.size(); ++i) {
+    for (std::size_t i = 0; i <= col_idxs.size(); ++i) {
         std::size_t expected = 0;
-        for (const std::size_t column : set_columns) {
-            if (column < i) {
+        for (const std::size_t col_idx : set_columns) {
+            if (col_idx < i) {
                 ++expected;
             }
         }
-        CHECK(columns.count_below(i) == expected);
+        CHECK(col_idxs.count_below(i) == expected);
     }
-    CHECK(columns.count_below(columns.size()) == columns.count());
+    CHECK(col_idxs.count_below(col_idxs.size()) == col_idxs.count());
 }
 
 TEST_CASE("index_set: for_each_set visits set columns in ascending order") {
-    IndexSet columns(400);
+    IndexSet col_idxs(400);
     const std::vector<std::size_t> expected{0, 1, 64, 65, 191, 256, 399};
-    for (const std::size_t column : expected) {
-        columns.set(column);
+    for (const std::size_t col_idx : expected) {
+        col_idxs.set(col_idx);
     }
 
     std::vector<std::size_t> seen;
-    columns.for_each_set([&](std::size_t column) { seen.push_back(column); });
+    col_idxs.for_each_set([&](std::size_t col_idx) { seen.push_back(col_idx); });
     CHECK(seen == expected);
 }
 
@@ -76,29 +76,29 @@ TEST_CASE("index_set: equality and randomized agreement with a reference") {
     constexpr std::size_t num_columns = 260;
 
     for (int trial = 0; trial < 100; ++trial) {
-        IndexSet columns(num_columns);
+        IndexSet col_idxs(num_columns);
         std::vector<bool> reference(num_columns, false);
-        for (std::size_t column = 0; column < num_columns; ++column) {
+        for (std::size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
             if (random.chance(3)) {
-                columns.set(column);
-                reference[column] = true;
+                col_idxs.set(col_idx);
+                reference[col_idx] = true;
             }
         }
 
         std::size_t expected_count = 0;
-        for (std::size_t column = 0; column < num_columns; ++column) {
-            REQUIRE(columns.test(column) == reference[column]);
-            if (reference[column]) {
+        for (std::size_t col_idx = 0; col_idx < num_columns; ++col_idx) {
+            REQUIRE(col_idxs.test(col_idx) == reference[col_idx]);
+            if (reference[col_idx]) {
                 ++expected_count;
             }
-            CHECK(columns.count_below(column) ==
-                  static_cast<std::size_t>(expected_count - (reference[column] ? 1 : 0)));
+            CHECK(col_idxs.count_below(col_idx) ==
+                  static_cast<std::size_t>(expected_count - (reference[col_idx] ? 1 : 0)));
         }
-        CHECK(columns.count() == expected_count);
-        CHECK(columns.none() == (expected_count == 0));
+        CHECK(col_idxs.count() == expected_count);
+        CHECK(col_idxs.none() == (expected_count == 0));
 
-        const IndexSet copy = columns;
-        CHECK(copy == columns);
+        const IndexSet copy = col_idxs;
+        CHECK(copy == col_idxs);
     }
 }
 

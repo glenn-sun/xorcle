@@ -12,9 +12,9 @@ namespace xorcle {
 namespace {
 
 std::optional<std::size_t> find_row_index(const Clause& clause, const Equation& clause_row) {
-    for (std::size_t row_index = 0; row_index < clause.rows(); ++row_index) {
-        if (clause.row(row_index) == clause_row) {
-            return row_index;
+    for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
+        if (clause.row(row_idx) == clause_row) {
+            return row_idx;
         }
     }
     return std::nullopt;
@@ -22,17 +22,17 @@ std::optional<std::size_t> find_row_index(const Clause& clause, const Equation& 
 
 /// @return The first row index other than `row_to_avoid`, or 0 if there is none.
 std::size_t first_distinct_row(std::size_t num_rows, std::size_t row_to_avoid) {
-    for (std::size_t row_index = 0; row_index < num_rows; ++row_index) {
-        if (row_index != row_to_avoid) {
-            return row_index;
+    for (std::size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+        if (row_idx != row_to_avoid) {
+            return row_idx;
         }
     }
     return 0;
 }
 
-Equation compact_old_row(const Clause& old_clause, std::size_t row_index,
+Equation compact_old_row(const Clause& old_clause, std::size_t row_idx,
                          const RowSpace& trail_span, const CompactionTransform& transform) {
-    Equation reduced_row = old_clause.row(row_index);
+    Equation reduced_row = old_clause.row(row_idx);
     trail_span.reduce(reduced_row);
     return reduced_row.compact(transform);
 }
@@ -92,7 +92,7 @@ bool should_compact_before_decision(const CompactionState& state) {
         return false;
     }
 
-    const IndexSet& pivots = state.trail.span().pivot_columns();
+    const IndexSet& pivots = state.trail.span().pivot_col_idxs();
     assert(pivots.size() == state.active_num_vars + 1 && "trail pivot column count mismatch");
     return pivots.count_below(state.active_num_vars) != 0;
 }
@@ -102,7 +102,7 @@ CompactionTransform build_compaction_transform(const Trail& trail, std::size_t a
     // The pivot set's size and its constant column are checked one layer down, by
     // `CompactionTransform::from_dropped_columns()`.
     return CompactionTransform::from_dropped_columns(active_num_vars,
-                                                     trail.span().pivot_columns());
+                                                     trail.span().pivot_col_idxs());
 }
 
 CompactionPlan build_compaction_plan(const CompactionState& state,
@@ -144,9 +144,9 @@ CompactionPlan build_compaction_plan(const CompactionState& state,
             continue;
         }
 
-        for (std::size_t row_index = 0; row_index < active_clause.rows(); ++row_index) {
+        for (std::size_t row_idx = 0; row_idx < active_clause.rows(); ++row_idx) {
             rewritten.add_row(
-                compact_old_row(active_clause, row_index, state.trail.span(), transform));
+                compact_old_row(active_clause, row_idx, state.trail.span(), transform));
         }
         assert(rewritten.rows() != 0 && "an active clause compacted to zero rows");
 

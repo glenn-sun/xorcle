@@ -17,8 +17,8 @@ namespace {
 /// @brief The trail-order sequence of set columns, resolved through `order_map()`.
 std::vector<std::vector<std::size_t>> rows_in_trail_order(const TrailSnapshot& snapshot) {
     std::vector<std::vector<std::size_t>> out;
-    for (const std::size_t row_index : snapshot.order_map()) {
-        out.push_back(bits_of(snapshot.span().row(row_index)));
+    for (const std::size_t row_idx : snapshot.order_map()) {
+        out.push_back(bits_of(snapshot.span().row(row_idx)));
     }
     return out;
 }

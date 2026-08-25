@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef XORCLE_COL_IDX_TO_ROW_DIVISOR
+#define XORCLE_COL_IDX_TO_ROW_DIVISOR 8
+#endif
+
 #include <cassert>
 #include <cstddef>
 #include <memory>
@@ -32,7 +36,7 @@ public:
 
     virtual const Equation& row(std::size_t index) const = 0;
 
-    virtual const IndexSet& pivot_columns() const noexcept = 0;
+    virtual const IndexSet& pivot_col_idxs() const noexcept = 0;
 
     virtual std::optional<std::size_t> add_row_get_index(const Equation& v) = 0;
 
@@ -61,8 +65,38 @@ public:
 template <GF2Vector V>
 class RowEchelonMatrixTemplate final : public RowEchelonMatrixInterface {
 public:
+    /// @brief A table indexed by column costs `cols()` to build, so it pays off
+    /// once the rows occupy this fraction of the columns.
+    static constexpr std::size_t col_idx_to_row_divisor = XORCLE_COL_IDX_TO_ROW_DIVISOR;
+
     explicit RowEchelonMatrixTemplate(std::size_t cols)
-        : pivot_columns_(cols), column_to_row_(cols, 0), cols_(cols) {}
+        : pivot_col_idxs_(cols), col_idx_to_row_idx_(cols, 0), cols_(cols) {}
+
+    // `pivot_row_` points into another matrix's rows, so a copy has to rebuild it.
+    RowEchelonMatrixTemplate(const RowEchelonMatrixTemplate& other)
+        : rows_(other.rows_), pivot_col_idxs_(other.pivot_col_idxs_),
+          col_idx_to_row_idx_(other.col_idx_to_row_idx_), cols_(other.cols_) {
+        if (!other.col_idx_to_row_.empty()) {
+            build_col_idx_to_row();
+        }
+    }
+
+    RowEchelonMatrixTemplate& operator=(const RowEchelonMatrixTemplate& other) {
+        if (this != &other) {
+            rows_ = other.rows_;
+            pivot_col_idxs_ = other.pivot_col_idxs_;
+            col_idx_to_row_idx_ = other.col_idx_to_row_idx_;
+            cols_ = other.cols_;
+            col_idx_to_row_.clear();
+            if (!other.col_idx_to_row_.empty()) {
+                build_col_idx_to_row();
+            }
+        }
+        return *this;
+    }
+
+    RowEchelonMatrixTemplate(RowEchelonMatrixTemplate&&) = default;
+    RowEchelonMatrixTemplate& operator=(RowEchelonMatrixTemplate&&) = default;
 
     EquationRepr repr() const noexcept override { return V::repr; }
 
@@ -76,46 +110,53 @@ public:
 
     const Equation& row(std::size_t index) const override { return rows_[index]; }
 
-    const IndexSet& pivot_columns() const noexcept override { return pivot_columns_; }
+    const IndexSet& pivot_col_idxs() const noexcept override { return pivot_col_idxs_; }
 
     std::optional<std::size_t> add_row_get_index(const Equation& v) override {
         // Partially reduce a copy of `v` against the stored rows.
         Equation reduced = v;
         V& reduced_row = gf2_vector_of<V>(reduced);
-        std::optional<std::size_t> leading = reduced_row.leading_bit();
-        while (leading && pivot_columns_.test(*leading)) {
-            reduced_row.plus_assign(gf2_vector_of<V>(rows_[column_to_row_[*leading]]));
-            leading = reduced_row.next_bit(*leading);
+        std::optional<std::size_t> leading_col_idx = reduced_row.leading_bit();
+        while (leading_col_idx && pivot_col_idxs_.test(*leading_col_idx)) {
+            reduced_row.plus_assign(gf2_vector_of<V>(rows_[col_idx_to_row_idx_[*leading_col_idx]]));
+            leading_col_idx = reduced_row.next_bit(*leading_col_idx);
         }
-        if (!leading) {
+        if (!leading_col_idx) {
             return std::nullopt; // `v` already belongs to the span
         }
 
         // Row-echelon order means the insertion index is the number of pivots
         // strictly below the new leading column
-        const std::size_t leading_column = *leading;
-        const std::size_t insert_index = pivot_columns_.count_below(leading_column);
+        const std::size_t new_pivot_col_idx = *leading_col_idx;
+        const std::size_t insert_row_idx = pivot_col_idxs_.count_below(new_pivot_col_idx);
 
-        rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_index), std::move(reduced));
-        pivot_columns_.for_each_set([&](std::size_t pivot_column) {
-            if (pivot_column > leading_column) {
-                ++column_to_row_[pivot_column];
+        rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_row_idx), std::move(reduced));
+        pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
+            if (pivot_col_idx > new_pivot_col_idx) {
+                ++col_idx_to_row_idx_[pivot_col_idx];
             }
         });
-        pivot_columns_.set(leading_column);
-        column_to_row_[leading_column] = insert_index;
+        pivot_col_idxs_.set(new_pivot_col_idx);
+        col_idx_to_row_idx_[new_pivot_col_idx] = insert_row_idx;
+        // Inserting moves handles, never the equations they own, so the entries
+        // for the other pivot columns stay valid.
+        if (!col_idx_to_row_.empty()) {
+            col_idx_to_row_[new_pivot_col_idx] = &gf2_vector_of<V>(rows_[insert_row_idx]);
+        } else if (rows_.size() * col_idx_to_row_divisor >= cols_) {
+            build_col_idx_to_row();
+        }
 
         debug_assert_valid_representation();
-        return insert_index;
+        return insert_row_idx;
     }
 
     void reduce(Equation& v) const override {
         V& row = gf2_vector_of<V>(v);
         // `v` is mutated while its set columns are being walked, so `next_bit`
         // must be re-evaluated against the live row each time.
-        for (auto column = row.leading_bit(); column; column = row.next_bit(*column)) {
-            if (pivot_columns_.test(*column)) {
-                row.plus_assign(gf2_vector_of<V>(rows_[column_to_row_[*column]]));
+        for (auto col_idx = row.leading_bit(); col_idx; col_idx = row.next_bit(*col_idx)) {
+            if (pivot_col_idxs_.test(*col_idx)) {
+                row.plus_assign(gf2_vector_of<V>(rows_[col_idx_to_row_idx_[*col_idx]]));
             }
         }
     }
@@ -123,64 +164,39 @@ public:
     IndexSet reduce_get_coefficients(Equation& v) const override {
         IndexSet coefficients(rows_.size());
         V& row = gf2_vector_of<V>(v);
-        for (auto column = row.leading_bit(); column; column = row.next_bit(*column)) {
-            if (pivot_columns_.test(*column)) {
-                const std::size_t row_index = column_to_row_[*column];
-                row.plus_assign(gf2_vector_of<V>(rows_[row_index]));
-                coefficients.set(row_index);
+        for (auto col_idx = row.leading_bit(); col_idx; col_idx = row.next_bit(*col_idx)) {
+            if (pivot_col_idxs_.test(*col_idx)) {
+                const std::size_t row_idx = col_idx_to_row_idx_[*col_idx];
+                row.plus_assign(gf2_vector_of<V>(rows_[row_idx]));
+                coefficients.set(row_idx);
             }
         }
         return coefficients;
     }
 
     ReduceResult partial_reduce(Equation& v) const override {
-        V& row = gf2_vector_of<V>(v);
-        std::optional<std::size_t> column = row.leading_bit();
-        while (true) {
-            if (!column) {
-                return ReduceResult::eq_true();
-            }
-            if (!pivot_columns_.test(*column)) {
-                return classify_column(*column);
-            }
-            row.plus_assign(gf2_vector_of<V>(rows_[column_to_row_[*column]]));
-            column = row.next_bit(*column);
-        }
+        return col_idx_to_row_.empty() ? partial_reduce_impl<false>(v) : partial_reduce_impl<true>(v);
     }
 
     ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const override {
-        const V& extra_row = gf2_vector_of<V>(extra);
-        const std::optional<std::size_t> extra_leading = extra_row.leading_bit();
-        V& row = gf2_vector_of<V>(v);
-        std::optional<std::size_t> column = row.leading_bit();
-        while (true) {
-            if (!column) {
-                return ReduceResult::eq_true();
-            }
-            if (!pivot_columns_.test(*column)) {
-                if (extra_leading && *column == *extra_leading) {
-                    row.plus_assign(extra_row);
-                    column = row.next_bit(*column);
-                    continue;
-                }
-                return classify_column(*column);
-            }
-            row.plus_assign(gf2_vector_of<V>(rows_[column_to_row_[*column]]));
-            column = row.next_bit(*column);
-        }
+        return col_idx_to_row_.empty() ? partial_reduce_with_extra_impl<false>(v, extra)
+                                  : partial_reduce_with_extra_impl<true>(v, extra);
     }
 
     Equation pop_first_row() override {
         Equation first_row = std::move(rows_.front());
-        const std::optional<std::size_t> leading = gf2_vector_of<V>(first_row).leading_bit();
+        const std::optional<std::size_t> leading_col_idx = gf2_vector_of<V>(first_row).leading_bit();
         // Stronger than the caller's `rows() > 0`: a structural invariant of a
         // row-echelon matrix, which never stores a zero row.
-        assert(leading && "stored row has no pivot");
+        assert(leading_col_idx && "stored row has no pivot");
 
         rows_.erase(rows_.begin());
-        pivot_columns_.reset(*leading);
-        pivot_columns_.for_each_set([&](std::size_t pivot_column) {
-            --column_to_row_[pivot_column];
+        pivot_col_idxs_.reset(*leading_col_idx);
+        if (!col_idx_to_row_.empty()) {
+            col_idx_to_row_[*leading_col_idx] = nullptr;
+        }
+        pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
+            --col_idx_to_row_idx_[pivot_col_idx];
         });
 
         debug_assert_valid_representation();
@@ -188,30 +204,33 @@ public:
     }
 
     void pop_last_row() override {
-        const std::optional<std::size_t> leading = gf2_vector_of<V>(rows_.back()).leading_bit();
+        const std::optional<std::size_t> leading_col_idx = gf2_vector_of<V>(rows_.back()).leading_bit();
         // Stronger than the caller's `rows() > 0`; see `pop_first_row()`.
-        assert(leading && "stored row has no pivot");
+        assert(leading_col_idx && "stored row has no pivot");
 
         rows_.pop_back();
-        pivot_columns_.reset(*leading);
+        pivot_col_idxs_.reset(*leading_col_idx);
+        if (!col_idx_to_row_.empty()) {
+            col_idx_to_row_[*leading_col_idx] = nullptr;
+        }
 
         debug_assert_valid_representation();
     }
 
     IndexSet solution() const override {
-        const std::size_t constant_column = cols_ - 1;
-        IndexSet out(constant_column);
-        for (std::size_t i = constant_column; i-- > 0;) {
+        const std::size_t constant_col_idx = cols_ - 1;
+        IndexSet out(constant_col_idx);
+        for (std::size_t i = constant_col_idx; i-- > 0;) {
             const V& row = gf2_vector_of<V>(rows_[i]);
             // Stronger than `RowSpace::unique_solution()`'s full-rank check:
             // full rank forces one pivot per variable column, and this pins each
             // one to its own row.
             assert(row.leading_bit() == std::optional<std::size_t>(i) &&
                    "a full-rank row space must have row i leading on column i");
-            bool value = row.get_bit(constant_column);
-            for (auto column = row.next_bit(i); column && *column < constant_column;
-                 column = row.next_bit(*column)) {
-                value ^= out.test(*column);
+            bool value = row.get_bit(constant_col_idx);
+            for (auto col_idx = row.next_bit(i); col_idx && *col_idx < constant_col_idx;
+                 col_idx = row.next_bit(*col_idx)) {
+                value ^= out.test(*col_idx);
             }
             if (value) {
                 out.set(i);
@@ -221,43 +240,105 @@ public:
     }
 
 private:
-    ReduceResult classify_column(std::size_t column) const noexcept {
-        return column + 1 == cols_ ? ReduceResult::eq_false() : ReduceResult::leading(column);
+    template <bool FromColIdxToRow>
+    const V& row_for_col_idx(std::size_t col_idx) const noexcept {
+        if constexpr (FromColIdxToRow) {
+            return *col_idx_to_row_[col_idx];
+        } else {
+            return gf2_vector_of<V>(rows_[col_idx_to_row_idx_[col_idx]]);
+        }
+    }
+
+    template <bool FromColIdxToRow>
+    ReduceResult partial_reduce_impl(Equation& v) const {
+        V& row = gf2_vector_of<V>(v);
+        std::optional<std::size_t> col_idx = row.leading_bit();
+        while (true) {
+            if (!col_idx) {
+                return ReduceResult::eq_true();
+            }
+            if (!pivot_col_idxs_.test(*col_idx)) {
+                return classify_col_idx(*col_idx);
+            }
+            row.plus_assign(row_for_col_idx<FromColIdxToRow>(*col_idx));
+            col_idx = row.next_bit(*col_idx);
+        }
+    }
+
+    template <bool FromColIdxToRow>
+    ReduceResult partial_reduce_with_extra_impl(Equation& v, const Equation& extra) const {
+        const V& extra_row = gf2_vector_of<V>(extra);
+        const std::optional<std::size_t> extra_leading = extra_row.leading_bit();
+        V& row = gf2_vector_of<V>(v);
+        std::optional<std::size_t> col_idx = row.leading_bit();
+        while (true) {
+            if (!col_idx) {
+                return ReduceResult::eq_true();
+            }
+            if (!pivot_col_idxs_.test(*col_idx)) {
+                if (extra_leading && *col_idx == *extra_leading) {
+                    row.plus_assign(extra_row);
+                    col_idx = row.next_bit(*col_idx);
+                    continue;
+                }
+                return classify_col_idx(*col_idx);
+            }
+            row.plus_assign(row_for_col_idx<FromColIdxToRow>(*col_idx));
+            col_idx = row.next_bit(*col_idx);
+        }
+    }
+
+    void build_col_idx_to_row() {
+        col_idx_to_row_.assign(cols_, nullptr);
+        pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
+            col_idx_to_row_[pivot_col_idx] = &gf2_vector_of<V>(rows_[col_idx_to_row_idx_[pivot_col_idx]]);
+        });
+    }
+
+    ReduceResult classify_col_idx(std::size_t col_idx) const noexcept {
+        return col_idx + 1 == cols_ ? ReduceResult::eq_false() : ReduceResult::leading(col_idx);
     }
 
     /// @brief Check representation invariants for `RowEchelonMatrix`.
     void debug_assert_valid_representation() const {
 #ifndef NDEBUG
-        assert(pivot_columns_.size() == cols());
-        assert(column_to_row_.size() == cols());
-        assert(pivot_columns_.count() == rows_.size());
+        assert(pivot_col_idxs_.size() == cols());
+        assert(col_idx_to_row_idx_.size() == cols());
+        assert(pivot_col_idxs_.count() == rows_.size());
 
         std::optional<std::size_t> previous_pivot;
-        for (std::size_t row_index = 0; row_index < rows_.size(); ++row_index) {
-            const V& current = gf2_vector_of<V>(rows_[row_index]);
+        for (std::size_t row_idx = 0; row_idx < rows_.size(); ++row_idx) {
+            const V& current = gf2_vector_of<V>(rows_[row_idx]);
             assert(current.num_bits() == cols());
 
-            const std::optional<std::size_t> leading = current.leading_bit();
-            assert(leading && *leading < cols());
+            const std::optional<std::size_t> leading_col_idx = current.leading_bit();
+            assert(leading_col_idx && *leading_col_idx < cols());
             if (previous_pivot) {
-                assert(*previous_pivot < *leading);
+                assert(*previous_pivot < *leading_col_idx);
             }
-            assert(pivot_columns_.test(*leading));
-            assert(column_to_row_[*leading] == row_index);
-            previous_pivot = leading;
+            assert(pivot_col_idxs_.test(*leading_col_idx));
+            assert(col_idx_to_row_idx_[*leading_col_idx] == row_idx);
+            previous_pivot = leading_col_idx;
         }
 
-        pivot_columns_.for_each_set([&](std::size_t pivot_column) {
-            assert(column_to_row_[pivot_column] < rows_.size());
-            assert(gf2_vector_of<V>(rows_[column_to_row_[pivot_column]]).leading_bit() ==
-                   std::optional<std::size_t>(pivot_column));
+        pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
+            assert(col_idx_to_row_idx_[pivot_col_idx] < rows_.size());
+            assert(gf2_vector_of<V>(rows_[col_idx_to_row_idx_[pivot_col_idx]]).leading_bit() ==
+                   std::optional<std::size_t>(pivot_col_idx));
+            assert(col_idx_to_row_.empty() ||
+                   col_idx_to_row_[pivot_col_idx] ==
+                       &gf2_vector_of<V>(rows_[col_idx_to_row_idx_[pivot_col_idx]]));
         });
 #endif
     }
 
     std::vector<Equation> rows_;
-    IndexSet pivot_columns_;
-    std::vector<std::size_t> column_to_row_;
+    IndexSet pivot_col_idxs_;
+    std::vector<std::size_t> col_idx_to_row_idx_;
+
+    /// @brief Empty until the rows are a large enough fraction of the columns,
+    /// since a table indexed by column costs a clause more than it saves it.
+    std::vector<const V*> col_idx_to_row_;
     std::size_t cols_;
 };
 

@@ -82,59 +82,59 @@ std::optional<std::size_t> ReferenceMatrix::add_row_get_index(const Bits& v) {
             return std::nullopt;
         }
         pivot_[*leading] = true;
-        column_to_row_[*leading] = 0;
+        col_idx_to_row_idx_[*leading] = 0;
         rows_.push_back(v);
         return 0;
     }
 
     Bits reduced = v;
-    std::size_t insert_index = 0;
-    std::size_t leading_column = 0;
-    for (; leading_column <= num_vars_; ++leading_column) {
-        if (reduced[leading_column]) {
-            if (pivot_[leading_column]) {
-                plus_into(reduced, rows_[insert_index]);
+    std::size_t insert_row_idx = 0;
+    std::size_t leading_col_idx = 0;
+    for (; leading_col_idx <= num_vars_; ++leading_col_idx) {
+        if (reduced[leading_col_idx]) {
+            if (pivot_[leading_col_idx]) {
+                plus_into(reduced, rows_[insert_row_idx]);
             } else {
                 break;
             }
         }
-        insert_index += pivot_[leading_column] ? 1 : 0;
+        insert_row_idx += pivot_[leading_col_idx] ? 1 : 0;
     }
 
     if (none_set(reduced)) {
         return std::nullopt;
     }
 
-    rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_index), reduced);
-    for (std::size_t column = 0; column <= num_vars_; ++column) {
-        if (pivot_[column] && column > leading_column) {
-            ++column_to_row_[column];
+    rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_row_idx), reduced);
+    for (std::size_t col_idx = 0; col_idx <= num_vars_; ++col_idx) {
+        if (pivot_[col_idx] && col_idx > leading_col_idx) {
+            ++col_idx_to_row_idx_[col_idx];
         }
     }
-    pivot_[leading_column] = true;
-    column_to_row_[leading_column] = insert_index;
-    return insert_index;
+    pivot_[leading_col_idx] = true;
+    col_idx_to_row_idx_[leading_col_idx] = insert_row_idx;
+    return insert_row_idx;
 }
 
 void ReferenceMatrix::reduce(Bits& v) const {
-    for (auto column = first_set(v); column; column = next_set(v, *column)) {
-        if (pivot_[*column]) {
-            plus_into(v, rows_[column_to_row_[*column]]);
+    for (auto col_idx = first_set(v); col_idx; col_idx = next_set(v, *col_idx)) {
+        if (pivot_[*col_idx]) {
+            plus_into(v, rows_[col_idx_to_row_idx_[*col_idx]]);
         }
     }
 }
 
 std::optional<std::size_t> ReferenceMatrix::partial_reduce(Bits& v) const {
-    std::optional<std::size_t> column = first_set(v);
+    std::optional<std::size_t> col_idx = first_set(v);
     while (true) {
-        if (!column) {
+        if (!col_idx) {
             return std::nullopt;
         }
-        if (!pivot_[*column]) {
-            return column;
+        if (!pivot_[*col_idx]) {
+            return col_idx;
         }
-        plus_into(v, rows_[column_to_row_[*column]]);
-        column = next_set(v, *column);
+        plus_into(v, rows_[col_idx_to_row_idx_[*col_idx]]);
+        col_idx = next_set(v, *col_idx);
     }
 }
 
@@ -144,9 +144,9 @@ Bits ReferenceMatrix::pop_first_row() {
     const std::size_t leading = *first_set(first);
     rows_.erase(rows_.begin());
     pivot_[leading] = false;
-    for (std::size_t column = 0; column <= num_vars_; ++column) {
-        if (pivot_[column]) {
-            --column_to_row_[column];
+    for (std::size_t col_idx = 0; col_idx <= num_vars_; ++col_idx) {
+        if (pivot_[col_idx]) {
+            --col_idx_to_row_idx_[col_idx];
         }
     }
     return first;

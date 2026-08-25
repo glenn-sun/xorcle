@@ -19,8 +19,8 @@ bool trail_maps_are_consistent(const Trail& trail) {
         return false;
     }
     for (std::size_t trail_index = 0; trail_index < trail_rows; ++trail_index) {
-        const std::size_t row_index = trail.order_map()[trail_index];
-        if (row_index >= trail_rows || trail.reverse_order_map()[row_index] != trail_index) {
+        const std::size_t row_idx = trail.order_map()[trail_index];
+        if (row_idx >= trail_rows || trail.reverse_order_map()[row_idx] != trail_index) {
             return false;
         }
     }
@@ -54,8 +54,8 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
 
         // Span row index -> trail order (`reverse_order_map`) -> reversed.
         mapped_bits.clear();
-        row_coefficients.for_each_set([&](std::size_t row_index) {
-            mapped_bits.push_back(num_coefficients - trail.reverse_order_map()[row_index] - 1);
+        row_coefficients.for_each_set([&](std::size_t row_idx) {
+            mapped_bits.push_back(num_coefficients - trail.reverse_order_map()[row_idx] - 1);
         });
         trail_basis_row.assign_bits(mapped_bits);
 

@@ -21,8 +21,8 @@ void check_matches_reference(const RowEchelonMatrix& matrix, const ReferenceMatr
     for (std::size_t index = 0; index < matrix.rows(); ++index) {
         CHECK(bits_of(matrix.row(index)) == set_bits(reference.row(index)));
     }
-    for (std::size_t column = 0; column < matrix.cols(); ++column) {
-        REQUIRE(matrix.pivot_columns().test(column) == reference.is_pivot(column));
+    for (std::size_t col_idx = 0; col_idx < matrix.cols(); ++col_idx) {
+        REQUIRE(matrix.pivot_col_idxs().test(col_idx) == reference.is_pivot(col_idx));
     }
 }
 
@@ -35,8 +35,8 @@ TEST_CASE_TEMPLATE("row echelon: empty matrix", Tag, DenseTag, SparseTag) {
     CHECK(matrix.repr() == repr);
     CHECK(matrix.rows() == 0);
     CHECK(matrix.cols() == 8);
-    CHECK(matrix.pivot_columns().size() == 8);
-    CHECK(matrix.pivot_columns().none());
+    CHECK(matrix.pivot_col_idxs().size() == 8);
+    CHECK(matrix.pivot_col_idxs().none());
     CHECK(matrix.begin() == matrix.end());
     check_echelon_invariant(matrix);
 
@@ -104,7 +104,7 @@ TEST_CASE_TEMPLATE("row echelon: add_row is idempotent on in-span rows", Tag, De
     // constant column.
     CHECK(matrix.add_row_get_index(Equation::eq_false(repr, 5)) ==
           std::optional<std::size_t>(2));
-    CHECK(matrix.pivot_columns().test(5));
+    CHECK(matrix.pivot_col_idxs().test(5));
     check_echelon_invariant(matrix);
 }
 
@@ -131,9 +131,9 @@ TEST_CASE_TEMPLATE("row echelon: reduce and partial_reduce", Tag, DenseTag, Spar
         Equation v = make_equation_with(repr, 4, {0, 1, 3});
         matrix.reduce(v);
         CHECK(bits_of(v) == std::vector<std::size_t>{2, 3, 4});
-        CHECK(matrix.pivot_columns().test(0) == true);
-        for (const std::size_t column : bits_of(v)) {
-            CHECK_FALSE(matrix.pivot_columns().test(column));
+        CHECK(matrix.pivot_col_idxs().test(0) == true);
+        for (const std::size_t col_idx : bits_of(v)) {
+            CHECK_FALSE(matrix.pivot_col_idxs().test(col_idx));
         }
     }
 
@@ -225,20 +225,20 @@ TEST_CASE_TEMPLATE("row echelon: pop_first_row and pop_last_row", Tag, DenseTag,
     const Equation first = matrix.pop_first_row();
     CHECK(bits_of(first) == std::vector<std::size_t>{0, 6});
     CHECK(matrix.rows() == 2);
-    CHECK_FALSE(matrix.pivot_columns().test(0));
+    CHECK_FALSE(matrix.pivot_col_idxs().test(0));
     CHECK(bits_of(matrix.row(0)) == std::vector<std::size_t>{2});
     CHECK(bits_of(matrix.row(1)) == std::vector<std::size_t>{4, 5});
     check_echelon_invariant(matrix);
 
     matrix.pop_last_row();
     CHECK(matrix.rows() == 1);
-    CHECK_FALSE(matrix.pivot_columns().test(4));
+    CHECK_FALSE(matrix.pivot_col_idxs().test(4));
     CHECK(bits_of(matrix.row(0)) == std::vector<std::size_t>{2});
     check_echelon_invariant(matrix);
 
     matrix.pop_last_row();
     CHECK(matrix.rows() == 0);
-    CHECK(matrix.pivot_columns().none());
+    CHECK(matrix.pivot_col_idxs().none());
     check_echelon_invariant(matrix);
 }
 
@@ -314,18 +314,18 @@ TEST_CASE_TEMPLATE("row echelon: a reduced row never leads on a pivot column", T
                 break;
             case ReduceResult::Kind::eq_false:
                 CHECK(v.is_eq_false());
-                CHECK(matrix.pivot_columns().test(num_vars) == false);
+                CHECK(matrix.pivot_col_idxs().test(num_vars) == false);
                 break;
             case ReduceResult::Kind::leading:
                 CHECK(v.leading_bit() == std::optional<std::size_t>(result.bit));
-                CHECK_FALSE(matrix.pivot_columns().test(result.bit));
+                CHECK_FALSE(matrix.pivot_col_idxs().test(result.bit));
                 break;
         }
 
         Equation fully = original;
         matrix.reduce(fully);
-        for (const std::size_t column : bits_of(fully)) {
-            CHECK_FALSE(matrix.pivot_columns().test(column));
+        for (const std::size_t col_idx : bits_of(fully)) {
+            CHECK_FALSE(matrix.pivot_col_idxs().test(col_idx));
         }
         CHECK(fully.classify() == result);
 
@@ -364,7 +364,7 @@ TEST_CASE_TEMPLATE("row space: unique_solution", Tag, DenseTag, SparseTag) {
         }
         REQUIRE(space.rows() == num_vars);
         check_echelon_invariant(space);
-        REQUIRE_FALSE(space.pivot_columns().test(num_vars));
+        REQUIRE_FALSE(space.pivot_col_idxs().test(num_vars));
 
         const IndexSet solution = space.unique_solution();
         REQUIRE(solution.size() == num_vars);
@@ -440,7 +440,7 @@ TEST_CASE("row echelon: the two representations agree") {
             REQUIRE(dense.row(index).to_string() == sparse.row(index).to_string());
             REQUIRE(bits_of(dense.row(index)) == bits_of(sparse.row(index)));
         }
-        REQUIRE(dense.pivot_columns() == sparse.pivot_columns());
+        REQUIRE(dense.pivot_col_idxs() == sparse.pivot_col_idxs());
 
         const Bits probe = random_bits(random, num_vars, 4);
         Equation dense_probe = to_equation(EquationRepr::dense, probe);

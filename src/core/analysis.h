@@ -48,7 +48,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 /// @pre The trail is conflicting.
 /// @post `asserting_basis.row(0).leading_bit() > pivot_column`.
 ClauseId resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
-                                             std::size_t pivot_column, const Trail& trail,
+                                             std::size_t pivot_col_idx, const Trail& trail,
                                              const std::vector<Clause>& clauses,
                                              DecisionProcedure& decisions,
                                              const Equation& trail_basis_one);

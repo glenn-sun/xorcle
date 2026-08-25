@@ -138,16 +138,16 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
 
     // Reduction can only lift a row's leading term up to `bucket`, and only
     // from a column that is itself a pivot; only those buckets need waking.
-    std::size_t pivots_below = trail.span().pivot_columns().count_below(bucket);
+    std::size_t pivots_below = trail.span().pivot_col_idxs().count_below(bucket);
     if (pivots_below != 0) {
-        trail.span().pivot_columns().for_each_set([&](std::size_t column) {
+        trail.span().pivot_col_idxs().for_each_set([&](std::size_t col_idx) {
             if (pivots_below == 0) {
                 return; // ascending order, so every pivot below is already queued
             }
             --pivots_below;
-            assert(column < by_leading_term_.size() &&
+            assert(col_idx < by_leading_term_.size() &&
                    "the trail carries more columns than the watchlist was built for");
-            append_bottom(by_leading_term_[column]);
+            append_bottom(by_leading_term_[col_idx]);
         });
     }
     append_top(by_leading_term_[bucket]);

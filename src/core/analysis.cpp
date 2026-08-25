@@ -43,12 +43,12 @@ bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
 } // namespace
 
 ClauseId resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
-                                             std::size_t pivot_column, const Trail& trail,
+                                             std::size_t pivot_col_idx, const Trail& trail,
                                              const std::vector<Clause>& clauses,
                                              DecisionProcedure& decisions,
                                              const Equation& trail_basis_one) {
     assert(asserting_basis.rows() > 0 && "resolving against an empty basis");
-    assert(asserting_basis.row(0).leading_bit() == std::optional<std::size_t>{pivot_column} &&
+    assert(asserting_basis.row(0).leading_bit() == std::optional<std::size_t>{pivot_col_idx} &&
            "the pivot column is not the leading column of the first row");
     assert(is_trail_basis_one(trail_basis_one, asserting_basis) &&
            "trail_basis_one is not the unit vector at column 0");
@@ -56,7 +56,7 @@ ClauseId resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
 
     Equation asserting_row = asserting_basis.pop_first_row();
 
-    const std::size_t reason_index = asserting_basis.cols() - 1 - pivot_column;
+    const std::size_t reason_index = asserting_basis.cols() - 1 - pivot_col_idx;
     assert(reason_index < trail.reasons().size() && "trail reason index is out of range");
     const std::optional<ClauseId> reason_clause_id = trail.reasons()[reason_index];
     assert(reason_clause_id.has_value() && "resolution step reached a decision, which has no reason");
@@ -90,7 +90,7 @@ ClauseId resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
     decisions.update_with_critical_equation(trail.span().row(trail.order_map()[reason_index]));
 
     assert(asserting_basis.rows() > 0 && "resolution derived the empty clause below the root");
-    assert(*asserting_basis.row(0).leading_bit() > pivot_column &&
+    assert(*asserting_basis.row(0).leading_bit() > pivot_col_idx &&
            "resolution did not eliminate the pivot column");
 
     return *reason_clause_id;
@@ -119,10 +119,10 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         ++resolution_steps;
         assert(resolution_steps < asserting_basis.cols() && "conflict analysis did not terminate");
         assert(asserting_basis.rows() > 0 && "resolution emptied the asserting basis");
-        const std::optional<std::size_t> pivot_column = asserting_basis.row(0).leading_bit();
-        assert(pivot_column.has_value() && "a stored row is zero");
+        const std::optional<std::size_t> pivot_col_idx = asserting_basis.row(0).leading_bit();
+        assert(pivot_col_idx.has_value() && "a stored row is zero");
         reason_ids.push_back(resolve_asserting_basis_with_reason(
-            asserting_basis, *pivot_column, trail, clauses, decisions, trail_basis_one));
+            asserting_basis, *pivot_col_idx, trail, clauses, decisions, trail_basis_one));
     }
 
     const std::size_t asserting_level = asserting_basis.asserting_level();

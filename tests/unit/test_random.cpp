@@ -21,11 +21,11 @@ namespace xorcle {
 namespace {
 
 /// @brief Render a coefficient column set as '0'/'1' in ascending index order.
-std::string to_bit_string(const IndexSet& columns) {
+std::string to_bit_string(const IndexSet& col_idxs) {
     std::string bits;
-    bits.reserve(columns.size());
-    for (std::size_t i = 0; i < columns.size(); ++i) {
-        bits.push_back(columns.test(i) ? '1' : '0');
+    bits.reserve(col_idxs.size());
+    for (std::size_t i = 0; i < col_idxs.size(); ++i) {
+        bits.push_back(col_idxs.test(i) ? '1' : '0');
     }
     return bits;
 }

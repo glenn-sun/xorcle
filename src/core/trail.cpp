@@ -14,9 +14,9 @@ void debug_assert_snapshot_valid(const TrailSnapshot& snapshot) {
     assert(snapshot.reasons().size() == trail_rows);
 
     for (std::size_t trail_index = 0; trail_index < trail_rows; ++trail_index) {
-        const std::size_t row_index = snapshot.order_map()[trail_index];
-        assert(row_index < trail_rows);
-        assert(snapshot.reverse_order_map()[row_index] == trail_index);
+        const std::size_t row_idx = snapshot.order_map()[trail_index];
+        assert(row_idx < trail_rows);
+        assert(snapshot.reverse_order_map()[row_idx] == trail_index);
     }
 }
 #endif
@@ -36,9 +36,9 @@ void TrailSnapshot::learn(const Equation& eqn, std::optional<ClauseId> reason) {
     reasons_.push_back(reason);
 
     // Inserting a row shifts every row at or after it one place up.
-    for (std::size_t& row_index : order_map_) {
-        if (row_index >= inserted_index) {
-            ++row_index;
+    for (std::size_t& row_idx : order_map_) {
+        if (row_idx >= inserted_index) {
+            ++row_idx;
         }
     }
     order_map_.push_back(inserted_index);

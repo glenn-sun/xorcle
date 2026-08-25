@@ -20,8 +20,8 @@ namespace {
 bool clause_admits_a_legal_decision(const Clause& clause, const RowSpace& trail_span) {
     RowSpace reduced_clause_space(clause.repr(), clause.num_vars());
     Equation reduced_row(clause.repr(), clause.num_vars());
-    for (std::size_t row_index = 0; row_index < clause.rows(); ++row_index) {
-        reduced_row.assign_from(clause.row(row_index));
+    for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
+        reduced_row.assign_from(clause.row(row_idx));
         trail_span.reduce(reduced_row);
         reduced_clause_space.add_row(reduced_row);
     }
@@ -30,7 +30,7 @@ bool clause_admits_a_legal_decision(const Clause& clause, const RowSpace& trail_
     }
     // In row-echelon form the constant column is a pivot exactly when some row
     // *is* the false equation, so this is the "1 is in the reduced span" test.
-    return !reduced_clause_space.pivot_columns().test(reduced_clause_space.cols() - 1);
+    return !reduced_clause_space.pivot_col_idxs().test(reduced_clause_space.cols() - 1);
 }
 #endif
 
@@ -100,8 +100,8 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
         return true;
     }
 
-    for (std::size_t row_index = 0; row_index < clause.rows(); ++row_index) {
-        workspace.scratch_row_.assign_from(clause.row(row_index));
+    for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
+        workspace.scratch_row_.assign_from(clause.row(row_idx));
         trail_span.reduce(workspace.scratch_row_);
         if (!workspace.local_basis_.add_row_get_index(workspace.scratch_row_).has_value()) {
             // Dependent on the rows already in the local basis; it adds nothing.
@@ -164,7 +164,7 @@ SampledDecision sample_equation_from_clause(const Clause& clause, const RowSpace
         const IndexSet coefficients = random_nonzero_coefficients(clause.rows(), rng);
         sample.candidate.set_eq_true();
         coefficients.for_each_set(
-            [&](std::size_t row_index) { sample.candidate.plus_assign(clause.row(row_index)); });
+            [&](std::size_t row_idx) { sample.candidate.plus_assign(clause.row(row_idx)); });
         sample.reduced.assign_from(sample.candidate);
         if (trail_span.partial_reduce(sample.reduced).is_leading()) {
             return sample;

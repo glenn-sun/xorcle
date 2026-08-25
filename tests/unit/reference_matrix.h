@@ -34,7 +34,7 @@ ReduceResult expected_result(const std::optional<std::size_t>& leading, std::siz
 class ReferenceMatrix {
 public:
     explicit ReferenceMatrix(std::size_t num_vars)
-        : num_vars_(num_vars), pivot_(num_vars + 1, false), column_to_row_(num_vars + 1, 0) {}
+        : num_vars_(num_vars), pivot_(num_vars + 1, false), col_idx_to_row_idx_(num_vars + 1, 0) {}
 
     std::size_t rows() const { return rows_.size(); }
 
@@ -46,9 +46,9 @@ public:
     }
 
     /// @pre `column < num_vars + 1`.
-    bool is_pivot(std::size_t column) const {
-        assert(column < pivot_.size() && "pivot column index is out of range");
-        return pivot_[column];
+    bool is_pivot(std::size_t col_idx) const {
+        assert(col_idx < pivot_.size() && "pivot column index is out of range");
+        return pivot_[col_idx];
     }
 
     std::optional<std::size_t> add_row_get_index(const Bits& v);
@@ -68,7 +68,7 @@ private:
     std::size_t num_vars_;
     std::vector<Bits> rows_;
     std::vector<bool> pivot_;
-    std::vector<std::size_t> column_to_row_;
+    std::vector<std::size_t> col_idx_to_row_idx_;
 };
 
 } // namespace xorcle

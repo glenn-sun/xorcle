@@ -27,7 +27,7 @@ std::vector<std::size_t> bits_of(const Equation& equation) {
 }
 
 void check_echelon_invariant(const RowEchelonMatrix& matrix) {
-    const IndexSet& pivots = matrix.pivot_columns();
+    const IndexSet& pivots = matrix.pivot_col_idxs();
     REQUIRE(pivots.size() == matrix.cols());
     REQUIRE(pivots.count() == matrix.rows());
 

@@ -44,7 +44,7 @@ public:
     }
 
     /// @brief The pivot columns, indexed by column, over `cols()` indices.
-    const IndexSet& pivot_columns() const noexcept { return interface_->pivot_columns(); }
+    const IndexSet& pivot_col_idxs() const noexcept { return interface_->pivot_col_idxs(); }
 
     /// @brief Does nothing if `v` is already in the span.
     /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`, here and in
@@ -146,7 +146,7 @@ public:
                "partial_reduce_with_extra: bit count does not match the matrix");
         assert(v.repr() == repr() && extra.repr() == repr() &&
                "partial_reduce_with_extra: representation does not match the matrix");
-        assert((!extra.leading_bit() || !pivot_columns().test(*extra.leading_bit())) &&
+        assert((!extra.leading_bit() || !pivot_col_idxs().test(*extra.leading_bit())) &&
                "extra must already be partially reduced by this matrix");
         return interface().partial_reduce_with_extra(v, extra);
     }
