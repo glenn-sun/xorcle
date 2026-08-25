@@ -249,7 +249,7 @@ TEST_CASE("options: enum labels are the first spelling naming an enumerator") {
 
 TEST_CASE("options: --help is generated from the table") {
     std::ostringstream help;
-    CHECK_FALSE(parse_options({"--help"}, help, "xorcle", "0.2.0").has_value());
+    CHECK_FALSE(parse_options({"--help"}, help, "xorcle", "0.0.0-test").has_value());
     const std::string text = help.str();
 
     CHECK(contains(text, "Usage: xorcle [options] <input>"));

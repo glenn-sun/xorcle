@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.31)
 project(xorcle VERSION 0.2.0 LANGUAGES CXX)
 
+# Nothing on this branch is released. `PROJECT_VERSION` is where it is heading,
+# and the `-dev` suffix is what says it has not arrived; a release drops it.
+set(XORCLE_VERSION "${PROJECT_VERSION}-dev")
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -68,7 +72,7 @@ target_compile_definitions(xorcle_core PRIVATE $<$<CONFIG:Debug>:DEBUG>)
 
 add_executable(xorcle src/cli/main.cpp)
 target_link_libraries(xorcle PRIVATE xorcle_core)
-target_compile_definitions(xorcle PRIVATE XORCLE_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(xorcle PRIVATE XORCLE_VERSION="${XORCLE_VERSION}")
 
 enable_testing()
 add_subdirectory(tests)
