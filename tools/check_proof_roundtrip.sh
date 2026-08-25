@@ -27,9 +27,9 @@ instance="$work/instance.xnf"
 proof="$work/proof.lrup"
 
 # random_kxnf_n needs no third-party generator dependency. This (family, seed)
-# is one of the manifest's UNSAT instances.
+# is UNSAT.
 "$python" "$root/tools/generate_xnf_tests.py" \
-    --family random_kxnf_n --params 'n=12;k=2' --seed 4 --out "$instance"
+    --family random_kxnf_n --params 'n=14;k=3' --seed 1 --out "$instance"
 
 # --proof requires --compact=false.
 "$xorcle" --compact=false --proof="$proof" "$instance" > "$work/solve.out" 2>&1 || {

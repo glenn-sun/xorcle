@@ -37,7 +37,7 @@ std::string console_output(const RunStats& stats) {
 /// @brief A `RunStats` with every counter set, for format checks.
 RunStats sample_stats() {
     RunStats stats;
-    stats.file = "tests/generated/random_kxnf_n/random_kxnf_n_n12_k2_s1.xnf";
+    stats.file = "benchmarks/generated/random_kxnf_n/random_kxnf_n_n12_k2_s1.xnf";
     stats.num_vars = 12;
     stats.start_clauses = 30;
     stats.final_clauses = 47;
@@ -104,7 +104,7 @@ TEST_CASE("to_string(SolveResult) uses the CSV spellings") {
 
 TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
     const std::string expected =
-        "c File: tests/generated/random_kxnf_n/random_kxnf_n_n12_k2_s1.xnf\n"
+        "c File: benchmarks/generated/random_kxnf_n/random_kxnf_n_n12_k2_s1.xnf\n"
         "c Variables: 12\n"
         "c Start clauses: 30\n"
         "c Final clauses: 47\n"
