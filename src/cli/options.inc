@@ -93,6 +93,8 @@ XORCLE_OPTION(restart_luby_unit, Size, 100, 1, SIZE_MAX,
 
 XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(⊕) proof here; requires --compact=false")
 XORCLE_OPTION(stats_file, Text, "", "", "", "append CSV statistics here instead of printing them")
+XORCLE_OPTION(report_every, Size, 100, 0, SIZE_MAX,
+              "conflicts between progress report lines; 0 reports nothing")
 
 #undef XORCLE_OPTION
 #undef XORCLE_ENUM_OPTION

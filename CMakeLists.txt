@@ -58,6 +58,7 @@ add_library(xorcle_core
     src/io/dimacs.cpp
     src/io/lrup_logger.cpp
     src/util/index_set.cpp
+    src/util/progress_reporter.cpp
     src/util/random.cpp
     src/util/stats.cpp
     src/util/stats_writer.cpp)

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <numeric>
 #include <optional>
 #include <utility>
@@ -16,7 +17,7 @@ namespace xorcle {
 Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
                std::unique_ptr<DecisionProcedure> decisions,
                std::unique_ptr<RestartPolicy> restarts, LrupLogger* proof_logger,
-               const CompactionConfig& compaction)
+               const CompactionConfig& compaction, const ProgressConfig& progress)
     : repr_(repr),
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
@@ -29,7 +30,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       propagator_(repr, num_vars),
       proof_logger_(proof_logger),
       conflict_check_eqn_(repr, num_vars),
-      false_equation_(Equation::eq_false(repr, num_vars)) {
+      false_equation_(Equation::eq_false(repr, num_vars)),
+      progress_(progress) {
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
@@ -166,6 +168,29 @@ void Solver::make_decision_step() {
     selector_->update_with_decision_clause(decisions_->decision_clause_hint());
 }
 
+void Solver::maybe_report() {
+    if (!reports_progress()) {
+        return;
+    }
+    if (counters_.num_conflicts - conflicts_at_last_report_ < progress_.conflict_interval) {
+        return;
+    }
+    conflicts_at_last_report_ = counters_.num_conflicts;
+    progress_.reporter->report(progress_snapshot());
+}
+
+ProgressSnapshot Solver::progress_snapshot() const {
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - solve_start_;
+    return ProgressSnapshot{.time_s = elapsed.count(),
+                            .num_conflicts = counters_.num_conflicts,
+                            .num_propagations = counters_.num_propagations,
+                            .num_restarts = counters_.num_restarts,
+                            .decisions = decisions_->decision_stats().decisions,
+                            .trail_level = trail_.level(),
+                            .trail_rank = trail_.span().rows(),
+                            .remaining_vars = active_num_vars_ - trail_[0].span().rows()};
+}
+
 bool Solver::maybe_compact_before_decision() {
     const CompactionState state{
         .trail = trail_,
@@ -235,6 +260,11 @@ Solution Solver::solve() {
 #endif
     next_proof_clause_id_ = std::max(next_proof_clause_id_, selector_->num_clauses());
 
+    solve_start_ = std::chrono::steady_clock::now();
+    if (reports_progress()) {
+        progress_.reporter->report(progress_snapshot());
+    }
+
     while (true) {
         if (propagate_until_conflict()) {
             ++counters_.num_conflicts;
@@ -243,6 +273,7 @@ Solution Solver::solve() {
                 return Solution{SolveResult::unsat, std::nullopt};
             }
             handle_non_root_conflict();
+            maybe_report();
             continue;
         }
 

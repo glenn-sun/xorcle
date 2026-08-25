@@ -27,6 +27,7 @@ add_executable(xorcle_tests
     unit/test_lrup_logger.cpp
     unit/test_max_heap.cpp
     unit/test_options.cpp
+    unit/test_progress_reporter.cpp
     unit/test_propagation.cpp
     unit/test_random.cpp
     unit/test_restart_policy.cpp

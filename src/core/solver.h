@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -17,6 +18,7 @@
 #include "heuristics/selection/clause_selector.h"
 #include "io/lrup_logger.h"
 #include "util/index_set.h"
+#include "util/progress_reporter.h"
 #include "util/stats.h"
 
 namespace xorcle {
@@ -26,6 +28,13 @@ struct CompactionConfig {
     bool enabled = true;
 
     std::size_t conflict_interval = 16; ///< Conflicts between two successful compactions.
+};
+
+/// @brief Where the solver reports progress while it runs, and how often.
+struct ProgressConfig {
+    ProgressReporter* reporter = nullptr; ///< Not owned; null reports nothing.
+
+    std::size_t conflict_interval = 0;    ///< Conflicts between report lines; 0 reports nothing.
 };
 
 struct Solution {
@@ -62,7 +71,8 @@ public:
     /// `proof_logger->num_vars() == num_vars`.
     Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
-           LrupLogger* proof_logger = nullptr, const CompactionConfig& compaction = {});
+           LrupLogger* proof_logger = nullptr, const CompactionConfig& compaction = {},
+           const ProgressConfig& progress = {});
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -99,6 +109,16 @@ private:
     void write_root_unsat_proof();
 
     void make_decision_step();
+
+    bool reports_progress() const noexcept {
+        return progress_.reporter != nullptr && progress_.conflict_interval != 0;
+    }
+
+    /// @brief Report progress if the conflict interval has elapsed since the last
+    /// line.
+    void maybe_report();
+
+    ProgressSnapshot progress_snapshot() const;
 
     /// @brief Compact if the trigger conditions hold; true if the active variable
     /// numbering changed, in which case the caller must restart the loop rather
@@ -144,6 +164,10 @@ private:
     Equation false_equation_; ///< A preallocated `0 = 1`.
 
     SolverCounters counters_;
+
+    ProgressConfig progress_;
+    std::size_t conflicts_at_last_report_ = 0;
+    std::chrono::steady_clock::time_point solve_start_;
 };
 
 } // namespace xorcle

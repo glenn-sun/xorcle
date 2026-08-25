@@ -28,6 +28,7 @@
 #include "heuristics/selection/leading_term_watchlist.h"
 #include "io/dimacs.h"
 #include "io/lrup_logger.h"
+#include "util/progress_reporter.h"
 #include "util/stats.h"
 #include "util/stats_writer.h"
 
@@ -102,11 +103,18 @@ RunStats run_once(const Options& options) {
         proof_logger = std::make_unique<LrupLogger>(options.proof, parsed.num_vars);
     }
 
+    std::unique_ptr<ProgressReporter> progress_reporter;
+    if (options.report_every != 0) {
+        progress_reporter = std::make_unique<ConsoleProgressReporter>(std::cout);
+    }
+
     Solver solver(options.equation_repr, parsed.num_vars,
                   make_clause_selector(options, parsed.num_vars),
                   make_decision_procedure(options, parsed.num_vars),
                   make_restart_policy(restart_config(options)), proof_logger.get(),
-                  compaction_config(options));
+                  compaction_config(options),
+                  ProgressConfig{.reporter = progress_reporter.get(),
+                                 .conflict_interval = options.report_every});
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
