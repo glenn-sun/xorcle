@@ -252,4 +252,60 @@ TEST_CASE_TEMPLATE("csids: decay makes later bumps worth more", Tag, DenseTag, S
     CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
 }
 
+TEST_CASE_TEMPLATE("decision procedure: the default keeps no levels on a restart", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const std::vector<Clause> clauses{make_clause(repr, 4, {{0}})};
+    const RowSpace span = make_row_space(repr, 4, {});
+
+    VariableVsids decisions(repr, 4, Seed{1});
+    CHECK(decisions.reusable_levels(span, clauses, {ClauseId{0}}) == 0);
+}
+
+TEST_CASE_TEMPLATE("csids: trail reuse keeps the levels outranking the next decision", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    constexpr std::size_t num_vars = 4;
+
+    // Single-row clauses, so clause `i` is the literal `x_i = 1` and a trail row
+    // `x_i + 1 = 0` satisfies it.
+    std::vector<Clause> clauses;
+    for (std::size_t var = 0; var < 3; ++var) {
+        clauses.push_back(make_clause(repr, num_vars, {{var}}));
+    }
+
+    Csids decisions(repr, num_vars, Seed{1});
+    for (ClauseId id = 0; id < clauses.size(); ++id) {
+        decisions.update_with_new_clause(clauses[id], id);
+    }
+    // Activity 3, 2 and 0 respectively, all at the same increment.
+    decisions.update_with_resolved_clause(0);
+    decisions.update_with_resolved_clause(0);
+    decisions.update_with_resolved_clause(0);
+    decisions.update_with_resolved_clause(1);
+    decisions.update_with_resolved_clause(1);
+
+    // The trail satisfies clause 0, so clause 1 is what the next decision comes
+    // from and only a level decided from clause 0 outranks it.
+    const RowSpace span = make_row_space(repr, num_vars, {{0, num_vars}});
+
+    CHECK(decisions.reusable_levels(span, clauses, {ClauseId{0}}) == 1);
+    CHECK(decisions.reusable_levels(span, clauses, {ClauseId{0}, ClauseId{1}}) == 1);
+    CHECK(decisions.reusable_levels(span, clauses, {ClauseId{1}}) == 0);
+    CHECK(decisions.reusable_levels(span, clauses, {ClauseId{2}}) == 0);
+
+    SUBCASE("a level the fallback basis decided ends the run of kept levels") {
+        CHECK(decisions.reusable_levels(span, clauses, {std::nullopt}) == 0);
+        CHECK(decisions.reusable_levels(span, clauses, {ClauseId{0}, std::nullopt}) == 1);
+    }
+
+    SUBCASE("asking leaves the choice of clause where it was") {
+        // Clause 0 was walked past on the satisfying trail; on the empty trail
+        // it must still be the clause with the most activity.
+        const RowSpace empty = make_row_space(repr, num_vars, {});
+        decisions.make_decision(empty, clauses);
+        CHECK(decisions.decision_clause_hint() == std::optional<ClauseId>{0});
+    }
+}
+
 } // namespace xorcle

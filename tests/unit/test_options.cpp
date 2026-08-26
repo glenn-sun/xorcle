@@ -111,13 +111,12 @@ TEST_CASE("options: booleans accept on/off as well as true/false") {
 TEST_CASE("options: values outside the table's bounds are rejected") {
     SUBCASE("a size below its minimum") {
         CHECK(contains(rejection_message<CliError>({"--compact-every=0"}), "must be at least 1"));
-        CHECK(contains(rejection_message<CliError>({"--restart-initial=0"}), "must be at least 1"));
-        CHECK(contains(rejection_message<CliError>({"--restart-luby-unit=0"}), "must be at least 1"));
+        CHECK(contains(rejection_message<CliError>({"--restart-lbd-min=0"}), "must be at least 1"));
     }
     SUBCASE("a real below its minimum") {
         CHECK(contains(rejection_message<CliError>({"--csids-initial=-1"}), "must be at least 0"));
         CHECK(contains(rejection_message<CliError>({"--csids-bump=-0.5"}), "must be at least 0"));
-        CHECK(contains(rejection_message<CliError>({"--restart-geometric-factor=0.5"}),
+        CHECK(contains(rejection_message<CliError>({"--restart-lbd-margin=0.5"}),
                        "must be at least 1"));
     }
     SUBCASE("the decay admits both of its bounds") {
@@ -244,7 +243,7 @@ TEST_CASE("options: enum labels are the first spelling naming an enumerator") {
     CHECK(enum_option_label("phase", static_cast<int>(DecisionPhase::falsify)) == "falsify");
     CHECK(enum_option_label("selection", static_cast<int>(ClauseSelectorName::cyclic)) == "cyclic");
     CHECK(enum_option_spellings("equation_repr") == "dense|sparse");
-    CHECK(enum_option_spellings("restart") == "none|geometric|luby");
+    CHECK(enum_option_spellings("restart") == "none|luby|lbd");
 }
 
 TEST_CASE("options: --help is generated from the table") {
@@ -269,27 +268,32 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--stats-file=PATH"));
     CHECK(contains(text, "--help"));
 
-    CHECK(contains(text, "--restart=none|geometric|luby"));
-    CHECK(contains(text, "EXPERIMENTAL: restart schedule"));
-    CHECK(contains(text, "EXPERIMENTAL: growth factor"));
-    CHECK(contains(text, "EXPERIMENTAL: first geometric conflict budget"));
-    CHECK(contains(text, "EXPERIMENTAL: conflict budget for a Luby value of 1"));
+    CHECK(contains(text, "--restart=none|luby|lbd"));
+    CHECK(contains(text, "restart schedule"));
+    CHECK(contains(text, "conflict budget for a Luby value of 1"));
+    CHECK(contains(text, "window of the fast LBD average"));
+}
+
+TEST_CASE("options: luby refuses to invent a budget") {
+    CHECK(contains(rejection_message<CliError>({"--restart=luby"}),
+                   "requires --restart-luby-unit"));
+    // The budget is only required by the schedule that uses it.
+    CHECK_NOTHROW(parse_with_input({"--restart=lbd"}));
+    CHECK_NOTHROW(parse_with_input({"--restart=luby", "--restart-luby-unit=4000"}));
 }
 
 TEST_CASE("options: the configuration projections carry the values across") {
     const Options options = parse_with_input({"--compact=false", "--compact-every=8",
-                                              "--restart=geometric",
-                                              "--restart-geometric-factor=2",
-                                              "--restart-initial=25", "--restart-luby-unit=50"});
+                                              "--restart=luby", "--restart-luby-unit=50",
+                                              "--restart-lbd-margin=1.25"});
     const CompactionConfig compaction = compaction_config(options);
     CHECK(compaction.enabled == false);
     CHECK(compaction.conflict_interval == 8);
 
     const RestartConfig restart = restart_config(options);
-    CHECK(restart.method == RestartMethod::geometric);
-    CHECK(restart.geometric_multiplier == doctest::Approx(2.0));
-    CHECK(restart.geometric_initial_conflicts == 25);
+    CHECK(restart.method == RestartMethod::luby);
     CHECK(restart.luby_unit_conflicts == 50);
+    CHECK(restart.lbd_margin == doctest::Approx(1.25));
 }
 
 } // namespace xorcle

@@ -406,7 +406,8 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
         << "  --proof requires --compact=false: it refuses rather than turning\n"
         << "  compaction off for you.\n"
         << "\n"
-        << "  The restart options are EXPERIMENTAL and untuned.\n";
+        << "  Restarts are off by default: measured single-threaded, both schedules\n"
+        << "  lose to --restart=none on every benchmark set tried.\n";
 }
 
 // --- Parsing a command line ------------------------------------------------
@@ -442,7 +443,8 @@ inline void apply_decisions_preset(Options& options, const std::string& value) {
 }
 
 /// @brief Check the constraints that span more than one option.
-/// @throws CliError if a preset was combined with a manual CSIDS override.
+/// @throws CliError if a preset was combined with a manual CSIDS override, or if
+/// `--restart=luby` was given without a budget.
 /// @throws LrupError if `--proof` was given with compaction on.
 inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (!options.csids_preset.empty() &&
@@ -450,6 +452,12 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
         throw CliError("--decisions=" + options.csids_preset +
                        " is a preset that fixes A0, alpha and delta; it does not accept "
                        "--csids-initial, --csids-decay or --csids-bump");
+    }
+    // No Luby budget beat leaving restarts off, so the schedule asks rather than
+    // shipping a value that would only look tuned.
+    if (options.restart == RestartMethod::luby && options.restart_luby_unit == 0) {
+        throw CliError("--restart=luby requires --restart-luby-unit=N: no budget tried beat "
+                       "--restart=none, so there is no default worth shipping");
     }
     require_compaction_disabled_for_proof(!options.proof.empty(), options.compact);
 }
@@ -529,9 +537,13 @@ inline CompactionConfig compaction_config(const Options& options) {
 
 inline RestartConfig restart_config(const Options& options) {
     return RestartConfig{.method = options.restart,
-                         .geometric_multiplier = options.restart_geometric_factor,
-                         .geometric_initial_conflicts = options.restart_initial,
-                         .luby_unit_conflicts = options.restart_luby_unit};
+                         .luby_unit_conflicts = options.restart_luby_unit,
+                         .lbd_fast_window = options.restart_lbd_fast,
+                         .lbd_slow_window = options.restart_lbd_slow,
+                         .lbd_margin = options.restart_lbd_margin,
+                         .lbd_min_conflicts = options.restart_lbd_min,
+                         .lbd_block_factor = options.restart_lbd_block,
+                         .reuse_trail = options.restart_reuse_trail};
 }
 
 } // namespace xorcle

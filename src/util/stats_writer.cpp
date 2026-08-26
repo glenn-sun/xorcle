@@ -91,6 +91,7 @@ ConsoleStatsWriter::log_impl(const RunStats& stats) {
     output << "c Attempted propagations: " << stats.num_attempt_props << "\n";
     output << "c Watch updates: " << stats.num_watch_updates << "\n";
     output << "c Restarts: " << stats.num_restarts << "\n";
+    output << "c Reused levels: " << stats.num_reused_levels << "\n";
     output << "c Decisions: " << stats.decisions << "\n";
     output << "c Fallback decisions: " << stats.fallback_decisions << "\n";
     // Each ratio line is omitted entirely when its denominator is zero; a
@@ -138,7 +139,7 @@ CsvStatsWriter::ensure_header() {
         file_ << "run_id,timestamp_utc,file,decision_procedure,csids_initial_activity,csids_decay,csids_bump,"
                  "decision_phase,clause_selector,seed,result,"
                  "num_vars,start_clauses,final_clauses,learned_clauses,"
-                 "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,"
+                 "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,reused_levels,"
                  "decisions,fallback_decisions,fallback_pct,"
                  "prop_per_conflict,attempts_per_prop_watch_conflict\n";
         if (!file_) {
@@ -203,6 +204,7 @@ CsvStatsWriter::log_impl(const RunStats& stats) {
           << stats.num_attempt_props << ','
           << stats.num_watch_updates << ','
           << stats.num_restarts << ','
+          << stats.num_reused_levels << ','
           << stats.decisions << ','
           << stats.fallback_decisions << ','
           << fmt_opt_double(fallback_pct(stats)) << ','

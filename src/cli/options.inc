@@ -77,17 +77,26 @@ XORCLE_ENUM_VALUE(selection, "leading_term_watchlist", ClauseSelectorName::leadi
 
 // --- Restarts --------------------------------------------------------------
 
-XORCLE_ENUM_OPTION(restart, RestartMethod, RestartMethod::none, "EXPERIMENTAL: restart schedule")
+XORCLE_ENUM_OPTION(restart, RestartMethod, RestartMethod::none, "restart schedule")
 XORCLE_ENUM_VALUE(restart, "none", RestartMethod::none)
-XORCLE_ENUM_VALUE(restart, "geometric", RestartMethod::geometric)
 XORCLE_ENUM_VALUE(restart, "luby", RestartMethod::luby)
+XORCLE_ENUM_VALUE(restart, "lbd", RestartMethod::lbd)
 
-XORCLE_OPTION(restart_geometric_factor, Real, 1.5, 1.0, INFINITY,
-              "EXPERIMENTAL: growth factor between geometric budgets")
-XORCLE_OPTION(restart_initial, Size, 100, 1, SIZE_MAX,
-              "EXPERIMENTAL: first geometric conflict budget")
-XORCLE_OPTION(restart_luby_unit, Size, 100, 1, SIZE_MAX,
-              "EXPERIMENTAL: conflict budget for a Luby value of 1")
+XORCLE_OPTION(restart_reuse_trail, Bool, true, false, true,
+              "a restart keeps the decisions it would re-make at once")
+
+XORCLE_OPTION(restart_luby_unit, Size, 0, 0, SIZE_MAX,
+              "conflict budget for a Luby value of 1; --restart=luby requires it")
+XORCLE_OPTION(restart_lbd_fast, Size, 33, 1, SIZE_MAX,
+              "window of the fast LBD average")
+XORCLE_OPTION(restart_lbd_slow, Size, 100000, 1, SIZE_MAX,
+              "window of the slow LBD average")
+XORCLE_OPTION(restart_lbd_margin, Real, 1.1, 1.0, INFINITY,
+              "how far the fast LBD average must exceed the slow one")
+XORCLE_OPTION(restart_lbd_min, Size, 2, 1, SIZE_MAX,
+              "conflicts an LBD restart waits out")
+XORCLE_OPTION(restart_lbd_block, Real, 1.4, 0.0, INFINITY,
+              "trail length, relative to average, that blocks an LBD restart; 0 never blocks")
 
 // --- Output ----------------------------------------------------------------
 

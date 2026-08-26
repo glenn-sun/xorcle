@@ -20,6 +20,11 @@ void DecisionProcedure::update_with_new_clause(const Clause&, ClauseId) {}
 
 void DecisionProcedure::update_with_resolved_clause(ClauseId) {}
 
+std::size_t DecisionProcedure::reusable_levels(const RowSpace&, const std::vector<Clause>&,
+                                              const std::vector<std::optional<ClauseId>>&) {
+    return 0;
+}
+
 std::optional<ClauseId> DecisionProcedure::decision_clause_hint() const {
     return std::nullopt;
 }

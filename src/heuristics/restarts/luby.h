@@ -22,7 +22,7 @@ public:
     explicit Luby(const RestartConfig& config = {});
 
     bool enabled() const override;
-    bool should_restart_after_conflict() override;
+    bool should_restart_after_conflict(const ConflictSummary& conflict) override;
     void note_restart() override;
 
 private:

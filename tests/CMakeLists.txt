@@ -22,6 +22,7 @@ add_executable(xorcle_tests
     unit/test_compaction.cpp
     unit/test_decisions.cpp
     unit/test_dimacs.cpp
+    unit/test_ema.cpp
     unit/test_equation.cpp
     unit/test_index_set.cpp
     unit/test_lrup_logger.cpp

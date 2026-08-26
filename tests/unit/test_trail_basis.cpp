@@ -1,6 +1,8 @@
 #include <doctest/doctest.h>
 
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <utility>
@@ -67,6 +69,62 @@ void check_asserting_level(const TrailBasisSpace& basis, const Trail& trail,
         REQUIRE(trail_step < level_of_trail_step.size());
         CHECK(asserting_level == level_of_trail_step[trail_step]);
     }
+}
+
+/// @brief The literal block distance read straight off the definition.
+///
+/// Enumerates the subspace, intersects it with each prefix of the trail, and
+/// counts the levels the dimension jumps in. Nothing here consults a pivot.
+std::size_t literal_block_distance_reference(const TrailBasisSpace& basis, const Trail& trail,
+                                             const std::vector<std::size_t>& level_of_trail_step) {
+    const std::size_t cols = basis.cols();
+    REQUIRE(basis.rows() <= 8);
+    REQUIRE(cols <= 32);
+
+    std::vector<std::uint32_t> subspace;
+    for (std::uint32_t combination = 0; combination < (std::uint32_t{1} << basis.rows());
+         ++combination) {
+        std::uint32_t vector = 0;
+        for (std::size_t row_idx = 0; row_idx < basis.rows(); ++row_idx) {
+            if (((combination >> row_idx) & 1u) != 0u) {
+                for (const std::size_t col_idx : bits_of(basis.row(row_idx))) {
+                    vector ^= std::uint32_t{1} << col_idx;
+                }
+            }
+        }
+        subspace.push_back(vector);
+    }
+
+    // Trail step `t` is column `cols - 1 - t`, so the span of the first `i`
+    // trail equations is the span of the columns at or above `cols - i`.
+    const auto dimension_of_intersection = [&](std::size_t prefix) {
+        const std::uint32_t below = prefix == cols
+                                        ? 0u
+                                        : (std::uint32_t{1} << (cols - prefix)) - 1u;
+        std::size_t members = 0;
+        for (const std::uint32_t vector : subspace) {
+            if ((vector & below) == 0u) {
+                ++members;
+            }
+        }
+        return static_cast<std::size_t>(std::countr_zero(members));
+    };
+
+    std::vector<bool> level_seen(trail.size(), false);
+    std::size_t blocks = 0;
+    std::size_t previous_dimension = 0;
+    for (std::size_t prefix = 1; prefix <= cols; ++prefix) {
+        const std::size_t dimension = dimension_of_intersection(prefix);
+        if (dimension > previous_dimension) {
+            const std::size_t level = level_of_trail_step[prefix - 1];
+            if (!level_seen[level]) {
+                level_seen[level] = true;
+                ++blocks;
+            }
+        }
+        previous_dimension = dimension;
+    }
+    return blocks;
 }
 
 /// @brief A trail with a hand-checkable level structure.
@@ -415,6 +473,89 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace and to_RowSpace round-trip on ran
         for (std::size_t index = 0; index < basis.rows(); ++index) {
             CHECK(bits_of(again.row(index)) == bits_of(basis.row(index)));
         }
+    }
+}
+
+TEST_CASE_TEMPLATE("trail basis: literal block distance with hand-computed answers", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Trail trail = make_levelled_trail(repr);
+    const std::vector<std::size_t>& levels = levelled_trail_step_levels();
+
+    // Columns 0, 1, 2 are level 3; 3, 4 are level 2; 5, 6 are level 1; 7 is the
+    // root. A row's pivot is what counts, not every column it touches.
+    SUBCASE("rows inside one level count once") {
+        const TrailBasisSpace basis = make_basis(trail, {{0}, {1}, {2}});
+        CHECK(basis.literal_block_distance() == 1);
+        CHECK(basis.literal_block_distance() ==
+              literal_block_distance_reference(basis, trail, levels));
+    }
+
+    SUBCASE("one row per level counts every level") {
+        const TrailBasisSpace basis = make_basis(trail, {{0}, {3}, {5}, {7}});
+        CHECK(basis.literal_block_distance() == 4);
+        CHECK(basis.literal_block_distance() ==
+              literal_block_distance_reference(basis, trail, levels));
+    }
+
+    SUBCASE("a column below the pivot does not add its level") {
+        // Pivots 0 and 2 are both level 3, though column 3 is level 2.
+        const TrailBasisSpace basis = make_basis(trail, {{0, 1}, {2, 3}});
+        CHECK(basis.literal_block_distance() == 1);
+        CHECK(basis.literal_block_distance() ==
+              literal_block_distance_reference(basis, trail, levels));
+    }
+
+    SUBCASE("a single row reaches only its own level") {
+        const TrailBasisSpace basis = make_basis(trail, {{4, 6, 7}});
+        CHECK(basis.literal_block_distance() == 1);
+        CHECK(basis.literal_block_distance() ==
+              literal_block_distance_reference(basis, trail, levels));
+    }
+
+    SUBCASE("the whole coordinate basis reaches every level") {
+        const TrailBasisSpace basis = make_basis(trail, {{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}});
+        CHECK(basis.literal_block_distance() == trail.size());
+    }
+}
+
+TEST_CASE_TEMPLATE("trail basis: literal block distance agrees with the definition on random input",
+                   Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    TestRandom rng(24681357u);
+
+    for (std::size_t iteration = 0; iteration < 400; ++iteration) {
+        const std::size_t num_vars = 1 + rng.next(10);
+        const RandomTrail random_trail = make_random_trail(repr, rng, num_vars);
+        const Trail& trail = random_trail.trail;
+        REQUIRE(trail.span().rows() == num_vars);
+
+        TrailBasisSpace basis(trail);
+        const std::size_t attempts = 1 + rng.next(4);
+        for (std::size_t attempt = 0; attempt < attempts; ++attempt) {
+            std::vector<std::size_t> col_idxs;
+            for (std::size_t col_idx = 0; col_idx < basis.cols(); ++col_idx) {
+                if (rng.chance(3)) {
+                    col_idxs.push_back(col_idx);
+                }
+            }
+            if (col_idxs.empty()) {
+                continue;
+            }
+            Equation row = Equation::with_num_bits(repr, basis.cols());
+            row.assign_bits(std::span<const std::size_t>(col_idxs));
+            basis.add_row(row);
+        }
+        if (basis.rows() == 0) {
+            continue;
+        }
+
+        const std::size_t lbd = basis.literal_block_distance();
+        CHECK(lbd == literal_block_distance_reference(basis, trail,
+                                                      random_trail.level_of_trail_step));
+        CHECK(lbd >= 1);
+        CHECK(lbd <= basis.rows());
+        CHECK(lbd <= trail.size());
     }
 }
 

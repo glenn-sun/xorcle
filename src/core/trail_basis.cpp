@@ -86,6 +86,11 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
     return row_space;
 }
 
+std::size_t TrailBasisSpace::columns_after_level(std::size_t level) const {
+    assert(level <= trail_.level() && "decision level is out of range");
+    return trail_.span().rows() - trail_[level].span().rows();
+}
+
 std::size_t TrailBasisSpace::asserting_level() const {
     assert(rows() > 0 && "asserting level of an empty trail-basis space");
 
@@ -99,21 +104,46 @@ std::size_t TrailBasisSpace::asserting_level() const {
     const std::optional<std::size_t> second_row_leading = row(1).leading_bit();
     assert(second_row_leading && "a stored row is zero");
 
-    const std::size_t span_rows = trail_.span().rows();
     for (std::size_t candidate_level = trail_.level(); candidate_level > 0;) {
         --candidate_level;
-
-        // Equations learned strictly after `candidate_level` occupy columns
-        // `[0, columns_after_level)` of this matrix.
-        const std::size_t columns_after_level =
-            span_rows - trail_[candidate_level].span().rows();
-
-        if (*second_row_leading < columns_after_level) {
+        if (*second_row_leading < columns_after_level(candidate_level)) {
             return candidate_level + 1;
         }
     }
 
     return 0;
+}
+
+std::size_t TrailBasisSpace::literal_block_distance() const {
+    assert(rows() > 0 && "literal block distance of an empty trail-basis space");
+
+    // The columns a level owns end where the next level up begins, and the root
+    // level runs to the last column.
+    const auto block_end_of = [this](std::size_t level) {
+        return level == 0 ? trail_.span().rows() : columns_after_level(level - 1);
+    };
+
+    // Columns ascend into the past exactly as levels descend, so one walk over
+    // the pivot columns enters each level's block at most once.
+    std::size_t level = trail_.level();
+    std::size_t block_end = block_end_of(level);
+    std::size_t blocks = 0;
+    bool block_counted = false;
+
+    pivot_col_idxs().for_each_set([&](std::size_t col_idx) {
+        while (col_idx >= block_end) {
+            assert(level > 0 && "a pivot column lies past the root level");
+            --level;
+            block_end = block_end_of(level);
+            block_counted = false;
+        }
+        if (!block_counted) {
+            ++blocks;
+            block_counted = true;
+        }
+    });
+
+    return blocks;
 }
 
 } // namespace xorcle

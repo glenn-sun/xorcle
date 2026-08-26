@@ -128,6 +128,9 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     const std::size_t asserting_level = asserting_basis.asserting_level();
     assert(asserting_level < trail.level() && "the loop exited without discarding a level");
 
+    // Only the trail-basis coordinates carry it; the clause itself does not.
+    const std::size_t lbd = asserting_basis.literal_block_distance();
+
     // Copied row by row so the clause gets the watches of a freshly built clause.
     const RowSpace asserting_rows = asserting_basis.to_RowSpace();
     Clause asserting_clause(trail.repr(), trail.num_vars());
@@ -142,7 +145,8 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     assert((asserting_clause.rows() != 1 || asserting_level == 0) &&
            "a unit asserting clause must assert at the root");
 
-    return AssertingClause{std::move(asserting_clause), asserting_level, std::move(reason_ids)};
+    return AssertingClause{std::move(asserting_clause), asserting_level, std::move(reason_ids),
+                          lbd};
 }
 
 } // namespace xorcle

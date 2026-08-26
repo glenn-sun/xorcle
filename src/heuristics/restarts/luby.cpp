@@ -44,7 +44,8 @@ luby_value(std::size_t index) {
     return luby_value(index - prev_block);
 }
 
-Luby::Luby(const RestartConfig& config) : unit_conflicts_(config.luby_unit_conflicts) {
+Luby::Luby(const RestartConfig& config)
+    : RestartPolicy(config.reuse_trail), unit_conflicts_(config.luby_unit_conflicts) {
     assert(config.luby_unit_conflicts != 0 && "Luby unit budget must be non-zero");
     refresh_budget();
 }
@@ -55,7 +56,7 @@ Luby::enabled() const {
 }
 
 bool
-Luby::should_restart_after_conflict() {
+Luby::should_restart_after_conflict(const ConflictSummary&) {
     ++conflicts_since_restart_;
     return conflicts_since_restart_ >= current_budget_;
 }

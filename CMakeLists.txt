@@ -49,7 +49,7 @@ add_library(xorcle_core
     src/heuristics/decisions/fixed_literals.cpp
     src/heuristics/decisions/phase.cpp
     src/heuristics/decisions/variable_vsids.cpp
-    src/heuristics/restarts/geometric.cpp
+    src/heuristics/restarts/lbd.cpp
     src/heuristics/restarts/luby.cpp
     src/heuristics/restarts/restart_policy.cpp
     src/heuristics/selection/clause_selector.cpp

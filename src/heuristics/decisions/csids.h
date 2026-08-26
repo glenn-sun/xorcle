@@ -97,6 +97,12 @@ public:
 
     std::optional<ClauseId> decision_clause_hint() const override;
 
+    /// @brief The levels whose decision clause still outranks the clause the next
+    /// decision would come from.
+    std::size_t reusable_levels(
+        const RowSpace& trail_span, const std::vector<Clause>& clauses,
+        const std::vector<std::optional<ClauseId>>& decision_clauses) override;
+
     void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
                                 const std::vector<Clause>& clauses,
                                 const std::vector<std::uint8_t>& clause_active) override;

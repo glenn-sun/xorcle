@@ -1,8 +1,8 @@
 /// @file test_restart_policy.cpp
 /// @brief The restart schedules, against hand-computed sequences.
 ///
-/// The expected Luby values and geometric budgets below were worked out by hand
-/// from the definitions, not read off the implementation.
+/// The expected Luby values below were worked out by hand from the definition,
+/// not read off the implementation.
 
 #include <doctest/doctest.h>
 
@@ -11,13 +11,16 @@
 #include <memory>
 #include <vector>
 
-#include "heuristics/restarts/geometric.h"
+#include "heuristics/restarts/lbd.h"
 #include "heuristics/restarts/luby.h"
 #include "heuristics/restarts/restart_policy.h"
 
 namespace xorcle {
 
 namespace {
+
+/// @brief A conflict the fixed schedules ignore.
+constexpr ConflictSummary any_conflict{.lbd = 1, .trail_size = 1};
 
 /// @brief Feed conflicts to a policy and record the budget each restart took.
 ///
@@ -30,7 +33,7 @@ std::vector<std::size_t> observed_budgets(RestartPolicy& policy, std::size_t num
     // Generous cap: the largest schedule exercised here needs well under this.
     for (std::size_t conflict = 0; budgets.size() < num_restarts && conflict < 1'000'000; ++conflict) {
         ++conflicts_in_budget;
-        if (policy.should_restart_after_conflict()) {
+        if (policy.should_restart_after_conflict(any_conflict)) {
             budgets.push_back(conflicts_in_budget);
             conflicts_in_budget = 0;
             policy.note_restart();
@@ -99,83 +102,19 @@ TEST_CASE("Luby: an enormous unit saturates rather than wrapping") {
     // A wrapped product would be a small budget that fires almost at once; a
     // saturated one never fires here, before or after the schedule advances.
     Luby policy(config);
-    CHECK_FALSE(policy.should_restart_after_conflict());
+    CHECK_FALSE(policy.should_restart_after_conflict(any_conflict));
     policy.note_restart();
-    CHECK_FALSE(policy.should_restart_after_conflict());
-}
-
-TEST_CASE("Geometric: budgets grow by the multiplier, rounding up") {
-    RestartConfig config;
-    config.method = RestartMethod::geometric;
-    config.geometric_initial_conflicts = 100;
-    config.geometric_multiplier = 1.5;
-
-    Geometric policy(config);
-    CHECK(policy.enabled());
-
-    // 100, 150, 225, ceil(337.5) = 338, ceil(507) = 507, ceil(760.5) = 761,
-    // ceil(1141.5) = 1142, 1713, ceil(2569.5) = 2570, 3855.
-    const std::vector<std::size_t> expected = {100, 150, 225, 338, 507, 761, 1142, 1713, 2570, 3855};
-    CHECK(observed_budgets(policy, expected.size()) == expected);
-}
-
-TEST_CASE("Geometric: a doubling schedule") {
-    RestartConfig config;
-    config.method = RestartMethod::geometric;
-    config.geometric_initial_conflicts = 3;
-    config.geometric_multiplier = 2.0;
-
-    Geometric policy(config);
-    const std::vector<std::size_t> expected = {3, 6, 12, 24, 48, 96};
-    CHECK(observed_budgets(policy, expected.size()) == expected);
-}
-
-TEST_CASE("Geometric: a multiplier of 1 gives a constant budget") {
-    RestartConfig config;
-    config.method = RestartMethod::geometric;
-    config.geometric_initial_conflicts = 7;
-    config.geometric_multiplier = 1.0;
-
-    Geometric policy(config);
-    const std::vector<std::size_t> expected = {7, 7, 7, 7};
-    CHECK(observed_budgets(policy, expected.size()) == expected);
-}
-
-TEST_CASE("Geometric: a shrinking multiplier never reaches zero") {
-    RestartConfig config;
-    config.method = RestartMethod::geometric;
-    config.geometric_initial_conflicts = 4;
-    config.geometric_multiplier = 0.5;
-
-    Geometric policy(config);
-    const std::vector<std::size_t> expected = {4, 2, 1, 1, 1};
-    CHECK(observed_budgets(policy, expected.size()) == expected);
-}
-
-TEST_CASE("Geometric: growth saturates instead of overflowing") {
-    RestartConfig config;
-    config.method = RestartMethod::geometric;
-    config.geometric_initial_conflicts = std::numeric_limits<std::size_t>::max();
-    config.geometric_multiplier = 1.5;
-
-    // Growing past `SIZE_MAX` must clamp; an overflowed budget would be small
-    // enough to fire on the next conflict.
-    Geometric policy(config);
-    CHECK_FALSE(policy.should_restart_after_conflict());
-    policy.note_restart();
-    CHECK_FALSE(policy.should_restart_after_conflict());
-    policy.note_restart();
-    CHECK_FALSE(policy.should_restart_after_conflict());
+    CHECK_FALSE(policy.should_restart_after_conflict(any_conflict));
 }
 
 TEST_CASE("NoRestarts: never fires and consumes no budget") {
     NoRestarts policy;
     CHECK_FALSE(policy.enabled());
     for (int i = 0; i < 10'000; ++i) {
-        CHECK_FALSE(policy.should_restart_after_conflict());
+        CHECK_FALSE(policy.should_restart_after_conflict(any_conflict));
     }
     policy.note_restart();
-    CHECK_FALSE(policy.should_restart_after_conflict());
+    CHECK_FALSE(policy.should_restart_after_conflict(any_conflict));
 }
 
 TEST_CASE("make_restart_policy: dispatches on the configured method") {
@@ -185,18 +124,7 @@ TEST_CASE("make_restart_policy: dispatches on the configured method") {
         auto policy = make_restart_policy(config);
         REQUIRE(policy != nullptr);
         CHECK_FALSE(policy->enabled());
-        CHECK_FALSE(policy->should_restart_after_conflict());
-    }
-
-    SUBCASE("geometric") {
-        RestartConfig config;
-        config.method = RestartMethod::geometric;
-        config.geometric_initial_conflicts = 2;
-        config.geometric_multiplier = 2.0;
-        auto policy = make_restart_policy(config);
-        REQUIRE(policy != nullptr);
-        CHECK(policy->enabled());
-        CHECK(observed_budgets(*policy, 3) == std::vector<std::size_t>{2, 4, 8});
+        CHECK_FALSE(policy->should_restart_after_conflict(any_conflict));
     }
 
     SUBCASE("luby") {
@@ -208,6 +136,107 @@ TEST_CASE("make_restart_policy: dispatches on the configured method") {
         CHECK(policy->enabled());
         CHECK(observed_budgets(*policy, 4) == std::vector<std::size_t>{2, 2, 4, 2});
     }
+
+    SUBCASE("lbd") {
+        RestartConfig config;
+        config.method = RestartMethod::lbd;
+        auto policy = make_restart_policy(config);
+        REQUIRE(policy != nullptr);
+        CHECK(policy->enabled());
+        CHECK_FALSE(policy->should_restart_after_conflict({.lbd = 4, .trail_size = 20}));
+    }
+}
+
+TEST_CASE("Lbd: a steady stream of clauses never restarts") {
+    RestartConfig config;
+    config.method = RestartMethod::lbd;
+
+    // Both averages read back the same constant exactly, so no margin above 1
+    // can ever be cleared.
+    Lbd policy(config);
+    CHECK(policy.enabled());
+    for (std::size_t conflict = 0; conflict < 10'000; ++conflict) {
+        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 4, .trail_size = 20}));
+    }
+}
+
+TEST_CASE("Lbd: clauses turning worse than the run's average restart") {
+    RestartConfig config;
+    config.method = RestartMethod::lbd;
+
+    Lbd policy(config);
+    for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
+        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_size = 20}));
+    }
+
+    std::size_t conflicts_until_restart = 0;
+    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20})) {
+        ++conflicts_until_restart;
+        REQUIRE(conflicts_until_restart < 1'000);
+    }
+    // Within the fast window, since that is how long the fast average takes to
+    // notice.
+    CHECK(conflicts_until_restart < config.lbd_fast_window);
+}
+
+TEST_CASE("Lbd: a trail far above average blocks the restart") {
+    RestartConfig config;
+    config.method = RestartMethod::lbd;
+
+    Lbd policy(config);
+    for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
+        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_size = 20}));
+    }
+    for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
+        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 20, .trail_size = 400}));
+    }
+
+    // The block is on the trail, not on the clauses: the same stream restarts
+    // once the trail comes back down.
+    std::size_t conflicts_until_restart = 0;
+    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20})) {
+        ++conflicts_until_restart;
+        REQUIRE(conflicts_until_restart < 1'000);
+    }
+}
+
+TEST_CASE("Lbd: a zero block factor never blocks") {
+    RestartConfig config;
+    config.method = RestartMethod::lbd;
+    config.lbd_block_factor = 0.0;
+
+    Lbd policy(config);
+    for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
+        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_size = 20}));
+    }
+    std::size_t conflicts_until_restart = 0;
+    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_size = 400})) {
+        ++conflicts_until_restart;
+        REQUIRE(conflicts_until_restart < 1'000);
+    }
+}
+
+TEST_CASE("Lbd: the minimum interval is waited out after a restart") {
+    RestartConfig config;
+    config.method = RestartMethod::lbd;
+    config.lbd_min_conflicts = 500;
+
+    Lbd policy(config);
+    for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
+        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_size = 20}));
+    }
+    std::size_t guard = 0;
+    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20})) {
+        REQUIRE(++guard < 1'000);
+    }
+    policy.note_restart();
+
+    // The averages call for another restart at once, the fast one reading back
+    // its first post-restart sample exactly; only the interval holds it back.
+    for (std::size_t conflict = 1; conflict < 500; ++conflict) {
+        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20}));
+    }
+    CHECK(policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20}));
 }
 
 TEST_CASE("restart policies: note_restart is what advances the schedule") {
@@ -220,9 +249,9 @@ TEST_CASE("restart policies: note_restart is what advances the schedule") {
     // where it was; the solver only advances it after a real restart, so the
     // exhausted budget keeps firing until it does.
     for (int i = 0; i < 10; ++i) {
-        CHECK(policy.should_restart_after_conflict() == (i == 9));
+        CHECK(policy.should_restart_after_conflict(any_conflict) == (i == 9));
     }
-    CHECK(policy.should_restart_after_conflict());
+    CHECK(policy.should_restart_after_conflict(any_conflict));
 
     // Advancing gives luby_value(2) == 1 then luby_value(3) == 2, i.e. 10 and 20.
     policy.note_restart();

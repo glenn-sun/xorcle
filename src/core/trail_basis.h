@@ -40,7 +40,21 @@ public:
     /// @note `O(trail.level())`, called twice per resolution step.
     std::size_t asserting_level() const;
 
+    /// @brief How many decision levels these rows reach into.
+    ///
+    /// The literal block distance of the clause they negate: the trail prefixes
+    /// meet this subspace exactly at its pivot columns, so those columns stand
+    /// in for the literals counted in the Boolean case.
+    /// @pre `rows() > 0`.
+    /// @note `O(rows() + trail.level())`.
+    std::size_t literal_block_distance() const;
+
 private:
+    /// @brief The number of columns holding equations learned strictly after
+    /// `level`, which are the columns below the returned index.
+    /// @pre `level <= trail.level()`.
+    std::size_t columns_after_level(std::size_t level) const;
+
     const Trail& trail_;
 };
 

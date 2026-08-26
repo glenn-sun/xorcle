@@ -2,7 +2,7 @@
 
 #include <cassert>
 
-#include "heuristics/restarts/geometric.h"
+#include "heuristics/restarts/lbd.h"
 #include "heuristics/restarts/luby.h"
 
 namespace xorcle {
@@ -13,7 +13,7 @@ NoRestarts::enabled() const {
 }
 
 bool
-NoRestarts::should_restart_after_conflict() {
+NoRestarts::should_restart_after_conflict(const ConflictSummary&) {
     return false;
 }
 
@@ -25,10 +25,10 @@ make_restart_policy(const RestartConfig& config) {
     switch (config.method) {
         case RestartMethod::none:
             return std::make_unique<NoRestarts>();
-        case RestartMethod::geometric:
-            return std::make_unique<Geometric>(config);
         case RestartMethod::luby:
             return std::make_unique<Luby>(config);
+        case RestartMethod::lbd:
+            return std::make_unique<Lbd>(config);
     }
     assert(false && "unhandled restart method");
     return std::make_unique<NoRestarts>();

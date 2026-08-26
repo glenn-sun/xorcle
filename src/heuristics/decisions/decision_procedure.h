@@ -73,6 +73,18 @@ public:
     /// @brief The clause the last decision came from, for the selector to prioritize.
     virtual std::optional<ClauseId> decision_clause_hint() const;
 
+    /// @brief How many of the lowest decision levels a restart may keep.
+    ///
+    /// The levels this procedure would rank ahead of the decision it is about to
+    /// make, so that keeping them costs no search. `decision_clauses[k]` is the
+    /// clause the decision at level `k + 1` came from, empty when the fallback
+    /// basis supplied it.
+    /// @return At most `decision_clauses.size()`. The default keeps nothing.
+    /// @pre `trail_span` is not conflicting.
+    virtual std::size_t reusable_levels(const RowSpace& trail_span,
+                                        const std::vector<Clause>& clauses,
+                                        const std::vector<std::optional<ClauseId>>& decision_clauses);
+
     /// @brief Remap procedure state into a compacted variable numbering.
     /// @pre `transform.old_num_vars() == num_vars()`.
     /// @note The default adopts the new active variable count and nothing else.

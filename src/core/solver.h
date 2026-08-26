@@ -52,6 +52,7 @@ struct SolverCounters {
     std::size_t num_propagations = 0;
     std::size_t num_conflicts = 0;     ///< Root conflict included.
     std::size_t num_restarts = 0;
+    std::size_t num_reused_levels = 0; ///< Decision levels restarts kept instead of discarding.
 };
 
 /// @brief The CDCL(⊕) solver.
@@ -108,6 +109,10 @@ private:
     /// @brief Emit the final empty-clause proof line for a root conflict.
     void write_root_unsat_proof();
 
+    /// @brief Discard every decision level above `level`, records included.
+    /// @pre `level <= trail_.level()`.
+    void backjump_to(std::size_t level);
+
     void make_decision_step();
 
     bool reports_progress() const noexcept {
@@ -149,6 +154,11 @@ private:
     std::size_t conflicts_at_last_compaction_ = 0;
 
     Trail trail_;
+
+    /// @brief The clause each decision level's decision came from, indexed by
+    /// level less one, and empty where the fallback basis supplied it.
+    std::vector<std::optional<ClauseId>> decision_clause_of_level_;
+
     std::unique_ptr<ClauseSelector> selector_;
     std::unique_ptr<DecisionProcedure> decisions_;
     std::unique_ptr<RestartPolicy> restarts_;

@@ -112,18 +112,28 @@ void Solver::handle_non_root_conflict() {
     const std::size_t level_before_backjump = trail_.level();
     // Consumes a conflict from the restart budget, so it must run exactly once
     // per non-root conflict whether or not a restart fires.
-    const bool restart_now = restarts_->should_restart_after_conflict();
+    const bool restart_now = restarts_->should_restart_after_conflict(
+        ConflictSummary{.lbd = learned.lbd, .trail_size = trail_.span().rows()});
 
     // How many levels the *solver* discards. Without a restart that is the
-    // complement of the asserting level; with one it is every non-root level.
+    // complement of the asserting level; with one it is everything below the
+    // levels trail reuse keeps.
     std::size_t removed_levels = level_before_backjump - learned.asserting_level;
+    backjump_to(learned.asserting_level);
     if (restart_now) {
-        removed_levels = level_before_backjump;
-        trail_.resize(1);
+        // Asked on the backjumped trail: it is not conflicting, and a restart
+        // can only discard further than the conflict already has.
+        std::size_t kept_levels = 0;
+        if (restarts_->reuses_trail()) {
+            kept_levels = decisions_->reusable_levels(trail_.span(), selector_->clauses(),
+                                                      decision_clause_of_level_);
+            assert(kept_levels <= learned.asserting_level && "reuse kept a discarded level");
+        }
+        counters_.num_reused_levels += kept_levels;
+        removed_levels = level_before_backjump - kept_levels;
+        backjump_to(kept_levels);
         restarts_->note_restart();
         ++counters_.num_restarts;
-    } else {
-        trail_.resize(learned.asserting_level + 1);
     }
 
     decisions_->update_with_new_clause(learned.clause, new_clause_id);
@@ -155,6 +165,12 @@ void Solver::write_root_unsat_proof() {
     proof_logger_->log_empty_clause(next_proof_clause_id_++, conflict_reason_ids);
 }
 
+void Solver::backjump_to(std::size_t level) {
+    assert(level <= trail_.level() && "backjump target is above the current level");
+    trail_.resize(level + 1);
+    decision_clause_of_level_.resize(level);
+}
+
 void Solver::make_decision_step() {
     Equation decision_eqn = decisions_->make_decision(trail_.span(), selector_->clauses());
     [[maybe_unused]] const ReduceResult reduced = trail_.span().partial_reduce(decision_eqn);
@@ -164,6 +180,9 @@ void Solver::make_decision_step() {
            "the decision procedure returned an equation the trail already decides");
 
     trail_.learn(decision_eqn, std::nullopt);
+    decision_clause_of_level_.push_back(decisions_->decision_clause_hint());
+    assert(decision_clause_of_level_.size() == trail_.level() &&
+           "the decision clause record fell out of step with the trail");
     selector_->update_with_decision(decision_eqn, trail_);
     selector_->update_with_decision_clause(decisions_->decision_clause_hint());
 }
@@ -246,6 +265,7 @@ void Solver::apply_compaction(CompactionPlan plan) {
 
     // The root trail is thrown away on purpose; see the warning on this method.
     trail_ = Trail(repr_, active_num_vars_);
+    decision_clause_of_level_.clear();
 
     selector_->update_with_compaction(plan.transform, trail_);
     decisions_->update_with_compaction(plan.transform, trail_.span(), selector_->clauses(),

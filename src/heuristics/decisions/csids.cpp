@@ -138,6 +138,42 @@ std::optional<ClauseId> Csids::decision_clause_hint() const {
     return state_.last_decision_clause;
 }
 
+std::size_t Csids::reusable_levels(
+    const RowSpace& trail_span, const std::vector<Clause>& clauses,
+    const std::vector<std::optional<ClauseId>>& decision_clauses) {
+    // The same walk `make_decision()` makes, undone afterwards: the heap holds
+    // nothing popped when a conflict hands over, so the rebuild restores it.
+    std::optional<ClauseId> next;
+    while (!state_.activity.activity_heap.empty()) {
+        const ClauseId id = state_.activity.activity_heap.peek_max();
+        if (id < clauses.size() &&
+            !clause_satisfied_by_trail(trail_span, clauses[id], clause_sat_workspace_)) {
+            next = id;
+            break;
+        }
+        state_.activity.activity_heap.extract_max();
+    }
+    state_.activity.activity_heap.rebuild();
+
+    // Nothing left to decide from, so every level is one the fallback basis
+    // would have to supply again.
+    if (!next.has_value()) {
+        return 0;
+    }
+
+    const double next_activity = state_.activity.activity_heap.get_priority(*next);
+    std::size_t levels = 0;
+    while (levels < decision_clauses.size()) {
+        const std::optional<ClauseId>& id = decision_clauses[levels];
+        if (!id.has_value() ||
+            state_.activity.activity_heap.get_priority(*id) <= next_activity) {
+            break;
+        }
+        ++levels;
+    }
+    return levels;
+}
+
 void Csids::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
                                    const std::vector<Clause>& clauses,
                                    const std::vector<std::uint8_t>& clause_active) {

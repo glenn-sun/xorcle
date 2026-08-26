@@ -152,6 +152,7 @@ RunStats run_once(const Options& options) {
     stats.num_attempt_props = counters.num_attempt_props;
     stats.num_watch_updates = counters.num_watch_updates;
     stats.num_restarts = counters.num_restarts;
+    stats.num_reused_levels = counters.num_reused_levels;
 
     const DecisionProcedure::DecisionStats decisions = solver.decision_stats();
     stats.decisions = decisions.decisions;

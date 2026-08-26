@@ -23,6 +23,10 @@ struct AssertingClause {
 
     /// @brief Every clause used, in derivation order: the conflicting clause first.
     std::vector<ClauseId> reason_ids;
+
+    /// @brief How many decision levels the clause reaches into, measured on the
+    /// trail it was derived from.
+    std::size_t lbd;
 };
 
 /// @brief Derive an asserting clause from a conflicting trail, by the 1-UIP-like

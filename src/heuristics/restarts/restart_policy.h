@@ -11,41 +11,67 @@ namespace xorcle {
 
 enum class RestartMethod {
     none,
-    geometric,
-    luby
+    luby,
+    lbd
 };
 
 struct RestartConfig {
     RestartMethod method = RestartMethod::none;
-    double geometric_multiplier = 1.5;
-    std::size_t geometric_initial_conflicts = 100;
-    std::size_t luby_unit_conflicts = 100; ///< The budget for a Luby value of 1.
+    /// @brief The budget for a Luby value of 1. No default: every value tried lost
+    /// to both `none` and `lbd`, so there is none to recommend.
+    std::size_t luby_unit_conflicts = 0;
+
+    std::size_t lbd_fast_window = 33;
+    std::size_t lbd_slow_window = 100000;
+    /// @brief How far the fast average must exceed the slow one.
+    double lbd_margin = 1.1;
+    std::size_t lbd_min_conflicts = 2; ///< Conflicts an LBD restart waits out.
+    /// @brief Trail length, relative to its average, that blocks a restart; `0` never blocks.
+    double lbd_block_factor = 1.4;
+
+    /// @brief Whether a restart keeps the decisions it would immediately re-make.
+    bool reuse_trail = true;
+
 };
 
-/// @brief Stateful restart scheduler driven by conflict counts.
-///
-/// @warning Restarts are experimental and the schedules here are untuned.
+/// @brief What a conflict tells a restart policy.
+struct ConflictSummary {
+    std::size_t lbd;        ///< Of the asserting clause just derived.
+    std::size_t trail_size; ///< Trail rows at the conflict, before the backjump.
+};
+
+/// @brief Stateful restart scheduler driven by the conflicts as they happen.
 class RestartPolicy {
 public:
+    explicit RestartPolicy(bool reuse_trail = true) : reuse_trail_(reuse_trail) {}
+
     virtual ~RestartPolicy() = default;
 
     virtual bool enabled() const = 0;
 
-    /// @brief Record one non-root conflict; true exactly when it exhausts the active budget.
+    /// @brief Whether a restart backjumps to the deepest level the decision
+    /// procedure would rebuild anyway, rather than to the root.
+    bool reuses_trail() const noexcept { return reuse_trail_; }
+
+    /// @brief Record one non-root conflict; true exactly when it calls for a restart.
     ///
-    /// Consumes a conflict but does not advance to the next budget.
-    virtual bool should_restart_after_conflict() = 0;
+    /// Consumes the conflict but does not advance to the next budget. The fixed
+    /// schedules ignore `conflict`.
+    virtual bool should_restart_after_conflict(const ConflictSummary& conflict) = 0;
 
     /// @brief Advance to the next budget.
     /// @pre A restart has just happened.
     virtual void note_restart() = 0;
+
+private:
+    bool reuse_trail_;
 };
 
 class NoRestarts final : public RestartPolicy {
 public:
     bool enabled() const override;
 
-    bool should_restart_after_conflict() override;
+    bool should_restart_after_conflict(const ConflictSummary& conflict) override;
 
     void note_restart() override;
 };

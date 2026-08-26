@@ -118,6 +118,7 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c Attempted propagations: 900\n"
         "c Watch updates: 83\n"
         "c Restarts: 2\n"
+        "c Reused levels: 0\n"
         "c Decisions: 40\n"
         "c Fallback decisions: 3\n"
         "c Propagations per conflict: 11.765\n"
@@ -188,6 +189,7 @@ TEST_CASE("ConsoleStatsWriter: zero denominators omit their ratio lines") {
         "c Attempted propagations: 0\n"
         "c Watch updates: 0\n"
         "c Restarts: 0\n"
+        "c Reused levels: 0\n"
         "c Decisions: 0\n"
         "c Fallback decisions: 0\n"
         "c Time: 0.000 s\n"
@@ -254,7 +256,7 @@ TEST_CASE("CsvStatsWriter: header then rows, appended") {
         "run_id,timestamp_utc,file,decision_procedure,csids_initial_activity,csids_decay,csids_bump,"
         "decision_phase,clause_selector,seed,result,"
         "num_vars,start_clauses,final_clauses,learned_clauses,"
-        "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,"
+        "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,reused_levels,"
         "decisions,fallback_decisions,fallback_pct,"
         "prop_per_conflict,attempts_per_prop_watch_conflict\n"));
     // Absent optional doubles are empty fields, and the result column is the

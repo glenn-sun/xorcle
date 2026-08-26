@@ -38,6 +38,7 @@ struct RunStats {
     std::size_t num_attempt_props = 0;
     std::size_t num_watch_updates = 0;
     std::size_t num_restarts = 0;
+    std::size_t num_reused_levels = 0; ///< Decision levels restarts kept instead of discarding.
     std::size_t decisions = 0;
     std::size_t fallback_decisions = 0;
     /// @brief The satisfying assignment, indexed by variable in the original

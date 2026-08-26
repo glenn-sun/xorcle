@@ -15,7 +15,7 @@
 #include "core/solver.h"
 #include "core/trail.h"
 #include "heuristics/decisions/csids.h"
-#include "heuristics/restarts/geometric.h"
+#include "heuristics/restarts/luby.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
 #include "heuristics/selection/cyclic.h"
@@ -147,14 +147,14 @@ Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfi
     return run;
 }
 
-/// @brief A `Geometric` policy on the smallest budget that still grows -- 1, 2,
-/// 3, 5, ... -- so a handful of conflicts restart several times.
-std::unique_ptr<RestartPolicy> tiny_geometric_restarts() {
+/// @brief A `Luby` policy on the smallest unit budget -- 1, 1, 2, 1, ... -- so a
+/// handful of conflicts restart several times.
+std::unique_ptr<RestartPolicy> tiny_luby_restarts(bool reuse_trail = false) {
     RestartConfig config;
-    config.method = RestartMethod::geometric;
-    config.geometric_initial_conflicts = 1;
-    config.geometric_multiplier = 1.5;
-    return std::make_unique<Geometric>(config);
+    config.method = RestartMethod::luby;
+    config.luby_unit_conflicts = 1;
+    config.reuse_trail = reuse_trail;
+    return std::make_unique<Luby>(config);
 }
 
 // --- Watching the backjump -------------------------------------------------
@@ -417,13 +417,13 @@ TEST_CASE_TEMPLATE("solver: compaction does not change an UNSAT verdict", Tag, D
 TEST_CASE_TEMPLATE("solver: restarting does not change the verdict", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Run restarting = make_run(repr, search_unsat_instance, CompactionConfig{},
-                              tiny_geometric_restarts());
+                              tiny_luby_restarts());
 
     CHECK(restarting.solver->solve().result == SolveResult::unsat);
     CHECK(restarting.solver->counters().num_restarts > 0);
 
     Run satisfiable =
-        make_run(repr, search_sat_instance, CompactionConfig{}, tiny_geometric_restarts());
+        make_run(repr, search_sat_instance, CompactionConfig{}, tiny_luby_restarts());
     const Solution solution = satisfiable.solver->solve();
     check_satisfies(satisfiable.clauses, solution, satisfiable.num_vars);
 }
@@ -454,8 +454,8 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
         }
     }
 
-    SUBCASE("with restarts it is every non-root level, whatever the clause asserts") {
-        const std::vector<Backjump> backjumps = record(tiny_geometric_restarts());
+    SUBCASE("with restarts and no trail reuse it is every non-root level") {
+        const std::vector<Backjump> backjumps = record(tiny_luby_restarts());
         REQUIRE_FALSE(backjumps.empty());
 
         std::size_t discriminating = 0;
@@ -473,6 +473,18 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
         }
         // The case that tells the two formulas apart really did occur.
         CHECK(discriminating > 0);
+    }
+
+    SUBCASE("trail reuse stops a restart short of the root, never above the clause") {
+        const std::vector<Backjump> backjumps = record(tiny_luby_restarts(true));
+        REQUIRE_FALSE(backjumps.empty());
+
+        for (const Backjump& backjump : backjumps) {
+            CHECK(backjump.level_after + backjump.removed_levels == backjump.level_before);
+            // Reuse chooses within what the conflict already allows, so a
+            // restart still lands at or below the asserting level.
+            CHECK(backjump.level_after <= backjump.asserting_level);
+        }
     }
 }
 
