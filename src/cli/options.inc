@@ -75,6 +75,9 @@ XORCLE_ENUM_OPTION(selection, ClauseSelectorName, ClauseSelectorName::cyclic,
 XORCLE_ENUM_VALUE(selection, "cyclic", ClauseSelectorName::cyclic)
 XORCLE_ENUM_VALUE(selection, "leading_term_watchlist", ClauseSelectorName::leading_term_watchlist)
 
+XORCLE_OPTION(defer_pushes, Size, 1, 1, SIZE_MAX,
+              "bottom pushes before a leading-term-watchlist clause is queued")
+
 // --- Restarts --------------------------------------------------------------
 
 XORCLE_ENUM_OPTION(restart, RestartMethod, RestartMethod::none, "restart schedule")

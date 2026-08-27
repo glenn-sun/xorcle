@@ -22,8 +22,10 @@ void debug_assert_non_unit_watches_valid(const Clause& clause) {
 
 } // namespace
 
-LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars)
-    : by_leading_term_(num_vars + 1) {}
+LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars, std::size_t defer_pushes)
+    : by_leading_term_(num_vars + 1), defer_pushes_(defer_pushes) {
+    assert(defer_pushes >= 1 && "a clause is queued on at least its first bottom push");
+}
 
 std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex row_idx) const {
     // Stronger than `RowEchelonMatrix::row()`'s own bound check below: this says
@@ -49,10 +51,45 @@ void LeadingTermWatchlist::push_top(ClauseId id) {
 
 void LeadingTermWatchlist::push_bottom(ClauseId id) {
     assert(id < in_queue_.size() && "clause id is out of range");
-    if (!in_queue_[id]) {
-        queue_.push_front(id);
-        in_queue_[id] = true;
+    if (in_queue_[id]) {
+        return;
     }
+    if (defer_pushes_ > 1) {
+        const std::uint32_t pushes = ++bottom_pushes_since_pop_[id];
+        if (pushes == 1) {
+            deferred_.push_back(id);
+        }
+        if (pushes < defer_pushes_) {
+            return;
+        }
+    }
+    queue_.push_front(id);
+    in_queue_[id] = true;
+}
+
+std::optional<ClauseId> LeadingTermWatchlist::pop_deferred() {
+    while (deferred_pos_ < deferred_.size()) {
+        const ClauseId id = deferred_[deferred_pos_++];
+        if (bottom_pushes_since_pop_[id] == 0) {
+            continue;
+        }
+        assert(!in_queue_[id] && "a deferred clause is also in the queue");
+        return id;
+    }
+    assert(std::all_of(bottom_pushes_since_pop_.begin(), bottom_pushes_since_pop_.end(),
+                       [](std::uint32_t pushes) { return pushes == 0; }) &&
+           "a clause kept a push count no deferred entry names");
+    deferred_.clear();
+    deferred_pos_ = 0;
+    return std::nullopt;
+}
+
+void LeadingTermWatchlist::clear_deferred() {
+    for (const ClauseId id : deferred_) {
+        bottom_pushes_since_pop_[id] = 0;
+    }
+    deferred_.clear();
+    deferred_pos_ = 0;
 }
 
 void LeadingTermWatchlist::append_top(const std::vector<ClauseId>& ids) {
@@ -67,8 +104,10 @@ void LeadingTermWatchlist::append_bottom(const std::vector<ClauseId>& ids) {
     }
 }
 
-ClauseId LeadingTermWatchlist::pop() {
-    assert(!queue_.empty() && "pop on an empty work queue");
+std::optional<ClauseId> LeadingTermWatchlist::pop() {
+    if (queue_.empty()) {
+        return pop_deferred();
+    }
     const ClauseId id = queue_.back();
     queue_.pop_back();
     in_queue_[id] = false;
@@ -76,13 +115,18 @@ ClauseId LeadingTermWatchlist::pop() {
 }
 
 std::optional<ClauseId> LeadingTermWatchlist::next() {
-    while (!queue_.empty()) {
-        const ClauseId id = pop();
-        if (is_clause_active(id)) {
+    while (true) {
+        const std::optional<ClauseId> id = pop();
+        if (!id.has_value()) {
+            return std::nullopt;
+        }
+        if (defer_pushes_ > 1) {
+            bottom_pushes_since_pop_[*id] = 0;
+        }
+        if (is_clause_active(*id)) {
             return id;
         }
     }
-    return std::nullopt;
 }
 
 void LeadingTermWatchlist::index_clause(ClauseId id) {
@@ -104,6 +148,7 @@ void LeadingTermWatchlist::add_clause(Clause clause) {
     // The watch check runs in `index_clause()` below, on the stored clause.
     ClauseSelector::add_clause(std::move(clause));
     in_queue_.push_back(false);
+    bottom_pushes_since_pop_.push_back(0);
 
     index_clause(new_id);
     if (clauses_[new_id].rows() <= 1) {
@@ -121,6 +166,7 @@ void LeadingTermWatchlist::add_asserting_clause(Clause clause, const Trail&, std
     // Everything queued before the conflict was queued against a trail that no
     // longer exists, so rebuild from the unit clauses with the new clause on top.
     queue_.clear();
+    clear_deferred();
     std::fill(in_queue_.begin(), in_queue_.end(), false);
     append_top(unit_clauses_);
     push_top(clauses_.size() - 1);
@@ -193,6 +239,7 @@ void LeadingTermWatchlist::update_with_compaction(const CompactionTransform&, co
 
     const std::deque<ClauseId> old_queue = queue_;
     queue_.clear();
+    clear_deferred();
     std::fill(in_queue_.begin(), in_queue_.end(), false);
 
     for (ClauseId id = 0; id < clauses_.size(); ++id) {

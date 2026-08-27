@@ -4,6 +4,7 @@
 /// @brief The selector that indexes clauses by their watched rows' leading terms.
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <optional>
 #include <vector>
@@ -29,7 +30,11 @@ namespace xorcle {
 class LeadingTermWatchlist final : public ClauseSelector {
 public:
     /// @param num_vars One bucket per column, plus one for the constant column.
-    explicit LeadingTermWatchlist(std::size_t num_vars);
+    /// @param defer_pushes Bottom pushes a clause takes before it joins the queue; a clause
+    /// still short of that many is served once the queue is empty, in the order it was
+    /// first pushed.
+    /// @pre `defer_pushes` is at least 1.
+    explicit LeadingTermWatchlist(std::size_t num_vars, std::size_t defer_pushes = 1);
 
     std::optional<ClauseId> next() override;
 
@@ -53,13 +58,19 @@ protected:
 
 private:
     void push_top(ClauseId id); ///< Queue at the pop end, unless already queued.
-    void push_bottom(ClauseId id); ///< Queue at the far end, unless already queued.
+    void push_bottom(ClauseId id); ///< Queue at the far end, on the `defer_pushes_`-th push.
+
+    /// @brief The next clause held short of `defer_pushes_`, skipping the entries whose
+    /// clause has since been popped.
+    std::optional<ClauseId> pop_deferred();
+
+    void clear_deferred();
 
     void append_top(const std::vector<ClauseId>& ids);
     void append_bottom(const std::vector<ClauseId>& ids);
 
-    /// @pre The queue is not empty.
-    ClauseId pop();
+    /// @brief The next clause to examine, or `std::nullopt` once nothing is left.
+    std::optional<ClauseId> pop();
 
     /// @pre `row_idx < clause.rows()`, and that row is not the true equation.
     std::size_t bucket_of(const Clause& clause, ClauseRowIndex row_idx) const;
@@ -72,6 +83,11 @@ private:
     std::deque<ClauseId> queue_; ///< Popped from the back.
     std::vector<bool> in_queue_;
     std::vector<ClauseId> unit_clauses_;
+
+    std::size_t defer_pushes_;
+    std::vector<std::uint32_t> bottom_pushes_since_pop_;
+    std::vector<ClauseId> deferred_; ///< In first-push order; entries go stale rather than move.
+    std::size_t deferred_pos_ = 0;
 };
 
 } // namespace xorcle

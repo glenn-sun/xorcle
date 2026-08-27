@@ -69,7 +69,7 @@ std::unique_ptr<ClauseSelector> make_clause_selector(const Options& options,
         case ClauseSelectorName::cyclic:
             return std::make_unique<Cyclic>(num_vars);
         case ClauseSelectorName::leading_term_watchlist:
-            return std::make_unique<LeadingTermWatchlist>(num_vars);
+            return std::make_unique<LeadingTermWatchlist>(num_vars, options.defer_pushes);
     }
     assert(false && "make_clause_selector: unknown clause selector name");
     return std::make_unique<Cyclic>(num_vars);
