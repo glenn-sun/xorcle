@@ -101,6 +101,11 @@ XORCLE_OPTION(restart_lbd_min, Size, 2, 1, SIZE_MAX,
 XORCLE_OPTION(restart_lbd_block, Real, 1.4, 0.0, INFINITY,
               "trail length, relative to average, that blocks an LBD restart; 0 never blocks")
 
+// --- Clause minimization ---------------------------------------------------
+
+XORCLE_OPTION(minimize, Bool, true, false, true,
+              "shrink each learned clause by resolving past the asserting point")
+
 // --- Output ----------------------------------------------------------------
 
 XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(⊕) proof here; requires --compact=false")

@@ -17,7 +17,7 @@ namespace xorcle {
 Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
                std::unique_ptr<DecisionProcedure> decisions,
                std::unique_ptr<RestartPolicy> restarts, LrupLogger* proof_logger,
-               const CompactionConfig& compaction, const ProgressConfig& progress)
+               const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize)
     : repr_(repr),
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
@@ -31,7 +31,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       proof_logger_(proof_logger),
       conflict_check_eqn_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)),
-      progress_(progress) {
+      progress_(progress),
+      minimize_(minimize) {
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
@@ -98,7 +99,14 @@ bool Solver::propagate_until_conflict() {
 }
 
 void Solver::handle_non_root_conflict() {
-    AssertingClause learned = find_asserting_clause(trail_, selector_->clauses(), *decisions_);
+    AssertingClause learned =
+        find_asserting_clause(trail_, selector_->clauses(), *decisions_, minimize_);
+    if (minimize_) {
+        counters_.minimize_dim_before += learned.dim_before_minimize;
+        counters_.minimize_dim_after += learned.clause.rows();
+        counters_.num_minimized_clauses +=
+            learned.clause.rows() < learned.dim_before_minimize ? 1 : 0;
+    }
 
     // The id the clause is *about* to take, read before it is added.
     const ClauseId new_clause_id = selector_->num_clauses();

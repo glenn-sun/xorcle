@@ -52,7 +52,8 @@ public:
     /// reading the last column as the constant.
     virtual ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const = 0;
 
-    virtual Equation pop_first_row() = 0;
+    /// @brief Remove the row at `index`, returning it.
+    virtual Equation pop_row(std::size_t index) = 0;
 
     virtual void pop_last_row() = 0;
 
@@ -186,31 +187,35 @@ public:
                                   : partial_reduce_with_extra_impl<true>(v, extra);
     }
 
-    Equation pop_first_row() override {
-        Equation first_row = std::move(rows_.front());
-        const std::optional<std::size_t> leading_col_idx = gf2_vector_of<V>(first_row).leading_bit();
+    Equation pop_row(std::size_t index) override {
+        Equation popped_row = std::move(rows_[index]);
+        const std::optional<std::size_t> leading_col_idx =
+            gf2_vector_of<V>(popped_row).leading_bit();
         // Stronger than the caller's `rows() > 0`: a structural invariant of a
         // row-echelon matrix, which never stores a zero row.
         assert(leading_col_idx && "stored row has no pivot");
 
-        rows_.erase(rows_.begin());
+        rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(index));
         pivot_col_idxs_.reset(*leading_col_idx);
         if (!col_idx_to_row_.empty()) {
             col_idx_to_row_[*leading_col_idx] = nullptr;
         }
+        // Only the rows above the hole moved down.
         if (!col_idx_to_row_idx_.empty()) {
             pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
-                --col_idx_to_row_idx_[pivot_col_idx];
+                if (pivot_col_idx > *leading_col_idx) {
+                    --col_idx_to_row_idx_[pivot_col_idx];
+                }
             });
         }
 
         debug_assert_valid_representation();
-        return first_row;
+        return popped_row;
     }
 
     void pop_last_row() override {
         const std::optional<std::size_t> leading_col_idx = gf2_vector_of<V>(rows_.back()).leading_bit();
-        // Stronger than the caller's `rows() > 0`; see `pop_first_row()`.
+        // Stronger than the caller's `rows() > 0`; see `pop_row()`.
         assert(leading_col_idx && "stored row has no pivot");
 
         rows_.pop_back();

@@ -68,17 +68,17 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
 }
 
 RowSpace TrailBasisSpace::to_RowSpace() const {
-    assert(trail_maps_are_consistent(trail_) && "the trail's order maps are inconsistent");
+    assert(trail_maps_are_consistent(*trail_) && "the trail's order maps are inconsistent");
 
-    RowSpace row_space(trail_.repr(), trail_.num_vars());
-    Equation row_space_eqn(trail_.repr(), trail_.num_vars());
+    RowSpace row_space(trail_->repr(), trail_->num_vars());
+    Equation row_space_eqn(trail_->repr(), trail_->num_vars());
     const std::size_t num_coefficients = cols();
 
     for (const Equation& trail_basis_row : *this) {
         row_space_eqn.set_eq_true();
         for (const std::size_t coefficient_bit : trail_basis_row.bits()) {
             const std::size_t trail_index = num_coefficients - coefficient_bit - 1;
-            row_space_eqn.plus_assign(trail_.span().row(trail_.order_map()[trail_index]));
+            row_space_eqn.plus_assign(trail_->span().row(trail_->order_map()[trail_index]));
         }
         row_space.add_row(row_space_eqn);
     }
@@ -87,8 +87,8 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
 }
 
 std::size_t TrailBasisSpace::columns_after_level(std::size_t level) const {
-    assert(level <= trail_.level() && "decision level is out of range");
-    return trail_.span().rows() - trail_[level].span().rows();
+    assert(level <= trail_->level() && "decision level is out of range");
+    return trail_->span().rows() - (*trail_)[level].span().rows();
 }
 
 std::size_t TrailBasisSpace::asserting_level() const {
@@ -104,7 +104,7 @@ std::size_t TrailBasisSpace::asserting_level() const {
     const std::optional<std::size_t> second_row_leading = row(1).leading_bit();
     assert(second_row_leading && "a stored row is zero");
 
-    for (std::size_t candidate_level = trail_.level(); candidate_level > 0;) {
+    for (std::size_t candidate_level = trail_->level(); candidate_level > 0;) {
         --candidate_level;
         if (*second_row_leading < columns_after_level(candidate_level)) {
             return candidate_level + 1;
@@ -120,12 +120,12 @@ std::size_t TrailBasisSpace::literal_block_distance() const {
     // The columns a level owns end where the next level up begins, and the root
     // level runs to the last column.
     const auto block_end_of = [this](std::size_t level) {
-        return level == 0 ? trail_.span().rows() : columns_after_level(level - 1);
+        return level == 0 ? trail_->span().rows() : columns_after_level(level - 1);
     };
 
     // Columns ascend into the past exactly as levels descend, so one walk over
     // the pivot columns enters each level's block at most once.
-    std::size_t level = trail_.level();
+    std::size_t level = trail_->level();
     std::size_t block_end = block_end_of(level);
     std::size_t blocks = 0;
     bool block_counted = false;

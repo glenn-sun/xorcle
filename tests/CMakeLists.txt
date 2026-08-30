@@ -27,6 +27,7 @@ add_executable(xorcle_tests
     unit/test_index_set.cpp
     unit/test_lrup_logger.cpp
     unit/test_max_heap.cpp
+    unit/test_minimization.cpp
     unit/test_options.cpp
     unit/test_progress_reporter.cpp
     unit/test_propagation.cpp
@@ -48,3 +49,10 @@ add_test(NAME proof_roundtrip
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle>)
 set_tests_properties(proof_roundtrip PROPERTIES SKIP_RETURN_CODE 77)
+
+# Minimization is on by default and rewrites the learned clause, but leaves the
+# derivation a chain of resolutions, so both settings have to check.
+add_test(NAME proof_roundtrip_no_minimize
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --minimize=false)
+set_tests_properties(proof_roundtrip_no_minimize PROPERTIES SKIP_RETURN_CODE 77)

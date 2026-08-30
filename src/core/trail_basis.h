@@ -21,7 +21,7 @@ namespace xorcle {
 class TrailBasisSpace : public RowEchelonMatrix {
 public:
     explicit TrailBasisSpace(const Trail& trail)
-        : RowEchelonMatrix(trail.repr(), trail.span().rows()), trail_(trail) {}
+        : RowEchelonMatrix(trail.repr(), trail.span().rows()), trail_(&trail) {}
 
     /// @brief Rewrite a row space into trail-basis coordinates, echelonized.
     /// @pre Every row of `rs` belongs to `trail.span()`, which is non-empty.
@@ -55,7 +55,8 @@ private:
     /// @pre `level <= trail.level()`.
     std::size_t columns_after_level(std::size_t level) const;
 
-    const Trail& trail_;
+    /// @brief Held by pointer, not by reference, so the class stays assignable.
+    const Trail* trail_;
 };
 
 } // namespace xorcle

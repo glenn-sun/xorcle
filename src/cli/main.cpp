@@ -114,7 +114,8 @@ RunStats run_once(const Options& options) {
                   make_restart_policy(restart_config(options)), proof_logger.get(),
                   compaction_config(options),
                   ProgressConfig{.reporter = progress_reporter.get(),
-                                 .conflict_interval = options.report_every});
+                                 .conflict_interval = options.report_every},
+                  options.minimize);
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
@@ -157,6 +158,11 @@ RunStats run_once(const Options& options) {
     const DecisionProcedure::DecisionStats decisions = solver.decision_stats();
     stats.decisions = decisions.decisions;
     stats.fallback_decisions = decisions.fallback_decisions;
+
+    stats.minimize = options.minimize;
+    stats.num_minimized_clauses = counters.num_minimized_clauses;
+    stats.minimize_dim_before = counters.minimize_dim_before;
+    stats.minimize_dim_after = counters.minimize_dim_after;
     return stats;
 }
 

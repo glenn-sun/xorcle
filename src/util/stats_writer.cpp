@@ -94,6 +94,11 @@ ConsoleStatsWriter::log_impl(const RunStats& stats) {
     output << "c Reused levels: " << stats.num_reused_levels << "\n";
     output << "c Decisions: " << stats.decisions << "\n";
     output << "c Fallback decisions: " << stats.fallback_decisions << "\n";
+    if (stats.minimize) {
+        output << "c Minimized clauses: " << stats.num_minimized_clauses << "\n";
+        output << "c Dimension before minimizing: " << stats.minimize_dim_before << "\n";
+        output << "c Dimension after minimizing: " << stats.minimize_dim_after << "\n";
+    }
     // Each ratio line is omitted entirely when its denominator is zero; a
     // parser must not assume it is present.
     if (const auto ratio = propagations_per_conflict(stats); ratio.has_value()) {

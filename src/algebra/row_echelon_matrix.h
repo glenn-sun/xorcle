@@ -78,11 +78,15 @@ public:
         return interface_->reduce_get_coefficients(v);
     }
 
-    /// @pre `rows() > 0`.
-    Equation pop_first_row() {
-        assert(rows() > 0 && "pop_first_row on an empty matrix");
-        return interface_->pop_first_row();
+    /// @brief Remove the row at `index`, returning it.
+    /// @pre `index < rows()`.
+    Equation pop_row(std::size_t index) {
+        assert(index < rows() && "pop_row index is out of range");
+        return interface_->pop_row(index);
     }
+
+    /// @pre `rows() > 0`.
+    Equation pop_first_row() { return pop_row(0); }
 
     /// @pre `rows() > 0`.
     void pop_last_row() {

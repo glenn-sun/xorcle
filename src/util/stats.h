@@ -41,6 +41,13 @@ struct RunStats {
     std::size_t num_reused_levels = 0; ///< Decision levels restarts kept instead of discarding.
     std::size_t decisions = 0;
     std::size_t fallback_decisions = 0;
+
+    /// @brief Whether clause minimization ran; its counters are reported only
+    /// when it did.
+    bool minimize = false;
+    std::size_t num_minimized_clauses = 0;
+    std::size_t minimize_dim_before = 0;
+    std::size_t minimize_dim_after = 0;
     /// @brief The satisfying assignment, indexed by variable in the original
     /// numbering; set only on SAT.
     std::optional<IndexSet> sat_assignment;

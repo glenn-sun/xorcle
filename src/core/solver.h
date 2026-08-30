@@ -53,6 +53,10 @@ struct SolverCounters {
     std::size_t num_conflicts = 0;     ///< Root conflict included.
     std::size_t num_restarts = 0;
     std::size_t num_reused_levels = 0; ///< Decision levels restarts kept instead of discarding.
+
+    std::size_t num_minimized_clauses = 0; ///< Learned clauses minimization shrank.
+    std::size_t minimize_dim_before = 0;   ///< Summed dimension at the asserting point.
+    std::size_t minimize_dim_after = 0;    ///< Summed dimension of the clauses as learned.
 };
 
 /// @brief The CDCL(⊕) solver.
@@ -73,7 +77,7 @@ public:
     Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
            LrupLogger* proof_logger = nullptr, const CompactionConfig& compaction = {},
-           const ProgressConfig& progress = {});
+           const ProgressConfig& progress = {}, bool minimize = true);
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -176,6 +180,9 @@ private:
     SolverCounters counters_;
 
     ProgressConfig progress_;
+
+    /// @brief Whether conflict analysis minimizes the clauses it learns.
+    bool minimize_;
     std::size_t conflicts_at_last_report_ = 0;
     std::chrono::steady_clock::time_point solve_start_;
 };

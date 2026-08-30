@@ -2,13 +2,14 @@
 # Solve an UNSAT instance with --proof and verify the proof with the
 # independently written LRUP(⊕) checker.
 #
-# Usage: check_proof_roundtrip.sh <repository root> <xorcle binary>
+# Usage: check_proof_roundtrip.sh <repository root> <xorcle binary> [solver option...]
 # Exit:  0 pass, 1 fail, 77 skipped (no usable python3)
 
 set -eu
 
 root="$1"
 xorcle="$2"
+shift 2
 
 if [ -x "$root/.venv/bin/python" ]; then
     python="$root/.venv/bin/python"
@@ -32,7 +33,7 @@ proof="$work/proof.lrup"
     --family random_kxnf_n --params 'n=14;k=3' --seed 1 --out "$instance"
 
 # --proof requires --compact=false.
-"$xorcle" --compact=false --proof="$proof" "$instance" > "$work/solve.out" 2>&1 || {
+"$xorcle" --compact=false --proof="$proof" "$@" "$instance" > "$work/solve.out" 2>&1 || {
     echo "check_proof_roundtrip: solver failed" >&2
     cat "$work/solve.out" >&2
     exit 1
