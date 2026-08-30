@@ -122,6 +122,24 @@ TEST_CASE_TEMPLATE("lrup logger: an empty reason list still closes the line", Ta
     std::filesystem::remove(path);
 }
 
+TEST_CASE_TEMPLATE("lrup logger: a deletion line is the one with a single zero", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path = proof_path(repr, "deletions");
+
+    {
+        LrupLogger logger(path, 3);
+        logger.log_learned_clause(ClauseId{5}, clause_from("1 -2 0", 3, repr),
+                                  std::vector<ClauseId>{0, 2});
+        logger.log_deleted_clauses(std::vector<ClauseId>{0, 2, 5});
+        logger.log_deleted_clauses(std::vector<ClauseId>{1});
+        logger.finalize(true);
+    }
+
+    CHECK(read_file(path) == "6 1 -2 0 1 3 0\n1 3 6 0\n2 0\n");
+    std::filesystem::remove(path);
+}
+
 TEST_CASE_TEMPLATE("lrup logger: finalize(false) discards the proof", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const std::filesystem::path path = proof_path(repr, "discard");

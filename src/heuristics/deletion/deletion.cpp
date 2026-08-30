@@ -1,0 +1,81 @@
+#include "heuristics/deletion/deletion.h"
+
+#include <algorithm>
+#include <cassert>
+#include <optional>
+
+namespace xorcle {
+
+namespace {
+
+/// @brief Whether `left` is evicted before `right`, ordered totally so that a tie
+/// does not depend on the sort.
+bool evicted_first(const DeletionState& state, ClauseId left, ClauseId right) {
+    if (state.key == DeletionKey::activity) {
+        const double left_activity = state.activity->clause_activity(left);
+        const double right_activity = state.activity->clause_activity(right);
+        if (left_activity != right_activity) {
+            return left_activity < right_activity;
+        }
+    } else {
+        const std::size_t left_lbd = state.selector.clause_lbd(left);
+        const std::size_t right_lbd = state.selector.clause_lbd(right);
+        if (left_lbd != right_lbd) {
+            return left_lbd > right_lbd;
+        }
+    }
+    return left < right;
+}
+
+} // namespace
+
+DeletionPlan build_deletion_plan(const DeletionState& state) {
+    assert((state.key != DeletionKey::activity || state.activity != nullptr) &&
+           "the activity key has no activity source");
+
+    const std::size_t num_clauses = state.selector.num_clauses();
+    std::vector<std::uint8_t> is_locked(num_clauses, 0);
+    for (const std::optional<ClauseId>& reason : state.trail.reasons()) {
+        if (reason.has_value()) {
+            is_locked[*reason] = 1;
+        }
+    }
+
+    DeletionPlan plan;
+    plan.unused_intervals.resize(num_clauses);
+    std::vector<ClauseId> candidates;
+
+    for (ClauseId id = 0; id < num_clauses; ++id) {
+        plan.unused_intervals[id] = state.selector.clause_unused_intervals(id);
+        if (!state.selector.is_clause_active(id) || !state.selector.is_clause_learned(id) ||
+            is_locked[id] != 0) {
+            continue;
+        }
+        switch (state.selector.clause_tier(id)) {
+            case ClauseTier::core:
+                break;
+            case ClauseTier::tier2:
+                if (state.selector.is_clause_used_since_deletion(id)) {
+                    plan.unused_intervals[id] = 0;
+                } else if (plan.unused_intervals[id] + 1 >= unused_intervals_before_demotion) {
+                    plan.demoted.push_back(id);
+                    plan.unused_intervals[id] = 0;
+                } else {
+                    ++plan.unused_intervals[id];
+                }
+                break;
+            case ClauseTier::local:
+                candidates.push_back(id);
+                break;
+        }
+    }
+
+    const std::size_t evict_count = candidates.size() / 2;
+    std::sort(candidates.begin(), candidates.end(),
+              [&](ClauseId left, ClauseId right) { return evicted_first(state, left, right); });
+    plan.evicted.assign(candidates.begin(), candidates.begin() + evict_count);
+    std::sort(plan.evicted.begin(), plan.evicted.end());
+    return plan;
+}
+
+} // namespace xorcle

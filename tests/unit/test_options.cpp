@@ -60,6 +60,11 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.phase == DecisionPhase::falsify);
     CHECK(options.selection == ClauseSelectorName::cyclic);
     CHECK(options.restart == RestartMethod::none);
+    CHECK(options.deletion == true);
+    CHECK(options.deletion_every == 200);
+    CHECK(options.deletion_core_lbd == 2);
+    CHECK(options.deletion_tier2_lbd == 6);
+    CHECK(options.deletion_key == DeletionKey::activity);
     CHECK(options.proof.empty());
     CHECK(options.stats_file.empty());
     CHECK(options.csids_preset.empty());
@@ -268,6 +273,11 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--stats-file=PATH"));
     CHECK(contains(text, "--help"));
 
+    CHECK(contains(text, "--deletion=true|false"));
+    CHECK(contains(text, "yields to an incompatible --decisions/--selection [default: true]"));
+    CHECK(contains(text, "--deletion-every=N"));
+    CHECK(contains(text, "--deletion-key=lbd|activity"));
+
     CHECK(contains(text, "--restart=none|luby|lbd"));
     CHECK(contains(text, "restart schedule"));
     CHECK(contains(text, "conflict budget for a Luby value of 1"));
@@ -282,10 +292,68 @@ TEST_CASE("options: luby refuses to invent a budget") {
     CHECK_NOTHROW(parse_with_input({"--restart=luby", "--restart-luby-unit=4000"}));
 }
 
+TEST_CASE("options: deletion needs the heuristics it reads") {
+    CHECK(contains(
+        rejection_message<CliError>({"--deletion=true", "--selection=leading_term_watchlist"}),
+        "--deletion requires --selection=cyclic"));
+    CHECK(contains(rejection_message<CliError>({"--deletion=true", "--deletion-key=activity",
+                                                "--decisions=variable_vsids"}),
+                   "--deletion-key=activity, the default, requires --decisions=csids"));
+    CHECK(contains(rejection_message<CliError>({"--deletion-core-lbd=7"}),
+                   "--deletion-core-lbd must not exceed --deletion-tier2-lbd"));
+
+    // The key defaults to activity, so --deletion alone carries the requirement, and
+    // the message has to name the way out.
+    const std::string defaulted =
+        rejection_message<CliError>({"--deletion=true", "--decisions=variable_vsids"});
+    CHECK(contains(defaulted, "requires --decisions=csids"));
+    CHECK(contains(defaulted, "pass --deletion-key=lbd"));
+    CHECK(contains(rejection_message<CliError>({"--deletion=true", "--decisions=fixed_literals"}),
+                   "pass --deletion-key=lbd"));
+
+    // Each constraint binds only where deletion actually reads the heuristic.
+    CHECK_NOTHROW(parse_with_input({"--deletion=true", "--deletion-key=activity"}));
+    CHECK_NOTHROW(parse_with_input(
+        {"--deletion=true", "--decisions=variable_vsids", "--deletion-key=lbd"}));
+    CHECK_NOTHROW(parse_with_input({"--deletion-core-lbd=7", "--deletion-tier2-lbd=9"}));
+}
+
+TEST_CASE("options: deletion on only by default yields to an incompatible choice") {
+    CHECK(parse_with_input({"--selection=leading_term_watchlist"}).deletion == false);
+    CHECK(parse_with_input({"--decisions=variable_vsids"}).deletion == false);
+    CHECK(parse_with_input({"--decisions=fixed_literals"}).deletion == false);
+    CHECK(parse_with_input({"--deletion-key=activity", "--decisions=variable_vsids"}).deletion ==
+          false);
+    // What the run reports has to agree with what it does.
+    CHECK(deletion_config(parse_with_input({"--selection=leading_term_watchlist"})).enabled ==
+          false);
+
+    // Only an incompatible choice makes it yield.
+    CHECK(parse_with_input({}).deletion == true);
+    CHECK(parse_with_input({"--selection=cyclic"}).deletion == true);
+    CHECK(parse_with_input({"--decisions=berkmin"}).deletion == true);
+    CHECK(parse_with_input({"--decisions=variable_vsids", "--deletion-key=lbd"}).deletion == true);
+
+    // Turning it off explicitly is never an error either.
+    CHECK(parse_with_input({"--deletion=false", "--selection=leading_term_watchlist"}).deletion ==
+          false);
+}
+
 TEST_CASE("options: the configuration projections carry the values across") {
     const Options options = parse_with_input({"--compact=false", "--compact-every=8",
                                               "--restart=luby", "--restart-luby-unit=50",
-                                              "--restart-lbd-margin=1.25"});
+                                              "--restart-lbd-margin=1.25", "--deletion=true",
+                                              "--deletion-every=25", "--deletion-core-lbd=2",
+                                              "--deletion-tier2-lbd=8", "--deletion-key=activity"});
+    const DeletionConfig deletion = deletion_config(options);
+    CHECK(deletion.enabled == true);
+    CHECK(deletion.conflict_interval == 25);
+    CHECK(deletion.tiers.core_lbd == 2);
+    CHECK(deletion.tiers.tier2_lbd == 8);
+    CHECK(deletion.key == DeletionKey::activity);
+    // Only the caller holding the decision procedure can fill this in.
+    CHECK(deletion.activity == nullptr);
+
     const CompactionConfig compaction = compaction_config(options);
     CHECK(compaction.enabled == false);
     CHECK(compaction.conflict_interval == 8);

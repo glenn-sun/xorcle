@@ -27,6 +27,28 @@ enum class ClauseSelectorName {
     leading_term_watchlist ///< Work queue driven by the leading terms of watched rows.
 };
 
+/// @brief How long a clause survives a deletion pass.
+enum class ClauseTier : std::uint8_t {
+    core, ///< Kept forever, as every input clause is.
+    tier2, ///< Demoted to `local` once enough deletion passes go by unused.
+    local ///< Evicted by key at a deletion pass.
+};
+
+/// @brief The LBD cutoffs a learned clause's tier is read off.
+struct ClauseTierConfig {
+    std::size_t core_lbd = 2; ///< At most this enters `core`.
+    std::size_t tier2_lbd = 6; ///< At most this, and above `core_lbd`, enters `tier2`.
+};
+
+/// @brief What conflict analysis knows about a learned clause beyond its rows.
+struct AssertingClauseInfo {
+    std::size_t lbd;
+
+    /// @brief The number of decision levels just *discarded*, which after a restart
+    /// is neither the asserting level nor its complement.
+    std::size_t removed_levels;
+};
+
 /// @brief Decides which clause the solver tries to propagate from next.
 ///
 /// It is also the **authoritative clause store**: the solver keeps no clause vector of its
@@ -54,6 +76,31 @@ public:
 
     const std::vector<std::uint8_t>& active_flags() const noexcept { return clause_active_; }
 
+    /// @brief Whether the clause was learned rather than read from the instance.
+    bool is_clause_learned(ClauseId id) const;
+
+    /// @brief Meaningful only on a learned clause; `0` on an input one.
+    std::size_t clause_lbd(ClauseId id) const;
+    void set_clause_lbd(ClauseId id, std::size_t lbd);
+
+    ClauseTier clause_tier(ClauseId id) const;
+    void set_clause_tier(ClauseId id, ClauseTier tier);
+
+    bool is_clause_used_since_deletion(ClauseId id) const;
+    void set_clause_used_since_deletion(ClauseId id, bool used);
+
+    /// @brief Deletion passes the clause has gone through unused, consecutively.
+    std::uint32_t clause_unused_intervals(ClauseId id) const;
+    void set_clause_unused_intervals(ClauseId id, std::uint32_t intervals);
+
+    const ClauseTierConfig& tier_config() const noexcept { return tier_config_; }
+
+    /// @pre No clause has been added yet, and `config.core_lbd <= config.tier2_lbd`.
+    void set_tier_config(const ClauseTierConfig& config);
+
+    /// @brief The tier a learned clause of this LBD enters.
+    ClauseTier tier_for_lbd(std::size_t lbd) const;
+
     /// @brief The next clause to try, or `std::nullopt` once propagation is quiescent.
     virtual std::optional<ClauseId> next() = 0;
 
@@ -63,10 +110,8 @@ public:
 
     /// @brief Add a learned asserting clause under the next id; `trail` already reflects
     /// the backjump.
-    /// @note `removed_levels` is the number of decision levels just *discarded*, which
-    /// after a restart is neither the asserting level nor its complement.
     virtual void add_asserting_clause(Clause clause, const Trail& trail,
-                                      std::size_t removed_levels);
+                                      const AssertingClauseInfo& info);
 
     /// @brief Note an equation learned by propagation, already reduced by the span it was
     /// added to and already on `trail`.
@@ -92,10 +137,18 @@ protected:
 
 #ifndef NDEBUG
     void debug_assert_database_synchronized() const;
+    void debug_assert_clause_id(ClauseId id) const;
 #endif
+
+    ClauseTierConfig tier_config_;
 
     std::vector<Clause> clauses_; ///< A clause's id is its index.
     std::vector<std::uint8_t> clause_active_;
+    std::vector<std::uint8_t> clause_learned_;
+    std::vector<std::uint8_t> clause_used_since_deletion_;
+    std::vector<ClauseTier> clause_tier_;
+    std::vector<std::size_t> clause_lbd_;
+    std::vector<std::uint32_t> clause_unused_intervals_;
 };
 
 } // namespace xorcle

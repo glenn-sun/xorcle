@@ -28,6 +28,7 @@
 #include "heuristics/decisions/csids.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/decisions/phase.h"
+#include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
 #include "io/lrup_logger.h"
@@ -407,7 +408,12 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
         << "  compaction off for you.\n"
         << "\n"
         << "  Restarts are off by default: measured single-threaded, both schedules\n"
-        << "  lose to --restart=none on every benchmark set tried.\n";
+        << "  lose to --restart=none on every benchmark set tried.\n"
+        << "\n"
+        << "  --deletion requires --selection=cyclic, and its default\n"
+        << "  --deletion-key=activity requires --decisions=csids; --deletion-key=lbd\n"
+        << "  lifts that. Asking for --deletion=true against either is an error;\n"
+        << "  left at its default it turns itself off instead.\n";
 }
 
 // --- Parsing a command line ------------------------------------------------
@@ -442,9 +448,28 @@ inline void apply_decisions_preset(Options& options, const std::string& value) {
     options.csids_preset = find_csids_preset(value) != nullptr ? value : std::string{};
 }
 
+/// @brief Turn deletion off when it is on only by default and the command line
+/// explicitly asked for a decision procedure or selector it cannot run under.
+///
+/// Asking for `--deletion=true` against one of those is still an error; this is
+/// what keeps a bare `--selection=leading_term_watchlist` from becoming one.
+inline void resolve_default_deletion(Options& options, const OptionSeen& seen) {
+    if (seen.deletion || !options.deletion) {
+        return;
+    }
+    const bool selector_refuses =
+        seen.selection && options.selection != ClauseSelectorName::cyclic;
+    const bool key_refuses = seen.decisions && options.deletion_key == DeletionKey::activity &&
+                             options.decisions != DecisionProcedureName::csids;
+    if (selector_refuses || key_refuses) {
+        options.deletion = false;
+    }
+}
+
 /// @brief Check the constraints that span more than one option.
-/// @throws CliError if a preset was combined with a manual CSIDS override, or if
-/// `--restart=luby` was given without a budget.
+/// @throws CliError if a preset was combined with a manual CSIDS override, if
+/// `--restart=luby` was given without a budget, or if the deletion options do
+/// not agree with each other and with the heuristics they need.
 /// @throws LrupError if `--proof` was given with compaction on.
 inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (!options.csids_preset.empty() &&
@@ -458,6 +483,19 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (options.restart == RestartMethod::luby && options.restart_luby_unit == 0) {
         throw CliError("--restart=luby requires --restart-luby-unit=N: no budget tried beat "
                        "--restart=none, so there is no default worth shipping");
+    }
+    if (options.deletion_core_lbd > options.deletion_tier2_lbd) {
+        throw CliError("--deletion-core-lbd must not exceed --deletion-tier2-lbd");
+    }
+    if (options.deletion && options.selection != ClauseSelectorName::cyclic) {
+        throw CliError("--deletion requires --selection=cyclic: no other selector yet keeps its "
+                       "indexes in step with a deleted clause");
+    }
+    if (options.deletion && options.deletion_key == DeletionKey::activity &&
+        options.decisions != DecisionProcedureName::csids) {
+        throw CliError("--deletion-key=activity, the default, requires --decisions=csids, the "
+                       "only decision procedure that scores clauses; pass --deletion-key=lbd "
+                       "to delete by LBD instead");
     }
     require_compaction_disabled_for_proof(!options.proof.empty(), options.compact);
 }
@@ -518,6 +556,7 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
         options.csids_bump = preset->config.bump;
     }
 
+    resolve_default_deletion(options, seen);
     validate_options(options, seen);
     return options;
 }
@@ -533,6 +572,17 @@ inline CsidsConfig csids_config(const Options& options) {
 
 inline CompactionConfig compaction_config(const Options& options) {
     return CompactionConfig{.enabled = options.compact, .conflict_interval = options.compact_every};
+}
+
+/// @brief Everything but the activity source, which only the caller holding the
+/// decision procedure can supply.
+inline DeletionConfig deletion_config(const Options& options) {
+    return DeletionConfig{.enabled = options.deletion,
+                          .conflict_interval = options.deletion_every,
+                          .tiers = ClauseTierConfig{.core_lbd = options.deletion_core_lbd,
+                                                    .tier2_lbd = options.deletion_tier2_lbd},
+                          .key = options.deletion_key,
+                          .activity = nullptr};
 }
 
 inline RestartConfig restart_config(const Options& options) {

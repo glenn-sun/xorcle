@@ -41,6 +41,10 @@ struct CompactionState {
     std::size_t compaction_conflict_interval;
 };
 
+/// @brief The one-row clause an id holds once it goes inactive.
+/// @pre `false_row` is `0 = 1`.
+Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row);
+
 /// @brief True when the trail is at the root, the conflict interval has elapsed,
 /// and at least one variable can be eliminated.
 /// @pre The trail span's pivot column set has size `state.active_num_vars + 1`.

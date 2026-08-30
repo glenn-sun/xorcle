@@ -13,6 +13,7 @@
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
+#include "heuristics/decisions/clause_activity.h"
 #include "heuristics/decisions/clause_decisions.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "util/max_heap.h"
@@ -74,7 +75,7 @@ struct CsidsState {
 /// it, decayed at every conflict. See arXiv:2605.15002 for details. When the
 /// heap runs dry the procedure scans the literal basis instead, counted
 /// separately as a fallback.
-class Csids final : public DecisionProcedure {
+class Csids final : public DecisionProcedure, public ClauseActivitySource {
 public:
     /// @brief The equation-sampling stream derives from `seed`.
     /// @pre `config.decay` satisfies `0 <= decay <= 1` and
@@ -85,7 +86,8 @@ public:
     /// @brief Resets both RNG streams as well as activity and the counters.
     void reinitialize() override;
 
-    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) override;
+    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
+                           const std::vector<std::uint8_t>& clause_active) override;
 
     /// @brief Record the activity the next new clause will enter at, then decay.
     void update_with_asserting_clause(const Clause& clause) override;
@@ -95,12 +97,15 @@ public:
 
     void update_with_resolved_clause(ClauseId id) override;
 
+    double clause_activity(ClauseId id) const override;
+
     std::optional<ClauseId> decision_clause_hint() const override;
 
     /// @brief The levels whose decision clause still outranks the clause the next
     /// decision would come from.
     std::size_t reusable_levels(
         const RowSpace& trail_span, const std::vector<Clause>& clauses,
+        const std::vector<std::uint8_t>& clause_active,
         const std::vector<std::optional<ClauseId>>& decision_clauses) override;
 
     void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,

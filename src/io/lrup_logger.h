@@ -61,6 +61,10 @@ public:
     /// @pre `finalize()` has not run.
     void log_empty_clause(ClauseId new_id, const std::vector<ClauseId>& reason_ids);
 
+    /// @brief Write one deletion line, naming clauses no later line may use.
+    /// @pre `deleted_ids` is non-empty and `finalize()` has not run.
+    void log_deleted_clauses(const std::vector<ClauseId>& deleted_ids);
+
     /// @brief Close the proof, moving the temporary file into place if `keep`.
     /// @throws LrupError If the proof was to be kept and cannot be written.
     /// @note Calling it twice is a no-op the second time.

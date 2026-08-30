@@ -129,6 +129,22 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
     CHECK(console_output(sample_stats()) == expected);
 }
 
+TEST_CASE("ConsoleStatsWriter: the deletion lines appear only when it ran") {
+    RunStats stats = sample_stats();
+    stats.num_deletion_passes = 4;
+    stats.num_deleted_clauses = 11;
+    stats.num_demoted_clauses = 6;
+    stats.num_promoted_clauses = 9;
+
+    CHECK(console_output(stats).find("c Deletion passes:") == std::string::npos);
+
+    stats.deletion = true;
+    CHECK(console_output(stats).find("c Deletion passes: 4\n"
+                                     "c Deleted clauses: 11\n"
+                                     "c Demoted clauses: 6\n"
+                                     "c Promoted clauses: 9\n") != std::string::npos);
+}
+
 TEST_CASE("ConsoleStatsWriter: the CSIDS lines appear together or not at all") {
     RunStats stats = sample_stats();
 
@@ -258,7 +274,8 @@ TEST_CASE("CsvStatsWriter: header then rows, appended") {
         "num_vars,start_clauses,final_clauses,learned_clauses,"
         "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,reused_levels,"
         "decisions,fallback_decisions,fallback_pct,"
-        "prop_per_conflict,attempts_per_prop_watch_conflict\n"));
+        "prop_per_conflict,attempts_per_prop_watch_conflict,"
+        "deletion_passes,deleted_clauses,demoted_clauses,promoted_clauses\n"));
     // Absent optional doubles are empty fields, and the result column is the
     // short spelling, not the console's SATISFIABLE/UNSATISFIABLE.
     CHECK(first.find(",csids,,,,falsify,cyclic,12345,UNSAT,12,30,47,17,") != std::string::npos);

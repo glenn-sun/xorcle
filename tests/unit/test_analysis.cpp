@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -45,7 +46,8 @@ public:
     void reinitialize() override {}
 
     /// @brief Unused; conflict analysis never decides.
-    Equation make_decision(const RowSpace&, const std::vector<Clause>&) override {
+    Equation make_decision(const RowSpace&, const std::vector<Clause>&,
+                           const std::vector<std::uint8_t>&) override {
         CHECK_MESSAGE(false, "conflict analysis must not make decisions");
         return Equation(repr(), num_vars());
     }
@@ -278,6 +280,32 @@ TEST_CASE_TEMPLATE("analysis: a conflict needing several resolution steps", Tag,
                                   resolved(3), critical({4, 6}), resolved(2), critical({3, 6})});
 }
 
+TEST_CASE_TEMPLATE("analysis: every reason is measured when asked", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
+    RecordingDecisions unmeasured_decisions(repr, conflict.trail.num_vars());
+    RecordingDecisions measured_decisions(repr, conflict.trail.num_vars());
+
+    const AssertingClause unmeasured =
+        find_asserting_clause(conflict.trail, conflict.clauses, unmeasured_decisions, true, false);
+    const AssertingClause measured =
+        find_asserting_clause(conflict.trail, conflict.clauses, measured_decisions, true, true);
+
+    CHECK(unmeasured.reason_lbds.empty());
+
+    // Level 2 owns basis columns 0 to 4 and level 1 the last two. Clause 4 leads
+    // at columns 1, 3 and 5, so it reaches into both levels; the rows of each
+    // reason resolved against stay inside level 2.
+    CHECK(measured.reason_ids == std::vector<ClauseId>{4, 3, 2});
+    CHECK(measured.reason_lbds == std::vector<std::size_t>{2, 1, 1});
+
+    // Measuring is all the flag does.
+    CHECK(rows_of(measured.clause) == rows_of(unmeasured.clause));
+    CHECK(measured.asserting_level == unmeasured.asserting_level);
+    CHECK(measured.lbd == unmeasured.lbd);
+    CHECK(measured_decisions.events == unmeasured_decisions.events);
+}
+
 TEST_CASE_TEMPLATE("analysis: an already-asserting conflict clause is learned unchanged", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
@@ -317,7 +345,7 @@ TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", T
     const Equation trail_basis_one = make_equation_with_num_bits(repr, basis.cols(), {0});
     REQUIRE(trail_basis_one.num_bits() == basis.cols());
 
-    const ClauseId reason_id = resolve_asserting_basis_with_reason(
+    const ResolvedReason reason = resolve_asserting_basis_with_reason(
         basis, 1, trail, conflict.clauses, decisions, trail_basis_one);
 
     // Column 1 is trail step 5, propagated by clause 3 = [x2 = 0] v [x4 = 1].
@@ -328,7 +356,8 @@ TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", T
     //
     // and the reason's remaining row {3} joins the basis.
     CHECK(rows_of(basis) == std::vector<std::vector<std::size_t>>{{2}, {3}, {5}});
-    CHECK(reason_id == ClauseId{3});
+    CHECK(reason.clause_id == ClauseId{3});
+    CHECK_FALSE(reason.lbd.has_value());
     CHECK(decisions.events ==
           std::vector<RecordingDecisions::Event>{resolved(3), critical({4, 6})});
 }

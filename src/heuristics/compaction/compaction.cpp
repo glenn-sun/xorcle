@@ -74,6 +74,16 @@ void rebuild_clause_watch_metadata(Clause& rewritten, const Clause& old_clause,
 
 } // namespace
 
+Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row) {
+    assert(!false_row.is_null() && false_row.is_eq_false() && "the placeholder row is not 0 = 1");
+    Clause placeholder(repr, false_row.num_bits() - 1);
+    placeholder.add_row(false_row);
+    placeholder.watched0 = 0;
+    placeholder.watched1 = 0;
+    placeholder.next_watch_search_start = 0;
+    return placeholder;
+}
+
 bool should_compact_before_decision(const CompactionState& state) {
     if (state.trail.size() != 1) {
         return false; // compaction is only sound against the root trail
@@ -132,18 +142,14 @@ CompactionPlan build_compaction_plan(const CompactionState& state,
             !was_active || clause_satisfied_by_trail(state.trail.span(), active_clause,
                                                      satisfaction_workspace);
 
-        Clause rewritten(repr, transform.new_num_vars());
         if (becomes_inactive) {
             // Kept as a placeholder so clause ids stay stable; never selected.
-            rewritten.add_row(false_clause_row);
-            rewritten.watched0 = 0;
-            rewritten.watched1 = 0;
-            rewritten.next_watch_search_start = 0;
             plan.clause_is_active[clause_id] = 0;
-            plan.rewritten_clauses.push_back(std::move(rewritten));
+            plan.rewritten_clauses.push_back(inactive_clause_placeholder(repr, false_clause_row));
             continue;
         }
 
+        Clause rewritten(repr, transform.new_num_vars());
         for (std::size_t row_idx = 0; row_idx < active_clause.rows(); ++row_idx) {
             rewritten.add_row(
                 compact_old_row(active_clause, row_idx, state.trail.span(), transform));

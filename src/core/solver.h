@@ -14,6 +14,7 @@
 #include "core/trail.h"
 #include "heuristics/compaction/compaction.h"
 #include "heuristics/decisions/decision_procedure.h"
+#include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
 #include "io/lrup_logger.h"
@@ -57,6 +58,11 @@ struct SolverCounters {
     std::size_t num_minimized_clauses = 0; ///< Learned clauses minimization shrank.
     std::size_t minimize_dim_before = 0;   ///< Summed dimension at the asserting point.
     std::size_t minimize_dim_after = 0;    ///< Summed dimension of the clauses as learned.
+
+    std::size_t num_deletion_passes = 0;
+    std::size_t num_deleted_clauses = 0;
+    std::size_t num_demoted_clauses = 0;
+    std::size_t num_promoted_clauses = 0; ///< Reasons an improved LBD moved up a tier.
 };
 
 /// @brief The CDCL(⊕) solver.
@@ -74,10 +80,13 @@ public:
     /// `NoRestarts` to disable restarts.
     /// @pre If `proof_logger` is non-null then `compaction.enabled` is false and
     /// `proof_logger->num_vars() == num_vars`.
+    /// @pre If `deletion.key` is `DeletionKey::activity` and deletion is
+    /// enabled then `deletion.activity` is non-null.
     Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
            LrupLogger* proof_logger = nullptr, const CompactionConfig& compaction = {},
-           const ProgressConfig& progress = {}, bool minimize = true);
+           const ProgressConfig& progress = {}, bool minimize = true,
+           const DeletionConfig& deletion = {});
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -140,6 +149,16 @@ private:
     /// unrecoverable from the clause database.
     void apply_compaction(CompactionPlan plan);
 
+    /// @brief Mark a resolved reason used, and promote it if this conflict
+    /// measured a better LBD than the stored one.
+    void note_reason_use(ClauseId id, std::size_t lbd);
+
+    /// @brief Delete learned clauses if the conflict interval has elapsed.
+    void maybe_delete_clauses();
+
+    /// @brief Demote, tombstone and clear the used flags a prepared plan calls for.
+    void apply_deletion(const DeletionPlan& plan);
+
     EquationRepr repr_;
 
     const std::size_t original_num_vars_;
@@ -151,11 +170,13 @@ private:
     std::vector<CompactionHistoryEntry> compaction_history_; ///< Oldest first.
 
     CompactionConfig compaction_;
+    DeletionConfig deletion_;
     bool has_compacted_once_ = false;
 #ifndef NDEBUG
     bool has_solved_ = false;
 #endif
     std::size_t conflicts_at_last_compaction_ = 0;
+    std::size_t conflicts_at_last_deletion_ = 0;
 
     Trail trail_;
 

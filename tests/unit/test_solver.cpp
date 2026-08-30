@@ -192,6 +192,7 @@ struct Backjump {
     std::size_t level_after = 0; ///< Decision level the solver backjumped to.
     std::size_t removed_levels = 0; ///< What the solver told the selector it discarded.
     std::size_t asserting_level = 0; ///< Where the learned clause actually asserts.
+    std::size_t lbd = 0; ///< The LBD the solver told the selector.
 };
 
 /// @brief A cyclic selector that records every backjump it is told about.
@@ -234,11 +235,11 @@ public:
     /// The trail passed here is the backjumped one; the last trail seen before
     /// it is the conflicting one.
     void add_asserting_clause(Clause clause, const Trail& trail,
-                              std::size_t removed_levels) override {
+                              const AssertingClauseInfo& info) override {
         REQUIRE(last_trail_.has_value());
-        backjumps.push_back(Backjump{last_trail_->level(), trail.level(), removed_levels,
-                                     asserting_level_of(clause, *last_trail_)});
-        ClauseSelector::add_asserting_clause(std::move(clause), trail, removed_levels);
+        backjumps.push_back(Backjump{last_trail_->level(), trail.level(), info.removed_levels,
+                                     asserting_level_of(clause, *last_trail_), info.lbd});
+        ClauseSelector::add_asserting_clause(std::move(clause), trail, info);
     }
 
     /// @brief Refresh the quiescence budget, as `Cyclic` does.
@@ -485,6 +486,36 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
             // restart still lands at or below the asserting level.
             CHECK(backjump.level_after <= backjump.asserting_level);
         }
+    }
+}
+
+TEST_CASE_TEMPLATE("solver: the learned clause's LBD reaches the selector", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+
+    auto selector = std::make_unique<RecordingSelector>();
+    RecordingSelector& recorder = *selector;
+    Run run = make_run(repr, search_unsat_instance, CompactionConfig{}, nullptr,
+                       std::move(selector));
+    const std::size_t num_input_clauses = run.clauses.size();
+    CHECK(run.solver->solve().result == SolveResult::unsat);
+
+    const std::vector<Backjump>& backjumps = recorder.backjumps;
+    REQUIRE(recorder.num_clauses() == num_input_clauses + backjumps.size());
+    REQUIRE_FALSE(backjumps.empty());
+
+    for (ClauseId id = 0; id < num_input_clauses; ++id) {
+        CHECK_FALSE(recorder.is_clause_learned(id));
+        CHECK(recorder.clause_tier(id) == ClauseTier::core);
+    }
+    for (std::size_t index = 0; index < backjumps.size(); ++index) {
+        const ClauseId id = num_input_clauses + index;
+        const std::size_t lbd = backjumps[index].lbd;
+        CHECK(recorder.is_clause_learned(id));
+        CHECK(recorder.clause_lbd(id) == lbd);
+        CHECK(recorder.clause_tier(id) == recorder.tier_for_lbd(lbd));
+        // The clause is derived from the levels of the conflicting trail.
+        CHECK(lbd <= backjumps[index].level_before);
     }
 }
 

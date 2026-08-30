@@ -17,12 +17,14 @@ namespace xorcle {
 Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
                std::unique_ptr<DecisionProcedure> decisions,
                std::unique_ptr<RestartPolicy> restarts, LrupLogger* proof_logger,
-               const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize)
+               const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize,
+               const DeletionConfig& deletion)
     : repr_(repr),
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
       active_var_to_original_(num_vars),
       compaction_(compaction),
+      deletion_(deletion),
       trail_(repr, num_vars),
       selector_(std::move(selector)),
       decisions_(std::move(decisions)),
@@ -41,6 +43,9 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
            "require_compaction_disabled_for_proof()");
     assert((proof_logger_ == nullptr || proof_logger_->num_vars() == original_num_vars_) &&
            "the proof logger's variable numbering must be the instance's");
+    assert((!deletion_.enabled || deletion_.key != DeletionKey::activity ||
+            deletion_.activity != nullptr) &&
+           "the activity key has no activity source");
     std::iota(active_var_to_original_.begin(), active_var_to_original_.end(), std::size_t{0});
 }
 
@@ -99,13 +104,19 @@ bool Solver::propagate_until_conflict() {
 }
 
 void Solver::handle_non_root_conflict() {
-    AssertingClause learned =
-        find_asserting_clause(trail_, selector_->clauses(), *decisions_, minimize_);
+    AssertingClause learned = find_asserting_clause(trail_, selector_->clauses(), *decisions_,
+                                                    minimize_, deletion_.enabled);
     if (minimize_) {
         counters_.minimize_dim_before += learned.dim_before_minimize;
         counters_.minimize_dim_after += learned.clause.rows();
         counters_.num_minimized_clauses +=
             learned.clause.rows() < learned.dim_before_minimize ? 1 : 0;
+    }
+    if (deletion_.enabled) {
+        // Before the proof path reverses `reason_ids`, which `reason_lbds` parallels.
+        for (std::size_t i = 0; i < learned.reason_ids.size(); ++i) {
+            note_reason_use(learned.reason_ids[i], learned.reason_lbds[i]);
+        }
     }
 
     // The id the clause is *about* to take, read before it is added.
@@ -134,6 +145,7 @@ void Solver::handle_non_root_conflict() {
         std::size_t kept_levels = 0;
         if (restarts_->reuses_trail()) {
             kept_levels = decisions_->reusable_levels(trail_.span(), selector_->clauses(),
+                                                      selector_->active_flags(),
                                                       decision_clause_of_level_);
             assert(kept_levels <= learned.asserting_level && "reuse kept a discarded level");
         }
@@ -152,7 +164,8 @@ void Solver::handle_non_root_conflict() {
         proof_logger_->log_learned_clause(new_clause_id, learned.clause, learned.reason_ids);
     }
 
-    selector_->add_asserting_clause(std::move(learned.clause), trail_, removed_levels);
+    const AssertingClauseInfo learned_info{.lbd = learned.lbd, .removed_levels = removed_levels};
+    selector_->add_asserting_clause(std::move(learned.clause), trail_, learned_info);
     next_proof_clause_id_ = std::max(next_proof_clause_id_, selector_->num_clauses());
 }
 
@@ -180,7 +193,8 @@ void Solver::backjump_to(std::size_t level) {
 }
 
 void Solver::make_decision_step() {
-    Equation decision_eqn = decisions_->make_decision(trail_.span(), selector_->clauses());
+    Equation decision_eqn =
+        decisions_->make_decision(trail_.span(), selector_->clauses(), selector_->active_flags());
     [[maybe_unused]] const ReduceResult reduced = trail_.span().partial_reduce(decision_eqn);
     assert(decision_eqn.num_bits() == active_num_vars_ + 1);
     // A decision must be neither 0 (already implied) nor 1 (already refuted).
@@ -282,6 +296,61 @@ void Solver::apply_compaction(CompactionPlan plan) {
     conflicts_at_last_compaction_ = counters_.num_conflicts;
 }
 
+void Solver::note_reason_use(ClauseId id, std::size_t lbd) {
+    selector_->set_clause_used_since_deletion(id, true);
+    if (!selector_->is_clause_learned(id) || lbd >= selector_->clause_lbd(id)) {
+        return;
+    }
+    selector_->set_clause_lbd(id, lbd);
+
+    // `ClauseTier` runs longest-lived first, so a smaller tier is a promotion.
+    const ClauseTier tier = selector_->tier_for_lbd(lbd);
+    if (tier < selector_->clause_tier(id)) {
+        selector_->set_clause_tier(id, tier);
+        selector_->set_clause_unused_intervals(id, 0);
+        ++counters_.num_promoted_clauses;
+    }
+}
+
+void Solver::maybe_delete_clauses() {
+    if (!deletion_.enabled) {
+        return;
+    }
+    if (counters_.num_conflicts - conflicts_at_last_deletion_ < deletion_.conflict_interval) {
+        return;
+    }
+    conflicts_at_last_deletion_ = counters_.num_conflicts;
+    apply_deletion(build_deletion_plan(DeletionState{.selector = *selector_,
+                                                     .trail = trail_,
+                                                     .key = deletion_.key,
+                                                     .activity = deletion_.activity}));
+}
+
+void Solver::apply_deletion(const DeletionPlan& plan) {
+    const std::size_t num_clauses = selector_->num_clauses();
+    assert(plan.unused_intervals.size() == num_clauses);
+
+    for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
+        selector_->set_clause_unused_intervals(clause_id, plan.unused_intervals[clause_id]);
+        selector_->set_clause_used_since_deletion(clause_id, false);
+    }
+    for (const ClauseId clause_id : plan.demoted) {
+        selector_->set_clause_tier(clause_id, ClauseTier::local);
+    }
+
+    if (proof_logger_ != nullptr && !plan.evicted.empty()) {
+        proof_logger_->log_deleted_clauses(plan.evicted);
+    }
+    for (const ClauseId clause_id : plan.evicted) {
+        selector_->clause(clause_id) = inactive_clause_placeholder(repr_, false_equation_);
+        selector_->set_clause_active(clause_id, false);
+    }
+
+    ++counters_.num_deletion_passes;
+    counters_.num_deleted_clauses += plan.evicted.size();
+    counters_.num_demoted_clauses += plan.demoted.size();
+}
+
 Solution Solver::solve() {
 #ifndef NDEBUG
     has_solved_ = true;
@@ -301,6 +370,7 @@ Solution Solver::solve() {
                 return Solution{SolveResult::unsat, std::nullopt};
             }
             handle_non_root_conflict();
+            maybe_delete_clauses();
             maybe_report();
             continue;
         }

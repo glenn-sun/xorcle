@@ -99,6 +99,12 @@ ConsoleStatsWriter::log_impl(const RunStats& stats) {
         output << "c Dimension before minimizing: " << stats.minimize_dim_before << "\n";
         output << "c Dimension after minimizing: " << stats.minimize_dim_after << "\n";
     }
+    if (stats.deletion) {
+        output << "c Deletion passes: " << stats.num_deletion_passes << "\n";
+        output << "c Deleted clauses: " << stats.num_deleted_clauses << "\n";
+        output << "c Demoted clauses: " << stats.num_demoted_clauses << "\n";
+        output << "c Promoted clauses: " << stats.num_promoted_clauses << "\n";
+    }
     // Each ratio line is omitted entirely when its denominator is zero; a
     // parser must not assume it is present.
     if (const auto ratio = propagations_per_conflict(stats); ratio.has_value()) {
@@ -146,7 +152,8 @@ CsvStatsWriter::ensure_header() {
                  "num_vars,start_clauses,final_clauses,learned_clauses,"
                  "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,reused_levels,"
                  "decisions,fallback_decisions,fallback_pct,"
-                 "prop_per_conflict,attempts_per_prop_watch_conflict\n";
+                 "prop_per_conflict,attempts_per_prop_watch_conflict,"
+                 "deletion_passes,deleted_clauses,demoted_clauses,promoted_clauses\n";
         if (!file_) {
             throw std::runtime_error("CsvStatsWriter::ensure_header: failed to write CSV header to " + path_);
         }
@@ -214,7 +221,11 @@ CsvStatsWriter::log_impl(const RunStats& stats) {
           << stats.fallback_decisions << ','
           << fmt_opt_double(fallback_pct(stats)) << ','
           << fmt_opt_double(propagations_per_conflict(stats)) << ','
-          << fmt_opt_double(attempts_per_event(stats)) << "\n";
+          << fmt_opt_double(attempts_per_event(stats)) << ','
+          << stats.num_deletion_passes << ','
+          << stats.num_deleted_clauses << ','
+          << stats.num_demoted_clauses << ','
+          << stats.num_promoted_clauses << "\n";
     file_.flush();
     if (!file_) {
         throw std::runtime_error("CsvStatsWriter::log_impl: failed to write a CSV row to " + path_);

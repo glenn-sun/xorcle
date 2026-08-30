@@ -167,8 +167,8 @@ BothWays learn_both_ways(const Conflict& conflict, EquationRepr repr) {
     std::unique_ptr<Csids> minimizing_decisions =
         default_decisions(repr, conflict.trail.num_vars());
     return BothWays{
-        find_asserting_clause(conflict.trail, conflict.clauses, *plain_decisions, false),
-        find_asserting_clause(conflict.trail, conflict.clauses, *minimizing_decisions, true)};
+        find_asserting_clause(conflict.trail, conflict.clauses, *plain_decisions, false, true),
+        find_asserting_clause(conflict.trail, conflict.clauses, *minimizing_decisions, true, true)};
 }
 
 /// @brief The invariants minimization has to keep, whether or not it shrank the
@@ -193,6 +193,10 @@ void check_minimization_invariants(const BothWays& both, const Trail& trail) {
     // taken, and its first entry is still the conflicting clause.
     CHECK(both.minimized.reason_ids.size() >= both.plain.reason_ids.size());
     CHECK(both.minimized.reason_ids.front() == both.plain.reason_ids.front());
+
+    // Minimization's accepted resolutions are measured like the 1-UIP loop's.
+    CHECK(both.plain.reason_lbds.size() == both.plain.reason_ids.size());
+    CHECK(both.minimized.reason_lbds.size() == both.minimized.reason_ids.size());
 }
 
 /// @brief All sixteen sign patterns over four variables: UNSAT, and reached

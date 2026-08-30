@@ -160,8 +160,9 @@ void LeadingTermWatchlist::add_clause(Clause clause) {
 #endif
 }
 
-void LeadingTermWatchlist::add_asserting_clause(Clause clause, const Trail&, std::size_t) {
-    add_clause(std::move(clause));
+void LeadingTermWatchlist::add_asserting_clause(Clause clause, const Trail& trail,
+                                                const AssertingClauseInfo& info) {
+    ClauseSelector::add_asserting_clause(std::move(clause), trail, info);
 
     // Everything queued before the conflict was queued against a trail that no
     // longer exists, so rebuild from the unit clauses with the new clause on top.

@@ -106,6 +106,21 @@ XORCLE_OPTION(restart_lbd_block, Real, 1.4, 0.0, INFINITY,
 XORCLE_OPTION(minimize, Bool, true, false, true,
               "shrink each learned clause by resolving past the asserting point")
 
+// --- Deletion --------------------------------------------------------------
+
+XORCLE_OPTION(deletion, Bool, true, false, true,
+              "delete the least useful learned clauses; yields to an incompatible --decisions/--selection")
+XORCLE_OPTION(deletion_every, Size, 200, 1, SIZE_MAX, "conflicts between deletion passes")
+XORCLE_OPTION(deletion_core_lbd, Size, 2, 0, SIZE_MAX,
+              "a learned clause of at most this LBD is never deleted")
+XORCLE_OPTION(deletion_tier2_lbd, Size, 6, 0, SIZE_MAX,
+              "a learned clause of at most this LBD survives until two deletion passes go unused")
+
+XORCLE_ENUM_OPTION(deletion_key, DeletionKey, DeletionKey::activity,
+                   "which score orders the clauses a deletion pass deletes")
+XORCLE_ENUM_VALUE(deletion_key, "lbd", DeletionKey::lbd)
+XORCLE_ENUM_VALUE(deletion_key, "activity", DeletionKey::activity)
+
 // --- Output ----------------------------------------------------------------
 
 XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(⊕) proof here; requires --compact=false")

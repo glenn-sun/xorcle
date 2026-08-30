@@ -63,18 +63,21 @@ void Csids::reinitialize() {
     state_.reset_activity();
 }
 
-Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses) {
+Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
+                              const std::vector<std::uint8_t>& clause_active) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
     assert(trail_span.repr() == repr() &&
            "the trail span does not match the procedure's representation");
     assert(trail_span.rows() < num_vars() && "no legal decision remains");
+    assert(clause_active.size() == clauses.size() && "clause active flags are desynchronized");
 
     state_.ensure_unit_eqns();
     while (!state_.activity.activity_heap.empty()) {
         const ClauseId id = state_.activity.activity_heap.peek_max();
-        if (id >= clauses.size()) {
-            // A stale id left over from before a compaction shrank the database.
+        if (id >= clauses.size() || clause_active[id] == 0) {
+            // Stale: left over from before a compaction shrank the database, or
+            // naming a clause since deleted.
             state_.activity.activity_heap.extract_max();
             continue;
         }
@@ -134,19 +137,26 @@ void Csids::update_with_resolved_clause(ClauseId id) {
     }
 }
 
+double Csids::clause_activity(ClauseId id) const {
+    return state_.activity.activity_heap.get_priority(id);
+}
+
 std::optional<ClauseId> Csids::decision_clause_hint() const {
     return state_.last_decision_clause;
 }
 
 std::size_t Csids::reusable_levels(
     const RowSpace& trail_span, const std::vector<Clause>& clauses,
+    const std::vector<std::uint8_t>& clause_active,
     const std::vector<std::optional<ClauseId>>& decision_clauses) {
+    assert(clause_active.size() == clauses.size() && "clause active flags are desynchronized");
+
     // The same walk `make_decision()` makes, undone afterwards: the heap holds
     // nothing popped when a conflict hands over, so the rebuild restores it.
     std::optional<ClauseId> next;
     while (!state_.activity.activity_heap.empty()) {
         const ClauseId id = state_.activity.activity_heap.peek_max();
-        if (id < clauses.size() &&
+        if (id < clauses.size() && clause_active[id] != 0 &&
             !clause_satisfied_by_trail(trail_span, clauses[id], clause_sat_workspace_)) {
             next = id;
             break;
@@ -165,7 +175,7 @@ std::size_t Csids::reusable_levels(
     std::size_t levels = 0;
     while (levels < decision_clauses.size()) {
         const std::optional<ClauseId>& id = decision_clauses[levels];
-        if (!id.has_value() ||
+        if (!id.has_value() || *id >= clause_active.size() || clause_active[*id] == 0 ||
             state_.activity.activity_heap.get_priority(*id) <= next_activity) {
             break;
         }

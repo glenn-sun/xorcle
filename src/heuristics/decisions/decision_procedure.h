@@ -52,8 +52,10 @@ public:
     /// @brief Choose the next decision equation, of `num_vars() + 1` bits.
     /// @pre `trail_span.cols() == num_vars() + 1` and `trail_span.repr() == repr()`.
     /// @pre At least one legal decision remains, i.e. `trail_span.rows() < num_vars()`.
+    /// @pre `clause_active.size() == clauses.size()`.
     virtual Equation make_decision(const RowSpace& trail_span,
-                                   const std::vector<Clause>& clauses) = 0;
+                                   const std::vector<Clause>& clauses,
+                                   const std::vector<std::uint8_t>& clause_active) = 0;
 
     /// @brief Note an equation resolved through during conflict analysis.
     /// @pre `eqn` has `num_vars() + 1` bits and a variable leading bit.
@@ -81,8 +83,10 @@ public:
     /// basis supplied it.
     /// @return At most `decision_clauses.size()`. The default keeps nothing.
     /// @pre `trail_span` is not conflicting.
+    /// @pre `clause_active.size() == clauses.size()`.
     virtual std::size_t reusable_levels(const RowSpace& trail_span,
                                         const std::vector<Clause>& clauses,
+                                        const std::vector<std::uint8_t>& clause_active,
                                         const std::vector<std::optional<ClauseId>>& decision_clauses);
 
     /// @brief Remap procedure state into a compacted variable numbering.

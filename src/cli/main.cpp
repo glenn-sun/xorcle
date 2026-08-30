@@ -18,10 +18,12 @@
 
 #include "cli/options.h"
 #include "core/solver.h"
+#include "heuristics/decisions/clause_activity.h"
 #include "heuristics/decisions/csids.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/decisions/fixed_literals.h"
 #include "heuristics/decisions/variable_vsids.h"
+#include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
 #include "heuristics/selection/cyclic.h"
@@ -108,14 +110,25 @@ RunStats run_once(const Options& options) {
         progress_reporter = std::make_unique<ConsoleProgressReporter>(std::cout);
     }
 
-    Solver solver(options.equation_repr, parsed.num_vars,
-                  make_clause_selector(options, parsed.num_vars),
-                  make_decision_procedure(options, parsed.num_vars),
+    std::unique_ptr<ClauseSelector> selector = make_clause_selector(options, parsed.num_vars);
+    std::unique_ptr<DecisionProcedure> decision_procedure =
+        make_decision_procedure(options, parsed.num_vars);
+
+    DeletionConfig deletion = deletion_config(options);
+    selector->set_tier_config(deletion.tiers);
+    if (deletion.enabled && deletion.key == DeletionKey::activity) {
+        deletion.activity = dynamic_cast<const ClauseActivitySource*>(decision_procedure.get());
+        assert(deletion.activity != nullptr &&
+               "validate_options() should have required a scoring decision procedure");
+    }
+
+    Solver solver(options.equation_repr, parsed.num_vars, std::move(selector),
+                  std::move(decision_procedure),
                   make_restart_policy(restart_config(options)), proof_logger.get(),
                   compaction_config(options),
                   ProgressConfig{.reporter = progress_reporter.get(),
                                  .conflict_interval = options.report_every},
-                  options.minimize);
+                  options.minimize, deletion);
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
@@ -163,6 +176,12 @@ RunStats run_once(const Options& options) {
     stats.num_minimized_clauses = counters.num_minimized_clauses;
     stats.minimize_dim_before = counters.minimize_dim_before;
     stats.minimize_dim_after = counters.minimize_dim_after;
+
+    stats.deletion = options.deletion;
+    stats.num_deletion_passes = counters.num_deletion_passes;
+    stats.num_deleted_clauses = counters.num_deleted_clauses;
+    stats.num_demoted_clauses = counters.num_demoted_clauses;
+    stats.num_promoted_clauses = counters.num_promoted_clauses;
     return stats;
 }
 

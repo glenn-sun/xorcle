@@ -40,7 +40,7 @@ public:
 
     /// @brief Add an asserting clause and requeue it above every unit clause.
     void add_asserting_clause(Clause clause, const Trail& trail,
-                              std::size_t removed_levels) override;
+                              const AssertingClauseInfo& info) override;
 
     /// @pre `reduced_eqn` is not the true equation, and `trail` is over the numbering it
     /// was constructed with.

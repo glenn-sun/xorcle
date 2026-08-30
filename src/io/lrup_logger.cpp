@@ -111,6 +111,19 @@ void LrupLogger::log_empty_clause(ClauseId new_id, const std::vector<ClauseId>& 
     write_reasons(reason_ids);
 }
 
+void LrupLogger::log_deleted_clauses(const std::vector<ClauseId>& deleted_ids) {
+    assert(!finalized_ && "the proof is closed");
+    assert(!deleted_ids.empty() && "a deletion line names at least one clause");
+
+    // The deletion form of the line grammar: ids, then a single `0`.
+    const char* separator = "";
+    for (const ClauseId id : deleted_ids) {
+        out_ << separator << (id + 1);
+        separator = " ";
+    }
+    out_ << " 0\n";
+}
+
 void LrupLogger::finalize(bool keep) {
     if (finalized_) {
         return;

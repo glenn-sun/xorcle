@@ -48,6 +48,14 @@ struct RunStats {
     std::size_t num_minimized_clauses = 0;
     std::size_t minimize_dim_before = 0;
     std::size_t minimize_dim_after = 0;
+
+    /// @brief Whether clause deletion ran; the console reports its counters
+    /// only when it did.
+    bool deletion = false;
+    std::size_t num_deletion_passes = 0;
+    std::size_t num_deleted_clauses = 0;
+    std::size_t num_demoted_clauses = 0;
+    std::size_t num_promoted_clauses = 0;
     /// @brief The satisfying assignment, indexed by variable in the original
     /// numbering; set only on SAT.
     std::optional<IndexSet> sat_assignment;

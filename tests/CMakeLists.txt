@@ -21,6 +21,7 @@ add_executable(xorcle_tests
     unit/test_clause_selector.cpp
     unit/test_compaction.cpp
     unit/test_decisions.cpp
+    unit/test_deletion.cpp
     unit/test_dimacs.cpp
     unit/test_ema.cpp
     unit/test_equation.cpp
@@ -56,3 +57,10 @@ add_test(NAME proof_roundtrip_no_minimize
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --minimize=false)
 set_tests_properties(proof_roundtrip_no_minimize PROPERTIES SKIP_RETURN_CODE 77)
+
+# Deletion adds deletion lines, and the checker refuses a reason it has already
+# deleted, so this is where a clause deleted too early would show up.
+add_test(NAME proof_roundtrip_deletion
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --deletion=true)
+set_tests_properties(proof_roundtrip_deletion PROPERTIES SKIP_RETURN_CODE 77)

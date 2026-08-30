@@ -42,10 +42,10 @@ bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
 
 } // namespace
 
-ClauseId resolve_asserting_basis(TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx,
-                                 std::size_t pivot_col_idx, const Trail& trail,
-                                 const std::vector<Clause>& clauses,
-                                 const Equation& trail_basis_one) {
+ResolvedReason resolve_asserting_basis(TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx,
+                                       std::size_t pivot_col_idx, const Trail& trail,
+                                       const std::vector<Clause>& clauses,
+                                       const Equation& trail_basis_one, bool measure_lbd) {
     assert(pivot_row_idx < asserting_basis.rows() && "the pivot row is out of range");
     assert(asserting_basis.row(pivot_row_idx).leading_bit() ==
                std::optional<std::size_t>{pivot_col_idx} &&
@@ -65,6 +65,9 @@ ClauseId resolve_asserting_basis(TrailBasisSpace& asserting_basis, std::size_t p
     TrailBasisSpace reason_basis =
         TrailBasisSpace::from_RowSpace(clauses[*reason_clause_id], trail);
     assert(reason_basis.rows() > 0 && "reason clause has no rows in the trail basis");
+    const std::optional<std::size_t> reason_lbd =
+        measure_lbd ? std::optional<std::size_t>{reason_basis.literal_block_distance()}
+                    : std::nullopt;
     Equation reason_row = reason_basis.pop_first_row();
 
     // The explicit `+ [0 = 1]` is the linear negation, valid because on a
@@ -83,22 +86,23 @@ ClauseId resolve_asserting_basis(TrailBasisSpace& asserting_basis, std::size_t p
             *asserting_basis.row(pivot_row_idx).leading_bit() > pivot_col_idx) &&
            "resolution did not eliminate the pivot column");
 
-    return *reason_clause_id;
+    return ResolvedReason{*reason_clause_id, reason_lbd};
 }
 
-ClauseId resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
-                                             std::size_t pivot_col_idx, const Trail& trail,
-                                             const std::vector<Clause>& clauses,
-                                             DecisionProcedure& decisions,
-                                             const Equation& trail_basis_one) {
+ResolvedReason resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
+                                                   std::size_t pivot_col_idx, const Trail& trail,
+                                                   const std::vector<Clause>& clauses,
+                                                   DecisionProcedure& decisions,
+                                                   const Equation& trail_basis_one,
+                                                   bool measure_lbd) {
     const std::size_t reason_index = asserting_basis.cols() - 1 - pivot_col_idx;
     // The 1-UIP loop has passed over no row, so the pivot leads the first one.
-    const ClauseId reason_clause_id =
-        resolve_asserting_basis(asserting_basis, 0, pivot_col_idx, trail, clauses, trail_basis_one);
+    const ResolvedReason reason = resolve_asserting_basis(
+        asserting_basis, 0, pivot_col_idx, trail, clauses, trail_basis_one, measure_lbd);
 
     // Order-sensitive: this and the critical-equation notification below both
     // feed CSIDS, so reordering them changes conflict counts.
-    decisions.update_with_resolved_clause(reason_clause_id);
+    decisions.update_with_resolved_clause(reason.clause_id);
 
     assert(reason_index < trail.order_map().size() && "trail order index is out of range");
     assert(trail.order_map()[reason_index] < trail.span().rows() &&
@@ -109,11 +113,12 @@ ClauseId resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
 
     assert(asserting_basis.rows() > 0 && "resolution derived the empty clause below the root");
 
-    return reason_clause_id;
+    return reason;
 }
 
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
-                                      DecisionProcedure& decisions, bool minimize) {
+                                      DecisionProcedure& decisions, bool minimize,
+                                      bool measure_reason_lbds) {
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail.level() > 0 && "a root conflict is UNSAT and is not analysed");
     assert(trail_is_conflicting(trail) && "conflict analysis on a trail that does not contain 1");
@@ -127,6 +132,11 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 
     TrailBasisSpace asserting_basis =
         TrailBasisSpace::from_RowSpace(clauses[*conflict_clause_id], trail);
+
+    std::vector<std::size_t> reason_lbds;
+    if (measure_reason_lbds) {
+        reason_lbds.push_back(asserting_basis.literal_block_distance());
+    }
 
     const Equation trail_basis_one = make_trail_basis_one(trail);
 
@@ -152,8 +162,13 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
             ++resolution_steps;
             assert(resolution_steps < asserting_basis.cols() &&
                    "conflict analysis did not terminate");
-            reason_ids.push_back(resolve_asserting_basis_with_reason(
-                asserting_basis, *pivot_col_idx, trail, clauses, decisions, trail_basis_one));
+            const ResolvedReason reason = resolve_asserting_basis_with_reason(
+                asserting_basis, *pivot_col_idx, trail, clauses, decisions, trail_basis_one,
+                measure_reason_lbds);
+            reason_ids.push_back(reason.clause_id);
+            if (measure_reason_lbds) {
+                reason_lbds.push_back(*reason.lbd);
+            }
             continue;
         }
 
@@ -164,14 +179,18 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         assert(reason_index < trail.reasons().size() && "trail reason index is out of range");
         if (trail.reasons()[reason_index].has_value()) {
             TrailBasisSpace resolved = asserting_basis;
-            const ClauseId reason_clause_id = resolve_asserting_basis(
-                resolved, frozen, *pivot_col_idx, trail, clauses, trail_basis_one);
+            const ResolvedReason reason = resolve_asserting_basis(
+                resolved, frozen, *pivot_col_idx, trail, clauses, trail_basis_one,
+                measure_reason_lbds);
             // A resolvent with no rows would be the empty clause below the root,
             // which a well-formed run cannot reach.
             if (resolved.rows() < asserting_basis.rows() && resolved.rows() > 0) {
                 asserting_basis = std::move(resolved);
-                reason_ids.push_back(reason_clause_id);
-                decisions.update_with_resolved_clause(reason_clause_id);
+                reason_ids.push_back(reason.clause_id);
+                if (measure_reason_lbds) {
+                    reason_lbds.push_back(*reason.lbd);
+                }
+                decisions.update_with_resolved_clause(reason.clause_id);
                 decisions.update_with_critical_equation(
                     trail.span().row(trail.order_map()[reason_index]));
                 continue;
@@ -203,8 +222,15 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     assert((asserting_clause.rows() != 1 || asserting_level == 0) &&
            "a unit asserting clause must assert at the root");
 
-    return AssertingClause{std::move(asserting_clause), asserting_level, std::move(reason_ids),
-                          lbd, dim_before_minimize};
+    assert((reason_lbds.empty() || reason_lbds.size() == reason_ids.size()) &&
+           "a measured reason is missing its literal block distance");
+
+    return AssertingClause{std::move(asserting_clause),
+                          asserting_level,
+                          std::move(reason_ids),
+                          std::move(reason_lbds),
+                          lbd,
+                          dim_before_minimize};
 }
 
 } // namespace xorcle
