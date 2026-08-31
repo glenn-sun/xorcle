@@ -19,7 +19,8 @@ namespace {
 
 constexpr const char* expected_header =
     "c  seconds   conflicts   propagations  restarts   decisions   "
-    "trail level   trail rank   remaining vars";
+    "trail level   trail rank   remaining vars   deletion passes   deleted   demoted"
+    "   promoted";
 
 ProgressSnapshot sample_snapshot() {
     return ProgressSnapshot{.time_s = 1.5,
@@ -29,7 +30,11 @@ ProgressSnapshot sample_snapshot() {
                             .decisions = 2048,
                             .trail_level = 17,
                             .trail_rank = 41,
-                            .remaining_vars = 128};
+                            .remaining_vars = 128,
+                            .num_deletion_passes = 5,
+                            .num_deleted_clauses = 640,
+                            .num_demoted_clauses = 512,
+                            .num_promoted_clauses = 96};
 }
 
 std::vector<std::string> lines_of(const std::string& text) {
@@ -76,8 +81,9 @@ TEST_CASE("every column carries its snapshot value") {
 
     const std::vector<std::string> lines = lines_of(out.str());
     REQUIRE(lines.size() == 2);
-    CHECK(values_of(lines[1]) ==
-          std::vector<std::string>{"1.50", "1024", "987654", "3", "2048", "17", "41", "128"});
+    CHECK(values_of(lines[1]) == std::vector<std::string>{"1.50", "1024", "987654", "3",
+                                                          "2048", "17", "41", "128",
+                                                          "5", "640", "512", "96"});
 }
 
 TEST_CASE("no progress line has the shape the stats parser reads") {

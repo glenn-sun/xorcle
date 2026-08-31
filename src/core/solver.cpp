@@ -229,7 +229,11 @@ ProgressSnapshot Solver::progress_snapshot() const {
                             .decisions = decisions_->decision_stats().decisions,
                             .trail_level = trail_.level(),
                             .trail_rank = trail_.span().rows(),
-                            .remaining_vars = active_num_vars_ - trail_[0].span().rows()};
+                            .remaining_vars = active_num_vars_ - trail_[0].span().rows(),
+                            .num_deletion_passes = counters_.num_deletion_passes,
+                            .num_deleted_clauses = counters_.num_deleted_clauses,
+                            .num_demoted_clauses = counters_.num_demoted_clauses,
+                            .num_promoted_clauses = counters_.num_promoted_clauses};
 }
 
 bool Solver::maybe_compact_before_decision() {

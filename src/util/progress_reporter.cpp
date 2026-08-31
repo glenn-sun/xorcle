@@ -19,8 +19,9 @@ struct Column {
 
 /// @brief The columns, in print order; the header and every line share them.
 constexpr Column columns[]{
-    {"seconds", 9},      {"conflicts", 12},   {"propagations", 15}, {"restarts", 10},
-    {"decisions", 12},   {"trail level", 14}, {"trail rank", 13},   {"remaining vars", 17},
+    {"seconds", 9},          {"conflicts", 12},   {"propagations", 15}, {"restarts", 10},
+    {"decisions", 12},       {"trail level", 14}, {"trail rank", 13},   {"remaining vars", 17},
+    {"deletion passes", 18}, {"deleted", 10},     {"demoted", 10},      {"promoted", 11},
 };
 
 std::string format_seconds(const double time_s) {
@@ -55,6 +56,10 @@ ConsoleProgressReporter::report(const ProgressSnapshot& snapshot) {
         std::to_string(snapshot.trail_level),
         std::to_string(snapshot.trail_rank),
         std::to_string(snapshot.remaining_vars),
+        std::to_string(snapshot.num_deletion_passes),
+        std::to_string(snapshot.num_deleted_clauses),
+        std::to_string(snapshot.num_demoted_clauses),
+        std::to_string(snapshot.num_promoted_clauses),
     };
     static_assert(std::tuple_size_v<decltype(cells)> == std::size(columns));
 

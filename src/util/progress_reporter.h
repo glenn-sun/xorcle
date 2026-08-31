@@ -20,6 +20,10 @@ struct ProgressSnapshot {
     /// @brief Active variables less the root trail's rank: the dimension of the
     /// space still to be searched.
     std::size_t remaining_vars = 0;
+    std::size_t num_deletion_passes = 0;
+    std::size_t num_deleted_clauses = 0;
+    std::size_t num_demoted_clauses = 0;
+    std::size_t num_promoted_clauses = 0;
 };
 
 /// @brief Receives one snapshot per report interval while the solver runs.
