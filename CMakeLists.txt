@@ -77,6 +77,18 @@ else()
         $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer;-fno-optimize-sibling-calls>)
 endif()
 
+# The x86-64 baseline is SSE2 with no hardware `popcount`; arm64's already carries
+# both, which is why only this target has to ask. Added only if the compiler takes it.
+option(XORCLE_NATIVE "Build for the host CPU on x86-64" ON)
+if(XORCLE_NATIVE AND NOT CMAKE_CROSSCOMPILING AND NOT MSVC
+        AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag(-march=native XORCLE_HAS_MARCH_NATIVE)
+    if(XORCLE_HAS_MARCH_NATIVE)
+        target_compile_options(xorcle_core PUBLIC -march=native)
+    endif()
+endif()
+
 # gf2 gates its bounds checks on `gf2_debug_assert`, which is a no-op unless
 # DEBUG is defined -- and neither CMake's Debug build type nor gf2's own
 # FetchContent-consumed CMakeLists defines it.
