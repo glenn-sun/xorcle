@@ -123,7 +123,9 @@ XORCLE_ENUM_VALUE(deletion_key, "activity", DeletionKey::activity)
 
 // --- Output ----------------------------------------------------------------
 
-XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(⊕) proof here; requires --compact=false")
+XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(⊕) proof here")
+XORCLE_OPTION(proof_raw, Text, "", "", "",
+              "keep the raw proof here instead of in a temporary file")
 XORCLE_OPTION(stats_file, Text, "", "", "", "append CSV statistics here instead of printing them")
 XORCLE_OPTION(report_every, Size, 100, 0, SIZE_MAX,
               "conflicts between progress report lines; 0 reports nothing")

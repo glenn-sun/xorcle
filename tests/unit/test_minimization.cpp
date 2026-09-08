@@ -2,13 +2,12 @@
 
 #include <cstddef>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -25,7 +24,8 @@
 #include "heuristics/selection/cyclic.h"
 #include "heuristics_test_support.h"
 #include "io/dimacs.h"
-#include "io/lrup_logger.h"
+#include "io/proof_raw.h"
+#include "io/proof_raw_file.h"
 #include "util/random.h"
 #include "util/stats.h"
 
@@ -225,23 +225,16 @@ struct Outcome {
 };
 
 Outcome solve_with(EquationRepr repr, std::string_view instance, bool minimize,
-                   LrupLogger* proof_logger = nullptr) {
+                   RawProofWriter* proof_writer = nullptr) {
     ParsedDimacs parsed = parse_dimacs_string(instance, repr);
     Solver solver(repr, parsed.num_vars, std::make_unique<Cyclic>(parsed.num_vars),
                   default_decisions(repr, parsed.num_vars), std::make_unique<NoRestarts>(),
-                  proof_logger, CompactionConfig{.enabled = false}, ProgressConfig{}, minimize);
+                  proof_writer, CompactionConfig{.enabled = false}, ProgressConfig{}, minimize);
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
     const Solution solution = solver.solve();
     return Outcome{solution.result, solver.counters()};
-}
-
-std::string read_file(const std::filesystem::path& path) {
-    std::ifstream file{path};
-    std::ostringstream contents;
-    contents << file.rdbuf();
-    return contents.str();
 }
 
 } // namespace
@@ -334,50 +327,45 @@ TEST_CASE("minimize: the option is on by default and round-trips") {
 }
 
 TEST_CASE("minimize: --minimize and --proof go together") {
-    const Options options =
-        parse({"--minimize=true", "--compact=false", "--proof=out.lrup", "instance.xnf"});
+    const Options options = parse({"--minimize=true", "--proof=out.lrup", "instance.xnf"});
     CHECK(options.minimize);
     CHECK(options.proof == "out.lrup");
 }
 
-TEST_CASE_TEMPLATE("minimize: a minimizing run still writes a proof", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("minimize: a minimizing run still writes a raw proof", Tag, DenseTag,
+                   SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() /
-        (repr == EquationRepr::dense ? "xorcle_minimize_proof_dense.lrup"
-                                     : "xorcle_minimize_proof_sparse.lrup");
+        (repr == EquationRepr::dense ? "xorcle_minimize_proof_dense.raw"
+                                     : "xorcle_minimize_proof_sparse.raw");
 
     {
-        LrupLogger logger(path, 4);
-        const Outcome outcome = solve_with(repr, sign_pattern_instance, true, &logger);
+        RawProofWriter writer(path, 4, 16);
+        const Outcome outcome = solve_with(repr, sign_pattern_instance, true, &writer);
         REQUIRE(outcome.result == SolveResult::unsat);
-        logger.finalize(true);
+        writer.finalize(true);
     }
 
-    // Every line is `<new id> <clause> 0 <reason ids> 0`, so it holds two `0`
-    // tokens; the last line is the empty clause, whose clause part is empty.
-    const std::string proof = read_file(path);
-    REQUIRE_FALSE(proof.empty());
-    std::istringstream lines{proof};
-    std::string line;
-    std::string last;
-    while (std::getline(lines, line)) {
-        CAPTURE(line);
-        std::istringstream tokens{line};
-        std::string token;
-        std::size_t zeros = 0;
-        std::size_t count = 0;
-        while (tokens >> token) {
-            ++count;
-            zeros += token == "0" ? 1 : 0;
+    // Learned clauses first, then exactly one empty clause, last.
+    RawProofFileSource source(path);
+    RawRecord record;
+    std::size_t learned = 0;
+    std::size_t empty = 0;
+    while (source.next(record)) {
+        if (const RawLearned* line = std::get_if<RawLearned>(&record)) {
+            CHECK(line->rows.size() > 0);
+            CHECK(line->reasons.size() >= 2);
+            CHECK(empty == 0);
+            ++learned;
         }
-        CHECK(count >= 3);
-        CHECK(zeros >= 2);
-        last = line;
+        if (const RawEmpty* line = std::get_if<RawEmpty>(&record)) {
+            CHECK(line->reasons.size() >= 1);
+            ++empty;
+        }
     }
-    // The final line is the empty clause: an id, then straight to the `0` that
-    // closes an empty clause part.
-    CHECK(last.find(" 0 ") == last.find(' '));
+    CHECK(learned > 0);
+    CHECK(empty == 1);
 
     std::filesystem::remove(path);
 }

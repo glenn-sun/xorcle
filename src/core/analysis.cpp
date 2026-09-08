@@ -1,5 +1,6 @@
 #include "core/analysis.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -114,6 +115,36 @@ ResolvedReason resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_ba
     assert(asserting_basis.rows() > 0 && "resolution derived the empty clause below the root");
 
     return reason;
+}
+
+std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
+                                                 const std::vector<Clause>& clauses) {
+    assert(trail.level() == 0 && "the root conflict chain is only defined at the root");
+    assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
+    assert(trail_is_conflicting(trail) && "the root conflict trail does not contain 1");
+
+    // `reasons()` is in trail order, so its last entry closed the conflict.
+    const std::optional<ClauseId> conflict_clause_id = trail.reasons().back();
+    assert(conflict_clause_id.has_value() && "the conflicting trail row has no reason");
+    assert(*conflict_clause_id < clauses.size() && "conflicting reason id is out of range");
+
+    std::vector<ClauseId> reason_ids{*conflict_clause_id};
+    TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(clauses[*conflict_clause_id], trail);
+    const Equation trail_basis_one = make_trail_basis_one(trail);
+
+    // At the root every row has a reason, so the walk resolves the basis away.
+    while (basis.rows() > 0) {
+        const std::optional<std::size_t> pivot_col_idx = basis.row(0).leading_bit();
+        assert(pivot_col_idx.has_value() && "a stored row is zero");
+        assert(reason_ids.size() <= basis.cols() && "the root conflict walk did not terminate");
+        const ResolvedReason reason =
+            resolve_asserting_basis(basis, 0, *pivot_col_idx, trail, clauses, trail_basis_one);
+        reason_ids.push_back(reason.clause_id);
+    }
+
+    // Derivation order to replay order. Exactly one reversal, here.
+    std::reverse(reason_ids.begin(), reason_ids.end());
+    return reason_ids;
 }
 
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,

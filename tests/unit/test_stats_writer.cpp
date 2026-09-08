@@ -275,7 +275,8 @@ TEST_CASE("CsvStatsWriter: header then rows, appended") {
         "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,reused_levels,"
         "decisions,fallback_decisions,fallback_pct,"
         "prop_per_conflict,attempts_per_prop_watch_conflict,"
-        "deletion_passes,deleted_clauses,demoted_clauses,promoted_clauses\n"));
+        "deletion_passes,deleted_clauses,demoted_clauses,promoted_clauses,"
+        "proof_postprocess_time_s\n"));
     // Absent optional doubles are empty fields, and the result column is the
     // short spelling, not the console's SATISFIABLE/UNSATISFIABLE.
     CHECK(first.find(",csids,,,,falsify,cyclic,12345,UNSAT,12,30,47,17,") != std::string::npos);
@@ -291,6 +292,20 @@ TEST_CASE("CsvStatsWriter: header then rows, appended") {
     const std::string second = read_file(temp.path());
     CHECK(second.starts_with(first));
     CHECK(second.find("run_id,timestamp_utc", 1) == std::string::npos);
+}
+
+TEST_CASE("CsvStatsWriter: the post-processing time is the last column") {
+    const TempFile temp;
+    CsvStatsWriter writer(temp.path());
+
+    RunStats stats = sample_stats();
+    CHECK(stats.proof_postprocess_time_s == 0.0);
+    writer.log(stats);
+    CHECK(read_file(temp.path()).ends_with(",0\n"));
+
+    stats.proof_postprocess_time_s = 0.4242;
+    writer.log(stats);
+    CHECK(read_file(temp.path()).ends_with(",0.4242\n"));
 }
 
 TEST_CASE("CsvStatsWriter: fields containing separators are quoted") {

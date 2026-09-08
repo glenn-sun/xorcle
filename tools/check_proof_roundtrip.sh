@@ -32,8 +32,7 @@ proof="$work/proof.lrup"
 "$python" "$root/tools/generate_xnf_tests.py" \
     --family random_kxnf_n --params 'n=14;k=3' --seed 1 --out "$instance"
 
-# --proof requires --compact=false.
-"$xorcle" --compact=false --proof="$proof" "$@" "$instance" > "$work/solve.out" 2>&1 || {
+"$xorcle" --proof="$proof" "$@" "$instance" > "$work/solve.out" 2>&1 || {
     echo "check_proof_roundtrip: solver failed" >&2
     cat "$work/solve.out" >&2
     exit 1

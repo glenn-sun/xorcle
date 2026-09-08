@@ -30,6 +30,10 @@ struct RunStats {
 
     SolveResult result = SolveResult::unsat;
     double time_s = 0.0;                     ///< Wall-clock.
+    /// @brief Wall-clock seconds spent turning the raw proof into the LRUP(⊕)
+    /// proof; 0 when none was written. The console reports it on the `c Proof:`
+    /// line instead, since the stats block prints before post-processing runs.
+    double proof_postprocess_time_s = 0.0;
     std::size_t num_vars = 0;
     std::size_t start_clauses = 0;
     std::size_t final_clauses = 0;

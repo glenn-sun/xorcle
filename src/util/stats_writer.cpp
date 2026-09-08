@@ -153,7 +153,8 @@ CsvStatsWriter::ensure_header() {
                  "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,reused_levels,"
                  "decisions,fallback_decisions,fallback_pct,"
                  "prop_per_conflict,attempts_per_prop_watch_conflict,"
-                 "deletion_passes,deleted_clauses,demoted_clauses,promoted_clauses\n";
+                 "deletion_passes,deleted_clauses,demoted_clauses,promoted_clauses,"
+                 "proof_postprocess_time_s\n";
         if (!file_) {
             throw std::runtime_error("CsvStatsWriter::ensure_header: failed to write CSV header to " + path_);
         }
@@ -225,7 +226,8 @@ CsvStatsWriter::log_impl(const RunStats& stats) {
           << stats.num_deletion_passes << ','
           << stats.num_deleted_clauses << ','
           << stats.num_demoted_clauses << ','
-          << stats.num_promoted_clauses << "\n";
+          << stats.num_promoted_clauses << ','
+          << std::setprecision(10) << stats.proof_postprocess_time_s << "\n";
     file_.flush();
     if (!file_) {
         throw std::runtime_error("CsvStatsWriter::log_impl: failed to write a CSV row to " + path_);

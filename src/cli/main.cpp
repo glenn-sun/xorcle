@@ -13,6 +13,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -29,7 +30,9 @@
 #include "heuristics/selection/cyclic.h"
 #include "heuristics/selection/leading_term_watchlist.h"
 #include "io/dimacs.h"
-#include "io/lrup_logger.h"
+#include "io/proof_postprocess.h"
+#include "io/proof_raw.h"
+#include "io/proof_raw_file.h"
 #include "util/progress_reporter.h"
 #include "util/stats.h"
 #include "util/stats_writer.h"
@@ -77,6 +80,65 @@ std::unique_ptr<ClauseSelector> make_clause_selector(const Options& options,
     return std::make_unique<Cyclic>(num_vars);
 }
 
+// --- Proofs ----------------------------------------------------------------
+
+/// @brief Where the raw proof goes: the requested path, or a temporary next to
+/// the final proof.
+std::filesystem::path raw_proof_path(const Options& options) {
+    return options.proof_raw.empty() ? std::filesystem::path(options.proof + ".raw")
+                                     : std::filesystem::path(options.proof_raw);
+}
+
+/// @brief The input clauses' rows, indexed by clause id, as post-processing
+/// wants them: already in the original numbering, so no lifting is needed.
+std::vector<std::vector<RawRow>> input_clause_rows(const std::vector<Clause>& clauses) {
+    std::vector<std::vector<RawRow>> rows(clauses.size());
+    for (std::size_t id = 0; id < clauses.size(); ++id) {
+        for (std::size_t index = 0; index < clauses[id].rows(); ++index) {
+            rows[id].push_back(clauses[id].row(index).bits());
+        }
+    }
+    return rows;
+}
+
+/// @brief The post-processing `run_once` leaves for after the verdict and the
+/// stats have been reported; `raw_path` is empty when there is none to do.
+struct PendingProof {
+    std::filesystem::path raw_path;
+    std::vector<std::vector<RawRow>> input_rows;
+    bool keep_raw = false; ///< `--proof-raw` asked for the raw proof itself.
+};
+
+/// @brief Turn the raw proof into the final LRUP(⊕) proof, and report on it.
+/// @return Wall-clock seconds spent post-processing and writing the proof.
+/// @throws std::runtime_error On a raw proof no proof can be made of.
+double write_lrup_proof(const Options& options, const PendingProof& pending) {
+    const auto start = std::chrono::steady_clock::now();
+    PostprocessSummary summary;
+    {
+        RawProofFileSource source(pending.raw_path);
+        AtomicOutputFile proof(options.proof, std::ios::out);
+        summary = postprocess_raw_proof(source, source.num_vars(), source.num_input_clauses(),
+                                        options.equation_repr, proof.out(), pending.input_rows);
+        proof.finalize(true);
+    }
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+    if (!pending.keep_raw) {
+        // Only on success: a raw proof no proof could be made of is the one
+        // thing a post-processing failure can be debugged from.
+        std::error_code ec;
+        std::filesystem::remove(pending.raw_path, ec);
+    }
+
+    std::cout << "c Proof: " << summary.kept_learned << " of " << summary.raw_learned
+              << " learned lines kept, " << summary.unit_lines << " unit lines, "
+              << summary.inserted_units << " inserted unit ids, " << summary.deletion_lines
+              << " deletion lines, post-processing " << std::fixed << std::setprecision(3)
+              << elapsed.count() << " s\n";
+    return elapsed.count();
+}
+
 // --- Running ---------------------------------------------------------------
 
 /// @brief The current UTC time as `%Y-%m-%dT%H:%M:%SZ`.
@@ -97,12 +159,25 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
     return timestamp_utc + "-" + std::to_string(millis);
 }
 
-RunStats run_once(const Options& options) {
+/// @brief Solve one instance; on UNSAT with `--proof`, leave the raw proof for
+/// `pending` so the caller can report before post-processing it.
+RunStats run_once(const Options& options, PendingProof& pending) {
     ParsedDimacs parsed = parse_dimacs_file(options.input_path, options.equation_repr);
 
-    std::unique_ptr<LrupLogger> proof_logger;
-    if (!options.proof.empty()) {
-        proof_logger = std::make_unique<LrupLogger>(options.proof, parsed.num_vars);
+    // The solver streams a raw proof; post-processing turns it into the proof.
+    const bool wants_proof = !options.proof.empty();
+    const bool wants_raw = !options.proof_raw.empty();
+    std::unique_ptr<RawProofWriter> proof_writer;
+    std::filesystem::path raw_path;
+    std::vector<std::vector<RawRow>> input_rows;
+    if (wants_proof || wants_raw) {
+        raw_path = raw_proof_path(options);
+        proof_writer =
+            std::make_unique<RawProofWriter>(raw_path, parsed.num_vars, parsed.clauses.size());
+    }
+    if (wants_proof) {
+        // The solver takes the clauses over, so their rows are kept beforehand.
+        input_rows = input_clause_rows(parsed.clauses);
     }
 
     std::unique_ptr<ProgressReporter> progress_reporter;
@@ -124,7 +199,7 @@ RunStats run_once(const Options& options) {
 
     Solver solver(options.equation_repr, parsed.num_vars, std::move(selector),
                   std::move(decision_procedure),
-                  make_restart_policy(restart_config(options)), proof_logger.get(),
+                  make_restart_policy(restart_config(options)), proof_writer.get(),
                   compaction_config(options),
                   ProgressConfig{.reporter = progress_reporter.get(),
                                  .conflict_interval = options.report_every},
@@ -138,8 +213,12 @@ RunStats run_once(const Options& options) {
     Solution solution = solver.solve();
     const std::chrono::duration<double> elapsed = std::chrono::high_resolution_clock::now() - start;
 
-    if (proof_logger) {
-        proof_logger->finalize(solution.result == SolveResult::unsat);
+    const bool unsat = solution.result == SolveResult::unsat;
+    if (proof_writer) {
+        proof_writer->finalize(wants_raw || (wants_proof && unsat));
+    }
+    if (wants_proof && unsat) {
+        pending = PendingProof{raw_path, std::move(input_rows), wants_raw};
     }
 
     RunStats stats;
@@ -212,17 +291,31 @@ int main(int argc, char* argv[]) {
         require_readable_input(options->input_path);
 
         const std::string timestamp_utc = utc_timestamp();
-        RunStats stats = run_once(*options);
+        PendingProof pending;
+        RunStats stats = run_once(*options, pending);
         stats.timestamp_utc = timestamp_utc;
         stats.run_id = run_id_from_timestamp(timestamp_utc);
 
+        const bool to_console = options->stats_file.empty();
         std::unique_ptr<StatsWriter> writer;
-        if (options->stats_file.empty()) {
+        if (to_console) {
             writer = std::make_unique<ConsoleStatsWriter>();
         } else {
             writer = std::make_unique<CsvStatsWriter>(options->stats_file);
         }
-        writer->log(stats);
+
+        // The console gets the verdict and the stats before post-processing,
+        // which can take a while; the CSV waits for its post-processing column.
+        if (to_console) {
+            writer->log(stats);
+            std::cout << std::flush;
+        }
+        if (!pending.raw_path.empty()) {
+            stats.proof_postprocess_time_s = write_lrup_proof(*options, pending);
+        }
+        if (!to_console) {
+            writer->log(stats);
+        }
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Error: " << error.what() << std::endl;

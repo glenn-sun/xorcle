@@ -31,7 +31,6 @@
 #include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
-#include "io/lrup_logger.h"
 #include "util/random.h"
 
 namespace xorcle {
@@ -404,9 +403,6 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
         << "  whole CSIDS triple, so combining one with a --csids-* option is an\n"
         << "  error rather than a silent override.\n"
         << "\n"
-        << "  --proof requires --compact=false: it refuses rather than turning\n"
-        << "  compaction off for you.\n"
-        << "\n"
         << "  Restarts are off by default: measured single-threaded, both schedules\n"
         << "  lose to --restart=none on every benchmark set tried.\n"
         << "\n"
@@ -470,7 +466,6 @@ inline void resolve_default_deletion(Options& options, const OptionSeen& seen) {
 /// @throws CliError if a preset was combined with a manual CSIDS override, if
 /// `--restart=luby` was given without a budget, or if the deletion options do
 /// not agree with each other and with the heuristics they need.
-/// @throws LrupError if `--proof` was given with compaction on.
 inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (!options.csids_preset.empty() &&
         (seen.csids_initial || seen.csids_decay || seen.csids_bump)) {
@@ -497,7 +492,6 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
                        "only decision procedure that scores clauses; pass --deletion-key=lbd "
                        "to delete by LBD instead");
     }
-    require_compaction_disabled_for_proof(!options.proof.empty(), options.compact);
 }
 
 /// @brief Parse a whole command line.

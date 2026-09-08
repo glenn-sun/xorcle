@@ -26,11 +26,12 @@ add_executable(xorcle_tests
     unit/test_ema.cpp
     unit/test_equation.cpp
     unit/test_index_set.cpp
-    unit/test_lrup_logger.cpp
     unit/test_max_heap.cpp
     unit/test_minimization.cpp
     unit/test_options.cpp
     unit/test_progress_reporter.cpp
+    unit/test_proof_postprocess.cpp
+    unit/test_proof_raw_file.cpp
     unit/test_propagation.cpp
     unit/test_random.cpp
     unit/test_restart_policy.cpp
@@ -64,3 +65,17 @@ add_test(NAME proof_roundtrip_deletion
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --deletion=true)
 set_tests_properties(proof_roundtrip_deletion PROPERTIES SKIP_RETURN_CODE 77)
+
+# Compaction is on by default above, so this is the one variant that exercises
+# a raw proof with no compaction record in it at all.
+add_test(NAME proof_roundtrip_no_compact
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --compact=false)
+set_tests_properties(proof_roundtrip_no_compact PROPERTIES SKIP_RETURN_CODE 77)
+
+# Compacting at every opportunity, so the proof is mostly the unit lines
+# post-processing derives from the root trails compaction threw away.
+add_test(NAME proof_roundtrip_compact_often
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --compact-every=1)
+set_tests_properties(proof_roundtrip_compact_often PROPERTIES SKIP_RETURN_CODE 77)

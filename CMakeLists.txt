@@ -57,7 +57,8 @@ add_library(xorcle_core
     src/heuristics/selection/cyclic.cpp
     src/heuristics/selection/leading_term_watchlist.cpp
     src/io/dimacs.cpp
-    src/io/lrup_logger.cpp
+    src/io/proof_postprocess.cpp
+    src/io/proof_raw_file.cpp
     src/util/index_set.cpp
     src/util/progress_reporter.cpp
     src/util/random.cpp

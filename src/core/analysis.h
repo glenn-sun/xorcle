@@ -58,6 +58,17 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                                       DecisionProcedure& decisions, bool minimize = true,
                                       bool measure_reason_lbds = false);
 
+/// @brief The clauses a root conflict actually depends on, in replay order.
+///
+/// The same walk as `find_asserting_clause()` at level 0, with no asserting
+/// point to stop at: it runs until nothing is left to resolve, which is the
+/// empty clause. Root propagations the conflict does not use are left out.
+///
+/// @pre `trail.level() == 0` and the trail is conflicting.
+/// @pre Every trail row carries a reason id in `clauses`, which the root does.
+std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
+                                                 const std::vector<Clause>& clauses);
+
 /// @brief The reason clause a resolution step used.
 struct ResolvedReason {
     ClauseId clause_id;

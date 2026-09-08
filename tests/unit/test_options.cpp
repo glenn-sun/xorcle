@@ -234,13 +234,16 @@ TEST_CASE("options: a preset rejects an accompanying manual override") {
           doctest::Approx(0.9));
 }
 
-TEST_CASE("options: --proof with compaction on is refused, naming the fix") {
-    const std::string message = rejection_message<LrupError>({"--proof=out.lrup"});
-    CHECK(contains(message, "--proof requires --compact=false"));
-    // It refuses; it does not flip the compaction default.
-    const Options options = parse_with_input({"--proof=out.lrup", "--compact=false"});
-    CHECK(options.compact == false);
+TEST_CASE("options: --proof goes with compaction, and --proof-raw with either") {
+    // Post-processing derives the units compaction ate, so the two go together.
+    const Options options = parse_with_input({"--proof=out.lrup"});
+    CHECK(options.compact);
     CHECK(options.proof == "out.lrup");
+    CHECK(options.proof_raw.empty());
+
+    const Options raw = parse_with_input({"--proof-raw=out.raw"});
+    CHECK(raw.proof.empty());
+    CHECK(raw.proof_raw == "out.raw");
 }
 
 TEST_CASE("options: enum labels are the first spelling naming an enumerator") {

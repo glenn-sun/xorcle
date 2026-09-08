@@ -17,7 +17,7 @@
 #include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
-#include "io/lrup_logger.h"
+#include "io/proof_raw_file.h"
 #include "util/index_set.h"
 #include "util/progress_reporter.h"
 #include "util/stats.h"
@@ -73,18 +73,17 @@ class Solver {
 public:
     /// @brief Construct a solver over an empty clause database.
     ///
-    /// `proof_logger` is null for no proof and is not owned, so it must outlive
+    /// `proof_writer` is null for no proof and is not owned, so it must outlive
     /// the solver, and the caller finalizes it.
     ///
     /// @pre `selector`, `decisions` and `restarts` are all non-null; use
     /// `NoRestarts` to disable restarts.
-    /// @pre If `proof_logger` is non-null then `compaction.enabled` is false and
-    /// `proof_logger->num_vars() == num_vars`.
+    /// @pre If `proof_writer` is non-null then `proof_writer->num_vars() == num_vars`.
     /// @pre If `deletion.key` is `DeletionKey::activity` and deletion is
     /// enabled then `deletion.activity` is non-null.
     Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
-           LrupLogger* proof_logger = nullptr, const CompactionConfig& compaction = {},
+           RawProofWriter* proof_writer = nullptr, const CompactionConfig& compaction = {},
            const ProgressConfig& progress = {}, bool minimize = true,
            const DeletionConfig& deletion = {});
 
@@ -119,8 +118,12 @@ private:
     /// @brief Analyse, backjump or restart, and learn.
     void handle_non_root_conflict();
 
-    /// @brief Emit the final empty-clause proof line for a root conflict.
+    /// @brief Record the final empty clause for a root conflict.
     void write_root_unsat_proof();
+
+    /// @brief Record the root trail a compaction is about to discard.
+    /// @pre The trail still holds it, and `proof_writer_` is non-null.
+    void write_compaction_units();
 
     /// @brief Discard every decision level above `level`, records included.
     /// @pre `level <= trail_.level()`.
@@ -189,7 +192,7 @@ private:
     std::unique_ptr<RestartPolicy> restarts_;
     Propagator propagator_;
 
-    LrupLogger* proof_logger_; ///< Not owned; null for no proof.
+    RawProofWriter* proof_writer_; ///< Not owned; null for no proof.
 
     /// @brief The next proof clause id for a line no solver clause backs, from
     /// the id space shared with the clause database.

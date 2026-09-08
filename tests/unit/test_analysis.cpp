@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -208,6 +209,65 @@ void check_conflicting(const Conflict& conflict) {
     }
 }
 
+/// @brief A conflict at the root, where one root propagation is beside the
+/// point: `[x1 = 1]` is propagated but no clause the conflict uses mentions it.
+///
+/// | step | equation | reason |
+/// |---|---|---|
+/// | 0 | `[x0 = 1]` | clause 0 |
+/// | 1 | `[x1 = 1]` | clause 1 |
+/// | 2 | `[x2 = 1]` | clause 2 |
+/// | 3 | `0 = 1` | clause 3 |
+Conflict make_root_conflict(EquationRepr repr) {
+    constexpr std::size_t num_vars = 4;
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{0}})); // 0: the unit [x0 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{1}})); // 1: the unit [x1 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{0, 4}, {2}})); // 2: implies [x2 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{0, 4}, {2, 4}})); // 3: the conflict
+
+    Trail trail(repr, num_vars);
+    trail.learn(make_equation_with(repr, num_vars, {0, 4}), ClauseId{0});
+    trail.learn(make_equation_with(repr, num_vars, {1, 4}), ClauseId{1});
+    trail.learn(make_equation_with(repr, num_vars, {2, 4}), ClauseId{2});
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{3});
+    return Conflict{std::move(trail), std::move(clauses)};
+}
+
+/// @brief Replay a reason chain the way `tools/check_lrup_parity.py` does: every
+/// reason but the last leaves exactly one distinct nonzero residue, which is
+/// deduced together with `[0 = 1]`, and the last one leaves none at all.
+bool replays_to_conflict(const std::vector<ClauseId>& reasons, const std::vector<Clause>& clauses,
+                         EquationRepr repr, std::size_t num_vars) {
+    RowSpace space(repr, num_vars);
+    for (std::size_t i = 0; i < reasons.size(); ++i) {
+        std::vector<std::vector<std::size_t>> residue_bits;
+        Equation residue = Equation::eq_true(repr, num_vars);
+        for (const Equation& row : clauses[reasons[i]]) {
+            Equation reduced = row;
+            space.reduce(reduced);
+            if (reduced.is_eq_true()) {
+                continue;
+            }
+            if (std::find(residue_bits.begin(), residue_bits.end(), bits_of(reduced)) ==
+                residue_bits.end()) {
+                residue_bits.push_back(bits_of(reduced));
+                residue = reduced;
+            }
+        }
+        const bool is_last = i + 1 == reasons.size();
+        if (residue_bits.empty()) {
+            return is_last;
+        }
+        if (residue_bits.size() > 1 || is_last) {
+            return false;
+        }
+        residue.plus_assign(Equation::eq_false(repr, num_vars));
+        space.add_row(residue);
+    }
+    return false;
+}
+
 } // namespace
 
 TEST_CASE_TEMPLATE("analysis: the fixtures really do conflict", Tag, DenseTag, SparseTag) {
@@ -391,6 +451,26 @@ TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the cur
 
     CHECK(steps == 2);
     CHECK(asserting_levels == std::vector<std::size_t>{2, 2, 1});
+}
+
+TEST_CASE_TEMPLATE("analysis: a root conflict names only the reasons it uses", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_root_conflict(repr);
+    REQUIRE(conflict.trail.level() == 0);
+    REQUIRE(conflict.trail.span().rows() == 4);
+
+    const std::vector<ClauseId> reasons =
+        find_root_conflict_reasons(conflict.trail, conflict.clauses);
+
+    // Clause 1 propagated [x1 = 1], which nothing in the derivation needs.
+    CHECK(reasons == std::vector<ClauseId>{0, 2, 3});
+    CHECK(replays_to_conflict(reasons, conflict.clauses, repr, conflict.trail.num_vars()));
+
+    // The whole trail would replay too, so the point is that it is not what the
+    // chain names.
+    CHECK(replays_to_conflict(std::vector<ClauseId>{0, 1, 2, 3}, conflict.clauses, repr,
+                              conflict.trail.num_vars()));
 }
 
 } // namespace xorcle

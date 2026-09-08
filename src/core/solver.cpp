@@ -16,7 +16,7 @@ namespace xorcle {
 
 Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
                std::unique_ptr<DecisionProcedure> decisions,
-               std::unique_ptr<RestartPolicy> restarts, LrupLogger* proof_logger,
+               std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer,
                const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize,
                const DeletionConfig& deletion)
     : repr_(repr),
@@ -30,7 +30,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       decisions_(std::move(decisions)),
       restarts_(std::move(restarts)),
       propagator_(repr, num_vars),
-      proof_logger_(proof_logger),
+      proof_writer_(proof_writer),
       conflict_check_eqn_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)),
       progress_(progress),
@@ -38,11 +38,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
-    assert((proof_logger_ == nullptr || !compaction_.enabled) &&
-           "proof emission with compaction on is not supported; see "
-           "require_compaction_disabled_for_proof()");
-    assert((proof_logger_ == nullptr || proof_logger_->num_vars() == original_num_vars_) &&
-           "the proof logger's variable numbering must be the instance's");
+    assert((proof_writer_ == nullptr || proof_writer_->num_vars() == original_num_vars_) &&
+           "the proof writer's variable numbering must be the instance's");
     assert((!deletion_.enabled || deletion_.key != DeletionKey::activity ||
             deletion_.activity != nullptr) &&
            "the activity key has no activity source");
@@ -158,10 +155,11 @@ void Solver::handle_non_root_conflict() {
 
     decisions_->update_with_new_clause(learned.clause, new_clause_id);
 
-    if (proof_logger_ != nullptr) {
+    if (proof_writer_ != nullptr) {
         // Derivation order to replay order. Exactly one reversal, here.
         std::reverse(learned.reason_ids.begin(), learned.reason_ids.end());
-        proof_logger_->log_learned_clause(new_clause_id, learned.clause, learned.reason_ids);
+        proof_writer_->write_learned(new_clause_id, learned.clause, active_var_to_original_,
+                                     learned.reason_ids);
     }
 
     const AssertingClauseInfo learned_info{.lbd = learned.lbd, .removed_levels = removed_levels};
@@ -170,20 +168,31 @@ void Solver::handle_non_root_conflict() {
 }
 
 void Solver::write_root_unsat_proof() {
-    if (proof_logger_ == nullptr) {
+    if (proof_writer_ == nullptr) {
         return;
     }
     next_proof_clause_id_ = std::max(next_proof_clause_id_, selector_->num_clauses());
+    proof_writer_->write_empty(next_proof_clause_id_++,
+                               find_root_conflict_reasons(trail_, selector_->clauses()));
+}
 
-    // Trail order is already replay order here, so nothing is reversed.
-    std::vector<ClauseId> conflict_reason_ids;
-    conflict_reason_ids.reserve(trail_.reasons().size());
-    for (const std::optional<ClauseId>& reason : trail_.reasons()) {
-        if (reason.has_value()) {
-            conflict_reason_ids.push_back(*reason);
-        }
+void Solver::write_compaction_units() {
+    assert(proof_writer_ != nullptr && "no proof to record a compaction in");
+
+    // Trail order is a derivation order: `add_row()` never back-substitutes, so
+    // each stored row is spanned by the reasons of the rows up to it.
+    const TrailSnapshot& root = trail_[0];
+    std::vector<RawUnit> units;
+    units.reserve(root.span().rows());
+    for (std::size_t t = 0; t < root.span().rows(); ++t) {
+        const std::optional<ClauseId>& reason = root.reasons()[t];
+        assert(reason.has_value() && "a root trail row has no reason");
+        units.push_back(
+            RawUnit{lift_row(root.span().row(root.order_map()[t]), active_var_to_original_,
+                             original_num_vars_),
+                    *reason});
     }
-    proof_logger_->log_empty_clause(next_proof_clause_id_++, conflict_reason_ids);
+    proof_writer_->write_compaction(units);
 }
 
 void Solver::backjump_to(std::size_t level) {
@@ -263,6 +272,11 @@ bool Solver::maybe_compact_before_decision() {
 }
 
 void Solver::apply_compaction(CompactionPlan plan) {
+    // The root trail is about to go, and the proof needs every unit it holds.
+    if (proof_writer_ != nullptr) {
+        write_compaction_units();
+    }
+
     const std::size_t num_clauses = selector_->num_clauses();
     assert(plan.rewritten_clauses.size() == num_clauses);
     assert(plan.clause_is_active.size() == num_clauses);
@@ -344,8 +358,8 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
         selector_->set_clause_tier(clause_id, ClauseTier::local);
     }
 
-    if (proof_logger_ != nullptr && !plan.evicted.empty()) {
-        proof_logger_->log_deleted_clauses(plan.evicted);
+    if (proof_writer_ != nullptr && !plan.evicted.empty()) {
+        proof_writer_->write_deleted(plan.evicted);
     }
     for (const ClauseId clause_id : plan.evicted) {
         selector_->clause(clause_id) = inactive_clause_placeholder(repr_, false_equation_);
