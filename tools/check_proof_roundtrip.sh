@@ -27,10 +27,10 @@ trap 'rm -rf "$work"' EXIT INT TERM
 instance="$work/instance.xnf"
 proof="$work/proof.lrup"
 
-# random_kxnf_n needs no third-party generator dependency. This (family, seed)
+# random_kxnf needs no third-party generator dependency. This (family, seed)
 # is UNSAT.
 "$python" "$root/tools/generate_xnf_tests.py" \
-    --family random_kxnf_n --params 'n=14;k=3' --seed 1 --out "$instance"
+    --family random_kxnf --params 'n=14;k=3' --seed 1 --out "$instance"
 
 "$xorcle" --proof="$proof" "$@" "$instance" > "$work/solve.out" 2>&1 || {
     echo "check_proof_roundtrip: solver failed" >&2

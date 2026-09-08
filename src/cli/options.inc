@@ -8,8 +8,10 @@
 /// - `XORCLE_OPTION(name, kind, default, lo, hi, help)` — a scalar option. The
 ///   command line spells `name` with dashes, so `compact_every` is
 ///   `--compact-every`. `kind` is one of the `OptionKind` tags: `Bool`, `U64`,
-///   `Size`, `Real` (all four have inclusive bounds) or `Text` (unbounded, so
-///   `lo` and `hi` are empty).
+///   `Size`, `Real` (all four have inclusive bounds), `Text` (a free-form
+///   string, e.g. a path) or `Name` (a string from a fixed vocabulary the
+///   option checks for itself, in `validate_options`). The last two are
+///   unbounded, so their `lo` and `hi` are empty.
 /// - `XORCLE_ENUM_OPTION(name, type, default, help)` — an option whose value is
 ///   one of a fixed set of names.
 /// - `XORCLE_ENUM_VALUE(option, spelling, enumerator)` — one accepted spelling
@@ -17,6 +19,10 @@
 ///   one the statistics output labels it with.
 /// - `XORCLE_PRESET(spelling, config)` — a `--decisions=` spelling that also
 ///   fixes the CSIDS parameters.
+/// - `XORCLE_REQUIRES(option, condition, needs)` — `option` is only read when
+///   `condition` holds of the parsed `options`, so giving it otherwise is
+///   rejected rather than silently ignored. `needs` completes the sentence
+///   "`--option` requires ...". An option may carry more than one row.
 
 #ifndef XORCLE_OPTION
 #define XORCLE_OPTION(name, kind, default_value, lo, hi, help)
@@ -29,6 +35,9 @@
 #endif
 #ifndef XORCLE_PRESET
 #define XORCLE_PRESET(spelling, config)
+#endif
+#ifndef XORCLE_REQUIRES
+#define XORCLE_REQUIRES(option, condition, needs)
 #endif
 
 // --- Representation and reproducibility ------------------------------------
@@ -109,7 +118,8 @@ XORCLE_OPTION(minimize, Bool, true, false, true,
 // --- Deletion --------------------------------------------------------------
 
 XORCLE_OPTION(deletion, Bool, true, false, true,
-              "delete the least useful learned clauses; yields to an incompatible --decisions/--selection")
+              "delete the least useful learned clauses; needs --selection=cyclic and, by the "
+              "default key, --decisions=csids")
 XORCLE_OPTION(deletion_every, Size, 200, 1, SIZE_MAX, "conflicts between deletion passes")
 XORCLE_OPTION(deletion_core_lbd, Size, 2, 0, SIZE_MAX,
               "a learned clause of at most this LBD is never deleted")
@@ -129,8 +139,52 @@ XORCLE_OPTION(proof_raw, Text, "", "", "",
 XORCLE_OPTION(stats_file, Text, "", "", "", "append CSV statistics here instead of printing them")
 XORCLE_OPTION(report_every, Size, 100, 0, SIZE_MAX,
               "conflicts between progress report lines; 0 reports nothing")
+XORCLE_OPTION(report, Name, "default", "", "",
+              "progress columns, comma-joined: default, search, deletion, propagation, all")
+
+// --- What each option needs in order to be read -----------------------------
+//
+// An option named on a command line that would not read it is an error, so that
+// no run reports a setting it did not act on. These rows cover the options that
+// are *parameters* of a subsystem; the switches that turn a subsystem on
+// (`deletion`, `restart_reuse_trail`) are checked against their value rather
+// than against having been given, in `validate_options`, because a default
+// `true` claims the feature just as loudly as an explicit one.
+
+XORCLE_REQUIRES(compact_every, options.compact, "--compact=true")
+
+XORCLE_REQUIRES(seed, options.decisions == DecisionProcedureName::csids,
+                "--decisions=csids, the only procedure that draws on the RNG")
+XORCLE_REQUIRES(csids_initial, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
+XORCLE_REQUIRES(csids_bump, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
+XORCLE_REQUIRES(csids_decay, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
+XORCLE_REQUIRES(phase, options.decisions == DecisionProcedureName::csids,
+                "--decisions=csids, the only procedure that decides a side of a clause row")
+
+XORCLE_REQUIRES(defer_pushes, options.selection == ClauseSelectorName::leading_term_watchlist,
+                "--selection=leading_term_watchlist")
+
+XORCLE_REQUIRES(restart_reuse_trail, options.restart != RestartMethod::none, "a restart schedule")
+XORCLE_REQUIRES(restart_luby_unit, options.restart == RestartMethod::luby, "--restart=luby")
+XORCLE_REQUIRES(restart_lbd_fast, options.restart == RestartMethod::lbd, "--restart=lbd")
+XORCLE_REQUIRES(restart_lbd_slow, options.restart == RestartMethod::lbd, "--restart=lbd")
+XORCLE_REQUIRES(restart_lbd_margin, options.restart == RestartMethod::lbd, "--restart=lbd")
+XORCLE_REQUIRES(restart_lbd_min, options.restart == RestartMethod::lbd, "--restart=lbd")
+XORCLE_REQUIRES(restart_lbd_block, options.restart == RestartMethod::lbd, "--restart=lbd")
+
+XORCLE_REQUIRES(deletion_every, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_core_lbd, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_tier2_lbd, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_key, options.deletion, "--deletion=true")
+
+XORCLE_REQUIRES(report_every, options.stats_file.empty(),
+                "statistics on the console, which --stats-file replaces")
+XORCLE_REQUIRES(report, options.stats_file.empty(),
+                "statistics on the console, which --stats-file replaces")
+XORCLE_REQUIRES(report, options.report_every != 0, "--report-every=N with N above zero")
 
 #undef XORCLE_OPTION
 #undef XORCLE_ENUM_OPTION
 #undef XORCLE_ENUM_VALUE
 #undef XORCLE_PRESET
+#undef XORCLE_REQUIRES

@@ -26,11 +26,12 @@ OUTPUT_DIRECTORY       = docs
 INPUT                  = src
 RECURSIVE              = YES
 
-# The default patterns already cover *.h and *.cpp. `cli/options.inc` is
-# deliberately left out: Doxygen has no way to read an X-macro table, and adding
-# *.inc turns each `XORCLE_OPTION(...)` row into an invented function or
-# variable in the output. The table documents itself in its own @file comment,
-# which `cli/options.h` refers to.
+# The default patterns already cover *.h and *.cpp. The X-macro tables,
+# `cli/options.inc` and `util/stats_fields.inc`, are deliberately left out:
+# Doxygen has no way to read one, and adding *.inc turns each `XORCLE_OPTION(...)`
+# or `XORCLE_STAT(...)` row into an invented function or variable in the output.
+# Each table documents itself in its own @file comment, which the header that
+# includes it refers to.
 
 # Show `io/dimacs.h` rather than `src/io/dimacs.h`; `src` is the include root
 # the library exports, so paths already read that way in the source.

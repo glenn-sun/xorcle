@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <ostream>
 #include <sstream>
 #include <stdexcept>
 
@@ -13,27 +14,42 @@ namespace {
 
 constexpr std::size_t assignment_literals_per_line = 20;
 
+/// @brief The prefix a configuration column carries, so a reader can tell the
+/// settings of a run apart from what it measured.
+constexpr const char* config_column_prefix = "config.";
+
+/// @brief How the console block prints one statistic, by its table kind.
+std::string stat_text(StatKind::Count, const std::size_t value) {
+    return std::to_string(value);
+}
+std::string stat_text(StatKind::Real, const double value) {
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(3) << value;
+    return text.str();
+}
+
+/// @brief How the CSV writes one, which keeps full precision rather than the
+/// three decimals a console reader wants.
+std::string csv_text(StatKind::Count, const std::size_t value) {
+    return std::to_string(value);
+}
+std::string csv_text(StatKind::Real, const double value) {
+    std::ostringstream text;
+    text << std::setprecision(10) << value;
+    return text.str();
+}
+
+std::string format_ratio(const double value, const int precision) {
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(precision) << value;
+    return text.str();
+}
+
 std::optional<double> divide_or_nullopt(const double numer, const double denom) {
     if (denom == 0.0) {
         return std::nullopt;
     }
     return numer / denom;
-}
-
-std::optional<double> fallback_pct(const RunStats& stats) {
-    return divide_or_nullopt(100.0 * static_cast<double>(stats.fallback_decisions),
-                             static_cast<double>(stats.decisions));
-}
-
-std::optional<double> propagations_per_conflict(const RunStats& stats) {
-    return divide_or_nullopt(static_cast<double>(stats.num_propagations),
-                             static_cast<double>(stats.num_conflicts));
-}
-
-std::optional<double> attempts_per_event(const RunStats& stats) {
-    return divide_or_nullopt(static_cast<double>(stats.num_attempt_props),
-                             static_cast<double>(stats.num_propagations + stats.num_watch_updates +
-                                                 stats.num_conflicts));
 }
 
 void append_dimacs_assignment(std::ostringstream& output, const IndexSet& assignment) {
@@ -58,6 +74,20 @@ void append_dimacs_assignment(std::ostringstream& output, const IndexSet& assign
     output << " 0\n";
 }
 
+/// @brief One `c Label: value` line.
+void append_stat(std::ostringstream& output, const char* label, const std::string& value) {
+    output << "c " << label << ": " << value << "\n";
+}
+
+/// @brief One derived line, omitted entirely when its denominator is zero.
+void append_ratio(std::ostringstream& output, const char* label,
+                  const std::optional<double>& value, const char* suffix = "",
+                  const int precision = 3) {
+    if (value.has_value()) {
+        output << "c " << label << ": " << format_ratio(*value, precision) << suffix << "\n";
+    }
+}
+
 } // namespace
 
 void
@@ -69,61 +99,82 @@ StatsWriter::log(const RunStats& stats) {
 void
 ConsoleStatsWriter::log_impl(const RunStats& stats) {
     std::ostringstream output;
-    output << "c File: " << stats.file << "\n";
-    output << "c Variables: " << stats.num_vars << "\n";
-    output << "c Start clauses: " << stats.start_clauses << "\n";
-    output << "c Final clauses: " << stats.final_clauses << "\n";
-    output << "c Learned clauses: " << learned_clause_count(stats) << "\n";
-    output << "c Decision procedure: " << stats.decision_procedure << "\n";
-    output << "c Clause selector: " << stats.clause_selector << "\n";
-    output << "c Decision phase: " << stats.decision_phase << "\n";
-    output << "c Seed: " << stats.seed << "\n";
-    // The three CSIDS lines appear together or not at all, and print in default
-    // float format.
-    if (stats.csids_initial_activity.has_value() && stats.csids_decay.has_value() &&
-        stats.csids_bump.has_value()) {
-        output << "c CSIDS initial activity: " << std::setprecision(6) << *stats.csids_initial_activity << "\n";
-        output << "c CSIDS decay: " << std::setprecision(6) << *stats.csids_decay << "\n";
-        output << "c CSIDS bump: " << std::setprecision(6) << *stats.csids_bump << "\n";
+
+    // One section's rows, in table order. The sections print in the order the
+    // calls below name, which is the order `stats_fields.inc` lists them.
+    const auto append_section = [&stats, &output](const StatsSection want) {
+        if (!stats.reports(want)) {
+            return;
+        }
+#define XORCLE_STAT(section, kind, name, csv_name, label)                                          \
+    if (StatsSection::section == want) {                                                           \
+        append_stat(output, label, stat_text(StatKind::kind{}, stats.name));                       \
     }
-    output << "c Conflicts: " << stats.num_conflicts << "\n";
-    output << "c Propagations: " << stats.num_propagations << "\n";
-    output << "c Attempted propagations: " << stats.num_attempt_props << "\n";
-    output << "c Watch updates: " << stats.num_watch_updates << "\n";
-    output << "c Restarts: " << stats.num_restarts << "\n";
-    output << "c Reused levels: " << stats.num_reused_levels << "\n";
-    output << "c Decisions: " << stats.decisions << "\n";
-    output << "c Fallback decisions: " << stats.fallback_decisions << "\n";
-    if (stats.minimize) {
-        output << "c Minimized clauses: " << stats.num_minimized_clauses << "\n";
-        output << "c Dimension before minimizing: " << stats.minimize_dim_before << "\n";
-        output << "c Dimension after minimizing: " << stats.minimize_dim_after << "\n";
+#include "util/stats_fields.inc"
+    };
+
+    append_stat(output, "File", stats.file);
+    append_section(StatsSection::instance);
+
+    // What this run was asked to do, which is the part worth reading; the CSV
+    // carries all of it, defaults included.
+    std::size_t defaults = 0;
+    std::ostringstream settings;
+    for (const ConfigEntry& entry : stats.config) {
+        if (entry.is_default) {
+            ++defaults;
+            continue;
+        }
+        settings << "c   " << entry.name << " = " << entry.value << "\n";
     }
-    if (stats.deletion) {
-        output << "c Deletion passes: " << stats.num_deletion_passes << "\n";
-        output << "c Deleted clauses: " << stats.num_deleted_clauses << "\n";
-        output << "c Demoted clauses: " << stats.num_demoted_clauses << "\n";
-        output << "c Promoted clauses: " << stats.num_promoted_clauses << "\n";
+    if (defaults == stats.config.size()) {
+        output << "c Configuration: all " << defaults << " options at their defaults\n";
+    } else {
+        output << "c Configuration (" << defaults << " further options at their defaults):\n"
+               << settings.str();
     }
-    // Each ratio line is omitted entirely when its denominator is zero; a
-    // parser must not assume it is present.
-    if (const auto ratio = propagations_per_conflict(stats); ratio.has_value()) {
-        output << "c Propagations per conflict: " << std::fixed << std::setprecision(3) << *ratio << "\n";
-    }
-    if (const auto ratio = attempts_per_event(stats); ratio.has_value()) {
-        output << "c Attempts per (propagations + watch updates + conflicts): "
-               << std::fixed << std::setprecision(3) << *ratio << "\n";
-    }
-    if (const auto ratio = fallback_pct(stats); ratio.has_value()) {
-        output << "c Fallback decision rate: " << std::fixed << std::setprecision(2) << *ratio << "%\n";
-    }
-    output << "c Time: " << std::fixed << std::setprecision(3) << stats.time_s << " s\n";
+
+    append_section(StatsSection::search);
+    append_section(StatsSection::restart);
+    append_section(StatsSection::clauses);
+    append_section(StatsSection::minimize);
+    append_section(StatsSection::deletion);
+    append_section(StatsSection::timing);
+    append_section(StatsSection::proof);
+
+    // --- Derived, each omitted when its denominator is zero ---
+    append_ratio(output, "Propagations per conflict",
+                 divide_or_nullopt(static_cast<double>(stats.num_propagations),
+                                   static_cast<double>(stats.num_conflicts)));
+    append_ratio(output, "Attempts per propagation, watch update or conflict",
+                 divide_or_nullopt(static_cast<double>(stats.num_attempt_props),
+                                   static_cast<double>(stats.num_propagations +
+                                                       stats.num_watch_updates +
+                                                       stats.num_conflicts)));
+    append_ratio(output, "Fallback decision rate",
+                 divide_or_nullopt(100.0 * static_cast<double>(stats.fallback_decisions),
+                                   static_cast<double>(stats.decisions)),
+                 "%", 2);
+    append_ratio(output, "Conflicts per second",
+                 divide_or_nullopt(static_cast<double>(stats.num_conflicts), stats.solve_time_s),
+                 "", 1);
+    append_ratio(output, "Propagations per second",
+                 divide_or_nullopt(static_cast<double>(stats.num_propagations), stats.solve_time_s),
+                 "", 1);
+
+    std::cout << output.str();
+    write_verdict(std::cout, stats);
+    std::cout << std::flush;
+}
+
+void
+write_verdict(std::ostream& out, const RunStats& stats) {
+    std::ostringstream output;
     output << "s " << (stats.result == SolveResult::sat ? "SATISFIABLE" : "UNSATISFIABLE") << "\n";
     if (stats.sat_assignment.has_value()) {
         append_dimacs_assignment(output, *stats.sat_assignment);
     }
-
-    std::cout << output.str() << std::flush;
+    out << output.str() << std::flush;
 }
 
 CsvStatsWriter::CsvStatsWriter(std::string path) : path_(std::move(path)) {
@@ -134,7 +185,7 @@ CsvStatsWriter::CsvStatsWriter(std::string path) : path_(std::move(path)) {
 }
 
 void
-CsvStatsWriter::ensure_header() {
+CsvStatsWriter::ensure_header(const RunStats& stats) {
     if (header_written_) {
         return;
     }
@@ -147,16 +198,19 @@ CsvStatsWriter::ensure_header() {
     }
 
     if (size == 0) {
-        file_ << "run_id,timestamp_utc,file,decision_procedure,csids_initial_activity,csids_decay,csids_bump,"
-                 "decision_phase,clause_selector,seed,result,"
-                 "num_vars,start_clauses,final_clauses,learned_clauses,"
-                 "time_s,conflicts,propagations,attempt_props,watch_updates,restarts,reused_levels,"
-                 "decisions,fallback_decisions,fallback_pct,"
-                 "prop_per_conflict,attempts_per_prop_watch_conflict,"
-                 "deletion_passes,deleted_clauses,demoted_clauses,promoted_clauses,"
-                 "proof_postprocess_time_s\n";
+        std::ostringstream header;
+        header << "run_id,timestamp_utc,file,result";
+        for (const ConfigEntry& entry : stats.config) {
+            header << ',' << config_column_prefix << entry.name;
+        }
+#define XORCLE_STAT(section, kind, name, csv_name, label) header << ',' << csv_name;
+#include "util/stats_fields.inc"
+        header << '\n';
+
+        file_ << header.str();
         if (!file_) {
-            throw std::runtime_error("CsvStatsWriter::ensure_header: failed to write CSV header to " + path_);
+            throw std::runtime_error("CsvStatsWriter::ensure_header: failed to write CSV header to " +
+                                     path_);
         }
     }
 
@@ -182,52 +236,24 @@ CsvStatsWriter::csv_escape(const std::string& value) {
     return out;
 }
 
-std::string
-CsvStatsWriter::fmt_opt_double(const std::optional<double>& value) {
-    if (!value.has_value()) {
-        return "";
-    }
-    std::ostringstream output;
-    output << std::setprecision(10) << *value;
-    return output.str();
-}
-
 void
 CsvStatsWriter::log_impl(const RunStats& stats) {
-    ensure_header();
+    ensure_header(stats);
 
+    // Every column is written whatever the configuration, so one file's schema
+    // stays the same across a sweep and the header alone describes it.
     file_ << csv_escape(stats.run_id) << ','
           << csv_escape(stats.timestamp_utc) << ','
           << csv_escape(stats.file) << ','
-          << csv_escape(stats.decision_procedure) << ','
-          << fmt_opt_double(stats.csids_initial_activity) << ','
-          << fmt_opt_double(stats.csids_decay) << ','
-          << fmt_opt_double(stats.csids_bump) << ','
-          << csv_escape(stats.decision_phase) << ','
-          << csv_escape(stats.clause_selector) << ','
-          << stats.seed << ','
-          << to_string(stats.result) << ','
-          << stats.num_vars << ','
-          << stats.start_clauses << ','
-          << stats.final_clauses << ','
-          << learned_clause_count(stats) << ','
-          << std::setprecision(10) << stats.time_s << ','
-          << stats.num_conflicts << ','
-          << stats.num_propagations << ','
-          << stats.num_attempt_props << ','
-          << stats.num_watch_updates << ','
-          << stats.num_restarts << ','
-          << stats.num_reused_levels << ','
-          << stats.decisions << ','
-          << stats.fallback_decisions << ','
-          << fmt_opt_double(fallback_pct(stats)) << ','
-          << fmt_opt_double(propagations_per_conflict(stats)) << ','
-          << fmt_opt_double(attempts_per_event(stats)) << ','
-          << stats.num_deletion_passes << ','
-          << stats.num_deleted_clauses << ','
-          << stats.num_demoted_clauses << ','
-          << stats.num_promoted_clauses << ','
-          << std::setprecision(10) << stats.proof_postprocess_time_s << "\n";
+          << to_string(stats.result);
+    for (const ConfigEntry& entry : stats.config) {
+        file_ << ',' << csv_escape(entry.value);
+    }
+#define XORCLE_STAT(section, kind, name, csv_name, label)                                          \
+    file_ << ',' << csv_text(StatKind::kind{}, stats.name);
+#include "util/stats_fields.inc"
+    file_ << "\n";
+
     file_.flush();
     if (!file_) {
         throw std::runtime_error("CsvStatsWriter::log_impl: failed to write a CSV row to " + path_);

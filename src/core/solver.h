@@ -54,6 +54,14 @@ struct SolverCounters {
     std::size_t num_conflicts = 0;     ///< Root conflict included.
     std::size_t num_restarts = 0;
     std::size_t num_reused_levels = 0; ///< Decision levels restarts kept instead of discarding.
+    std::size_t num_compactions = 0;
+
+    /// @brief Summed LBD of the clauses learned, for their mean.
+    std::size_t sum_learned_lbd = 0;
+    /// @brief Summed trail level and rank *at* the conflicts, before their
+    /// backjumps, for the means the progress line reports over an interval.
+    std::size_t sum_conflict_level = 0;
+    std::size_t sum_conflict_rank = 0;
 
     std::size_t num_minimized_clauses = 0; ///< Learned clauses minimization shrank.
     std::size_t minimize_dim_before = 0;   ///< Summed dimension at the asserting point.
@@ -103,13 +111,25 @@ public:
     /// @brief Original variable count, before compaction.
     std::size_t num_vars() const noexcept { return original_num_vars_; }
 
+    /// @brief Clause ids ever handed out; deletion tombstones rather than
+    /// reclaiming them, so this only grows. `num_active_clauses()` is the
+    /// database as it stands.
     std::size_t num_clauses() const noexcept { return selector_->num_clauses(); }
+
+    /// @brief Clauses still in the database: neither deleted nor dropped by a
+    /// compaction. Tracked as they change, so a progress line costs nothing.
+    std::size_t num_active_clauses() const noexcept { return num_active_clauses_; }
+
+    /// @brief Variables left after compaction, which is `num_vars()` until one runs.
+    std::size_t active_num_vars() const noexcept { return active_num_vars_; }
 
     std::size_t level() const noexcept { return trail_.level(); }
 
     const SolverCounters& counters() const noexcept { return counters_; }
 
     DecisionProcedure::DecisionStats decision_stats() const { return decisions_->decision_stats(); }
+
+    RestartStats restart_stats() const { return restarts_->stats(); }
 
 private:
     /// @brief Propagate to quiescence; true if the trail now holds `0 = 1`.
@@ -139,6 +159,11 @@ private:
     /// line.
     void maybe_report();
 
+    /// @brief Write one progress line and open a fresh interval.
+    void report_progress();
+
+    /// @brief The state one line reports, with the averages and the rate taken
+    /// over the interval since the last one.
     ProgressSnapshot progress_snapshot() const;
 
     /// @brief Compact if the trigger conditions hold; true if the active variable
@@ -155,6 +180,12 @@ private:
     /// @brief Mark a resolved reason used, and promote it if this conflict
     /// measured a better LBD than the stored one.
     void note_reason_use(ClauseId id, std::size_t lbd);
+
+#ifndef NDEBUG
+    /// @brief Whether the tracked live-clause count still matches the flags it
+    /// summarises. Recounting is linear, so this is a debug check only.
+    bool active_clause_count_is_consistent() const;
+#endif
 
     /// @brief Delete learned clauses if the conflict interval has elapsed.
     void maybe_delete_clauses();
@@ -180,6 +211,7 @@ private:
 #endif
     std::size_t conflicts_at_last_compaction_ = 0;
     std::size_t conflicts_at_last_deletion_ = 0;
+    std::size_t num_active_clauses_ = 0;
 
     Trail trail_;
 
@@ -207,7 +239,14 @@ private:
 
     /// @brief Whether conflict analysis minimizes the clauses it learns.
     bool minimize_;
+
+    /// @brief What the last progress line saw, so the next one can report the
+    /// interval between them rather than the run so far.
     std::size_t conflicts_at_last_report_ = 0;
+    std::size_t sum_level_at_last_report_ = 0;
+    std::size_t sum_rank_at_last_report_ = 0;
+    double time_at_last_report_s_ = 0.0;
+
     std::chrono::steady_clock::time_point solve_start_;
 };
 

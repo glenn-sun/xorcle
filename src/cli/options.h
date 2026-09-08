@@ -31,7 +31,9 @@
 #include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
+#include "util/progress_reporter.h"
 #include "util/random.h"
+#include "util/stats.h"
 
 namespace xorcle {
 
@@ -53,6 +55,7 @@ struct OptionKind {
     struct Size {};  ///< `std::size_t`; bounds inclusive.
     struct Real {};  ///< Finite double; bounds inclusive.
     struct Text {};  ///< Free-form string, e.g. a path. Unbounded.
+    struct Name {};  ///< A string from a fixed vocabulary the option itself checks. Unbounded.
 };
 
 /// @brief The storage type an `OptionKind` tag stands for.
@@ -77,6 +80,10 @@ struct OptionValue<OptionKind::Real> {
 };
 template <>
 struct OptionValue<OptionKind::Text> {
+    using type = std::string;
+};
+template <>
+struct OptionValue<OptionKind::Name> {
     using type = std::string;
 };
 
@@ -121,6 +128,31 @@ inline constexpr EnumOptionValue enum_option_values[]{
     {#option, spelling, static_cast<int>(enumerator)},
 #include "cli/options.inc"
 };
+
+/// @brief One `XORCLE_REQUIRES` row, for the help text; `validate_options`
+/// reads the same table for the condition itself.
+struct OptionRequirement {
+    std::string_view option;
+    std::string_view needs;
+};
+
+inline constexpr OptionRequirement option_requirements[]{
+#define XORCLE_REQUIRES(option, condition, needs) {#option, needs},
+#include "cli/options.inc"
+};
+
+/// @brief What @p option needs to be read at all, or empty when it always is.
+inline std::string requirement_text(const std::string_view option) {
+    std::string text;
+    for (const OptionRequirement& row : option_requirements) {
+        if (row.option != option) {
+            continue;
+        }
+        text += text.empty() ? "requires " : " and ";
+        text += row.needs;
+    }
+    return text;
+}
 
 /// @brief A `--decisions=` spelling that fixes the whole CSIDS triple.
 struct CsidsPreset {
@@ -303,6 +335,12 @@ inline std::string parse_option_value(OptionKind::Text, std::string_view, const 
     return text;
 }
 
+/// @note The vocabulary is not in the table, so `validate_options` checks it.
+inline std::string parse_option_value(OptionKind::Name, std::string_view, const std::string& text,
+                                      std::string_view, std::string_view) {
+    return text;
+}
+
 /// @brief Parse one enum option's value, or list every accepted spelling.
 template <class Enum>
 Enum parse_enum_option_value(std::string_view option, const std::string& text) {
@@ -323,6 +361,7 @@ inline std::string option_syntax(OptionKind::U64) { return "N"; }
 inline std::string option_syntax(OptionKind::Size) { return "N"; }
 inline std::string option_syntax(OptionKind::Real) { return "X"; }
 inline std::string option_syntax(OptionKind::Text) { return "PATH"; }
+inline std::string option_syntax(OptionKind::Name) { return "NAME"; }
 
 /// @brief How the help text shows a default value.
 inline std::string format_option_default(OptionKind::Bool, bool value) {
@@ -339,6 +378,9 @@ inline std::string format_option_default(OptionKind::Real, double value) {
 }
 inline std::string format_option_default(OptionKind::Text, std::string_view value) {
     return value.empty() ? "unset" : std::string(value);
+}
+inline std::string format_option_default(OptionKind::Name, std::string_view value) {
+    return std::string(value);
 }
 
 /// @brief How the help text states an option's bounds.
@@ -364,13 +406,22 @@ inline std::string format_option_bounds(OptionKind::Real, double lo, double hi) 
 inline std::string format_option_bounds(OptionKind::Text, std::string_view, std::string_view) {
     return "";
 }
+inline std::string format_option_bounds(OptionKind::Name, std::string_view, std::string_view) {
+    return "";
+}
 
 /// @brief Write one option's two help lines.
 inline void append_option_help(std::ostream& out, std::string_view table_name,
                                const std::string& syntax, std::string_view help,
                                const std::string& default_text, const std::string& bounds) {
     out << "  " << cli_spelling(table_name) << "=" << syntax << "\n";
-    out << "      " << help << " [default: " << default_text;
+    out << "      " << help;
+    // Naming what reads an option here is what keeps its refusal from being a
+    // surprise; `validate_options` enforces the same rows.
+    if (const std::string requires_text = requirement_text(table_name); !requires_text.empty()) {
+        out << "; " << requires_text;
+    }
+    out << " [default: " << default_text;
     if (!bounds.empty()) {
         out << "; " << bounds;
     }
@@ -444,22 +495,54 @@ inline void apply_decisions_preset(Options& options, const std::string& value) {
     options.csids_preset = find_csids_preset(value) != nullptr ? value : std::string{};
 }
 
-/// @brief Turn deletion off when it is on only by default and the command line
-/// explicitly asked for a decision procedure or selector it cannot run under.
+// --- The effective configuration, as the statistics record it --------------
+
+/// @brief How the statistics record a value: the text `--name=` would take to
+/// reproduce it. Unlike the help text, an unset path records as empty.
+inline std::string format_option_value(OptionKind::Bool, bool value) {
+    return value ? "true" : "false";
+}
+inline std::string format_option_value(OptionKind::U64, std::uint64_t value) {
+    return std::to_string(value);
+}
+inline std::string format_option_value(OptionKind::Size, std::size_t value) {
+    return std::to_string(value);
+}
+inline std::string format_option_value(OptionKind::Real, double value) {
+    return format_real(value);
+}
+inline std::string format_option_value(OptionKind::Text, std::string_view value) {
+    return std::string(value);
+}
+inline std::string format_option_value(OptionKind::Name, std::string_view value) {
+    return std::string(value);
+}
+
+/// @brief Every option and its effective value, in table order.
 ///
-/// Asking for `--deletion=true` against one of those is still an error; this is
-/// what keeps a bare `--selection=leading_term_watchlist` from becoming one.
-inline void resolve_default_deletion(Options& options, const OptionSeen& seen) {
-    if (seen.deletion || !options.deletion) {
-        return;
-    }
-    const bool selector_refuses =
-        seen.selection && options.selection != ClauseSelectorName::cyclic;
-    const bool key_refuses = seen.decisions && options.deletion_key == DeletionKey::activity &&
-                             options.decisions != DecisionProcedureName::csids;
-    if (selector_refuses || key_refuses) {
-        options.deletion = false;
-    }
+/// This is what makes a statistics row a reproduction recipe, so it is taken
+/// from the resolved `Options`: a `--decisions=` preset has already become the
+/// CSIDS triple it stands for, and deletion has already yielded to a selector it
+/// cannot run under.
+inline std::vector<ConfigEntry> option_settings(const Options& options) {
+    std::vector<ConfigEntry> settings;
+
+    // Each row compares its value against the table's own default, so the
+    // console block can show what was asked for rather than the whole table.
+    const auto entry = [](const char* name, std::string value, std::string default_value) {
+        const bool is_default = value == default_value;
+        return ConfigEntry{name, std::move(value), is_default};
+    };
+
+#define XORCLE_OPTION(name, kind, default_value, lo, hi, help)                                     \
+    settings.push_back(entry(#name, format_option_value(OptionKind::kind{}, options.name),         \
+                             format_option_value(OptionKind::kind{}, default_value)));
+#define XORCLE_ENUM_OPTION(name, type, default_value, help)                                        \
+    settings.push_back(entry(#name, enum_option_label(#name, static_cast<int>(options.name)),      \
+                             enum_option_label(#name, static_cast<int>(default_value))));
+#include "cli/options.inc"
+
+    return settings;
 }
 
 /// @brief Check the constraints that span more than one option.
@@ -478,6 +561,28 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (options.restart == RestartMethod::luby && options.restart_luby_unit == 0) {
         throw CliError("--restart=luby requires --restart-luby-unit=N: no budget tried beat "
                        "--restart=none, so there is no default worth shipping");
+    }
+    // One check per `XORCLE_REQUIRES` row: an option given where nothing would
+    // read it is refused, so a run never reports a setting it did not act on.
+#define XORCLE_REQUIRES(option, condition, needs)                                                  \
+    if (seen.option && !(condition)) {                                                             \
+        throw CliError(cli_spelling(#option) + " requires " + needs +                              \
+                       "; nothing would read it here");                                            \
+    }
+#include "cli/options.inc"
+
+    // Trail reuse is a switch rather than a parameter, so it is checked against
+    // its value: left at its default `true` it claims the feature just as
+    // loudly, and only CSIDS ranks the levels a restart could keep.
+    if (options.restart != RestartMethod::none && options.restart_reuse_trail &&
+        options.decisions != DecisionProcedureName::csids) {
+        throw CliError("--restart-reuse-trail requires --decisions=csids, the only procedure that "
+                       "ranks the levels a restart could keep; pass --restart-reuse-trail=false "
+                       "to restart to the root instead");
+    }
+    if (!parse_progress_groups(options.report).has_value()) {
+        throw CliError("--report='" + options.report +
+                       "' is not a comma-joined list of: " + progress_group_names());
     }
     if (options.deletion_core_lbd > options.deletion_tier2_lbd) {
         throw CliError("--deletion-core-lbd must not exceed --deletion-tier2-lbd");
@@ -550,7 +655,6 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
         options.csids_bump = preset->config.bump;
     }
 
-    resolve_default_deletion(options, seen);
     validate_options(options, seen);
     return options;
 }

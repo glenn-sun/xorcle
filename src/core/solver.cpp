@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <chrono>
 #include <numeric>
 #include <optional>
@@ -57,6 +58,7 @@ void Solver::add_starting_clause(Clause clause) {
     const ClauseId new_clause_id = selector_->num_clauses();
     decisions_->update_with_new_clause(clause, new_clause_id);
     selector_->add_starting_clause(std::move(clause));
+    ++num_active_clauses_;
     next_proof_clause_id_ = selector_->num_clauses();
 }
 
@@ -126,6 +128,11 @@ void Solver::handle_non_root_conflict() {
     assert((learned.clause.rows() != 1 || learned.asserting_level == 0) &&
            "a unit asserting clause must assert at the root");
     const std::size_t level_before_backjump = trail_.level();
+    // Sampled at the conflict rather than after the backjump, which is where the
+    // progress line used to read them and why they read low.
+    counters_.sum_learned_lbd += learned.lbd;
+    counters_.sum_conflict_level += level_before_backjump;
+    counters_.sum_conflict_rank += trail_.span().rows();
     // Consumes a conflict from the restart budget, so it must run exactly once
     // per non-root conflict whether or not a restart fires.
     const bool restart_now = restarts_->should_restart_after_conflict(
@@ -164,6 +171,7 @@ void Solver::handle_non_root_conflict() {
 
     const AssertingClauseInfo learned_info{.lbd = learned.lbd, .removed_levels = removed_levels};
     selector_->add_asserting_clause(std::move(learned.clause), trail_, learned_info);
+    ++num_active_clauses_;
     next_proof_clause_id_ = std::max(next_proof_clause_id_, selector_->num_clauses());
 }
 
@@ -218,6 +226,14 @@ void Solver::make_decision_step() {
     selector_->update_with_decision_clause(decisions_->decision_clause_hint());
 }
 
+#ifndef NDEBUG
+bool Solver::active_clause_count_is_consistent() const {
+    const std::vector<std::uint8_t>& active = selector_->active_flags();
+    return num_active_clauses_ ==
+           static_cast<std::size_t>(std::count(active.begin(), active.end(), 1));
+}
+#endif
+
 void Solver::maybe_report() {
     if (!reports_progress()) {
         return;
@@ -225,24 +241,54 @@ void Solver::maybe_report() {
     if (counters_.num_conflicts - conflicts_at_last_report_ < progress_.conflict_interval) {
         return;
     }
+    report_progress();
+}
+
+void Solver::report_progress() {
+    const ProgressSnapshot snapshot = progress_snapshot();
+    progress_.reporter->report(snapshot);
     conflicts_at_last_report_ = counters_.num_conflicts;
-    progress_.reporter->report(progress_snapshot());
+    sum_level_at_last_report_ = counters_.sum_conflict_level;
+    sum_rank_at_last_report_ = counters_.sum_conflict_rank;
+    time_at_last_report_s_ = snapshot.time_s;
 }
 
 ProgressSnapshot Solver::progress_snapshot() const {
+    assert(active_clause_count_is_consistent() &&
+           "the tracked live-clause count fell out of step with the active flags");
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - solve_start_;
-    return ProgressSnapshot{.time_s = elapsed.count(),
-                            .num_conflicts = counters_.num_conflicts,
-                            .num_propagations = counters_.num_propagations,
-                            .num_restarts = counters_.num_restarts,
-                            .decisions = decisions_->decision_stats().decisions,
-                            .trail_level = trail_.level(),
-                            .trail_rank = trail_.span().rows(),
-                            .remaining_vars = active_num_vars_ - trail_[0].span().rows(),
-                            .num_deletion_passes = counters_.num_deletion_passes,
-                            .num_deleted_clauses = counters_.num_deleted_clauses,
-                            .num_demoted_clauses = counters_.num_demoted_clauses,
-                            .num_promoted_clauses = counters_.num_promoted_clauses};
+    const double time_s = elapsed.count();
+
+    // Everything below is taken over the interval since the last line, so a
+    // reader sees the current trend rather than the run's flattening average.
+    const std::size_t interval_conflicts = counters_.num_conflicts - conflicts_at_last_report_;
+    const double interval_s = time_s - time_at_last_report_s_;
+    const auto per_conflict = [interval_conflicts](const std::size_t interval_sum) {
+        return interval_conflicts == 0 ? 0.0
+                                       : static_cast<double>(interval_sum) /
+                                             static_cast<double>(interval_conflicts);
+    };
+
+    return ProgressSnapshot{
+        .time_s = time_s,
+        .num_conflicts = counters_.num_conflicts,
+        .conflicts_per_second =
+            interval_s > 0.0 ? static_cast<double>(interval_conflicts) / interval_s : 0.0,
+        .num_propagations = counters_.num_propagations,
+        .num_clauses = num_active_clauses_,
+        .average_level = per_conflict(counters_.sum_conflict_level - sum_level_at_last_report_),
+        .average_rank = per_conflict(counters_.sum_conflict_rank - sum_rank_at_last_report_),
+        .remaining_vars = active_num_vars_ - trail_[0].span().rows(),
+        .decisions = decisions_->decision_stats().decisions,
+        .trail_level = trail_.level(),
+        .trail_rank = trail_.span().rows(),
+        .num_restarts = counters_.num_restarts,
+        .num_reused_levels = counters_.num_reused_levels,
+        .num_deleted_clauses = counters_.num_deleted_clauses,
+        .num_demoted_clauses = counters_.num_demoted_clauses,
+        .num_promoted_clauses = counters_.num_promoted_clauses,
+        .num_attempt_props = counters_.num_attempt_props,
+        .num_watch_updates = counters_.num_watch_updates};
 }
 
 bool Solver::maybe_compact_before_decision() {
@@ -281,9 +327,12 @@ void Solver::apply_compaction(CompactionPlan plan) {
     assert(plan.rewritten_clauses.size() == num_clauses);
     assert(plan.clause_is_active.size() == num_clauses);
 
+    num_active_clauses_ = 0;
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
         selector_->clause(clause_id) = std::move(plan.rewritten_clauses[clause_id]);
-        selector_->set_clause_active(clause_id, plan.clause_is_active[clause_id] != 0);
+        const bool active = plan.clause_is_active[clause_id] != 0;
+        selector_->set_clause_active(clause_id, active);
+        num_active_clauses_ += active ? 1 : 0;
     }
 
     // Composed through the numbering being retired, not replaced.
@@ -312,6 +361,7 @@ void Solver::apply_compaction(CompactionPlan plan) {
                                        selector_->active_flags());
     has_compacted_once_ = true;
     conflicts_at_last_compaction_ = counters_.num_conflicts;
+    ++counters_.num_compactions;
 }
 
 void Solver::note_reason_use(ClauseId id, std::size_t lbd) {
@@ -367,6 +417,7 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
     }
 
     ++counters_.num_deletion_passes;
+    num_active_clauses_ -= plan.evicted.size();
     counters_.num_deleted_clauses += plan.evicted.size();
     counters_.num_demoted_clauses += plan.demoted.size();
 }
@@ -375,11 +426,13 @@ Solution Solver::solve() {
 #ifndef NDEBUG
     has_solved_ = true;
 #endif
+    assert(active_clause_count_is_consistent() &&
+           "the starting clauses left the live-clause count wrong");
     next_proof_clause_id_ = std::max(next_proof_clause_id_, selector_->num_clauses());
 
     solve_start_ = std::chrono::steady_clock::now();
     if (reports_progress()) {
-        progress_.reporter->report(progress_snapshot());
+        report_progress();
     }
 
     while (true) {

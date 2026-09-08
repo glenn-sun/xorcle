@@ -162,7 +162,10 @@ std::string run_id_from_timestamp(const std::string& timestamp_utc) {
 /// @brief Solve one instance; on UNSAT with `--proof`, leave the raw proof for
 /// `pending` so the caller can report before post-processing it.
 RunStats run_once(const Options& options, PendingProof& pending) {
+    const auto parse_start = std::chrono::steady_clock::now();
     ParsedDimacs parsed = parse_dimacs_file(options.input_path, options.equation_repr);
+    const std::chrono::duration<double> parse_elapsed =
+        std::chrono::steady_clock::now() - parse_start;
 
     // The solver streams a raw proof; post-processing turns it into the proof.
     const bool wants_proof = !options.proof.empty();
@@ -180,9 +183,13 @@ RunStats run_once(const Options& options, PendingProof& pending) {
         input_rows = input_clause_rows(parsed.clauses);
     }
 
+    // Progress goes to stdout beside the DIMACS output, so a run writing its
+    // statistics to a file reports nothing here: the file is the output then.
     std::unique_ptr<ProgressReporter> progress_reporter;
-    if (options.report_every != 0) {
-        progress_reporter = std::make_unique<ConsoleProgressReporter>(std::cout);
+    if (options.report_every != 0 && options.stats_file.empty()) {
+        const std::optional<unsigned> groups = parse_progress_groups(options.report);
+        assert(groups.has_value() && "validate_options() should have checked --report");
+        progress_reporter = std::make_unique<ConsoleProgressReporter>(std::cout, *groups);
     }
 
     std::unique_ptr<ClauseSelector> selector = make_clause_selector(options, parsed.num_vars);
@@ -223,44 +230,55 @@ RunStats run_once(const Options& options, PendingProof& pending) {
 
     RunStats stats;
     stats.file = options.input_path;
-    stats.decision_procedure = enum_option_label("decisions", static_cast<int>(options.decisions));
-    stats.decision_phase = enum_option_label("phase", static_cast<int>(options.phase));
-    stats.clause_selector = enum_option_label("selection", static_cast<int>(options.selection));
-    stats.seed = options.seed;
-    if (options.decisions == DecisionProcedureName::csids) {
-        stats.csids_initial_activity = options.csids_initial;
-        stats.csids_decay = options.csids_decay;
-        stats.csids_bump = options.csids_bump;
-    }
+    stats.config = option_settings(options);
     stats.result = solution.result;
     stats.sat_assignment = std::move(solution.assignment);
-    stats.time_s = elapsed.count();
+
     stats.num_vars = solver.num_vars();
+    stats.active_vars = solver.active_num_vars();
     stats.start_clauses = start_clauses;
-    stats.final_clauses = solver.num_clauses();
 
     const SolverCounters& counters = solver.counters();
     stats.num_conflicts = counters.num_conflicts;
     stats.num_propagations = counters.num_propagations;
     stats.num_attempt_props = counters.num_attempt_props;
     stats.num_watch_updates = counters.num_watch_updates;
-    stats.num_restarts = counters.num_restarts;
-    stats.num_reused_levels = counters.num_reused_levels;
+    stats.num_compactions = counters.num_compactions;
 
     const DecisionProcedure::DecisionStats decisions = solver.decision_stats();
     stats.decisions = decisions.decisions;
     stats.fallback_decisions = decisions.fallback_decisions;
 
-    stats.minimize = options.minimize;
+    const RestartStats restarts = solver.restart_stats();
+    stats.num_restarts = counters.num_restarts;
+    stats.num_reused_levels = counters.num_reused_levels;
+    stats.num_blocked_restarts = restarts.blocked;
+    stats.fast_lbd = restarts.fast_lbd;
+    stats.slow_lbd = restarts.slow_lbd;
+
+    // Ids are never reused, so what was allocated and what is still there part
+    // company as soon as deletion runs.
+    stats.clauses_allocated = solver.num_clauses();
+    stats.clauses_in_database = solver.num_active_clauses();
+    stats.learned_clauses = solver.num_clauses() - start_clauses;
+    // Over the clauses learned, not over the conflicts: a root conflict ends the
+    // run without learning one, so it contributes no LBD to average.
+    stats.average_learned_lbd =
+        stats.learned_clauses == 0 ? 0.0
+                                   : static_cast<double>(counters.sum_learned_lbd) /
+                                         static_cast<double>(stats.learned_clauses);
+
     stats.num_minimized_clauses = counters.num_minimized_clauses;
     stats.minimize_dim_before = counters.minimize_dim_before;
     stats.minimize_dim_after = counters.minimize_dim_after;
 
-    stats.deletion = options.deletion;
     stats.num_deletion_passes = counters.num_deletion_passes;
     stats.num_deleted_clauses = counters.num_deleted_clauses;
     stats.num_demoted_clauses = counters.num_demoted_clauses;
     stats.num_promoted_clauses = counters.num_promoted_clauses;
+
+    stats.parse_time_s = parse_elapsed.count();
+    stats.solve_time_s = elapsed.count();
     return stats;
 }
 
@@ -277,7 +295,9 @@ void require_readable_input(const std::string& input_path) {
 } // namespace xorcle
 
 /// @brief Entry point: parse, solve, report.
-/// @return 0 on success, SAT and UNSAT alike; 1 on any reported error.
+/// @return 0 on success, SAT and UNSAT alike; 2 on a command line this build
+/// will not accept, and 1 on any other reported error. A harness sweeping
+/// options tells a rejected combination from a failed run by that difference.
 int main(int argc, char* argv[]) {
     using namespace xorcle;
     try {
@@ -305,10 +325,12 @@ int main(int argc, char* argv[]) {
         }
 
         // The console gets the verdict and the stats before post-processing,
-        // which can take a while; the CSV waits for its post-processing column.
+        // which can take a while; the CSV waits for its post-processing column,
+        // so its verdict goes out first on its own.
         if (to_console) {
             writer->log(stats);
-            std::cout << std::flush;
+        } else {
+            write_verdict(std::cout, stats);
         }
         if (!pending.raw_path.empty()) {
             stats.proof_postprocess_time_s = write_lrup_proof(*options, pending);
@@ -317,6 +339,9 @@ int main(int argc, char* argv[]) {
             writer->log(stats);
         }
         return 0;
+    } catch (const CliError& error) {
+        std::cerr << "Error: " << error.what() << std::endl;
+        return 2;
     } catch (const std::exception& error) {
         std::cerr << "Error: " << error.what() << std::endl;
         return 1;

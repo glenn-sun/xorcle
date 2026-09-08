@@ -26,6 +26,7 @@ public:
     bool enabled() const override;
     bool should_restart_after_conflict(const ConflictSummary& conflict) override;
     void note_restart() override;
+    RestartStats stats() const override;
 
 private:
     Ema fast_lbd_;
@@ -35,6 +36,7 @@ private:
     double block_factor_;
     std::size_t min_conflicts_;
     std::size_t conflicts_since_restart_ = 0;
+    std::size_t blocked_ = 0;
 };
 
 } // namespace xorcle

@@ -40,6 +40,18 @@ struct ConflictSummary {
     std::size_t trail_size; ///< Trail rows at the conflict, before the backjump.
 };
 
+/// @brief What a policy can report about its own decisions.
+///
+/// Only `Lbd` fills any of it; the fixed schedules have nothing to say, so the
+/// base returns zeroes and the statistics report the section only when a
+/// schedule is in force.
+struct RestartStats {
+    /// @brief Restarts the trail-length guard suppressed.
+    std::size_t blocked = 0;
+    double fast_lbd = 0.0; ///< The fast average as the run ended.
+    double slow_lbd = 0.0; ///< The slow average as the run ended.
+};
+
 /// @brief Stateful restart scheduler driven by the conflicts as they happen.
 class RestartPolicy {
 public:
@@ -62,6 +74,9 @@ public:
     /// @brief Advance to the next budget.
     /// @pre A restart has just happened.
     virtual void note_restart() = 0;
+
+    /// @brief What the policy has to report; zeroes unless it overrides this.
+    virtual RestartStats stats() const { return {}; }
 
 private:
     bool reuse_trail_;

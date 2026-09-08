@@ -30,6 +30,7 @@ Lbd::should_restart_after_conflict(const ConflictSummary& conflict) {
     const double trail_size = static_cast<double>(conflict.trail_size);
     trail_size_.update(trail_size);
     if (block_factor_ > 0.0 && trail_size > block_factor_ * trail_size_.value()) {
+        ++blocked_;
         fast_lbd_.reset();
         return false;
     }
@@ -38,6 +39,13 @@ Lbd::should_restart_after_conflict(const ConflictSummary& conflict) {
         return false;
     }
     return fast_lbd_.value() > margin_ * slow_lbd_.value();
+}
+
+RestartStats
+Lbd::stats() const {
+    return RestartStats{.blocked = blocked_,
+                        .fast_lbd = fast_lbd_.value(),
+                        .slow_lbd = slow_lbd_.value()};
 }
 
 void

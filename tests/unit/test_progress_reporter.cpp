@@ -1,11 +1,13 @@
 /// @file test_progress_reporter.cpp
 /// @brief The progress report format.
 ///
-/// The shape checks here are the point. Column
-/// names carry spaces, so only a value line splits on whitespace.
+/// The columnar shape is what keeps a progress line from being read as the run's
+/// totals, so the shape checks here are the point. Column names carry spaces, so
+/// only a value line splits on whitespace.
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -17,24 +19,29 @@ namespace xorcle {
 
 namespace {
 
-constexpr const char* expected_header =
-    "c  seconds   conflicts   propagations  restarts   decisions   "
-    "trail level   trail rank   remaining vars   deletion passes   deleted   demoted"
-    "   promoted";
+constexpr const char* expected_default_header =
+    "c  seconds   conflicts   confl/s   propagations   clauses   avg level   avg rank"
+    "   remaining vars";
 
 ProgressSnapshot sample_snapshot() {
     return ProgressSnapshot{.time_s = 1.5,
                             .num_conflicts = 1024,
+                            .conflicts_per_second = 682.5,
                             .num_propagations = 987654,
-                            .num_restarts = 3,
+                            .num_clauses = 4096,
+                            .average_level = 17.25,
+                            .average_rank = 41.5,
+                            .remaining_vars = 128,
                             .decisions = 2048,
                             .trail_level = 17,
                             .trail_rank = 41,
-                            .remaining_vars = 128,
-                            .num_deletion_passes = 5,
+                            .num_restarts = 3,
+                            .num_reused_levels = 7,
                             .num_deleted_clauses = 640,
                             .num_demoted_clauses = 512,
-                            .num_promoted_clauses = 96};
+                            .num_promoted_clauses = 96,
+                            .num_attempt_props = 31415,
+                            .num_watch_updates = 2718};
 }
 
 std::vector<std::string> lines_of(const std::string& text) {
@@ -62,7 +69,7 @@ std::vector<std::string> values_of(const std::string& line) {
 
 } // namespace
 
-TEST_CASE("the header precedes the first line and appears once") {
+TEST_CASE("the header precedes the first line") {
     std::ostringstream out;
     ConsoleProgressReporter reporter(out);
     reporter.report(sample_snapshot());
@@ -70,29 +77,68 @@ TEST_CASE("the header precedes the first line and appears once") {
 
     const std::vector<std::string> lines = lines_of(out.str());
     REQUIRE(lines.size() == 3);
-    CHECK(lines[0] == expected_header);
+    CHECK(lines[0] == expected_default_header);
     CHECK(lines[1] == lines[2]);
 }
 
-TEST_CASE("every column carries its snapshot value") {
+TEST_CASE("the header repeats so it stays on screen") {
+    std::ostringstream out;
+    ConsoleProgressReporter reporter(out);
+    // One more line than the interval, so exactly two headers are due.
+    for (std::size_t i = 0; i <= 25; ++i) {
+        reporter.report(sample_snapshot());
+    }
+
+    const std::vector<std::string> lines = lines_of(out.str());
+    const std::size_t headers =
+        static_cast<std::size_t>(std::count(lines.begin(), lines.end(), expected_default_header));
+    CHECK(headers == 2);
+    CHECK(lines.size() == 26 + headers);
+}
+
+TEST_CASE("the default columns carry their snapshot values") {
     std::ostringstream out;
     ConsoleProgressReporter reporter(out);
     reporter.report(sample_snapshot());
 
     const std::vector<std::string> lines = lines_of(out.str());
     REQUIRE(lines.size() == 2);
-    CHECK(values_of(lines[1]) == std::vector<std::string>{"1.50", "1024", "987654", "3",
-                                                          "2048", "17", "41", "128",
-                                                          "5", "640", "512", "96"});
+    CHECK(values_of(lines[1]) == std::vector<std::string>{"1.50", "1024", "682.5", "987654",
+                                                          "4096", "17.2", "41.5", "128"});
 }
 
-TEST_CASE("no progress line has the shape the stats parser reads") {
+TEST_CASE("a group adds its columns to the default ones") {
     std::ostringstream out;
-    ConsoleProgressReporter reporter(out);
+    ConsoleProgressReporter reporter(out, progress_group::defaults | progress_group::deletion);
     reporter.report(sample_snapshot());
 
-    const std::regex key_value(R"(^c\s+(Conflicts|Decisions|Propagations|Time)\s*:.*$)",
-                               std::regex::icase);
+    const std::vector<std::string> lines = lines_of(out.str());
+    REQUIRE(lines.size() == 2);
+    CHECK(values_of(lines[1]) == std::vector<std::string>{"1.50", "1024", "682.5", "987654",
+                                                          "4096", "17.2", "41.5", "128",
+                                                          "640", "512", "96"});
+}
+
+TEST_CASE("--report names map onto the groups") {
+    CHECK(parse_progress_groups("default") == progress_group::defaults);
+    CHECK(parse_progress_groups("all") == progress_group::all);
+    // The default columns are what makes a line readable, so they are never off.
+    CHECK(parse_progress_groups("deletion") ==
+          (progress_group::defaults | progress_group::deletion));
+    CHECK(parse_progress_groups("search,deletion") ==
+          (progress_group::defaults | progress_group::search | progress_group::deletion));
+
+    CHECK(!parse_progress_groups("nope").has_value());
+    CHECK(!parse_progress_groups("").has_value());
+    CHECK(!parse_progress_groups("search,").has_value());
+}
+
+TEST_CASE("no progress line has the shape of an end-of-run statistic") {
+    std::ostringstream out;
+    ConsoleProgressReporter reporter(out, progress_group::all);
+    reporter.report(sample_snapshot());
+
+    const std::regex key_value(R"(^c\s+[A-Za-z][A-Za-z ]*\s*:.*$)");
     const std::regex status(R"(^s\s+.+$)", std::regex::icase);
     for (const std::string& line : lines_of(out.str())) {
         CHECK(!std::regex_match(line, key_value));
@@ -102,7 +148,7 @@ TEST_CASE("no progress line has the shape the stats parser reads") {
 
 TEST_CASE("columns stay aligned as values widen") {
     std::ostringstream out;
-    ConsoleProgressReporter reporter(out);
+    ConsoleProgressReporter reporter(out, progress_group::all);
     reporter.report(ProgressSnapshot{});
     reporter.report(sample_snapshot());
 
