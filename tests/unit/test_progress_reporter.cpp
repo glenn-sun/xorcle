@@ -19,7 +19,7 @@ namespace {
 
 constexpr const char* expected_header =
     "c  seconds   conflicts   propagations  restarts   decisions   "
-    "trail level   trail rank   remaining vars   deletion passes   deleted   demoted"
+    "decision level   trail rank   remaining vars   deletion passes   deleted   demoted"
     "   promoted";
 
 ProgressSnapshot sample_snapshot() {
@@ -28,7 +28,7 @@ ProgressSnapshot sample_snapshot() {
                             .num_propagations = 987654,
                             .num_restarts = 3,
                             .decisions = 2048,
-                            .trail_level = 17,
+                            .decision_level = 17,
                             .trail_rank = 41,
                             .remaining_vars = 128,
                             .num_deletion_passes = 5,

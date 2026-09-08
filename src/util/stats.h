@@ -50,8 +50,8 @@ struct RunStats {
     /// when it did.
     bool minimize = false;
     std::size_t num_minimized_clauses = 0;
-    std::size_t minimize_dim_before = 0;
-    std::size_t minimize_dim_after = 0;
+    std::size_t minimize_width_before = 0;
+    std::size_t minimize_width_after = 0;
 
     /// @brief Whether clause deletion ran; the console reports its counters
     /// only when it did.

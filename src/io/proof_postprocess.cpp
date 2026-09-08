@@ -170,7 +170,7 @@ private:
         std::vector<std::size_t> same_epoch;
         reduce_rows(rows, echelon, same_epoch);
 
-        // A trail row is reduced only on its leading column, so the unit has to
+        // A trail row is reduced only on its leading bit, so the unit has to
         // be brought all the way down before it can be compared, or written.
         Equation unit_row = make_equation(repr_, num_vars_);
         unit_row.assign_bits(raw.row);
@@ -237,7 +237,7 @@ private:
         return cache;
     }
 
-    /// @brief Reduce `rows` in place, appending the units `echelon` used to `used`.
+    /// @brief Reduce `rows` in place, recording into `used` the units `echelon` used.
     void reduce_rows(std::vector<RawRow>& rows, const RowSpace& echelon,
                      std::vector<std::size_t>& used) {
         ++unit_stamp_;
@@ -301,7 +301,7 @@ private:
             }
         }
 
-        // The deletions of each line, packed: every kept clause is in one line's.
+        // The deletions of each line, packed: every kept clause is in one line's deletions.
         deletion_starts_.assign(derivations_.size() + 1, 0);
         for (const std::size_t use : last_input_use) {
             if (use != no_index) {

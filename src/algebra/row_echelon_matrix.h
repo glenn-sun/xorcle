@@ -36,11 +36,11 @@ public:
 
     std::size_t cols() const noexcept { return interface_->cols(); }
 
-    /// @brief Equation at row `index`, in row-echelon order.
-    /// @pre `index < rows()`.
-    const Equation& row(std::size_t index) const {
-        assert(index < rows() && "row index is out of range");
-        return interface_->row(index);
+    /// @brief Equation at row `row_idx`, in row-echelon order.
+    /// @pre `row_idx < rows()`.
+    const Equation& row(std::size_t row_idx) const {
+        assert(row_idx < rows() && "row index is out of range");
+        return interface_->row(row_idx);
     }
 
     /// @brief The pivot columns, indexed by column, over `cols()` indices.
@@ -51,7 +51,7 @@ public:
     /// `add_row_get_index()`.
     void add_row(Equation v) { add_row_get_index(std::move(v)); }
 
-    /// @brief The inserted index, or `std::nullopt` if `v` was already in the span.
+    /// @brief The inserted row_idx, or `std::nullopt` if `v` was already in the span.
     std::optional<std::size_t> add_row_get_index(Equation v) {
         assert(v.num_bits() == cols() && "add_row: bit count does not match the matrix");
         assert(v.repr() == repr() && "add_row: representation does not match the matrix");
@@ -78,11 +78,11 @@ public:
         return interface_->reduce_get_coefficients(v);
     }
 
-    /// @brief Remove the row at `index`, returning it.
-    /// @pre `index < rows()`.
-    Equation pop_row(std::size_t index) {
-        assert(index < rows() && "pop_row index is out of range");
-        return interface_->pop_row(index);
+    /// @brief Remove the row at `row_idx`, returning it.
+    /// @pre `row_idx < rows()`.
+    Equation pop_row(std::size_t row_idx) {
+        assert(row_idx < rows() && "pop_row index is out of range");
+        return interface_->pop_row(row_idx);
     }
 
     /// @pre `rows() > 0`.
@@ -96,21 +96,21 @@ public:
 
     class iterator {
     public:
-        iterator(const RowEchelonMatrix* matrix, std::size_t index) noexcept
-            : matrix_(matrix), index_(index) {}
+        iterator(const RowEchelonMatrix* matrix, std::size_t row_idx) noexcept
+            : matrix_(matrix), row_idx_(row_idx) {}
 
         iterator& operator++() noexcept {
-            ++index_;
+            ++row_idx_;
             return *this;
         }
 
-        const Equation& operator*() const { return matrix_->row(index_); }
+        const Equation& operator*() const { return matrix_->row(row_idx_); }
 
         bool operator==(const iterator& other) const noexcept = default;
 
     private:
         const RowEchelonMatrix* matrix_;
-        std::size_t index_;
+        std::size_t row_idx_;
     };
 
     iterator begin() const noexcept { return iterator(this, 0); }
@@ -162,7 +162,7 @@ public:
 
 /// @brief A clause stored as its linear negation.
 ///
-/// A clause `f1 v ... v fk` is the span of the `fi + [0 = 1]`, so
+/// The linear negation of `f1 v ... v fk` is the span of the `fi + [0 = 1]`, so
 /// `[x1 + x2 = 1] v [x3 = 0]` is stored as `[x1 + x2 = 0], [x3 = 1]`.
 class Clause : public RowSpace {
 public:

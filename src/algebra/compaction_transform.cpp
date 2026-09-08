@@ -16,24 +16,24 @@ CompactionTransform CompactionTransform::from_dropped_columns(std::size_t old_nu
     out.old_to_new_.assign(old_num_vars, npos);
     out.new_to_old_.reserve(old_num_vars);
 
-    for (std::size_t old_index = 0; old_index < old_num_vars; ++old_index) {
-        if (dropped_columns.test(old_index)) {
+    for (std::size_t old_col_idx = 0; old_col_idx < old_num_vars; ++old_col_idx) {
+        if (dropped_columns.test(old_col_idx)) {
             continue;
         }
-        out.old_to_new_[old_index] = out.new_to_old_.size();
-        out.new_to_old_.push_back(old_index);
+        out.old_to_new_[old_col_idx] = out.new_to_old_.size();
+        out.new_to_old_.push_back(old_col_idx);
     }
     out.new_num_vars_ = out.new_to_old_.size();
 
     // A postcondition, not a precondition: the two maps this builds must be
     // mutual inverses on the surviving variables.
 #ifndef NDEBUG
-    for (std::size_t old_index = 0; old_index < old_num_vars; ++old_index) {
-        const std::size_t mapped = out.old_to_new_[old_index];
+    for (std::size_t old_col_idx = 0; old_col_idx < old_num_vars; ++old_col_idx) {
+        const std::size_t mapped = out.old_to_new_[old_col_idx];
         if (mapped == npos) {
             continue;
         }
-        assert(mapped < out.new_num_vars_ && out.new_to_old_[mapped] == old_index &&
+        assert(mapped < out.new_num_vars_ && out.new_to_old_[mapped] == old_col_idx &&
                "compaction mapping is not invertible");
     }
 #endif

@@ -104,10 +104,10 @@ void Solver::handle_non_root_conflict() {
     AssertingClause learned = find_asserting_clause(trail_, selector_->clauses(), *decisions_,
                                                     minimize_, deletion_.enabled);
     if (minimize_) {
-        counters_.minimize_dim_before += learned.dim_before_minimize;
-        counters_.minimize_dim_after += learned.clause.rows();
+        counters_.minimize_width_before += learned.width_before_minimize;
+        counters_.minimize_width_after += learned.clause.rows();
         counters_.num_minimized_clauses +=
-            learned.clause.rows() < learned.dim_before_minimize ? 1 : 0;
+            learned.clause.rows() < learned.width_before_minimize ? 1 : 0;
     }
     if (deletion_.enabled) {
         // Before the proof path reverses `reason_ids`, which `reason_lbds` parallels.
@@ -236,7 +236,7 @@ ProgressSnapshot Solver::progress_snapshot() const {
                             .num_propagations = counters_.num_propagations,
                             .num_restarts = counters_.num_restarts,
                             .decisions = decisions_->decision_stats().decisions,
-                            .trail_level = trail_.level(),
+                            .decision_level = trail_.level(),
                             .trail_rank = trail_.span().rows(),
                             .remaining_vars = active_num_vars_ - trail_[0].span().rows(),
                             .num_deletion_passes = counters_.num_deletion_passes,

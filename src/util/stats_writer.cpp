@@ -96,8 +96,8 @@ ConsoleStatsWriter::log_impl(const RunStats& stats) {
     output << "c Fallback decisions: " << stats.fallback_decisions << "\n";
     if (stats.minimize) {
         output << "c Minimized clauses: " << stats.num_minimized_clauses << "\n";
-        output << "c Dimension before minimizing: " << stats.minimize_dim_before << "\n";
-        output << "c Dimension after minimizing: " << stats.minimize_dim_after << "\n";
+        output << "c Width before minimizing: " << stats.minimize_width_before << "\n";
+        output << "c Width after minimizing: " << stats.minimize_width_after << "\n";
     }
     if (stats.deletion) {
         output << "c Deletion passes: " << stats.num_deletion_passes << "\n";

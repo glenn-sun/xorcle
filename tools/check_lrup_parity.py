@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LRUP(⊕) proof checker for the DIMACS-plus (XNF) format.
+LRUP(⊕) proof checker for the extended DIMACS/XNF format.
 
 Usage:
   python3 tools/check_lrup_parity.py <input.xnf> <proof.lrup>
@@ -231,8 +231,8 @@ def check_proof(xnf_path: str, proof_path: str, verbose: bool) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check LRUP(⊕) proofs for DIMACS-plus (XNF).")
-    parser.add_argument("input", help="Input XNF/DIMACS-plus file")
+    parser = argparse.ArgumentParser(description="Check LRUP(⊕) proofs for extended DIMACS/XNF.")
+    parser.add_argument("input", help="Input extended DIMACS/XNF file")
     parser.add_argument("proof", help="Proof file in LRUP(⊕) format (conventionally .lrup)")
     parser.add_argument("--verbose", action="store_true", help="Verbose per-line output")
     args = parser.parse_args()

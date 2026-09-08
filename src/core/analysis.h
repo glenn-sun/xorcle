@@ -33,9 +33,9 @@ struct AssertingClause {
     /// trail it was derived from.
     std::size_t lbd;
 
-    /// @brief The clause's dimension when it first became asserting, which is
+    /// @brief The clause's width when it first became asserting, which is
     /// `clause.rows()` unless minimization shrank it further.
-    std::size_t dim_before_minimize;
+    std::size_t width_before_minimize;
 };
 
 /// @brief Derive an asserting clause from a conflicting trail, by the 1-UIP-like
@@ -43,7 +43,7 @@ struct AssertingClause {
 ///
 /// With `minimize`, the walk does not stop at the asserting point but runs to
 /// the beginning of the trail, taking only the resolutions that strictly shrink
-/// the clause's dimension.
+/// the clause's width.
 ///
 /// With `measure_reason_lbds`, every clause the derivation uses is measured and
 /// fills `reason_lbds`.
@@ -79,16 +79,16 @@ struct ResolvedReason {
 };
 
 /// @brief One resolution step, in trail-basis coordinates: removes the coordinate
-/// `pivot_column` from `asserting_basis` against the reason clause it names, then
+/// `pivot_col_idx` from `asserting_basis` against the reason clause it names, then
 /// merges in the reason's remaining rows.
 ///
 /// @return The reason clause resolved against, measured when `measure_lbd`.
-/// @pre `asserting_basis` is non-empty and `pivot_column` leads its first row.
+/// @pre `asserting_basis` is non-empty and `pivot_col_idx` leads its first row.
 /// @pre `trail_basis_one` is the unit vector at column 0 of the basis.
-/// @pre `pivot_column`'s trail step was propagated, with a reason id in `clauses`.
+/// @pre `pivot_col_idx`'s trail step was propagated, with a reason id in `clauses`.
 /// @pre The trail is conflicting.
 /// @post `asserting_basis` is non-empty and its first row's leading column is
-/// past `pivot_column`.
+/// past `pivot_col_idx`.
 ResolvedReason resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_basis,
                                                    std::size_t pivot_col_idx, const Trail& trail,
                                                    const std::vector<Clause>& clauses,
@@ -105,7 +105,7 @@ ResolvedReason resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_ba
 /// @return The reason clause resolved against, measured when `measure_lbd`.
 /// @pre `pivot_col_idx` leads row `pivot_row_idx`; otherwise as
 /// `resolve_asserting_basis_with_reason()`.
-/// @post No row from `pivot_row_idx` on leads at or before `pivot_column`.
+/// @post No row from `pivot_row_idx` on leads at or before `pivot_col_idx`.
 ResolvedReason resolve_asserting_basis(TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx,
                                        std::size_t pivot_col_idx, const Trail& trail,
                                        const std::vector<Clause>& clauses,

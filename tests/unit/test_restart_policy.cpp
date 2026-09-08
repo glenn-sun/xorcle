@@ -200,10 +200,10 @@ TEST_CASE("Lbd: a trail far above average blocks the restart") {
     }
 }
 
-TEST_CASE("Lbd: a zero block factor never blocks") {
+TEST_CASE("Lbd: a zero trail ratio never blocks") {
     RestartConfig config;
     config.method = RestartMethod::lbd;
-    config.lbd_block_factor = 0.0;
+    config.lbd_trail_ratio = 0.0;
 
     Lbd policy(config);
     for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {

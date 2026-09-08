@@ -17,17 +17,17 @@ enum class RestartMethod {
 
 struct RestartConfig {
     RestartMethod method = RestartMethod::none;
-    /// @brief The budget for a Luby value of 1. No default: every value tried lost
-    /// to both `none` and `lbd`, so there is none to recommend.
+    /// @brief The budget for a Luby value of 1. No default: the schedule requires
+    /// a value.
     std::size_t luby_unit_conflicts = 0;
 
     std::size_t lbd_fast_window = 33;
     std::size_t lbd_slow_window = 100000;
     /// @brief How far the fast average must exceed the slow one.
-    double lbd_margin = 1.1;
+    double lbd_min_ratio = 1.1;
     std::size_t lbd_min_conflicts = 2; ///< Conflicts an LBD restart waits out.
     /// @brief Trail length, relative to its average, that blocks a restart; `0` never blocks.
-    double lbd_block_factor = 1.4;
+    double lbd_trail_ratio = 1.4;
 
     /// @brief Whether a restart keeps the decisions it would immediately re-make.
     bool reuse_trail = true;

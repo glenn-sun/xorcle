@@ -20,7 +20,7 @@ struct Column {
 /// @brief The columns, in print order; the header and every line share them.
 constexpr Column columns[]{
     {"seconds", 9},          {"conflicts", 12},   {"propagations", 15}, {"restarts", 10},
-    {"decisions", 12},       {"trail level", 14}, {"trail rank", 13},   {"remaining vars", 17},
+    {"decisions", 12},       {"decision level", 17}, {"trail rank", 13}, {"remaining vars", 17},
     {"deletion passes", 18}, {"deleted", 10},     {"demoted", 10},      {"promoted", 11},
 };
 
@@ -53,7 +53,7 @@ ConsoleProgressReporter::report(const ProgressSnapshot& snapshot) {
         std::to_string(snapshot.num_propagations),
         std::to_string(snapshot.num_restarts),
         std::to_string(snapshot.decisions),
-        std::to_string(snapshot.trail_level),
+        std::to_string(snapshot.decision_level),
         std::to_string(snapshot.trail_rank),
         std::to_string(snapshot.remaining_vars),
         std::to_string(snapshot.num_deletion_passes),

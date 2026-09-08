@@ -30,11 +30,11 @@ namespace xorcle {
 class LeadingTermWatchlist final : public ClauseSelector {
 public:
     /// @param num_vars One bucket per column, plus one for the constant column.
-    /// @param defer_pushes Bottom pushes a clause takes before it joins the queue; a clause
+    /// @param wait_for_queue Bottom pushes a clause takes before it joins the queue; a clause
     /// still short of that many is served once the queue is empty, in the order it was
     /// first pushed.
-    /// @pre `defer_pushes` is at least 1.
-    explicit LeadingTermWatchlist(std::size_t num_vars, std::size_t defer_pushes = 1);
+    /// @pre `wait_for_queue` is at least 1.
+    explicit LeadingTermWatchlist(std::size_t num_vars, std::size_t wait_for_queue = 1);
 
     std::optional<ClauseId> next() override;
 
@@ -58,9 +58,9 @@ protected:
 
 private:
     void push_top(ClauseId id); ///< Queue at the pop end, unless already queued.
-    void push_bottom(ClauseId id); ///< Queue at the far end, on the `defer_pushes_`-th push.
+    void push_bottom(ClauseId id); ///< Queue at the far end, on the `wait_for_queue_`-th push.
 
-    /// @brief The next clause held short of `defer_pushes_`, skipping the entries whose
+    /// @brief The next clause held short of `wait_for_queue_`, skipping the entries whose
     /// clause has since been popped.
     std::optional<ClauseId> pop_deferred();
 
@@ -84,7 +84,7 @@ private:
     std::vector<bool> in_queue_;
     std::vector<ClauseId> unit_clauses_;
 
-    std::size_t defer_pushes_;
+    std::size_t wait_for_queue_;
     std::vector<std::uint32_t> bottom_pushes_since_pop_;
     std::vector<ClauseId> deferred_; ///< In first-push order; entries go stale rather than move.
     std::size_t deferred_pos_ = 0;

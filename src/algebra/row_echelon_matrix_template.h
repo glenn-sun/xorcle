@@ -19,9 +19,8 @@
 
 namespace xorcle {
 
-/// @brief The abstract interface behind `RowEchelonMatrix`.
-/// Contains common functionality involving loops over rows, to avoid virtual
-/// dispatch at low levels.
+/// @brief The abstract interface behind `RowEchelonMatrix`, containing common
+/// functionality involving loops over rows.
 class RowEchelonMatrixInterface {
 public:
     virtual ~RowEchelonMatrixInterface() = default;
@@ -34,7 +33,7 @@ public:
 
     virtual std::size_t cols() const noexcept = 0;
 
-    virtual const Equation& row(std::size_t index) const = 0;
+    virtual const Equation& row(std::size_t row_idx) const = 0;
 
     virtual const IndexSet& pivot_col_idxs() const noexcept = 0;
 
@@ -52,8 +51,8 @@ public:
     /// reading the last column as the constant.
     virtual ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const = 0;
 
-    /// @brief Remove the row at `index`, returning it.
-    virtual Equation pop_row(std::size_t index) = 0;
+    /// @brief Remove the row at `row_idx`, returning it.
+    virtual Equation pop_row(std::size_t row_idx) = 0;
 
     virtual void pop_last_row() = 0;
 
@@ -109,7 +108,7 @@ public:
 
     std::size_t cols() const noexcept override { return cols_; }
 
-    const Equation& row(std::size_t index) const override { return rows_[index]; }
+    const Equation& row(std::size_t row_idx) const override { return rows_[row_idx]; }
 
     const IndexSet& pivot_col_idxs() const noexcept override { return pivot_col_idxs_; }
 
@@ -125,7 +124,7 @@ public:
             return std::nullopt; // `v` already belongs to the span
         }
 
-        // Row-echelon order means the insertion index is the number of pivots
+        // Row-echelon order means the insertion row_idx is the number of pivots
         // strictly below the new leading column
         const std::size_t new_pivot_col_idx = *leading_col_idx;
         const std::size_t insert_row_idx = pivot_col_idxs_.count_below(new_pivot_col_idx);
@@ -187,15 +186,15 @@ public:
                                   : partial_reduce_with_extra_impl<true>(v, extra);
     }
 
-    Equation pop_row(std::size_t index) override {
-        Equation popped_row = std::move(rows_[index]);
+    Equation pop_row(std::size_t row_idx) override {
+        Equation popped_row = std::move(rows_[row_idx]);
         const std::optional<std::size_t> leading_col_idx =
             gf2_vector_of<V>(popped_row).leading_bit();
         // Stronger than the caller's `rows() > 0`: a structural invariant of a
         // row-echelon matrix, which never stores a zero row.
         assert(leading_col_idx && "stored row has no pivot");
 
-        rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(index));
+        rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(row_idx));
         pivot_col_idxs_.reset(*leading_col_idx);
         if (!col_idx_to_row_.empty()) {
             col_idx_to_row_[*leading_col_idx] = nullptr;
@@ -297,8 +296,7 @@ private:
         }
     }
 
-    /// @brief The row holding the pivot in `col_idx`. Rows are stored in pivot
-    /// order, so this is the number of pivots below it; the table only caches that.
+    /// @brief The row holding the pivot in `col_idx`.
     std::size_t row_idx_for_col_idx(std::size_t col_idx) const noexcept {
         return col_idx_to_row_idx_.empty() ? pivot_col_idxs_.count_below(col_idx)
                                            : col_idx_to_row_idx_[col_idx];

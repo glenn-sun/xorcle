@@ -57,9 +57,9 @@ ResolvedReason resolve_asserting_basis(TrailBasisSpace& asserting_basis, std::si
 
     Equation asserting_row = asserting_basis.pop_row(pivot_row_idx);
 
-    const std::size_t reason_index = asserting_basis.cols() - 1 - pivot_col_idx;
-    assert(reason_index < trail.reasons().size() && "trail reason index is out of range");
-    const std::optional<ClauseId> reason_clause_id = trail.reasons()[reason_index];
+    const std::size_t trail_index = asserting_basis.cols() - 1 - pivot_col_idx;
+    assert(trail_index < trail.reasons().size() && "trail reason index is out of range");
+    const std::optional<ClauseId> reason_clause_id = trail.reasons()[trail_index];
     assert(reason_clause_id.has_value() && "resolution step reached a decision, which has no reason");
     assert(*reason_clause_id < clauses.size() && "resolution reason id is out of range");
 
@@ -96,7 +96,7 @@ ResolvedReason resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_ba
                                                    DecisionProcedure& decisions,
                                                    const Equation& trail_basis_one,
                                                    bool measure_lbd) {
-    const std::size_t reason_index = asserting_basis.cols() - 1 - pivot_col_idx;
+    const std::size_t trail_index = asserting_basis.cols() - 1 - pivot_col_idx;
     // The 1-UIP loop has passed over no row, so the pivot leads the first one.
     const ResolvedReason reason = resolve_asserting_basis(
         asserting_basis, 0, pivot_col_idx, trail, clauses, trail_basis_one, measure_lbd);
@@ -105,12 +105,12 @@ ResolvedReason resolve_asserting_basis_with_reason(TrailBasisSpace& asserting_ba
     // feed CSIDS, so reordering them changes conflict counts.
     decisions.update_with_resolved_clause(reason.clause_id);
 
-    assert(reason_index < trail.order_map().size() && "trail order index is out of range");
-    assert(trail.order_map()[reason_index] < trail.span().rows() &&
+    assert(trail_index < trail.order_map().size() && "trail order index is out of range");
+    assert(trail.order_map()[trail_index] < trail.span().rows() &&
            "trail order map points outside the span");
     // The row-echelon row, not the raw equation handed to `Trail::learn()`; the
     // two differ by earlier rows.
-    decisions.update_with_critical_equation(trail.span().row(trail.order_map()[reason_index]));
+    decisions.update_with_critical_equation(trail.span().row(trail.order_map()[trail_index]));
 
     assert(asserting_basis.rows() > 0 && "resolution derived the empty clause below the root");
 
@@ -176,7 +176,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     // a resolution leaves or brings in leads strictly later.
     std::size_t frozen = 0;
     std::size_t resolution_steps = 0;
-    std::size_t dim_before_minimize = 0;
+    std::size_t width_before_minimize = 0;
     for (bool asserting = false; frozen < asserting_basis.rows();) {
         const std::optional<std::size_t> pivot_col_idx = asserting_basis.row(frozen).leading_bit();
         assert(pivot_col_idx.has_value() && "a stored row is zero");
@@ -184,7 +184,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         if (!asserting) {
             if (asserting_basis.asserting_level() < trail.level()) {
                 asserting = true;
-                dim_before_minimize = asserting_basis.rows();
+                width_before_minimize = asserting_basis.rows();
                 if (!minimize) {
                     break;
                 }
@@ -206,9 +206,9 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         // Minimization: continue the walk to the start of the trail, accepting a
         // resolution only when it strictly shrinks the clause; decision-led rows
         // are kept. Only an accepted step reaches the heuristics and the proof.
-        const std::size_t reason_index = asserting_basis.cols() - 1 - *pivot_col_idx;
-        assert(reason_index < trail.reasons().size() && "trail reason index is out of range");
-        if (trail.reasons()[reason_index].has_value()) {
+        const std::size_t trail_index = asserting_basis.cols() - 1 - *pivot_col_idx;
+        assert(trail_index < trail.reasons().size() && "trail reason index is out of range");
+        if (trail.reasons()[trail_index].has_value()) {
             TrailBasisSpace resolved = asserting_basis;
             const ResolvedReason reason = resolve_asserting_basis(
                 resolved, frozen, *pivot_col_idx, trail, clauses, trail_basis_one,
@@ -223,15 +223,15 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                 }
                 decisions.update_with_resolved_clause(reason.clause_id);
                 decisions.update_with_critical_equation(
-                    trail.span().row(trail.order_map()[reason_index]));
+                    trail.span().row(trail.order_map()[trail_index]));
                 continue;
             }
         }
         ++frozen;
     }
 
-    assert(dim_before_minimize > 0 && "the walk never reached the asserting point");
-    assert(asserting_basis.rows() <= dim_before_minimize && "minimization widened the clause");
+    assert(width_before_minimize > 0 && "the walk never reached the asserting point");
+    assert(asserting_basis.rows() <= width_before_minimize && "minimization widened the clause");
 
     const std::size_t asserting_level = asserting_basis.asserting_level();
     assert(asserting_level < trail.level() && "the walk exited without discarding a level");
@@ -261,7 +261,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                           std::move(reason_ids),
                           std::move(reason_lbds),
                           lbd,
-                          dim_before_minimize};
+                          width_before_minimize};
 }
 
 } // namespace xorcle

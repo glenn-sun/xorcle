@@ -15,7 +15,7 @@ struct ProgressSnapshot {
     std::size_t num_propagations = 0;
     std::size_t num_restarts = 0;
     std::size_t decisions = 0;
-    std::size_t trail_level = 0;
+    std::size_t decision_level = 0;
     std::size_t trail_rank = 0;
     /// @brief Active variables less the root trail's rank: the dimension of the
     /// space still to be searched.
