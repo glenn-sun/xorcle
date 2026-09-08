@@ -433,8 +433,8 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
     out << "xorcle " << version << "\n"
         << "Usage: " << program_name << " [options] <instance>\n"
         << "\n"
-        << "Solves an XNF instance: a conjunction of clauses, each a disjunction\n"
-        << "of linear equations modulo 2.\n"
+        << "A SAT solver for XNF formulas, where clauses are disjunctions of\n"
+        << "linear equations modulo 2. See arXiv:2605.15002 for details.\n"
         << "\nOptions:\n";
 
 #define XORCLE_OPTION(name, kind, default_value, lo, hi, help)                                     \
@@ -448,19 +448,6 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
 
     out << "  --help\n"
         << "      show this message and exit\n";
-
-    out << "\nNotes:\n"
-        << "  --decisions=berkmin and --decisions=cmtf are presets: each fixes the\n"
-        << "  whole CSIDS triple, so combining one with a --csids-* option is an\n"
-        << "  error rather than a silent override.\n"
-        << "\n"
-        << "  Restarts are off by default: measured single-threaded, both schedules\n"
-        << "  lose to --restart=none on every benchmark set tried.\n"
-        << "\n"
-        << "  --deletion requires --selection=cyclic, and its default\n"
-        << "  --deletion-key=activity requires --decisions=csids; --deletion-key=lbd\n"
-        << "  lifts that. Asking for --deletion=true against either is an error;\n"
-        << "  left at its default it turns itself off instead.\n";
 }
 
 // --- Parsing a command line ------------------------------------------------
@@ -553,14 +540,11 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (!options.csids_preset.empty() &&
         (seen.csids_initial || seen.csids_decay || seen.csids_bump)) {
         throw CliError("--decisions=" + options.csids_preset +
-                       " is a preset that fixes A0, alpha and delta; it does not accept "
-                       "--csids-initial, --csids-decay or --csids-bump");
+                       " is a preset and does not accept --csids-initial, --csids-decay "
+                       "or --csids-bump");
     }
-    // No Luby budget beat leaving restarts off, so the schedule asks rather than
-    // shipping a value that would only look tuned.
     if (options.restart == RestartMethod::luby && options.restart_luby_unit == 0) {
-        throw CliError("--restart=luby requires --restart-luby-unit=N: no budget tried beat "
-                       "--restart=none, so there is no default worth shipping");
+        throw CliError("--restart=luby requires --restart-luby-unit=N");
     }
     // One check per `XORCLE_REQUIRES` row: an option given where nothing would
     // read it is refused, so a run never reports a setting it did not act on.
@@ -588,14 +572,11 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
         throw CliError("--deletion-core-lbd must not exceed --deletion-tier2-lbd");
     }
     if (options.deletion && options.selection != ClauseSelectorName::cyclic) {
-        throw CliError("--deletion requires --selection=cyclic: no other selector yet keeps its "
-                       "indexes in step with a deleted clause");
+        throw CliError("--deletion requires --selection=cyclic");
     }
     if (options.deletion && options.deletion_key == DeletionKey::activity &&
         options.decisions != DecisionProcedureName::csids) {
-        throw CliError("--deletion-key=activity, the default, requires --decisions=csids, the "
-                       "only decision procedure that scores clauses; pass --deletion-key=lbd "
-                       "to delete by LBD instead");
+        throw CliError("--deletion-key=activity requires --decisions=csids");
     }
 }
 
@@ -623,8 +604,7 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
         }
         if (argument.starts_with("-") && !argument.starts_with("--")) {
             throw CliError("'" + argument +
-                           "' is not an option; every option has the form --name=value, "
-                           "listed by --help");
+                           "' is not an option. See --help for details.");
         }
         if (!argument.starts_with("--")) {
             positionals.push_back(argument);
@@ -688,9 +668,9 @@ inline RestartConfig restart_config(const Options& options) {
                          .luby_unit_conflicts = options.restart_luby_unit,
                          .lbd_fast_window = options.restart_lbd_fast,
                          .lbd_slow_window = options.restart_lbd_slow,
-                         .lbd_margin = options.restart_lbd_margin,
-                         .lbd_min_conflicts = options.restart_lbd_min,
-                         .lbd_block_factor = options.restart_lbd_block,
+                         .lbd_min_ratio = options.restart_lbd_min_ratio,
+                         .lbd_min_conflicts = options.restart_lbd_min_conflicts,
+                         .lbd_trail_ratio = options.restart_lbd_trail_ratio,
                          .reuse_trail = options.restart_reuse_trail};
 }
 

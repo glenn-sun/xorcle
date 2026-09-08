@@ -122,12 +122,12 @@ TEST_CASE("options: booleans accept on/off as well as true/false") {
 TEST_CASE("options: values outside the table's bounds are rejected") {
     SUBCASE("a size below its minimum") {
         CHECK(contains(rejection_message<CliError>({"--compact-every=0"}), "must be at least 1"));
-        CHECK(contains(rejection_message<CliError>({"--restart-lbd-min=0"}), "must be at least 1"));
+        CHECK(contains(rejection_message<CliError>({"--restart-lbd-min-conflicts=0"}), "must be at least 1"));
     }
     SUBCASE("a real below its minimum") {
         CHECK(contains(rejection_message<CliError>({"--csids-initial=-1"}), "must be at least 0"));
         CHECK(contains(rejection_message<CliError>({"--csids-bump=-0.5"}), "must be at least 0"));
-        CHECK(contains(rejection_message<CliError>({"--restart-lbd-margin=0.5"}),
+        CHECK(contains(rejection_message<CliError>({"--restart-lbd-min-ratio=0.5"}),
                        "must be at least 1"));
     }
     SUBCASE("the decay admits both of its bounds") {
@@ -159,8 +159,8 @@ TEST_CASE("options: malformed command lines are rejected") {
     CHECK(contains(rejection_message<CliError>({"--nonsense=1"}), "unknown option '--nonsense'"));
     // Single-dash arguments are named as such rather than being taken for extra
     // positional arguments.
-    CHECK(contains(rejection_message<CliError>({"-d", "clause_vsids"}), "every option has the form --name=value"));
-    CHECK(contains(rejection_message<CliError>({"-x", "off"}), "every option has the form --name=value"));
+    CHECK(contains(rejection_message<CliError>({"-d", "clause_vsids"}), "is not an option"));
+    CHECK(contains(rejection_message<CliError>({"-x", "off"}), "is not an option"));
 
     std::ostringstream help;
     CHECK_THROWS_AS(parse_options({}, help), CliError);
@@ -283,19 +283,18 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--help"));
 
     CHECK(contains(text, "--deletion=true|false"));
-    CHECK(contains(text, "needs --selection=cyclic and, by the default key, --decisions=csids "
-                         "[default: true]"));
+    CHECK(contains(text, "periodically delete some learned clauses (only with cyclic selector) "
+                       "[default: true]"));
     CHECK(contains(text, "--deletion-every=N"));
     CHECK(contains(text, "--deletion-key=lbd|activity"));
 
     // The requirement table feeds the help, so a refusal is never a surprise.
-    CHECK(contains(text, "conflicts between compactions; requires --compact=true"));
-    CHECK(contains(text, "how far the fast LBD average must exceed the slow one; "
-                         "requires --restart=lbd"));
+    CHECK(contains(text, "number of conflicts between compactions; requires --compact=true"));
+    CHECK(contains(text, "fast/slow ratio needed for LBD restart; requires --restart=lbd"));
 
     CHECK(contains(text, "--restart=none|luby|lbd"));
     CHECK(contains(text, "restart schedule"));
-    CHECK(contains(text, "conflict budget for a Luby value of 1"));
+    CHECK(contains(text, "multiplier for luby schedule"));
     CHECK(contains(text, "window of the fast LBD average"));
 }
 
@@ -313,18 +312,16 @@ TEST_CASE("options: deletion needs the heuristics it reads") {
         "--deletion requires --selection=cyclic"));
     CHECK(contains(rejection_message<CliError>({"--deletion=true", "--deletion-key=activity",
                                                 "--decisions=variable_vsids"}),
-                   "--deletion-key=activity, the default, requires --decisions=csids"));
+                   "--deletion-key=activity requires --decisions=csids"));
     CHECK(contains(rejection_message<CliError>({"--deletion-core-lbd=7"}),
                    "--deletion-core-lbd must not exceed --deletion-tier2-lbd"));
 
-    // The key defaults to activity, so --deletion alone carries the requirement, and
-    // the message has to name the way out.
+    // The key defaults to activity, so --deletion alone carries the requirement.
     const std::string defaulted =
         rejection_message<CliError>({"--deletion=true", "--decisions=variable_vsids"});
     CHECK(contains(defaulted, "requires --decisions=csids"));
-    CHECK(contains(defaulted, "pass --deletion-key=lbd"));
     CHECK(contains(rejection_message<CliError>({"--deletion=true", "--decisions=fixed_literals"}),
-                   "pass --deletion-key=lbd"));
+                   "requires --decisions=csids"));
 
     // Each constraint binds only where deletion actually reads the heuristic.
     CHECK_NOTHROW(parse_with_input({"--deletion=true", "--deletion-key=activity"}));
@@ -356,10 +353,10 @@ TEST_CASE("options: deletion refuses an incompatible choice rather than yielding
 }
 
 TEST_CASE("options: the configuration projections carry the values across") {
-    // Each option is given where something reads it: the LBD margin needs the LBD
+    // Each option is given where something reads it: the LBD ratio needs the LBD
     // schedule, so the Luby settings are checked in their own parse below.
     const Options options = parse_with_input({"--compact=false",
-                                              "--restart=lbd", "--restart-lbd-margin=1.25",
+                                              "--restart=lbd", "--restart-lbd-min-ratio=1.25",
                                               "--deletion=true",
                                               "--deletion-every=25", "--deletion-core-lbd=2",
                                               "--deletion-tier2-lbd=8", "--deletion-key=activity"});
@@ -377,7 +374,7 @@ TEST_CASE("options: the configuration projections carry the values across") {
 
     const RestartConfig restart = restart_config(options);
     CHECK(restart.method == RestartMethod::lbd);
-    CHECK(restart.lbd_margin == doctest::Approx(1.25));
+    CHECK(restart.lbd_min_ratio == doctest::Approx(1.25));
 
     const RestartConfig luby =
         restart_config(parse_with_input({"--restart=luby", "--restart-luby-unit=50"}));
@@ -474,8 +471,8 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
           "--compact-every requires --compact=true; nothing would read it here");
     CHECK(refusal({"--decisions=variable_vsids", "--deletion=false", "--csids-decay=0.5"})
               .starts_with("--csids-decay requires --decisions=csids"));
-    CHECK(refusal({"--defer-pushes=4"}).starts_with("--defer-pushes requires"));
-    CHECK(refusal({"--restart-lbd-margin=1.2"}).starts_with("--restart-lbd-margin requires"));
+    CHECK(refusal({"--wait-for-queue=4"}).starts_with("--wait-for-queue requires"));
+    CHECK(refusal({"--restart-lbd-min-ratio=1.2"}).starts_with("--restart-lbd-min-ratio requires"));
     CHECK(refusal({"--restart-luby-unit=50"}).starts_with("--restart-luby-unit requires"));
     CHECK(refusal({"--deletion=false", "--deletion-every=25"})
               .starts_with("--deletion-every requires"));
@@ -498,10 +495,10 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
 
     // Each of these is given where something does read it.
     CHECK(parse_with_input({"--compact-every=8"}).compact_every == 8);
-    CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-margin=1.2"}).restart_lbd_margin ==
+    CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-min-ratio=1.2"}).restart_lbd_min_ratio ==
           doctest::Approx(1.2));
     CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false",
-                            "--defer-pushes=4"}).defer_pushes == 4);
+                            "--wait-for-queue=4"}).wait_for_queue == 4);
     CHECK(parse_with_input({"--report=all"}).report == "all");
 }
 

@@ -31,17 +31,17 @@ public:
     const IndexSet& dropped_columns() const noexcept { return dropped_columns_; }
 
     /// @brief New numbering of a variable from the old numbering, or `npos` if dropped.
-    /// @pre `old_index < old_num_vars()`. The constant column has no image here;
+    /// @pre `old_col_idx < old_num_vars()`. The constant column has no image here;
     /// a caller mapping a whole equation handles bit `old_num_vars()` itself.
-    std::size_t to_new(std::size_t old_index) const noexcept {
-        assert(old_index < old_num_vars_ && "to_new: index is not in the old numbering");
-        return old_to_new_[old_index];
+    std::size_t to_new(std::size_t old_col_idx) const noexcept {
+        assert(old_col_idx < old_num_vars_ && "to_new: old_col_idx is not in the old numbering");
+        return old_to_new_[old_col_idx];
     }
 
-    /// @pre `new_index < new_num_vars()`, i.e. the constant column is excluded here too.
-    std::size_t to_old(std::size_t new_index) const noexcept {
-        assert(new_index < new_num_vars_ && "to_old: index is not in the new numbering");
-        return new_to_old_[new_index];
+    /// @pre `new_col_idx < new_num_vars()`, i.e. the constant column is excluded here too.
+    std::size_t to_old(std::size_t new_col_idx) const noexcept {
+        assert(new_col_idx < new_num_vars_ && "to_old: new_col_idx is not in the new numbering");
+        return new_to_old_[new_col_idx];
     }
 
 private:

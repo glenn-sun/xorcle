@@ -22,9 +22,9 @@ void debug_assert_non_unit_watches_valid(const Clause& clause) {
 
 } // namespace
 
-LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars, std::size_t defer_pushes)
-    : by_leading_term_(num_vars + 1), defer_pushes_(defer_pushes) {
-    assert(defer_pushes >= 1 && "a clause is queued on at least its first bottom push");
+LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars, std::size_t wait_for_queue)
+    : by_leading_term_(num_vars + 1), wait_for_queue_(wait_for_queue) {
+    assert(wait_for_queue >= 1 && "a clause is queued on at least its first bottom push");
 }
 
 std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex row_idx) const {
@@ -54,12 +54,12 @@ void LeadingTermWatchlist::push_bottom(ClauseId id) {
     if (in_queue_[id]) {
         return;
     }
-    if (defer_pushes_ > 1) {
+    if (wait_for_queue_ > 1) {
         const std::uint32_t pushes = ++bottom_pushes_since_pop_[id];
         if (pushes == 1) {
             deferred_.push_back(id);
         }
-        if (pushes < defer_pushes_) {
+        if (pushes < wait_for_queue_) {
             return;
         }
     }
@@ -120,7 +120,7 @@ std::optional<ClauseId> LeadingTermWatchlist::next() {
         if (!id.has_value()) {
             return std::nullopt;
         }
-        if (defer_pushes_ > 1) {
+        if (wait_for_queue_ > 1) {
             bottom_pushes_since_pop_[*id] = 0;
         }
         if (is_clause_active(*id)) {

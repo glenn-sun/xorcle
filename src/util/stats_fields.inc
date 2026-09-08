@@ -54,8 +54,8 @@ XORCLE_STAT(clauses, Real, average_learned_lbd, "average_learned_lbd", "Average 
 // --- Clause minimization, reported only when it ran -------------------------
 
 XORCLE_STAT(minimize, Count, num_minimized_clauses, "minimized_clauses", "Minimized clauses")
-XORCLE_STAT(minimize, Count, minimize_dim_before, "minimize_dim_before", "Dimension before minimizing")
-XORCLE_STAT(minimize, Count, minimize_dim_after, "minimize_dim_after", "Dimension after minimizing")
+XORCLE_STAT(minimize, Count, minimize_width_before, "minimize_width_before", "Width before minimizing")
+XORCLE_STAT(minimize, Count, minimize_width_after, "minimize_width_after", "Width after minimizing")
 
 // --- Clause deletion, reported only when it ran -----------------------------
 

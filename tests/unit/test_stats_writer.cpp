@@ -82,8 +82,8 @@ RunStats sample_stats() {
     stats.average_learned_lbd = 2.5;
 
     stats.num_minimized_clauses = 11;
-    stats.minimize_dim_before = 146;
-    stats.minimize_dim_after = 90;
+    stats.minimize_width_before = 146;
+    stats.minimize_width_after = 90;
 
     stats.num_deletion_passes = 4;
     stats.num_deleted_clauses = 6;
@@ -214,8 +214,8 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c Clauses allocated: 47\n"
         "c Average learned LBD: 2.500\n"
         "c Minimized clauses: 11\n"
-        "c Dimension before minimizing: 146\n"
-        "c Dimension after minimizing: 90\n"
+        "c Width before minimizing: 146\n"
+        "c Width after minimizing: 90\n"
         "c Parse time (s): 0.002\n"
         "c Solve time (s): 0.013\n"
         "c Propagations per conflict: 11.765\n"

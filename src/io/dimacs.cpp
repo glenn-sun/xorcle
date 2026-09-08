@@ -155,10 +155,10 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
     const bool rhs_is_zero = token.front() == '-';
     const std::string_view body = rhs_is_zero ? token.substr(1) : token;
     if (body.empty()) {
-        fail(origin, line_number, "empty parity expression in token: " + std::string{token});
+        fail(origin, line_number, "empty XOR expression in token: " + std::string{token});
     }
     if (body.find('-') != std::string_view::npos) {
-        fail(origin, line_number, "'-' inside a parity expression in token: " +
+        fail(origin, line_number, "'-' inside an XOR expression in token: " +
                                       std::string{token});
     }
 

@@ -174,8 +174,8 @@ BothWays learn_both_ways(const Conflict& conflict, EquationRepr repr) {
 /// @brief The invariants minimization has to keep, whether or not it shrank the
 /// clause on this conflict.
 void check_minimization_invariants(const BothWays& both, const Trail& trail) {
-    CHECK(both.plain.dim_before_minimize == both.plain.clause.rows());
-    CHECK(both.minimized.dim_before_minimize == both.plain.clause.rows());
+    CHECK(both.plain.width_before_minimize == both.plain.clause.rows());
+    CHECK(both.minimized.width_before_minimize == both.plain.clause.rows());
 
     // Narrower, and spanning less: the minimized negation lies inside the
     // negation of the clause the 1-UIP loop stopped at.
@@ -308,16 +308,16 @@ TEST_CASE_TEMPLATE("minimize: a whole run reaches the same verdict and narrower 
 
     // Off, the counters stay untouched.
     CHECK(off.counters.num_minimized_clauses == 0);
-    CHECK(off.counters.minimize_dim_before == 0);
-    CHECK(off.counters.minimize_dim_after == 0);
+    CHECK(off.counters.minimize_width_before == 0);
+    CHECK(off.counters.minimize_width_after == 0);
 
-    // On, every non-root conflict is counted, and the total dimension can only
+    // On, every non-root conflict is counted, and the total width can only
     // have fallen.
-    CHECK(on.counters.minimize_dim_before > 0);
-    CHECK(on.counters.minimize_dim_after <= on.counters.minimize_dim_before);
+    CHECK(on.counters.minimize_width_before > 0);
+    CHECK(on.counters.minimize_width_after <= on.counters.minimize_width_before);
     CHECK(on.counters.num_minimized_clauses <= on.counters.num_conflicts);
     CHECK((on.counters.num_minimized_clauses > 0) ==
-          (on.counters.minimize_dim_after < on.counters.minimize_dim_before));
+          (on.counters.minimize_width_after < on.counters.minimize_width_before));
 }
 
 TEST_CASE("minimize: the option is on by default and round-trips") {

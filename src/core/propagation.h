@@ -57,8 +57,8 @@ private:
     Equation working_eqn_;  ///< First watch's reduction, then candidate rows.
     Equation working_eqn2_; ///< Second watch's reduction, then the complement's.
 
-    /// @brief A preallocated `0 = 1`; adding it to a falsified clause row is the
-    /// linear negation that yields the equation the clause implies.
+    /// @brief A preallocated `0 = 1`; adding it to a falsified clause row undoes
+    /// the linear negation, recovering the equation the clause implies.
     Equation false_equation_;
 };
 

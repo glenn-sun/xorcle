@@ -37,7 +37,7 @@ def write_cnf_xor(path: str, nvars: int, cnf_clauses: List[List[int]], xor_claus
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Convert XNF (DIMACS-plus) to CNF, CNF-XOR, 2-XNF, or exponential CNF.")
+    parser = argparse.ArgumentParser(description="Convert extended DIMACS/XNF to CNF, CNF-XOR, 2-XNF, or exponential CNF.")
     parser.add_argument("format", choices=["cnf", "cnf-exp", "cnf-xor", "2-xnf"], help="Output format")
     parser.add_argument("input", help="Input XNF file")
     parser.add_argument("output", help="Output file")

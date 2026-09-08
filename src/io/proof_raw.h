@@ -18,7 +18,7 @@
 namespace xorcle {
 
 /// @brief One equation: ascending bit indices, with `num_vars` standing for the
-/// constant column, exactly as `Equation::bits()` reports it.
+/// constant bit, exactly as `Equation::bits()` reports it.
 using RawRow = std::vector<std::size_t>;
 
 /// @brief A learned clause in its linear negation, reasons in replay order.
@@ -36,7 +36,7 @@ struct RawEmpty {
 
 /// @brief One root trail row a compaction eliminated, and the clause that
 /// propagated it. Its derivation depends only on units before it in the record.
-/// The row is a trail row, so it is reduced only on its leading column.
+/// The row is a trail row, so it is reduced only on its leading bit.
 struct RawUnit {
     RawRow row;
     ClauseId reason;

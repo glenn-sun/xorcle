@@ -106,10 +106,10 @@ void Solver::handle_non_root_conflict() {
     AssertingClause learned = find_asserting_clause(trail_, selector_->clauses(), *decisions_,
                                                     minimize_, deletion_.enabled);
     if (minimize_) {
-        counters_.minimize_dim_before += learned.dim_before_minimize;
-        counters_.minimize_dim_after += learned.clause.rows();
+        counters_.minimize_width_before += learned.width_before_minimize;
+        counters_.minimize_width_after += learned.clause.rows();
         counters_.num_minimized_clauses +=
-            learned.clause.rows() < learned.dim_before_minimize ? 1 : 0;
+            learned.clause.rows() < learned.width_before_minimize ? 1 : 0;
     }
     if (deletion_.enabled) {
         // Before the proof path reverses `reason_ids`, which `reason_lbds` parallels.
@@ -276,11 +276,11 @@ ProgressSnapshot Solver::progress_snapshot() const {
             interval_s > 0.0 ? static_cast<double>(interval_conflicts) / interval_s : 0.0,
         .num_propagations = counters_.num_propagations,
         .num_clauses = num_active_clauses_,
-        .average_level = per_conflict(counters_.sum_conflict_level - sum_level_at_last_report_),
-        .average_rank = per_conflict(counters_.sum_conflict_rank - sum_rank_at_last_report_),
+        .average_decision_level = per_conflict(counters_.sum_conflict_level - sum_level_at_last_report_),
+        .average_trail_rank = per_conflict(counters_.sum_conflict_rank - sum_rank_at_last_report_),
         .remaining_vars = active_num_vars_ - trail_[0].span().rows(),
         .decisions = decisions_->decision_stats().decisions,
-        .trail_level = trail_.level(),
+        .decision_level = trail_.level(),
         .trail_rank = trail_.span().rows(),
         .num_restarts = counters_.num_restarts,
         .num_reused_levels = counters_.num_reused_levels,

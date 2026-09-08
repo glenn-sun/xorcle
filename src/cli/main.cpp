@@ -74,7 +74,7 @@ std::unique_ptr<ClauseSelector> make_clause_selector(const Options& options,
         case ClauseSelectorName::cyclic:
             return std::make_unique<Cyclic>(num_vars);
         case ClauseSelectorName::leading_term_watchlist:
-            return std::make_unique<LeadingTermWatchlist>(num_vars, options.defer_pushes);
+            return std::make_unique<LeadingTermWatchlist>(num_vars, options.wait_for_queue);
     }
     assert(false && "make_clause_selector: unknown clause selector name");
     return std::make_unique<Cyclic>(num_vars);
@@ -269,8 +269,8 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                                          static_cast<double>(stats.learned_clauses);
 
     stats.num_minimized_clauses = counters.num_minimized_clauses;
-    stats.minimize_dim_before = counters.minimize_dim_before;
-    stats.minimize_dim_after = counters.minimize_dim_after;
+    stats.minimize_width_before = counters.minimize_width_before;
+    stats.minimize_width_after = counters.minimize_width_after;
 
     stats.num_deletion_passes = counters.num_deletion_passes;
     stats.num_deleted_clauses = counters.num_deleted_clauses;

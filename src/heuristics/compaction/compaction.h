@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file compaction.h
-/// @brief Eliminating the variables the root trail span pivots on.
+/// @brief Eliminating the leading terms of all known units.
 
 #include <cstddef>
 #include <cstdint>
@@ -50,7 +50,7 @@ Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row)
 /// @pre The trail span's pivot column set has size `state.active_num_vars + 1`.
 bool should_compact_before_decision(const CompactionState& state);
 
-/// @brief Build the change of basis dropping every variable the span pivots on.
+/// @brief Build the change of basis eliminating the leading terms of all known units.
 /// @pre The trail is at the root level, and its span's pivot column set has size
 /// `active_num_vars + 1` and does not include the constant column.
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars);

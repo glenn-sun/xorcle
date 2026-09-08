@@ -18,9 +18,8 @@
 
 namespace xorcle {
 
-/// @brief The abstract interface behind `Equation`.
-/// Contains all functionality involving per-bit loops, to avoid virtual
-/// dispatch at low levels.
+/// @brief The abstract interface behind `Equation`, containing all
+/// functionality involving per-bit loops.
 class EquationInterface {
 public:
     virtual ~EquationInterface() = default;

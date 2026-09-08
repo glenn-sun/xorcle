@@ -13,7 +13,7 @@ namespace xorcle {
 /// @brief Restart once recent clauses are worse than the run has averaged.
 ///
 /// Glucose's rule over exponential moving averages of the literal block
-/// distance: a fast average exceeding the slow one by `RestartConfig::lbd_margin`
+/// distance: a fast average exceeding the slow one by `RestartConfig::lbd_min_ratio`
 /// means learning has degraded. A trail far longer than average blocks that and
 /// clears the fast average instead, on the grounds that a long trail is close to
 /// a model.
@@ -32,8 +32,8 @@ private:
     Ema fast_lbd_;
     Ema slow_lbd_;
     Ema trail_size_;
-    double margin_;
-    double block_factor_;
+    double min_ratio_;
+    double trail_ratio_;
     std::size_t min_conflicts_;
     std::size_t conflicts_since_restart_ = 0;
     std::size_t blocked_ = 0;

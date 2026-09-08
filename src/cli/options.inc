@@ -47,17 +47,17 @@ XORCLE_ENUM_OPTION(equation_repr, EquationRepr, EquationRepr::dense,
 XORCLE_ENUM_VALUE(equation_repr, "dense", EquationRepr::dense)
 XORCLE_ENUM_VALUE(equation_repr, "sparse", EquationRepr::sparse)
 
-XORCLE_OPTION(seed, U64, 0, 0, UINT64_MAX, "base RNG seed; a run is reproducible from it")
+XORCLE_OPTION(seed, U64, 0, 0, UINT64_MAX, "RNG seed")
 
 // --- Compaction ------------------------------------------------------------
 
-XORCLE_OPTION(compact, Bool, true, false, true, "variable compaction")
-XORCLE_OPTION(compact_every, Size, 16, 1, SIZE_MAX, "conflicts between compactions")
+XORCLE_OPTION(compact, Bool, true, false, true, "eliminate the leading terms of all known units")
+XORCLE_OPTION(compact_every, Size, 16, 1, SIZE_MAX, "number of conflicts between compactions")
 
 // --- Decisions -------------------------------------------------------------
 
 XORCLE_ENUM_OPTION(decisions, DecisionProcedureName, DecisionProcedureName::csids,
-                   "decision procedure; berkmin and cmtf are CSIDS presets")
+                   "decision procedure (berkmin/cmtf are CSIDS presets)")
 XORCLE_ENUM_VALUE(decisions, "csids", DecisionProcedureName::csids)
 XORCLE_ENUM_VALUE(decisions, "variable_vsids", DecisionProcedureName::variable_vsids)
 XORCLE_ENUM_VALUE(decisions, "fixed_literals", DecisionProcedureName::fixed_literals)
@@ -67,12 +67,12 @@ XORCLE_ENUM_VALUE(decisions, "cmtf", DecisionProcedureName::csids)
 XORCLE_PRESET(berkmin, csids_berkmin_config)
 XORCLE_PRESET(cmtf, csids_cmtf_config)
 
-XORCLE_OPTION(csids_initial, Real, 1.0, 0.0, INFINITY, "A0: activity a new asserting clause enters at")
-XORCLE_OPTION(csids_bump, Real, 1.0, 0.0, INFINITY, "delta: activity bump per resolution step")
-XORCLE_OPTION(csids_decay, Real, 0.98, 0.0, 1.0, "alpha: activity decay per conflict")
+XORCLE_OPTION(csids_initial, Real, 1.0, 0.0, INFINITY, "initial activity of asserting clauses")
+XORCLE_OPTION(csids_bump, Real, 1.0, 0.0, INFINITY, "activity bump per resolution step")
+XORCLE_OPTION(csids_decay, Real, 0.98, 0.0, 1.0, "activity decay per conflict")
 
 XORCLE_ENUM_OPTION(phase, DecisionPhase, default_decision_phase,
-                   "which side of a sampled clause row to decide")
+                   "decide sampled equation (falsify) or its negation (satisfy)")
 XORCLE_ENUM_VALUE(phase, "falsify", DecisionPhase::falsify)
 XORCLE_ENUM_VALUE(phase, "satisfy", DecisionPhase::satisfy)
 XORCLE_ENUM_VALUE(phase, "random", DecisionPhase::random)
@@ -84,8 +84,8 @@ XORCLE_ENUM_OPTION(selection, ClauseSelectorName, ClauseSelectorName::cyclic,
 XORCLE_ENUM_VALUE(selection, "cyclic", ClauseSelectorName::cyclic)
 XORCLE_ENUM_VALUE(selection, "leading_term_watchlist", ClauseSelectorName::leading_term_watchlist)
 
-XORCLE_OPTION(defer_pushes, Size, 1, 1, SIZE_MAX,
-              "bottom pushes before a leading-term-watchlist clause is queued")
+XORCLE_OPTION(wait_for_queue, Size, 1, 1, SIZE_MAX,
+              "for watchlists of earlier variables, do not queue until requested N times")
 
 // --- Restarts --------------------------------------------------------------
 
@@ -95,31 +95,31 @@ XORCLE_ENUM_VALUE(restart, "luby", RestartMethod::luby)
 XORCLE_ENUM_VALUE(restart, "lbd", RestartMethod::lbd)
 
 XORCLE_OPTION(restart_reuse_trail, Bool, true, false, true,
-              "a restart keeps the decisions it would re-make at once")
+              "after a restart, decide with the same clauses as before, if possible "
+              "(only with CSIDS)")
 
 XORCLE_OPTION(restart_luby_unit, Size, 0, 0, SIZE_MAX,
-              "conflict budget for a Luby value of 1; --restart=luby requires it")
+              "multiplier for luby schedule")
 XORCLE_OPTION(restart_lbd_fast, Size, 33, 1, SIZE_MAX,
               "window of the fast LBD average")
 XORCLE_OPTION(restart_lbd_slow, Size, 100000, 1, SIZE_MAX,
               "window of the slow LBD average")
-XORCLE_OPTION(restart_lbd_margin, Real, 1.1, 1.0, INFINITY,
-              "how far the fast LBD average must exceed the slow one")
-XORCLE_OPTION(restart_lbd_min, Size, 2, 1, SIZE_MAX,
-              "conflicts an LBD restart waits out")
-XORCLE_OPTION(restart_lbd_block, Real, 1.4, 0.0, INFINITY,
-              "trail length, relative to average, that blocks an LBD restart; 0 never blocks")
+XORCLE_OPTION(restart_lbd_min_ratio, Real, 1.1, 1.0, INFINITY,
+              "fast/slow ratio needed for LBD restart")
+XORCLE_OPTION(restart_lbd_min_conflicts, Size, 2, 1, SIZE_MAX,
+              "elapsed conflicts needed for LBD restart")
+XORCLE_OPTION(restart_lbd_trail_ratio, Real, 1.4, 0.0, INFINITY,
+              "do not restart if trail is this much longer than average (0 = off)")
 
 // --- Clause minimization ---------------------------------------------------
 
 XORCLE_OPTION(minimize, Bool, true, false, true,
-              "shrink each learned clause by resolving past the asserting point")
+              "apply local minimization (self-subsumption) to each learned clause")
 
 // --- Deletion --------------------------------------------------------------
 
 XORCLE_OPTION(deletion, Bool, true, false, true,
-              "delete the least useful learned clauses; needs --selection=cyclic and, by the "
-              "default key, --decisions=csids")
+              "periodically delete some learned clauses (only with cyclic selector)")
 XORCLE_OPTION(deletion_every, Size, 200, 1, SIZE_MAX, "conflicts between deletion passes")
 XORCLE_OPTION(deletion_core_lbd, Size, 2, 0, SIZE_MAX,
               "a learned clause of at most this LBD is never deleted")
@@ -127,7 +127,7 @@ XORCLE_OPTION(deletion_tier2_lbd, Size, 6, 0, SIZE_MAX,
               "a learned clause of at most this LBD survives until two deletion passes go unused")
 
 XORCLE_ENUM_OPTION(deletion_key, DeletionKey, DeletionKey::activity,
-                   "which score orders the clauses a deletion pass deletes")
+                   "which score orders a deletion pass (activity requires CSIDS)")
 XORCLE_ENUM_VALUE(deletion_key, "lbd", DeletionKey::lbd)
 XORCLE_ENUM_VALUE(deletion_key, "activity", DeletionKey::activity)
 
@@ -138,9 +138,9 @@ XORCLE_OPTION(proof_raw, Text, "", "", "",
               "keep the raw proof here instead of in a temporary file")
 XORCLE_OPTION(stats_file, Text, "", "", "", "append CSV statistics here instead of printing them")
 XORCLE_OPTION(report_every, Size, 100, 0, SIZE_MAX,
-              "conflicts between progress report lines; 0 reports nothing")
+              "conflicts between progress report lines (0 = off)")
 XORCLE_OPTION(report, Name, "default", "", "",
-              "progress columns, comma-joined: default, search, deletion, propagation, all")
+              "progress columns (default/search/deletion/propagation/all, comma-joined)")
 
 // --- What each option needs in order to be read -----------------------------
 //
@@ -159,18 +159,18 @@ XORCLE_REQUIRES(csids_initial, options.decisions == DecisionProcedureName::csids
 XORCLE_REQUIRES(csids_bump, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
 XORCLE_REQUIRES(csids_decay, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
 XORCLE_REQUIRES(phase, options.decisions == DecisionProcedureName::csids,
-                "--decisions=csids, the only procedure that decides a side of a clause row")
+                "--decisions=csids, the only procedure that decides a sampled equation")
 
-XORCLE_REQUIRES(defer_pushes, options.selection == ClauseSelectorName::leading_term_watchlist,
+XORCLE_REQUIRES(wait_for_queue, options.selection == ClauseSelectorName::leading_term_watchlist,
                 "--selection=leading_term_watchlist")
 
 XORCLE_REQUIRES(restart_reuse_trail, options.restart != RestartMethod::none, "a restart schedule")
 XORCLE_REQUIRES(restart_luby_unit, options.restart == RestartMethod::luby, "--restart=luby")
 XORCLE_REQUIRES(restart_lbd_fast, options.restart == RestartMethod::lbd, "--restart=lbd")
 XORCLE_REQUIRES(restart_lbd_slow, options.restart == RestartMethod::lbd, "--restart=lbd")
-XORCLE_REQUIRES(restart_lbd_margin, options.restart == RestartMethod::lbd, "--restart=lbd")
-XORCLE_REQUIRES(restart_lbd_min, options.restart == RestartMethod::lbd, "--restart=lbd")
-XORCLE_REQUIRES(restart_lbd_block, options.restart == RestartMethod::lbd, "--restart=lbd")
+XORCLE_REQUIRES(restart_lbd_min_ratio, options.restart == RestartMethod::lbd, "--restart=lbd")
+XORCLE_REQUIRES(restart_lbd_min_conflicts, options.restart == RestartMethod::lbd, "--restart=lbd")
+XORCLE_REQUIRES(restart_lbd_trail_ratio, options.restart == RestartMethod::lbd, "--restart=lbd")
 
 XORCLE_REQUIRES(deletion_every, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_core_lbd, options.deletion, "--deletion=true")

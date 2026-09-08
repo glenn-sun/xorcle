@@ -45,7 +45,7 @@ public:
         return rows_[index];
     }
 
-    /// @pre `column < num_vars + 1`.
+    /// @pre `col_idx < num_vars + 1`.
     bool is_pivot(std::size_t col_idx) const {
         assert(col_idx < pivot_.size() && "pivot column index is out of range");
         return pivot_[col_idx];

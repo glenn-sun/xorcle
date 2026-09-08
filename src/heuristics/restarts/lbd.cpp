@@ -9,8 +9,8 @@ Lbd::Lbd(const RestartConfig& config)
     : RestartPolicy(config.reuse_trail),
       fast_lbd_(config.lbd_fast_window), slow_lbd_(config.lbd_slow_window),
       trail_size_(config.lbd_slow_window),
-      margin_(config.lbd_margin),
-      block_factor_(config.lbd_block_factor), min_conflicts_(config.lbd_min_conflicts) {
+      min_ratio_(config.lbd_min_ratio),
+      trail_ratio_(config.lbd_trail_ratio), min_conflicts_(config.lbd_min_conflicts) {
     assert(config.lbd_min_conflicts != 0 && "LBD restart interval must be non-zero");
 }
 
@@ -29,7 +29,7 @@ Lbd::should_restart_after_conflict(const ConflictSummary& conflict) {
 
     const double trail_size = static_cast<double>(conflict.trail_size);
     trail_size_.update(trail_size);
-    if (block_factor_ > 0.0 && trail_size > block_factor_ * trail_size_.value()) {
+    if (trail_ratio_ > 0.0 && trail_size > trail_ratio_ * trail_size_.value()) {
         ++blocked_;
         fast_lbd_.reset();
         return false;
@@ -38,7 +38,7 @@ Lbd::should_restart_after_conflict(const ConflictSummary& conflict) {
     if (conflicts_since_restart_ < min_conflicts_) {
         return false;
     }
-    return fast_lbd_.value() > margin_ * slow_lbd_.value();
+    return fast_lbd_.value() > min_ratio_ * slow_lbd_.value();
 }
 
 RestartStats

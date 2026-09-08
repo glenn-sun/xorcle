@@ -15,7 +15,7 @@
 
 PROJECT_NAME           = Xorcle
 PROJECT_NUMBER         = 0.2.0
-PROJECT_BRIEF          = "A CDCL(⊕) solver for XNF: clauses that are disjunctions of linear equations modulo 2"
+PROJECT_BRIEF          = "A SAT solver for XNF formulas, where clauses are disjunctions of linear equations modulo 2"
 
 OUTPUT_DIRECTORY       = docs
 

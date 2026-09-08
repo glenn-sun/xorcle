@@ -64,8 +64,8 @@ struct SolverCounters {
     std::size_t sum_conflict_rank = 0;
 
     std::size_t num_minimized_clauses = 0; ///< Learned clauses minimization shrank.
-    std::size_t minimize_dim_before = 0;   ///< Summed dimension at the asserting point.
-    std::size_t minimize_dim_after = 0;    ///< Summed dimension of the clauses as learned.
+    std::size_t minimize_width_before = 0; ///< Summed width at the asserting point.
+    std::size_t minimize_width_after = 0;  ///< Summed width of the clauses as learned.
 
     std::size_t num_deletion_passes = 0;
     std::size_t num_deleted_clauses = 0;

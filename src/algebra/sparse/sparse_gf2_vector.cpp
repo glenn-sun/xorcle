@@ -33,7 +33,7 @@ void SparseGF2Vector::set_bit(std::size_t i) {
 
 void SparseGF2Vector::plus_assign(const SparseGF2Vector& other) {
     assert(num_bits_ == other.num_bits_ && "bit count mismatch in plus_assign");
-    // Symmetric difference of two ascending index lists
+    // Symmetric difference of two ascending bit lists
     scratch_.clear();
     std::size_t i = 0;
     std::size_t j = 0;

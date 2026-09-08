@@ -20,8 +20,7 @@ namespace xorcle {
 namespace {
 
 constexpr const char* expected_default_header =
-    "c  seconds   conflicts   confl/s   propagations   clauses   avg level   avg rank"
-    "   remaining vars";
+    "c  seconds   conflicts   confl/s   propagations   clauses   avg decision level  avg trail rank   remaining vars";
 
 ProgressSnapshot sample_snapshot() {
     return ProgressSnapshot{.time_s = 1.5,
@@ -29,11 +28,11 @@ ProgressSnapshot sample_snapshot() {
                             .conflicts_per_second = 682.5,
                             .num_propagations = 987654,
                             .num_clauses = 4096,
-                            .average_level = 17.25,
-                            .average_rank = 41.5,
+                            .average_decision_level = 17.25,
+                            .average_trail_rank = 41.5,
                             .remaining_vars = 128,
                             .decisions = 2048,
-                            .trail_level = 17,
+                            .decision_level = 17,
                             .trail_rank = 41,
                             .num_restarts = 3,
                             .num_reused_levels = 7,
