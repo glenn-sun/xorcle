@@ -29,12 +29,16 @@ enum class ClauseSelectorName {
 
 /// @brief How long a clause survives a deletion pass.
 enum class ClauseTier : std::uint8_t {
-    core, ///< Kept forever, as every input clause is.
+    core, ///< Kept forever.
     tier2, ///< Demoted to `local` once enough deletion passes go by unused.
-    local ///< Evicted by key at a deletion pass.
+    local ///< Evicted by key at a deletion pass, unless it is a starting clause.
 };
 
-/// @brief The LBD cutoffs a learned clause's tier is read off.
+/// @brief The LBD of a clause no conflict has resolved against yet, which is
+/// where a starting clause begins: it is tiered by its first use, never evicted.
+inline constexpr std::size_t unset_clause_lbd = static_cast<std::size_t>(-1);
+
+/// @brief The LBD cutoffs a clause's tier is read off.
 struct ClauseTierConfig {
     std::size_t core_lbd = 2; ///< At most this enters `core`.
     std::size_t tier2_lbd = 6; ///< At most this, and above `core_lbd`, enters `tier2`.
@@ -79,7 +83,7 @@ public:
     /// @brief Whether the clause was learned rather than read from the instance.
     bool is_clause_learned(ClauseId id) const;
 
-    /// @brief Meaningful only on a learned clause; `0` on an input one.
+    /// @brief `unset_clause_lbd` until a use records one.
     std::size_t clause_lbd(ClauseId id) const;
     void set_clause_lbd(ClauseId id, std::size_t lbd);
 

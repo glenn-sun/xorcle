@@ -167,8 +167,10 @@ void ClauseSelector::add_clause(Clause clause) {
     clause_active_.push_back(1);
     clause_learned_.push_back(0);
     clause_used_since_deletion_.push_back(0);
-    clause_tier_.push_back(ClauseTier::core);
-    clause_lbd_.push_back(0);
+    // A starting clause enters `local` with no LBD: it is tiered by its first use
+    // and, being unlearned, is never an eviction candidate.
+    clause_tier_.push_back(ClauseTier::local);
+    clause_lbd_.push_back(unset_clause_lbd);
     clause_unused_intervals_.push_back(0);
 }
 

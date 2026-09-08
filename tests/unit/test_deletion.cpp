@@ -246,7 +246,7 @@ TEST_CASE_TEMPLATE("deletion: what is never a candidate", Tag, DenseTag, SparseT
         for (std::size_t index = 0; index < 4; ++index) {
             selector->add_starting_clause(make_clause(repr, 8, {{index}}));
         }
-        REQUIRE(selector->clause_tier(0) == ClauseTier::core);
+        REQUIRE(selector->clause_tier(0) == ClauseTier::local);
 
         const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
         CHECK(plan.evicted.empty());
@@ -329,10 +329,10 @@ TEST_CASE_TEMPLATE("deletion: a reason resolved at a better LBD is promoted", Ta
         solve_deleting(repr, 1, ClauseTierConfig{.core_lbd = 1, .tier2_lbd = 2});
     CHECK(counters.num_promoted_clauses != 0);
 
-    // With every learned clause already in `core` nothing can move up.
+    // With every learned clause already in `core` only starting clauses move up,
+    // out of the `local` they enter at.
     const SolverCounters all_core =
         solve_deleting(repr, 1, ClauseTierConfig{.core_lbd = 64, .tier2_lbd = 64});
-    CHECK(all_core.num_promoted_clauses == 0);
     CHECK(all_core.num_deleted_clauses == 0);
 }
 

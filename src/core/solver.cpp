@@ -302,7 +302,9 @@ void Solver::apply_compaction(CompactionPlan plan) {
 
 void Solver::note_reason_use(ClauseId id, std::size_t lbd) {
     selector_->set_clause_used_since_deletion(id, true);
-    if (!selector_->is_clause_learned(id) || lbd >= selector_->clause_lbd(id)) {
+    // A starting clause is tiered by its uses too, so this does not check for a
+    // learned one; its LBD starts unset, so the first use always records.
+    if (lbd >= selector_->clause_lbd(id)) {
         return;
     }
     selector_->set_clause_lbd(id, lbd);

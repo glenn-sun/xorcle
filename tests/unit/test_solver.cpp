@@ -506,7 +506,7 @@ TEST_CASE_TEMPLATE("solver: the learned clause's LBD reaches the selector", Tag,
 
     for (ClauseId id = 0; id < num_input_clauses; ++id) {
         CHECK_FALSE(recorder.is_clause_learned(id));
-        CHECK(recorder.clause_tier(id) == ClauseTier::core);
+        CHECK(recorder.clause_tier(id) == ClauseTier::local);
     }
     for (std::size_t index = 0; index < backjumps.size(); ++index) {
         const ClauseId id = num_input_clauses + index;

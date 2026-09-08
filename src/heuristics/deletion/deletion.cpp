@@ -47,8 +47,9 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
 
     for (ClauseId id = 0; id < num_clauses; ++id) {
         plan.unused_intervals[id] = state.selector.clause_unused_intervals(id);
-        if (!state.selector.is_clause_active(id) || !state.selector.is_clause_learned(id) ||
-            is_locked[id] != 0) {
+        // A starting clause is tiered and demoted like a learned one; only the
+        // eviction candidates below are restricted to learned clauses.
+        if (!state.selector.is_clause_active(id) || is_locked[id] != 0) {
             continue;
         }
         switch (state.selector.clause_tier(id)) {
@@ -65,7 +66,9 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
                 }
                 break;
             case ClauseTier::local:
-                candidates.push_back(id);
+                if (state.selector.is_clause_learned(id)) {
+                    candidates.push_back(id);
+                }
                 break;
         }
     }

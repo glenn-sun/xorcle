@@ -199,11 +199,11 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
     Cyclic selector(4);
     const Trail trail(repr, 4);
 
-    SUBCASE("an input clause is unlearned and kept in core") {
+    SUBCASE("an input clause is unlearned and starts in local, with no LBD recorded") {
         selector.add_starting_clause(make_clause(repr, 4, {{0}}));
         CHECK_FALSE(selector.is_clause_learned(0));
-        CHECK(selector.clause_lbd(0) == 0);
-        CHECK(selector.clause_tier(0) == ClauseTier::core);
+        CHECK(selector.clause_lbd(0) == unset_clause_lbd);
+        CHECK(selector.clause_tier(0) == ClauseTier::local);
         CHECK_FALSE(selector.is_clause_used_since_deletion(0));
         CHECK(selector.clause_unused_intervals(0) == 0);
     }
@@ -251,8 +251,8 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
 
         CHECK_FALSE(selector.is_clause_used_since_deletion(0));
         CHECK(selector.clause_unused_intervals(0) == 0);
-        CHECK(selector.clause_tier(0) == ClauseTier::core);
-        CHECK(selector.clause_lbd(0) == 0);
+        CHECK(selector.clause_tier(0) == ClauseTier::local);
+        CHECK(selector.clause_lbd(0) == unset_clause_lbd);
     }
 
     SUBCASE("metadata is id-indexed, so compaction leaves it alone") {
