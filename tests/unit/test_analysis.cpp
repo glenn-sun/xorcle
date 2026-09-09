@@ -189,6 +189,29 @@ Conflict make_two_level_conflict(EquationRepr repr, ClauseId conflict_clause_id)
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
+/// @brief A conflict whose learned clause is the level-2 decision negated, so
+/// its one pivot is a decision row rather than a propagation.
+///
+/// | step | equation | reason | level |
+/// |---|---|---|---|
+/// | 0 | `[x0 = 0]` | decision | 1 |
+/// | 1 | `[x1 = 0]` | decision | 2 |
+/// | 2 | `[x2 = 1]` | clause 0 | 2 |
+/// | 3 | `0 = 1` | clause 1 | 2 |
+Conflict make_decision_pivot_conflict(EquationRepr repr) {
+    constexpr std::size_t num_vars = 3;
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{1}, {2}})); // 0: implies [x2 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{1}, {2, 3}})); // 1: the conflict
+
+    Trail trail(repr, num_vars);
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
+    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt);
+    trail.learn(make_equation_with(repr, num_vars, {2, 3}), ClauseId{0});
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{1});
+    return Conflict{std::move(trail), std::move(clauses)};
+}
+
 /// @brief Assert the shape every fixture's trail is claimed to have.
 void check_conflicting(const Conflict& conflict) {
     const Trail& trail = conflict.trail;
@@ -364,6 +387,44 @@ TEST_CASE_TEMPLATE("analysis: every reason is measured when asked", Tag, DenseTa
     CHECK(measured.asserting_level == unmeasured.asserting_level);
     CHECK(measured.lbd == unmeasured.lbd);
     CHECK(measured_decisions.events == unmeasured_decisions.events);
+}
+
+TEST_CASE_TEMPLATE("analysis: the learned clause's pivots name trail rows", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+
+    SUBCASE("a pivot the trail propagated names the reason that propagated it") {
+        const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
+        RecordingDecisions decisions(repr, conflict.trail.num_vars());
+
+        const AssertingClause reported = find_asserting_clause(conflict.trail, conflict.clauses,
+                                                               decisions, true, false, true);
+        RecordingDecisions plain_decisions(repr, conflict.trail.num_vars());
+        const AssertingClause plain =
+            find_asserting_clause(conflict.trail, conflict.clauses, plain_decisions);
+        CHECK(plain.pivot_trail_idxs.empty());
+        CHECK(rows_of(reported.clause) == rows_of(plain.clause));
+
+        // The clause is [x2 = 1] v [x5 = 1], derived at trail steps 3 and 1.
+        CHECK(reported.pivot_trail_idxs == std::vector<std::size_t>{3, 1});
+        CHECK(conflict.trail.reasons()[3] == std::optional<ClauseId>{1});
+        CHECK(conflict.trail.reasons()[1] == std::optional<ClauseId>{0});
+    }
+
+    SUBCASE("a pivot at a decision row carries no reason") {
+        const Conflict conflict = make_decision_pivot_conflict(repr);
+        check_conflicting(conflict);
+        RecordingDecisions decisions(repr, conflict.trail.num_vars());
+
+        const AssertingClause learned = find_asserting_clause(conflict.trail, conflict.clauses,
+                                                              decisions, true, false, true);
+        // The unit [x1 = 1], which is trail step 1 negated.
+        CHECK(rows_of(learned.clause) == std::vector<std::vector<std::size_t>>{{1}});
+        CHECK(learned.pivot_trail_idxs == std::vector<std::size_t>{1});
+        CHECK_FALSE(conflict.trail.reasons()[1].has_value());
+        // Level 2 opens with that decision, so it sits where level 1 ended.
+        CHECK(conflict.trail[1].span().rows() == 1);
+    }
 }
 
 TEST_CASE_TEMPLATE("analysis: an already-asserting conflict clause is learned unchanged", Tag,

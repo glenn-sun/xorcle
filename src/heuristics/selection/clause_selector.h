@@ -30,7 +30,7 @@ enum class ClauseSelectorName {
 /// @brief How long a clause survives a deletion pass.
 enum class ClauseTier : std::uint8_t {
     core, ///< Kept forever.
-    tier2, ///< Demoted to `local` once enough deletion passes go by unused.
+    tier2, ///< Demoted to `local` once enough conflicts go by unused.
     local ///< Evicted by key at a deletion pass, unless it is a starting clause.
 };
 
@@ -93,9 +93,10 @@ public:
     bool is_clause_used_since_deletion(ClauseId id) const;
     void set_clause_used_since_deletion(ClauseId id, bool used);
 
-    /// @brief Deletion passes the clause has gone through unused, consecutively.
-    std::uint32_t clause_unused_intervals(ClauseId id) const;
-    void set_clause_unused_intervals(ClauseId id, std::uint32_t intervals);
+    /// @brief Conflicts the clause has gone unused, counted at the deletion
+    /// passes it sat through unlocked.
+    std::size_t clause_unused_conflicts(ClauseId id) const;
+    void set_clause_unused_conflicts(ClauseId id, std::size_t num_conflicts);
 
     const ClauseTierConfig& tier_config() const noexcept { return tier_config_; }
 
@@ -152,7 +153,7 @@ protected:
     std::vector<std::uint8_t> clause_used_since_deletion_;
     std::vector<ClauseTier> clause_tier_;
     std::vector<std::size_t> clause_lbd_;
-    std::vector<std::uint32_t> clause_unused_intervals_;
+    std::vector<std::size_t> clause_unused_conflicts_;
 };
 
 } // namespace xorcle

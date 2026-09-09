@@ -93,7 +93,7 @@ public:
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
            RawProofWriter* proof_writer = nullptr, const CompactionConfig& compaction = {},
            const ProgressConfig& progress = {}, bool minimize = true,
-           const DeletionConfig& deletion = {});
+           const DeletionConfig& deletion = {}, bool bump_learned_clause_pivots = false);
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -181,6 +181,15 @@ private:
     /// measured a better LBD than the stored one.
     void note_reason_use(ClauseId id, std::size_t lbd);
 
+    /// @brief Bump the clause owning each of a learned clause's pivots: the
+    /// reason of that trail row, or the clause its decision was sampled from.
+    void bump_pivot_clauses(const std::vector<std::size_t>& pivot_trail_idxs);
+
+    /// @brief The clause the decision at this trail row was sampled from, empty
+    /// where the fallback literal basis supplied it.
+    /// @pre `trail_idx` names a decision row.
+    std::optional<ClauseId> decision_clause_at(std::size_t trail_idx) const;
+
 #ifndef NDEBUG
     /// @brief Whether the tracked live-clause count still matches the flags it
     /// summarises. Recounting is linear, so this is a debug check only.
@@ -239,6 +248,10 @@ private:
 
     /// @brief Whether conflict analysis minimizes the clauses it learns.
     bool minimize_;
+
+    /// @brief Whether a conflict also bumps the clauses at the learned clause's
+    /// pivots in the trail basis.
+    bool bump_learned_clause_pivots_;
 
     /// @brief What the last progress line saw, so the next one can report the
     /// interval between them rather than the run so far.

@@ -149,7 +149,7 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
 
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
                                       DecisionProcedure& decisions, bool minimize,
-                                      bool measure_reason_lbds) {
+                                      bool measure_reason_lbds, bool report_pivot_trail_idxs) {
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail.level() > 0 && "a root conflict is UNSAT and is not analysed");
     assert(trail_is_conflicting(trail) && "conflict analysis on a trail that does not contain 1");
@@ -239,6 +239,15 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     // Only the trail-basis coordinates carry it; the clause itself does not.
     const std::size_t lbd = asserting_basis.literal_block_distance();
 
+    std::vector<std::size_t> pivot_trail_idxs;
+    if (report_pivot_trail_idxs) {
+        pivot_trail_idxs.reserve(asserting_basis.rows());
+        for (const Equation& row : asserting_basis) {
+            assert(row.leading_bit().has_value() && "a stored row is zero");
+            pivot_trail_idxs.push_back(asserting_basis.cols() - 1 - *row.leading_bit());
+        }
+    }
+
     // Copied row by row so the clause gets the watches of a freshly built clause.
     const RowSpace asserting_rows = asserting_basis.to_RowSpace();
     Clause asserting_clause(trail.repr(), trail.num_vars());
@@ -261,7 +270,8 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                           std::move(reason_ids),
                           std::move(reason_lbds),
                           lbd,
-                          width_before_minimize};
+                          width_before_minimize,
+                          std::move(pivot_trail_idxs)};
 }
 
 } // namespace xorcle

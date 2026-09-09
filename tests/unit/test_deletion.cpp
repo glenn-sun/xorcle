@@ -79,10 +79,18 @@ Trail make_trail_with_reasons(EquationRepr repr, std::size_t num_vars,
     return trail;
 }
 
+/// @brief A pass over `conflict_interval` conflicts, demoting a `tier2` clause
+/// once it has gone `demote_interval` conflicts unused.
 DeletionPlan plan_for(const ClauseSelector& selector, const Trail& trail, DeletionKey key,
-                      const ClauseActivitySource* activity = nullptr) {
-    return build_deletion_plan(
-        DeletionState{.selector = selector, .trail = trail, .key = key, .activity = activity});
+                      const ClauseActivitySource* activity = nullptr,
+                      std::size_t conflict_interval = 100,
+                      std::size_t demote_interval = 200) {
+    return build_deletion_plan(DeletionState{.selector = selector,
+                                             .trail = trail,
+                                             .conflict_interval = conflict_interval,
+                                             .demote_interval = demote_interval,
+                                             .key = key,
+                                             .activity = activity});
 }
 
 bool contains(const std::vector<ClauseId>& ids, ClauseId id) {
@@ -116,10 +124,12 @@ constexpr std::string_view search_unsat_instance = "p cnf 4 16\n"
 /// The default cutoffs put every learned clause in `local`, so a run of any
 /// length evicts.
 SolverCounters solve_deleting(EquationRepr repr, std::size_t conflict_interval,
-                              ClauseTierConfig tiers = {.core_lbd = 0, .tier2_lbd = 0}) {
+                              ClauseTierConfig tiers = {.core_lbd = 0, .tier2_lbd = 0},
+                              std::size_t demote_interval = 200) {
     ParsedDimacs parsed = parse_dimacs_string(search_unsat_instance, repr);
     const DeletionConfig deletion{.enabled = true,
                                   .conflict_interval = conflict_interval,
+                                  .demote_interval = demote_interval,
                                   .tiers = tiers,
                                   .key = DeletionKey::lbd,
                                   .activity = nullptr};
@@ -168,8 +178,8 @@ TEST_CASE_TEMPLATE("deletion: a locked clause is neither evicted nor counted", T
         const Trail trail = make_trail_with_reasons(repr, 8, {ClauseId{1}});
 
         const DeletionPlan plan = plan_for(*tier2, trail, DeletionKey::lbd);
-        CHECK(plan.unused_intervals[1] == 0);
-        CHECK(plan.unused_intervals[2] == 1);
+        CHECK(plan.unused_conflicts[1] == 0);
+        CHECK(plan.unused_conflicts[2] == 100);
         CHECK(plan.demoted.empty());
     }
 }
@@ -180,28 +190,34 @@ TEST_CASE_TEMPLATE("deletion: tier2 demotion", Tag, DenseTag, SparseTag) {
     const Trail trail(repr, 8);
     REQUIRE(selector->clause_tier(1) == ClauseTier::tier2);
 
-    SUBCASE("two unused intervals demote, and the counter starts over") {
+    SUBCASE("the count accrues a pass at a time, and starts over at the demotion") {
         const DeletionPlan first = plan_for(*selector, trail, DeletionKey::lbd);
         CHECK(first.demoted.empty());
-        CHECK(first.unused_intervals[1] == 1);
+        CHECK(first.unused_conflicts[1] == 100);
 
-        selector->set_clause_unused_intervals(1, first.unused_intervals[1]);
+        selector->set_clause_unused_conflicts(1, first.unused_conflicts[1]);
         const DeletionPlan second = plan_for(*selector, trail, DeletionKey::lbd);
         CHECK(second.demoted == std::vector<ClauseId>{1});
-        CHECK(second.unused_intervals[1] == 0);
+        CHECK(second.unused_conflicts[1] == 0);
+    }
+
+    SUBCASE("a pass wider than the demote interval demotes at the first one") {
+        CHECK(plan_for(*selector, trail, DeletionKey::lbd, nullptr, 200, 200).demoted ==
+              std::vector<ClauseId>{1});
+        CHECK(plan_for(*selector, trail, DeletionKey::lbd, nullptr, 100, 1000).demoted.empty());
     }
 
     SUBCASE("a use resets the count") {
-        selector->set_clause_unused_intervals(1, 1);
+        selector->set_clause_unused_conflicts(1, 100);
         selector->set_clause_used_since_deletion(1, true);
 
         const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
         CHECK(plan.demoted.empty());
-        CHECK(plan.unused_intervals[1] == 0);
+        CHECK(plan.unused_conflicts[1] == 0);
     }
 
     SUBCASE("a clause demoted here is not also evicted here") {
-        selector->set_clause_unused_intervals(1, 1);
+        selector->set_clause_unused_conflicts(1, 100);
         const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
         REQUIRE(plan.demoted == std::vector<ClauseId>{1});
         CHECK(plan.evicted.empty());
@@ -334,6 +350,15 @@ TEST_CASE_TEMPLATE("deletion: a reason resolved at a better LBD is promoted", Ta
     const SolverCounters all_core =
         solve_deleting(repr, 1, ClauseTierConfig{.core_lbd = 64, .tier2_lbd = 64});
     CHECK(all_core.num_deleted_clauses == 0);
+}
+
+TEST_CASE_TEMPLATE("deletion: a shorter demote interval demotes more", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    // Cutoffs that leave a tier2 to demote out of.
+    constexpr ClauseTierConfig tiers{.core_lbd = 1, .tier2_lbd = 2};
+
+    CHECK(solve_deleting(repr, 1, tiers, 1).num_demoted_clauses != 0);
+    CHECK(solve_deleting(repr, 1, tiers, 1000).num_demoted_clauses == 0);
 }
 
 TEST_CASE_TEMPLATE("deletion: a wider interval deletes less often", Tag, DenseTag, SparseTag) {

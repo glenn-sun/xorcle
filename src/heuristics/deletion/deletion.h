@@ -24,7 +24,11 @@ enum class DeletionKey : std::uint8_t {
 struct DeletionConfig {
     bool enabled = false;
 
-    std::size_t conflict_interval = 200; ///< Conflicts between deletion passes.
+    std::size_t conflict_interval = 100; ///< Conflicts between deletion passes.
+
+    /// @brief Conflicts a `tier2` clause goes unused before it becomes `local`.
+    std::size_t demote_interval = 200;
+
     ClauseTierConfig tiers;
     DeletionKey key = DeletionKey::activity;
 
@@ -32,13 +36,16 @@ struct DeletionConfig {
     const ClauseActivitySource* activity = nullptr;
 };
 
-/// @brief Deletion passes a `tier2` clause passes unused before it becomes `local`.
-inline constexpr std::uint32_t unused_intervals_before_demotion = 2;
-
 /// @brief A read-only view of the state a deletion pass is planned against.
 struct DeletionState {
     const ClauseSelector& selector;
     const Trail& trail;
+
+    /// @brief Conflicts this pass adds to an unused clause's count, and the count
+    /// at which it is demoted.
+    std::size_t conflict_interval;
+    std::size_t demote_interval;
+
     DeletionKey key;
     const ClauseActivitySource* activity;
 };
@@ -48,8 +55,8 @@ struct DeletionPlan {
     std::vector<ClauseId> evicted; ///< To tombstone, ascending.
     std::vector<ClauseId> demoted; ///< `tier2` clauses becoming `local`, ascending.
 
-    /// @brief The unused-interval counter after the pass, by clause id.
-    std::vector<std::uint32_t> unused_intervals;
+    /// @brief The unused-conflict count after the pass, by clause id.
+    std::vector<std::size_t> unused_conflicts;
 };
 
 /// @brief Choose the clauses this deletion pass demotes, and the worse half of the

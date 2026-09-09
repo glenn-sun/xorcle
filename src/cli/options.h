@@ -657,6 +657,7 @@ inline CompactionConfig compaction_config(const Options& options) {
 inline DeletionConfig deletion_config(const Options& options) {
     return DeletionConfig{.enabled = options.deletion,
                           .conflict_interval = options.deletion_every,
+                          .demote_interval = options.deletion_tier2_demote_every,
                           .tiers = ClauseTierConfig{.core_lbd = options.deletion_core_lbd,
                                                     .tier2_lbd = options.deletion_tier2_lbd},
                           .key = options.deletion_key,

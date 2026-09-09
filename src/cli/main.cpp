@@ -210,7 +210,7 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                   compaction_config(options),
                   ProgressConfig{.reporter = progress_reporter.get(),
                                  .conflict_interval = options.report_every},
-                  options.minimize, deletion);
+                  options.minimize, deletion, options.bump_learned_clause_pivots);
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }

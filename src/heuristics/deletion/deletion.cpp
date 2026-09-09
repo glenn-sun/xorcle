@@ -42,11 +42,11 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
     }
 
     DeletionPlan plan;
-    plan.unused_intervals.resize(num_clauses);
+    plan.unused_conflicts.resize(num_clauses);
     std::vector<ClauseId> candidates;
 
     for (ClauseId id = 0; id < num_clauses; ++id) {
-        plan.unused_intervals[id] = state.selector.clause_unused_intervals(id);
+        plan.unused_conflicts[id] = state.selector.clause_unused_conflicts(id);
         // A starting clause is tiered and demoted like a learned one; only the
         // eviction candidates below are restricted to learned clauses.
         if (!state.selector.is_clause_active(id) || is_locked[id] != 0) {
@@ -57,12 +57,13 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
                 break;
             case ClauseTier::tier2:
                 if (state.selector.is_clause_used_since_deletion(id)) {
-                    plan.unused_intervals[id] = 0;
-                } else if (plan.unused_intervals[id] + 1 >= unused_intervals_before_demotion) {
+                    plan.unused_conflicts[id] = 0;
+                } else if (plan.unused_conflicts[id] + state.conflict_interval >=
+                           state.demote_interval) {
                     plan.demoted.push_back(id);
-                    plan.unused_intervals[id] = 0;
+                    plan.unused_conflicts[id] = 0;
                 } else {
-                    ++plan.unused_intervals[id];
+                    plan.unused_conflicts[id] += state.conflict_interval;
                 }
                 break;
             case ClauseTier::local:

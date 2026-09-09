@@ -61,10 +61,12 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.selection == ClauseSelectorName::cyclic);
     CHECK(options.restart == RestartMethod::none);
     CHECK(options.deletion == true);
-    CHECK(options.deletion_every == 200);
+    CHECK(options.deletion_every == 100);
     CHECK(options.deletion_core_lbd == 2);
     CHECK(options.deletion_tier2_lbd == 6);
+    CHECK(options.deletion_tier2_demote_every == 200);
     CHECK(options.deletion_key == DeletionKey::activity);
+    CHECK(options.bump_learned_clause_pivots == false);
     CHECK(options.proof.empty());
     CHECK(options.stats_file.empty());
     CHECK(options.report_every == 100);
@@ -359,10 +361,12 @@ TEST_CASE("options: the configuration projections carry the values across") {
                                               "--restart=lbd", "--restart-lbd-min-ratio=1.25",
                                               "--deletion=true",
                                               "--deletion-every=25", "--deletion-core-lbd=2",
-                                              "--deletion-tier2-lbd=8", "--deletion-key=activity"});
+                                              "--deletion-tier2-lbd=8", "--deletion-key=activity",
+                                              "--deletion-tier2-demote-every=75"});
     const DeletionConfig deletion = deletion_config(options);
     CHECK(deletion.enabled == true);
     CHECK(deletion.conflict_interval == 25);
+    CHECK(deletion.demote_interval == 75);
     CHECK(deletion.tiers.core_lbd == 2);
     CHECK(deletion.tiers.tier2_lbd == 8);
     CHECK(deletion.key == DeletionKey::activity);
@@ -476,6 +480,12 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(refusal({"--restart-luby-unit=50"}).starts_with("--restart-luby-unit requires"));
     CHECK(refusal({"--deletion=false", "--deletion-every=25"})
               .starts_with("--deletion-every requires"));
+    CHECK(refusal({"--deletion=false", "--deletion-tier2-demote-every=25"})
+              .starts_with("--deletion-tier2-demote-every requires"));
+    // Only CSIDS scores clauses, so only CSIDS can bump the pivots.
+    CHECK(refusal({"--decisions=variable_vsids", "--deletion=false",
+                   "--bump-learned-clause-pivots=true"})
+              .starts_with("--bump-learned-clause-pivots requires --decisions=csids"));
     CHECK(refusal({"--stats-file=s.csv", "--report=all"}).starts_with("--report requires"));
     CHECK(refusal({"--report-every=0", "--report=all"}).starts_with("--report requires"));
 

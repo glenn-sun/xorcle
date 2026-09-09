@@ -36,6 +36,13 @@ struct AssertingClause {
     /// @brief The clause's width when it first became asserting, which is
     /// `clause.rows()` unless minimization shrank it further.
     std::size_t width_before_minimize;
+
+    /// @brief The trail row of each pivot of the clause, ascending by pivot
+    /// column, or empty when none were asked for.
+    ///
+    /// Reading the trail as a flag of subspaces, these are the rows at which the
+    /// intersection with the clause's subspace gains a dimension.
+    std::vector<std::size_t> pivot_trail_idxs;
 };
 
 /// @brief Derive an asserting clause from a conflicting trail, by the 1-UIP-like
@@ -48,6 +55,9 @@ struct AssertingClause {
 /// With `measure_reason_lbds`, every clause the derivation uses is measured and
 /// fills `reason_lbds`.
 ///
+/// With `report_pivot_trail_idxs`, the pivots of the clause as learned fill
+/// `pivot_trail_idxs`.
+///
 /// The LRUP(⊕) proof wants `reason_ids` reversed, which the caller does once.
 ///
 /// @pre `trail.level() > 0`.
@@ -56,7 +66,8 @@ struct AssertingClause {
 /// @pre Every non-decision trail row carries a reason id in `clauses`.
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
                                       DecisionProcedure& decisions, bool minimize = true,
-                                      bool measure_reason_lbds = false);
+                                      bool measure_reason_lbds = false,
+                                      bool report_pivot_trail_idxs = false);
 
 /// @brief The clauses a root conflict actually depends on, in replay order.
 ///

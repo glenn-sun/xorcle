@@ -19,7 +19,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
                std::unique_ptr<DecisionProcedure> decisions,
                std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer,
                const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize,
-               const DeletionConfig& deletion)
+               const DeletionConfig& deletion, bool bump_learned_clause_pivots)
     : repr_(repr),
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
@@ -35,7 +35,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       conflict_check_eqn_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)),
       progress_(progress),
-      minimize_(minimize) {
+      minimize_(minimize),
+      bump_learned_clause_pivots_(bump_learned_clause_pivots) {
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
@@ -103,8 +104,9 @@ bool Solver::propagate_until_conflict() {
 }
 
 void Solver::handle_non_root_conflict() {
-    AssertingClause learned = find_asserting_clause(trail_, selector_->clauses(), *decisions_,
-                                                    minimize_, deletion_.enabled);
+    AssertingClause learned =
+        find_asserting_clause(trail_, selector_->clauses(), *decisions_, minimize_,
+                              deletion_.enabled, bump_learned_clause_pivots_);
     if (minimize_) {
         counters_.minimize_width_before += learned.width_before_minimize;
         counters_.minimize_width_after += learned.clause.rows();
@@ -116,6 +118,10 @@ void Solver::handle_non_root_conflict() {
         for (std::size_t i = 0; i < learned.reason_ids.size(); ++i) {
             note_reason_use(learned.reason_ids[i], learned.reason_lbds[i]);
         }
+    }
+    // With the resolved-clause bumps, before the decay below.
+    if (bump_learned_clause_pivots_) {
+        bump_pivot_clauses(learned.pivot_trail_idxs);
     }
 
     // The id the clause is *about* to take, read before it is added.
@@ -377,9 +383,33 @@ void Solver::note_reason_use(ClauseId id, std::size_t lbd) {
     const ClauseTier tier = selector_->tier_for_lbd(lbd);
     if (tier < selector_->clause_tier(id)) {
         selector_->set_clause_tier(id, tier);
-        selector_->set_clause_unused_intervals(id, 0);
+        selector_->set_clause_unused_conflicts(id, 0);
         ++counters_.num_promoted_clauses;
     }
+}
+
+void Solver::bump_pivot_clauses(const std::vector<std::size_t>& pivot_trail_idxs) {
+    for (const std::size_t trail_idx : pivot_trail_idxs) {
+        assert(trail_idx < trail_.reasons().size() && "a pivot names no trail row");
+        const std::optional<ClauseId>& reason = trail_.reasons()[trail_idx];
+        const std::optional<ClauseId> id =
+            reason.has_value() ? reason : decision_clause_at(trail_idx);
+        if (id.has_value()) {
+            decisions_->update_with_resolved_clause(*id);
+        }
+    }
+}
+
+std::optional<ClauseId> Solver::decision_clause_at(std::size_t trail_idx) const {
+    // A level opens with its decision, so that decision sits where the level
+    // below it ended.
+    for (std::size_t level = 1; level <= trail_.level(); ++level) {
+        if (trail_[level - 1].span().rows() == trail_idx) {
+            return decision_clause_of_level_[level - 1];
+        }
+    }
+    assert(false && "no decision level opens at this trail row");
+    return std::nullopt;
 }
 
 void Solver::maybe_delete_clauses() {
@@ -392,16 +422,19 @@ void Solver::maybe_delete_clauses() {
     conflicts_at_last_deletion_ = counters_.num_conflicts;
     apply_deletion(build_deletion_plan(DeletionState{.selector = *selector_,
                                                      .trail = trail_,
+                                                     .conflict_interval =
+                                                         deletion_.conflict_interval,
+                                                     .demote_interval = deletion_.demote_interval,
                                                      .key = deletion_.key,
                                                      .activity = deletion_.activity}));
 }
 
 void Solver::apply_deletion(const DeletionPlan& plan) {
     const std::size_t num_clauses = selector_->num_clauses();
-    assert(plan.unused_intervals.size() == num_clauses);
+    assert(plan.unused_conflicts.size() == num_clauses);
 
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
-        selector_->set_clause_unused_intervals(clause_id, plan.unused_intervals[clause_id]);
+        selector_->set_clause_unused_conflicts(clause_id, plan.unused_conflicts[clause_id]);
         selector_->set_clause_used_since_deletion(clause_id, false);
     }
     for (const ClauseId clause_id : plan.demoted) {

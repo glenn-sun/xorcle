@@ -205,7 +205,7 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         CHECK(selector.clause_lbd(0) == unset_clause_lbd);
         CHECK(selector.clause_tier(0) == ClauseTier::local);
         CHECK_FALSE(selector.is_clause_used_since_deletion(0));
-        CHECK(selector.clause_unused_intervals(0) == 0);
+        CHECK(selector.clause_unused_conflicts(0) == 0);
     }
 
     SUBCASE("a learned clause takes its LBD and the tier that LBD names") {
@@ -239,18 +239,18 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         selector.add_starting_clause(make_clause(repr, 4, {{1}}));
 
         selector.set_clause_used_since_deletion(1, true);
-        selector.set_clause_unused_intervals(1, 2);
+        selector.set_clause_unused_conflicts(1, 2);
         selector.set_clause_tier(1, ClauseTier::local);
         selector.set_clause_lbd(1, 7);
 
         CHECK(selector.is_clause_used_since_deletion(1));
-        CHECK(selector.clause_unused_intervals(1) == 2);
+        CHECK(selector.clause_unused_conflicts(1) == 2);
         CHECK(selector.clause_tier(1) == ClauseTier::local);
         CHECK(selector.clause_lbd(1) == 7);
         CHECK(selector.is_clause_active(1));
 
         CHECK_FALSE(selector.is_clause_used_since_deletion(0));
-        CHECK(selector.clause_unused_intervals(0) == 0);
+        CHECK(selector.clause_unused_conflicts(0) == 0);
         CHECK(selector.clause_tier(0) == ClauseTier::local);
         CHECK(selector.clause_lbd(0) == unset_clause_lbd);
     }
@@ -260,7 +260,7 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         selector.add_asserting_clause(make_clause(repr, 4, {{1}}), trail,
                                       AssertingClauseInfo{.lbd = 5, .removed_levels = 0});
         selector.set_clause_used_since_deletion(1, true);
-        selector.set_clause_unused_intervals(1, 3);
+        selector.set_clause_unused_conflicts(1, 3);
         selector.set_clause_active(0, false);
 
         const CompactionTransform transform;
@@ -271,7 +271,7 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         CHECK(selector.clause_lbd(1) == 5);
         CHECK(selector.clause_tier(1) == ClauseTier::tier2);
         CHECK(selector.is_clause_used_since_deletion(1));
-        CHECK(selector.clause_unused_intervals(1) == 3);
+        CHECK(selector.clause_unused_conflicts(1) == 3);
     }
 }
 

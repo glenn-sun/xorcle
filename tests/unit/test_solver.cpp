@@ -15,6 +15,7 @@
 #include "core/solver.h"
 #include "core/trail.h"
 #include "heuristics/decisions/csids.h"
+#include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/luby.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
@@ -129,7 +130,8 @@ struct Run {
 /// Null `restarts`/`selector` mean `NoRestarts` and `Cyclic`.
 Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfig& compaction = {},
              std::unique_ptr<RestartPolicy> restarts = nullptr,
-             std::unique_ptr<ClauseSelector> selector = nullptr) {
+             std::unique_ptr<ClauseSelector> selector = nullptr,
+             bool bump_learned_clause_pivots = false) {
     ParsedDimacs parsed = parse_dimacs_string(instance, repr);
 
     Run run;
@@ -140,7 +142,7 @@ Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfi
         selector != nullptr ? std::move(selector) : std::make_unique<Cyclic>(parsed.num_vars),
         std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
         restarts != nullptr ? std::move(restarts) : std::make_unique<NoRestarts>(), nullptr,
-        compaction);
+        compaction, ProgressConfig{}, true, DeletionConfig{}, bump_learned_clause_pivots);
     for (Clause& clause : parsed.clauses) {
         run.solver->add_starting_clause(std::move(clause));
     }
@@ -325,6 +327,20 @@ TEST_CASE_TEMPLATE("solver: UNSAT found by search", Tag, DenseTag, SparseTag) {
     // solver has to decide, conflict, and learn its way through them.
     CHECK(run.solver->decision_stats().decisions > 0);
     CHECK(run.solver->num_clauses() > run.clauses.size());
+}
+
+TEST_CASE_TEMPLATE("solver: bumping the learned clause's pivots leaves the answers alone", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const auto bumping = [repr](std::string_view instance) {
+        return make_run(repr, instance, CompactionConfig{}, nullptr, nullptr, true);
+    };
+
+    Run unsat = bumping(search_unsat_instance);
+    CHECK(unsat.solver->solve().result == SolveResult::unsat);
+
+    Run sat = bumping(compaction_sat_instance);
+    check_satisfies(sat.clauses, sat.solver->solve(), sat.num_vars);
 }
 
 TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTag, SparseTag) {

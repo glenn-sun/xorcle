@@ -12,7 +12,7 @@ void ClauseSelector::debug_assert_database_synchronized() const {
     assert(clauses_.size() == clause_learned_.size() &&
            clauses_.size() == clause_used_since_deletion_.size() &&
            clauses_.size() == clause_tier_.size() && clauses_.size() == clause_lbd_.size() &&
-           clauses_.size() == clause_unused_intervals_.size() &&
+           clauses_.size() == clause_unused_conflicts_.size() &&
            "clause database and metadata are desynchronized");
 }
 
@@ -99,18 +99,18 @@ void ClauseSelector::set_clause_used_since_deletion(ClauseId id, bool used) {
     clause_used_since_deletion_[id] = used ? 1 : 0;
 }
 
-std::uint32_t ClauseSelector::clause_unused_intervals(ClauseId id) const {
+std::size_t ClauseSelector::clause_unused_conflicts(ClauseId id) const {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
 #endif
-    return clause_unused_intervals_[id];
+    return clause_unused_conflicts_[id];
 }
 
-void ClauseSelector::set_clause_unused_intervals(ClauseId id, std::uint32_t intervals) {
+void ClauseSelector::set_clause_unused_conflicts(ClauseId id, std::size_t num_conflicts) {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
 #endif
-    clause_unused_intervals_[id] = intervals;
+    clause_unused_conflicts_[id] = num_conflicts;
 }
 
 void ClauseSelector::set_tier_config(const ClauseTierConfig& config) {
@@ -171,7 +171,7 @@ void ClauseSelector::add_clause(Clause clause) {
     // and, being unlearned, is never an eviction candidate.
     clause_tier_.push_back(ClauseTier::local);
     clause_lbd_.push_back(unset_clause_lbd);
-    clause_unused_intervals_.push_back(0);
+    clause_unused_conflicts_.push_back(0);
 }
 
 void ClauseSelector::update_with_new_equation(const Equation&, const Trail&) {}

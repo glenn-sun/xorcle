@@ -71,6 +71,9 @@ XORCLE_OPTION(csids_initial, Real, 1.0, 0.0, INFINITY, "initial activity of asse
 XORCLE_OPTION(csids_bump, Real, 1.0, 0.0, INFINITY, "activity bump per resolution step")
 XORCLE_OPTION(csids_decay, Real, 0.98, 0.0, 1.0, "activity decay per conflict")
 
+XORCLE_OPTION(bump_learned_clause_pivots, Bool, false, false, true,
+              "also bump the clauses at the learned clause's pivots in the trail basis")
+
 XORCLE_ENUM_OPTION(phase, DecisionPhase, default_decision_phase,
                    "decide sampled equation (falsify) or its negation (satisfy)")
 XORCLE_ENUM_VALUE(phase, "falsify", DecisionPhase::falsify)
@@ -106,7 +109,7 @@ XORCLE_OPTION(restart_lbd_slow, Size, 100000, 1, SIZE_MAX,
               "window of the slow LBD average")
 XORCLE_OPTION(restart_lbd_min_ratio, Real, 1.1, 1.0, INFINITY,
               "fast/slow ratio needed for LBD restart")
-XORCLE_OPTION(restart_lbd_min_conflicts, Size, 2, 1, SIZE_MAX,
+XORCLE_OPTION(restart_lbd_min_conflicts, Size, 200, 1, SIZE_MAX,
               "elapsed conflicts needed for LBD restart")
 XORCLE_OPTION(restart_lbd_trail_ratio, Real, 1.4, 0.0, INFINITY,
               "do not restart if trail is this much longer than average (0 = off)")
@@ -120,11 +123,13 @@ XORCLE_OPTION(minimize, Bool, true, false, true,
 
 XORCLE_OPTION(deletion, Bool, true, false, true,
               "periodically delete some learned clauses (only with cyclic selector)")
-XORCLE_OPTION(deletion_every, Size, 200, 1, SIZE_MAX, "conflicts between deletion passes")
+XORCLE_OPTION(deletion_every, Size, 100, 1, SIZE_MAX, "conflicts between deletion passes")
 XORCLE_OPTION(deletion_core_lbd, Size, 2, 0, SIZE_MAX,
               "a learned clause of at most this LBD is never deleted")
 XORCLE_OPTION(deletion_tier2_lbd, Size, 6, 0, SIZE_MAX,
-              "a learned clause of at most this LBD survives until two deletion passes go unused")
+              "a learned clause of at most this LBD survives until unused for --deletion-tier2-demote-every conflicts")
+XORCLE_OPTION(deletion_tier2_demote_every, Size, 200, 1, SIZE_MAX,
+              "conflicts a tier2 clause goes unused before it becomes local")
 
 XORCLE_ENUM_OPTION(deletion_key, DeletionKey, DeletionKey::activity,
                    "which score orders a deletion pass (activity requires CSIDS)")
@@ -158,6 +163,8 @@ XORCLE_REQUIRES(seed, options.decisions == DecisionProcedureName::csids,
 XORCLE_REQUIRES(csids_initial, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
 XORCLE_REQUIRES(csids_bump, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
 XORCLE_REQUIRES(csids_decay, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
+XORCLE_REQUIRES(bump_learned_clause_pivots, options.decisions == DecisionProcedureName::csids,
+                "--decisions=csids, the only procedure with an activity to bump")
 XORCLE_REQUIRES(phase, options.decisions == DecisionProcedureName::csids,
                 "--decisions=csids, the only procedure that decides a sampled equation")
 
@@ -175,6 +182,7 @@ XORCLE_REQUIRES(restart_lbd_trail_ratio, options.restart == RestartMethod::lbd, 
 XORCLE_REQUIRES(deletion_every, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_core_lbd, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_tier2_lbd, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_tier2_demote_every, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_key, options.deletion, "--deletion=true")
 
 XORCLE_REQUIRES(report_every, options.stats_file.empty(),

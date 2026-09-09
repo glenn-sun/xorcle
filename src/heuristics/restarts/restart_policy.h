@@ -25,7 +25,7 @@ struct RestartConfig {
     std::size_t lbd_slow_window = 100000;
     /// @brief How far the fast average must exceed the slow one.
     double lbd_min_ratio = 1.1;
-    std::size_t lbd_min_conflicts = 2; ///< Conflicts an LBD restart waits out.
+    std::size_t lbd_min_conflicts = 200; ///< Conflicts an LBD restart waits out.
     /// @brief Trail length, relative to its average, that blocks a restart; `0` never blocks.
     double lbd_trail_ratio = 1.4;
 
