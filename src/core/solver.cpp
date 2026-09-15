@@ -19,7 +19,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
                std::unique_ptr<DecisionProcedure> decisions,
                std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer,
                const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize,
-               const DeletionConfig& deletion, bool bump_learned_clause_pivots)
+               const DeletionConfig& deletion, bool bump_learned_clause_pivots, bool subsume)
     : repr_(repr),
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
@@ -36,7 +36,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       false_equation_(Equation::eq_false(repr, num_vars)),
       progress_(progress),
       minimize_(minimize),
-      bump_learned_clause_pivots_(bump_learned_clause_pivots) {
+      bump_learned_clause_pivots_(bump_learned_clause_pivots),
+      subsume_(subsume) {
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
@@ -106,7 +107,7 @@ bool Solver::propagate_until_conflict() {
 void Solver::handle_non_root_conflict() {
     AssertingClause learned =
         find_asserting_clause(trail_, selector_->clauses(), *decisions_, minimize_,
-                              deletion_.enabled, bump_learned_clause_pivots_);
+                              deletion_.enabled, bump_learned_clause_pivots_, subsume_);
     if (minimize_) {
         counters_.minimize_width_before += learned.width_before_minimize;
         counters_.minimize_width_after += learned.clause.rows();
@@ -168,6 +169,27 @@ void Solver::handle_non_root_conflict() {
 
     decisions_->update_with_new_clause(learned.clause, new_clause_id);
 
+    // Each replacement's chain: the subsumed reason itself, then the derivation
+    // prefix before it, which is replay order; sliced before the in-place
+    // reversal below. A subsumed conflicting clause already opens the prefix,
+    // so its chain is the plain reversed prefix.
+    std::vector<std::vector<ClauseId>> replacement_chains(learned.subsumed_reasons.size());
+    if (proof_writer_ != nullptr) {
+        for (std::size_t i = 0; i < learned.subsumed_reasons.size(); ++i) {
+            const SubsumedReason& record = learned.subsumed_reasons[i];
+            if (record.replacement.has_value()) {
+                if (!record.subsumed_conflicting_clause) {
+                    replacement_chains[i].push_back(record.clause_id);
+                }
+                const std::size_t prefix = record.num_reasons -
+                                           (record.subsumed_conflicting_clause ? 0 : 1);
+                replacement_chains[i].insert(replacement_chains[i].end(),
+                                             learned.reason_ids.rend() - prefix,
+                                             learned.reason_ids.rend());
+            }
+        }
+    }
+
     if (proof_writer_ != nullptr) {
         // Derivation order to replay order. Exactly one reversal, here.
         std::reverse(learned.reason_ids.begin(), learned.reason_ids.end());
@@ -178,6 +200,66 @@ void Solver::handle_non_root_conflict() {
     const AssertingClauseInfo learned_info{.lbd = learned.lbd, .removed_levels = removed_levels};
     selector_->add_asserting_clause(std::move(learned.clause), trail_, learned_info);
     ++num_active_clauses_;
+
+    // A reason a trail row still names is left as is, replacement included:
+    // that case never occurred in any measured run, so acting on it would ship
+    // behavior nothing has exercised.
+    const auto reason_still_named = [this](const SubsumedReason& record) {
+        const std::vector<std::optional<ClauseId>>& reasons = trail_.reasons();
+        const bool named = record.trail_idx < reasons.size() &&
+                           reasons[record.trail_idx] == record.clause_id;
+        assert(named == (std::find(reasons.begin(), reasons.end(),
+                                   std::optional<ClauseId>{record.clause_id}) != reasons.end()) &&
+               "a clause is the reason of a row other than its recorded one");
+        return named;
+    };
+
+    // On-the-fly subsumption: each record's resolvent implies its reason clause.
+    // Add every resolvent (unless it is the clause just learned) before any
+    // deletion, because a later record's chain names an earlier record's reason.
+    for (std::size_t i = 0; i < learned.subsumed_reasons.size(); ++i) {
+        SubsumedReason& record = learned.subsumed_reasons[i];
+        assert(selector_->is_clause_active(record.clause_id) &&
+               "a conflict reason must be active");
+        if (reason_still_named(record)) {
+            continue;
+        }
+        // What replaces a starting clause is kept forever, as it would have
+        // been, and so on along chains of replacements.
+        const bool keep_forever = !selector_->is_clause_learned(record.clause_id) ||
+                                  selector_->clause_tier(record.clause_id) == ClauseTier::core;
+        ClauseId replacement_id = new_clause_id;
+        if (record.replacement.has_value()) {
+            replacement_id = selector_->num_clauses();
+            decisions_->update_with_new_clause(*record.replacement, replacement_id);
+            if (proof_writer_ != nullptr) {
+                proof_writer_->write_learned(replacement_id, *record.replacement,
+                                             active_var_to_original_, replacement_chains[i]);
+            }
+            selector_->add_asserting_clause(
+                std::move(*record.replacement), trail_,
+                AssertingClauseInfo{.lbd = record.lbd, .removed_levels = removed_levels});
+            ++num_active_clauses_;
+            ++counters_.num_subsume_replacements;
+        }
+        if (keep_forever) {
+            selector_->set_clause_tier(replacement_id, ClauseTier::core);
+        }
+        decisions_->update_with_subsumed_clause(record.clause_id, replacement_id);
+    }
+    for (const SubsumedReason& record : learned.subsumed_reasons) {
+        if (reason_still_named(record)) {
+            continue;
+        }
+        if (proof_writer_ != nullptr) {
+            proof_writer_->write_deleted({record.clause_id});
+        }
+        selector_->clause(record.clause_id) = inactive_clause_placeholder(repr_, false_equation_);
+        selector_->set_clause_active(record.clause_id, false);
+        --num_active_clauses_;
+        ++counters_.num_subsumed_clauses;
+        counters_.num_subsumed_conflicting_clauses += record.subsumed_conflicting_clause ? 1 : 0;
+    }
     next_proof_clause_id_ = std::max(next_proof_clause_id_, selector_->num_clauses());
 }
 

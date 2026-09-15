@@ -71,6 +71,10 @@ struct SolverCounters {
     std::size_t num_deleted_clauses = 0;
     std::size_t num_demoted_clauses = 0;
     std::size_t num_promoted_clauses = 0; ///< Reasons an improved LBD moved up a tier.
+
+    std::size_t num_subsumed_clauses = 0;      ///< Reason clauses deleted as subsumed.
+    std::size_t num_subsumed_conflicting_clauses = 0; ///< Of those, subsumed as the conflicting clause.
+    std::size_t num_subsume_replacements = 0;  ///< Subsuming resolvents added as clauses.
 };
 
 /// @brief The CDCL(⊕) solver.
@@ -93,7 +97,8 @@ public:
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
            RawProofWriter* proof_writer = nullptr, const CompactionConfig& compaction = {},
            const ProgressConfig& progress = {}, bool minimize = true,
-           const DeletionConfig& deletion = {}, bool bump_learned_clause_pivots = false);
+           const DeletionConfig& deletion = {}, bool bump_learned_clause_pivots = false,
+           bool subsume = false);
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -252,6 +257,9 @@ private:
     /// @brief Whether a conflict also bumps the clauses at the learned clause's
     /// pivots in the trail basis.
     bool bump_learned_clause_pivots_;
+
+    /// @brief Whether a learned clause deletes the reason clause it subsumes.
+    bool subsume_;
 
     /// @brief What the last progress line saw, so the next one can report the
     /// interval between them rather than the run so far.

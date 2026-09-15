@@ -509,8 +509,8 @@ inline std::string format_option_value(OptionKind::Name, std::string_view value)
 ///
 /// This is what makes a statistics row a reproduction recipe, so it is taken
 /// from the resolved `Options`: a `--decisions=` preset has already become the
-/// CSIDS triple it stands for, and deletion has already yielded to a selector it
-/// cannot run under.
+/// CSIDS triple it stands for, and a selector that deletion cannot run under
+/// has already been refused rather than resolved.
 inline std::vector<ConfigEntry> option_settings(const Options& options) {
     std::vector<ConfigEntry> settings;
 
@@ -573,6 +573,9 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     }
     if (options.deletion && options.selection != ClauseSelectorName::cyclic) {
         throw CliError("--deletion requires --selection=cyclic");
+    }
+    if (options.subsume && options.selection != ClauseSelectorName::cyclic) {
+        throw CliError("--subsume requires --selection=cyclic");
     }
     if (options.deletion && options.deletion_key == DeletionKey::activity &&
         options.decisions != DecisionProcedureName::csids) {

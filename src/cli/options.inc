@@ -119,6 +119,12 @@ XORCLE_OPTION(restart_lbd_trail_ratio, Real, 1.4, 0.0, INFINITY,
 XORCLE_OPTION(minimize, Bool, true, false, true,
               "apply local minimization (self-subsumption) to each learned clause")
 
+// --- On-the-fly subsumption -------------------------------------------------
+
+XORCLE_OPTION(subsume, Bool, true, false, true,
+              "replace the clauses the resolvents of conflict analysis subsume "
+              "(only with cyclic selector)")
+
 // --- Deletion --------------------------------------------------------------
 
 XORCLE_OPTION(deletion, Bool, true, false, true,

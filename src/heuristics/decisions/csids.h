@@ -97,6 +97,9 @@ public:
 
     void update_with_resolved_clause(ClauseId id) override;
 
+    /// @brief The replacement inherits the subsumed clause's activity when larger.
+    void update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id) override;
+
     double clause_activity(ClauseId id) const override;
 
     std::optional<ClauseId> decision_clause_hint() const override;

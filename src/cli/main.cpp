@@ -210,7 +210,8 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                   compaction_config(options),
                   ProgressConfig{.reporter = progress_reporter.get(),
                                  .conflict_interval = options.report_every},
-                  options.minimize, deletion, options.bump_learned_clause_pivots);
+                  options.minimize, deletion, options.bump_learned_clause_pivots,
+                  options.subsume);
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
@@ -271,6 +272,10 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     stats.num_minimized_clauses = counters.num_minimized_clauses;
     stats.minimize_width_before = counters.minimize_width_before;
     stats.minimize_width_after = counters.minimize_width_after;
+
+    stats.num_subsumed_clauses = counters.num_subsumed_clauses;
+    stats.num_subsumed_conflicting_clauses = counters.num_subsumed_conflicting_clauses;
+    stats.num_subsume_replacements = counters.num_subsume_replacements;
 
     stats.num_deletion_passes = counters.num_deletion_passes;
     stats.num_deleted_clauses = counters.num_deleted_clauses;

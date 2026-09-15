@@ -1,5 +1,6 @@
 #include "core/trail_basis.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <optional>
@@ -30,7 +31,8 @@ bool trail_maps_are_consistent(const Trail& trail) {
 
 } // namespace
 
-TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail) {
+TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail,
+                                               std::vector<std::size_t>* row_leading_cols) {
     assert(trail.span().rows() != 0 && "trail span is empty");
     assert(rs.cols() == trail.span().cols() &&
            "row space column count does not match the trail span");
@@ -40,6 +42,9 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
     TrailBasisSpace trail_basis(trail);
 
     const std::size_t num_coefficients = trail_basis.cols();
+    if (row_leading_cols != nullptr) {
+        row_leading_cols->clear();
+    }
 
     Equation reduced_eqn(trail.repr(), trail.num_vars());
     Equation trail_basis_row = Equation::with_num_bits(trail.repr(), num_coefficients);
@@ -58,6 +63,11 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
             mapped_bits.push_back(num_coefficients - trail.reverse_order_map()[row_idx] - 1);
         });
         trail_basis_row.assign_bits(mapped_bits);
+        if (row_leading_cols != nullptr) {
+            assert(!mapped_bits.empty() && "a row space row is zero");
+            row_leading_cols->push_back(
+                *std::min_element(mapped_bits.begin(), mapped_bits.end()));
+        }
 
         // Echelonized into ascending leading-column order, i.e. most recent
         // trail equation first.

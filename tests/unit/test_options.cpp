@@ -87,6 +87,7 @@ TEST_CASE("options: --name=value sets each kind") {
                                               "--phase=satisfy",
                                               "--selection=leading_term_watchlist",
                                               "--deletion=false",
+                                              "--subsume=false",
                                               "--restart=luby",
                                               "--restart-luby-unit=7",
                                               "--proof=out.lrup",
@@ -343,8 +344,8 @@ TEST_CASE("options: deletion refuses an incompatible choice rather than yielding
     CHECK(refusal({"--decisions=fixed_literals"}).find("--deletion-key=activity") == 0);
 
     // Saying what you want is always accepted.
-    CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false"}).deletion ==
-          false);
+    CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false",
+                            "--subsume=false"}).deletion == false);
     CHECK(parse_with_input({"--decisions=variable_vsids", "--deletion=false"}).deletion == false);
     CHECK(parse_with_input({"--decisions=variable_vsids", "--deletion-key=lbd"}).deletion == true);
 
@@ -508,7 +509,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-min-ratio=1.2"}).restart_lbd_min_ratio ==
           doctest::Approx(1.2));
     CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false",
-                            "--wait-for-queue=4"}).wait_for_queue == 4);
+                            "--subsume=false", "--wait-for-queue=4"}).wait_for_queue == 4);
     CHECK(parse_with_input({"--report=all"}).report == "all");
 }
 

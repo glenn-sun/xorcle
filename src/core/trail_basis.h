@@ -24,9 +24,13 @@ public:
         : RowEchelonMatrix(trail.repr(), trail.span().rows()), trail_(&trail) {}
 
     /// @brief Rewrite a row space into trail-basis coordinates, echelonized.
+    ///
+    /// A non-null `row_leading_cols` receives each *input* row's leading
+    /// coordinate column, in `rs` order, before echelonization mixes the rows.
     /// @pre Every row of `rs` belongs to `trail.span()`, which is non-empty.
     /// @pre `rs.cols() == trail.span().cols()` and `rs.repr() == trail.repr()`.
-    static TrailBasisSpace from_RowSpace(const RowSpace& rs, const Trail& trail);
+    static TrailBasisSpace from_RowSpace(const RowSpace& rs, const Trail& trail,
+                                         std::vector<std::size_t>* row_leading_cols = nullptr);
 
     /// @brief Convert back out of trail-basis coordinates.
     ///

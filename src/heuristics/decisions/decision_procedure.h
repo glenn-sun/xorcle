@@ -72,6 +72,11 @@ public:
 
     virtual void update_with_resolved_clause(ClauseId id);
 
+    /// @brief Note that `replacement_id` subsumed `subsumed_id`, which is about to
+    /// be deleted: the replacement inherits the larger of the two activities.
+    /// @pre Both ids are already registered.
+    virtual void update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id);
+
     /// @brief The clause the last decision came from, for the selector to prioritize.
     virtual std::optional<ClauseId> decision_clause_hint() const;
 

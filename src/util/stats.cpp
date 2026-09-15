@@ -44,6 +44,8 @@ RunStats::reports(const StatsSection section) const {
         }
         case StatsSection::minimize:
             return config_value(*this, "minimize") == "true";
+        case StatsSection::subsume:
+            return config_value(*this, "subsume") == "true";
         case StatsSection::deletion:
             return config_value(*this, "deletion") == "true";
         case StatsSection::proof:

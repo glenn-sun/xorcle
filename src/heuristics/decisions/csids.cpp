@@ -137,6 +137,15 @@ void Csids::update_with_resolved_clause(ClauseId id) {
     }
 }
 
+void Csids::update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id) {
+    assert(subsumed_id < state_.num_clauses && replacement_id < state_.num_clauses &&
+           "subsumption names an unregistered clause");
+    const double inherited = clause_activity(subsumed_id);
+    if (inherited > clause_activity(replacement_id)) {
+        state_.activity.activity_heap.set_activity(replacement_id, inherited);
+    }
+}
+
 double Csids::clause_activity(ClauseId id) const {
     return state_.activity.activity_heap.get_priority(id);
 }

@@ -446,6 +446,131 @@ TEST_CASE_TEMPLATE("analysis: an already-asserting conflict clause is learned un
     CHECK(decisions.events.empty());
 }
 
+TEST_CASE_TEMPLATE("analysis: the one-step resolvent subsumes both operands", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_one_step_conflict(repr);
+    RecordingDecisions decisions(repr, conflict.trail.num_vars());
+
+    const AssertingClause learned = find_asserting_clause(conflict.trail, conflict.clauses,
+                                                          decisions, true, false, false, true);
+
+    // The resolvent [x1 = 0] has one row where both operands have two, so it
+    // subsumes the conflicting clause 2 and the reason clause 1 alike; the
+    // rejected minimization trial against clause 0 then subsumes that too.
+    CHECK(rows_of(learned.clause) == std::vector<std::vector<std::size_t>>{{1, 3}});
+    REQUIRE(learned.subsumed_reasons.size() == 3);
+
+    // The conflicting clause's record, first: its replacement is materialized.
+    const SubsumedReason& conflicting = learned.subsumed_reasons[0];
+    CHECK(conflicting.clause_id == 2);
+    CHECK(conflicting.subsumed_conflicting_clause);
+    REQUIRE(conflicting.replacement.has_value());
+    CHECK(rows_of(*conflicting.replacement) == std::vector<std::vector<std::size_t>>{{1, 3}});
+    CHECK(conflicting.num_reasons == 2);
+    CHECK(conflicting.trail_idx == 3); // The conflict row.
+    CHECK(conflicting.lbd == 1);
+
+    // The reason's record: the clause as learned is its replacement, so none is
+    // materialized.
+    const SubsumedReason& reason = learned.subsumed_reasons[1];
+    CHECK(reason.clause_id == 1);
+    CHECK(!reason.subsumed_conflicting_clause);
+    CHECK(!reason.replacement.has_value());
+    CHECK(reason.num_reasons == 2);
+    CHECK(reason.trail_idx == 2); // The row clause 1 propagated.
+
+    // The harvested record: clause 0 never entered `reason_ids`, so its chain
+    // is one longer, and its replacement [x0 = 0] is materialized.
+    const SubsumedReason& harvested = learned.subsumed_reasons[2];
+    CHECK(harvested.clause_id == 0);
+    CHECK(!harvested.subsumed_conflicting_clause);
+    REQUIRE(harvested.replacement.has_value());
+    CHECK(rows_of(*harvested.replacement) == std::vector<std::vector<std::size_t>>{{0}});
+    CHECK(harvested.num_reasons == 3);
+    CHECK(harvested.trail_idx == 1); // The row clause 0 propagated.
+
+    // Asking for no records leaves the walk unchanged and the list empty.
+    RecordingDecisions plain_decisions(repr, conflict.trail.num_vars());
+    const AssertingClause plain = find_asserting_clause(conflict.trail, conflict.clauses,
+                                                        plain_decisions, true, false, false, false);
+    CHECK(plain.subsumed_reasons.empty());
+    CHECK(rows_of(plain.clause) == rows_of(learned.clause));
+}
+
+/// @brief A conflict whose first resolution subsumes its reason while the walk
+/// continues for one more step, so the record keeps a materialized replacement.
+///
+/// | step | equation | reason | level |
+/// |---|---|---|---|
+/// | 0 | `[x0 = 0]` | decision | 1 |
+/// | 1 | `[x1 = 0]` | decision | 2 |
+/// | 2 | `[x2 = 1]` | clause 0 | 2 |
+/// | 3 | `[x3 = 1]` | clause 1 | 2 |
+/// | 4 | `0 = 1` | clause 2 | 2 |
+///
+/// Resolving the conflict against clause 1 drops its rank from 3 to 2, the
+/// subsumption; the result still reaches two rows of level 2, so a second
+/// resolution against clause 0 follows before the clause asserts.
+Conflict make_subsumed_reason_conflict(EquationRepr repr) {
+    constexpr std::size_t num_vars = 5;
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{1, 2}, {0}})); // 0: implies [x2 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{2, 3, 5}, {2, 5}, {1}})); // 1: implies [x3 = 1]
+    clauses.push_back(make_clause(repr, num_vars, {{3, 5}, {1}})); // 2: the conflict
+
+    Trail trail(repr, num_vars);
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
+    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt);
+    trail.learn(make_equation_with(repr, num_vars, {2, 5}), ClauseId{0});
+    trail.learn(make_equation_with(repr, num_vars, {3, 5}), ClauseId{1});
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2});
+    return Conflict{std::move(trail), std::move(clauses)};
+}
+
+TEST_CASE_TEMPLATE("analysis: a subsumed reason keeps its replacement when the walk continues",
+                   Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_subsumed_reason_conflict(repr);
+    check_conflicting(conflict);
+    RecordingDecisions decisions(repr, conflict.trail.num_vars());
+
+    const AssertingClause learned = find_asserting_clause(conflict.trail, conflict.clauses,
+                                                          decisions, true, false, false, true);
+
+    CHECK(rows_of(learned.clause) == std::vector<std::vector<std::size_t>>{{0}, {1}});
+    CHECK(learned.asserting_level == 1);
+    CHECK(learned.reason_ids == std::vector<ClauseId>{2, 1, 0});
+
+    // Only the first resolution subsumed; the second reason kept its rank, so
+    // the record's replacement survives the walk with clause 1 minus its
+    // propagating row: [x2 = 1] and [x1 = 0], echelonized.
+    REQUIRE(learned.subsumed_reasons.size() == 1);
+    const SubsumedReason& record = learned.subsumed_reasons[0];
+    CHECK(record.clause_id == 1);
+    CHECK(!record.subsumed_conflicting_clause);
+    REQUIRE(record.replacement.has_value());
+    CHECK(rows_of(*record.replacement) == std::vector<std::vector<std::size_t>>{{1}, {2, 5}});
+    CHECK(record.num_reasons == 2);
+    CHECK(record.trail_idx == 3);
+    CHECK(record.lbd == 1);
+}
+
+TEST_CASE_TEMPLATE("analysis: no subsumption is recorded when no rank drops", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Conflict conflict = make_two_level_conflict(repr, ClauseId{4});
+    RecordingDecisions decisions(repr, conflict.trail.num_vars());
+
+    const AssertingClause learned = find_asserting_clause(conflict.trail, conflict.clauses,
+                                                          decisions, true, false, false, true);
+
+    // Both resolutions and both minimization trials keep every rank, so the
+    // walk records nothing.
+    CHECK(learned.subsumed_reasons.empty());
+    CHECK(learned.reason_ids == std::vector<ClauseId>{4, 3, 2});
+}
+
 TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;

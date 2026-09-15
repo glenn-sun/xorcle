@@ -57,6 +57,12 @@ XORCLE_STAT(minimize, Count, num_minimized_clauses, "minimized_clauses", "Minimi
 XORCLE_STAT(minimize, Count, minimize_width_before, "minimize_width_before", "Width before minimizing")
 XORCLE_STAT(minimize, Count, minimize_width_after, "minimize_width_after", "Width after minimizing")
 
+// --- On-the-fly subsumption, reported only when it ran ----------------------
+
+XORCLE_STAT(subsume, Count, num_subsumed_clauses, "subsumed_clauses", "Subsumed clauses")
+XORCLE_STAT(subsume, Count, num_subsumed_conflicting_clauses, "subsumed_conflicting_clauses", "Subsumed conflicting clauses")
+XORCLE_STAT(subsume, Count, num_subsume_replacements, "subsume_replacements", "Subsumption replacements")
+
 // --- Clause deletion, reported only when it ran -----------------------------
 
 XORCLE_STAT(deletion, Count, num_deletion_passes, "deletion_passes", "Deletion passes")
