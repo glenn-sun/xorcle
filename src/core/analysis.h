@@ -10,6 +10,7 @@
 #include "core/trail.h"
 #include "core/trail_basis.h"
 #include "heuristics/decisions/decision_procedure.h"
+#include "util/random.h"
 
 namespace xorcle {
 
@@ -90,6 +91,10 @@ struct AssertingClause {
 /// With `collect_subsumed`, every resolution whose resolvent subsumes its
 /// reason clause records the resolvent in `subsumed_reasons`.
 ///
+/// `representative_rng` makes each minimization step pick its resolvent
+/// uniformly at random from the family the step leaves free; see
+/// `resolve_asserting_basis()`.
+///
 /// The LRUP(⊕) proof wants `reason_ids` reversed, which the caller does once.
 ///
 /// @pre `trail.level() > 0`.
@@ -97,8 +102,8 @@ struct AssertingClause {
 /// reduced, and the one that made it conflicting is the most recent learned.
 /// @pre Every non-decision trail row carries a reason id in `clauses`.
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
-                                      DecisionProcedure& decisions, bool minimize = true,
-                                      bool measure_reason_lbds = false,
+                                      DecisionProcedure& decisions, Rng& representative_rng,
+                                      bool minimize = true, bool measure_reason_lbds = false,
                                       bool report_pivot_trail_idxs = false,
                                       bool collect_subsumed = false);
 
@@ -111,7 +116,8 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 /// @pre `trail.level() == 0` and the trail is conflicting.
 /// @pre Every trail row carries a reason id in `clauses`, which the root does.
 std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
-                                                 const std::vector<Clause>& clauses);
+                                                 const std::vector<Clause>& clauses,
+                                                 Rng& representative_rng);
 
 /// @brief The reason clause a resolution step used.
 struct ResolvedReason {
@@ -138,10 +144,12 @@ struct ResolvedReason {
 /// @pre The trail is conflicting.
 /// @post `asserting_basis` is non-empty and its first row's leading column is
 /// past `pivot_col_idx`.
+/// The pivot leads the first row, so no row is free and `representative_rng` is
+/// only forwarded, never drawn from.
 ResolvedReason resolve_asserting_basis_with_reason(
     TrailBasisSpace& asserting_basis, std::size_t pivot_col_idx, const Trail& trail,
     const std::vector<Clause>& clauses, DecisionProcedure& decisions,
-    const Equation& trail_basis_one, bool measure_lbd = false,
+    const Equation& trail_basis_one, Rng& representative_rng, bool measure_lbd = false,
     std::vector<std::size_t>* reason_row_leading_cols = nullptr);
 
 /// @brief The same resolution step on any row, leaving the decision procedure
@@ -149,6 +157,11 @@ ResolvedReason resolve_asserting_basis_with_reason(
 ///
 /// Continued past the asserting point the step can leave nothing after the pivot
 /// row, which is why this one does not require a row there afterwards.
+///
+/// With `pivot_row_idx > 0` the rows before the pivot are free: each may take
+/// the popped pivot row or not, one choice per row, and every combination spans
+/// a valid resolvent. A fair coin from `representative_rng` per such row draws
+/// the resolvent uniformly from that family.
 ///
 /// @return The reason clause resolved against, measured when `measure_lbd`.
 /// A non-null `reason_row_leading_cols` receives the reason clause's per-row
@@ -160,6 +173,7 @@ ResolvedReason resolve_asserting_basis_with_reason(
 ResolvedReason resolve_asserting_basis(
     TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx, std::size_t pivot_col_idx,
     const Trail& trail, const std::vector<Clause>& clauses, const Equation& trail_basis_one,
-    bool measure_lbd = false, std::vector<std::size_t>* reason_row_leading_cols = nullptr);
+    Rng& representative_rng, bool measure_lbd = false,
+    std::vector<std::size_t>* reason_row_leading_cols = nullptr);
 
 } // namespace xorcle

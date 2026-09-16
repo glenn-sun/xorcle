@@ -166,9 +166,13 @@ BothWays learn_both_ways(const Conflict& conflict, EquationRepr repr) {
     std::unique_ptr<Csids> plain_decisions = default_decisions(repr, conflict.trail.num_vars());
     std::unique_ptr<Csids> minimizing_decisions =
         default_decisions(repr, conflict.trail.num_vars());
-    return BothWays{
-        find_asserting_clause(conflict.trail, conflict.clauses, *plain_decisions, false, true),
-        find_asserting_clause(conflict.trail, conflict.clauses, *minimizing_decisions, true, true)};
+    // A stream each, so both walks draw the same coins.
+    Rng plain_rng = make_rng(default_seed, RngComponent::minimize_representative);
+    Rng minimizing_rng = make_rng(default_seed, RngComponent::minimize_representative);
+    return BothWays{find_asserting_clause(conflict.trail, conflict.clauses, *plain_decisions,
+                                          plain_rng, false, true),
+                    find_asserting_clause(conflict.trail, conflict.clauses, *minimizing_decisions,
+                                          minimizing_rng, true, true)};
 }
 
 /// @brief The invariants minimization has to keep, whether or not it shrank the
@@ -269,8 +273,9 @@ TEST_CASE_TEMPLATE("minimize: a clause the walk can shrink", Tag, DenseTag, Spar
     CHECK(both.plain.reason_ids == std::vector<ClauseId>{4, 3, 2});
 
     // Resolving [x5 = 1] away against clause 0 drops it: the only equation the
-    // reason brings in is [x0 = 0], which the clause already holds.
-    CHECK(rows_of(both.minimized.clause) == std::vector<std::vector<std::size_t>>{{0}, {2, 6}});
+    // reason brings in is [x0 = 0], which the clause already holds. The step's
+    // coin then took the popped row into the survivor, so {2, 6} reads {2, 5}.
+    CHECK(rows_of(both.minimized.clause) == std::vector<std::vector<std::size_t>>{{0}, {2, 5}});
     CHECK(both.minimized.asserting_level == 1);
     CHECK(both.minimized.reason_ids == std::vector<ClauseId>{4, 3, 2, 0});
     check_minimization_invariants(both, conflict.trail);
@@ -284,10 +289,12 @@ TEST_CASE_TEMPLATE("minimize: the parameter defaults to on", Tag, DenseTag, Spar
         std::unique_ptr<Csids> defaulted = default_decisions(repr, conflict.trail.num_vars());
         std::unique_ptr<Csids> explicitly_on = default_decisions(repr, conflict.trail.num_vars());
 
+        Rng implicit_rng = make_rng(default_seed, RngComponent::minimize_representative);
+        Rng explicit_rng = make_rng(default_seed, RngComponent::minimize_representative);
         const AssertingClause implicit =
-            find_asserting_clause(conflict.trail, conflict.clauses, *defaulted);
-        const AssertingClause explicit_on =
-            find_asserting_clause(conflict.trail, conflict.clauses, *explicitly_on, true);
+            find_asserting_clause(conflict.trail, conflict.clauses, *defaulted, implicit_rng);
+        const AssertingClause explicit_on = find_asserting_clause(
+            conflict.trail, conflict.clauses, *explicitly_on, explicit_rng, true);
 
         CHECK(rows_of(implicit.clause) == rows_of(explicit_on.clause));
         CHECK(implicit.asserting_level == explicit_on.asserting_level);

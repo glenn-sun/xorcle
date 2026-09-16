@@ -54,6 +54,8 @@ public:
 
     virtual std::vector<std::size_t> bits() const = 0;
 
+    virtual std::size_t num_set_bits() const noexcept = 0;
+
     virtual bool equals(const EquationInterface& other) const noexcept = 0;
 
     virtual std::size_t hash() const noexcept = 0;
@@ -170,6 +172,12 @@ public:
         std::vector<std::size_t> out;
         vector_.for_each_set_bit([&](std::size_t bit) { out.push_back(bit); });
         return out;
+    }
+
+    std::size_t num_set_bits() const noexcept override {
+        std::size_t count = 0;
+        vector_.for_each_set_bit([&](std::size_t) { ++count; });
+        return count;
     }
 
     bool equals(const EquationInterface& other) const noexcept override {

@@ -4,6 +4,7 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <utility>
@@ -63,7 +64,8 @@ bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
 ResolvedReason resolve_asserting_basis(
     TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx, std::size_t pivot_col_idx,
     const Trail& trail, const std::vector<Clause>& clauses, const Equation& trail_basis_one,
-    bool measure_lbd, std::vector<std::size_t>* reason_row_leading_cols) {
+    Rng& representative_rng, bool measure_lbd,
+    std::vector<std::size_t>* reason_row_leading_cols) {
     assert(pivot_row_idx < asserting_basis.rows() && "the pivot row is out of range");
     assert(asserting_basis.row(pivot_row_idx).leading_bit() ==
                std::optional<std::size_t>{pivot_col_idx} &&
@@ -73,6 +75,19 @@ ResolvedReason resolve_asserting_basis(
     assert(trail_is_conflicting(trail) && "resolution step on a trail that does not contain 1");
 
     Equation asserting_row = asserting_basis.pop_row(pivot_row_idx);
+
+    // Every earlier row may gain the pivot row and still span a valid resolvent;
+    // a fair coin each draws the representative uniformly from that family.
+    std::uint64_t coins = 0;
+    for (std::size_t row_idx = 0; row_idx < pivot_row_idx; ++row_idx) {
+        const std::size_t bit = row_idx % 64;
+        if (bit == 0) {
+            coins = representative_rng();
+        }
+        if ((coins >> bit) & 1ULL) {
+            asserting_basis.add_to_row(row_idx, asserting_row);
+        }
+    }
 
     const std::size_t trail_index = asserting_basis.cols() - 1 - pivot_col_idx;
     assert(trail_index < trail.reasons().size() && "trail reason index is out of range");
@@ -98,8 +113,8 @@ ResolvedReason resolve_asserting_basis(
         asserting_basis.add_row(extra_reason_row);
     }
 
-    // The rows before the pivot are untouched; everything the step leaves or
-    // brings in leads strictly later.
+    // The rows before the pivot keep their leading columns; everything the step
+    // leaves or brings in leads strictly later.
     assert((asserting_basis.rows() == pivot_row_idx ||
             *asserting_basis.row(pivot_row_idx).leading_bit() > pivot_col_idx) &&
            "resolution did not eliminate the pivot column");
@@ -113,13 +128,14 @@ ResolvedReason resolve_asserting_basis(
 ResolvedReason resolve_asserting_basis_with_reason(
     TrailBasisSpace& asserting_basis, std::size_t pivot_col_idx, const Trail& trail,
     const std::vector<Clause>& clauses, DecisionProcedure& decisions,
-    const Equation& trail_basis_one, bool measure_lbd,
+    const Equation& trail_basis_one, Rng& representative_rng, bool measure_lbd,
     std::vector<std::size_t>* reason_row_leading_cols) {
     const std::size_t trail_index = asserting_basis.cols() - 1 - pivot_col_idx;
     // The 1-UIP loop has passed over no row, so the pivot leads the first one.
     const ResolvedReason reason =
         resolve_asserting_basis(asserting_basis, 0, pivot_col_idx, trail, clauses,
-                                trail_basis_one, measure_lbd, reason_row_leading_cols);
+                                trail_basis_one, representative_rng, measure_lbd,
+                                reason_row_leading_cols);
 
     // Order-sensitive: this and the critical-equation notification below both
     // feed CSIDS, so reordering them changes conflict counts.
@@ -138,7 +154,8 @@ ResolvedReason resolve_asserting_basis_with_reason(
 }
 
 std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
-                                                 const std::vector<Clause>& clauses) {
+                                                 const std::vector<Clause>& clauses,
+                                                 Rng& representative_rng) {
     assert(trail.level() == 0 && "the root conflict chain is only defined at the root");
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail_is_conflicting(trail) && "the root conflict trail does not contain 1");
@@ -158,7 +175,8 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
         assert(pivot_col_idx.has_value() && "a stored row is zero");
         assert(reason_ids.size() <= basis.cols() && "the root conflict walk did not terminate");
         const ResolvedReason reason =
-            resolve_asserting_basis(basis, 0, *pivot_col_idx, trail, clauses, trail_basis_one);
+            resolve_asserting_basis(basis, 0, *pivot_col_idx, trail, clauses, trail_basis_one,
+                                    representative_rng);
         reason_ids.push_back(reason.clause_id);
     }
 
@@ -168,9 +186,9 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
 }
 
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
-                                      DecisionProcedure& decisions, bool minimize,
-                                      bool measure_reason_lbds, bool report_pivot_trail_idxs,
-                                      bool collect_subsumed) {
+                                      DecisionProcedure& decisions, Rng& representative_rng,
+                                      bool minimize, bool measure_reason_lbds,
+                                      bool report_pivot_trail_idxs, bool collect_subsumed) {
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail.level() > 0 && "a root conflict is UNSAT and is not analysed");
     assert(trail_is_conflicting(trail) && "conflict analysis on a trail that does not contain 1");
@@ -262,9 +280,9 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     // clause as learned is that record's replacement, and no copy is added.
     std::optional<std::size_t> last_resolution_record_idx;
 
-    // `frozen` counts the leading rows the walk has passed over. They can stay
-    // in the matrix: they lead strictly earlier than the pivot, while every row
-    // a resolution leaves or brings in leads strictly later.
+    // `frozen` counts the leading rows the walk has passed over. They keep their
+    // leading columns, strictly earlier than the pivot, though a resolution may
+    // add the pivot row into them.
     std::size_t frozen = 0;
     std::size_t resolution_steps = 0;
     std::size_t width_before_minimize = 0;
@@ -286,7 +304,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                    "conflict analysis did not terminate");
             const ResolvedReason reason = resolve_asserting_basis_with_reason(
                 asserting_basis, *pivot_col_idx, trail, clauses, decisions, trail_basis_one,
-                measure_reason_lbds, leading_cols_out);
+                representative_rng, measure_reason_lbds, leading_cols_out);
             reason_ids.push_back(reason.clause_id);
             if (measure_reason_lbds) {
                 reason_lbds.push_back(*reason.lbd);
@@ -314,7 +332,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
             TrailBasisSpace resolved = asserting_basis;
             const ResolvedReason reason = resolve_asserting_basis(
                 resolved, frozen, *pivot_col_idx, trail, clauses, trail_basis_one,
-                measure_reason_lbds, leading_cols_out);
+                representative_rng, measure_reason_lbds, leading_cols_out);
             // A resolvent with no rows would be the empty clause below the root,
             // which a well-formed run cannot reach.
             if (resolved.rows() < asserting_basis.rows() && resolved.rows() > 0) {

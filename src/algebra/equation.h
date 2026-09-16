@@ -119,6 +119,11 @@ public:
     /// @brief Ascending list of set bits; empty for a null handle.
     std::vector<std::size_t> bits() const;
 
+    /// @brief Number of set bits, the constant bit included; zero for a null handle.
+    std::size_t num_set_bits() const noexcept {
+        return interface_ ? interface_->num_set_bits() : 0;
+    }
+
     /// @brief Null handles compare equal to each other only.
     bool operator==(const Equation& other) const noexcept;
 

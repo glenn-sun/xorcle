@@ -80,6 +80,7 @@ RunStats sample_stats() {
     stats.clauses_in_database = 41;
     stats.clauses_allocated = 47;
     stats.average_learned_lbd = 2.5;
+    stats.learned_equation_bits = 630;
 
     stats.num_minimized_clauses = 11;
     stats.minimize_width_before = 146;
@@ -213,6 +214,7 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c Clauses in database: 41\n"
         "c Clauses allocated: 47\n"
         "c Average learned LBD: 2.500\n"
+        "c Learned equation bits: 630\n"
         "c Minimized clauses: 11\n"
         "c Width before minimizing: 146\n"
         "c Width after minimizing: 90\n"
@@ -283,6 +285,7 @@ TEST_CASE("ConsoleStatsWriter: zero denominators omit their ratio lines") {
         "c Clauses in database: 0\n"
         "c Clauses allocated: 0\n"
         "c Average learned LBD: 0.000\n"
+        "c Learned equation bits: 0\n"
         "c Parse time (s): 0.000\n"
         "c Solve time (s): 0.000\n"
         "s UNSATISFIABLE\n";

@@ -109,6 +109,9 @@ public:
 
     void set_decision_phase(DecisionPhase phase) noexcept { decision_phase_ = phase; }
 
+    /// @brief The run's seed, which every RNG stream of the run derives from.
+    Seed base_seed() const noexcept { return base_seed_; }
+
 protected:
     void record_decision(bool used_fallback);
     void reset_stats() noexcept;
@@ -123,8 +126,6 @@ protected:
 
     /// @pre `var < num_vars()`.
     Equation unit_equation(std::size_t var) const;
-
-    Seed base_seed() const noexcept { return base_seed_; }
 
 private:
     EquationRepr repr_;

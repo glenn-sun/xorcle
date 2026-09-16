@@ -51,6 +51,9 @@ public:
     /// reading the last column as the constant.
     virtual ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const = 0;
 
+    /// @brief Add `eqn` into the row at `row_idx`, which must keep its pivot.
+    virtual void add_to_row(std::size_t row_idx, const Equation& eqn) = 0;
+
     /// @brief Remove the row at `row_idx`, returning it.
     virtual Equation pop_row(std::size_t row_idx) = 0;
 
@@ -184,6 +187,16 @@ public:
     ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const override {
         return col_idx_to_row_.empty() ? partial_reduce_with_extra_impl<false>(v, extra)
                                   : partial_reduce_with_extra_impl<true>(v, extra);
+    }
+
+    void add_to_row(std::size_t row_idx, const Equation& eqn) override {
+        // Leading strictly later leaves every pivot, and so both tables, alone.
+        assert(gf2_vector_of<V>(eqn).leading_bit() >
+                   gf2_vector_of<V>(rows_[row_idx]).leading_bit() &&
+               "add_to_row: the addend must lead strictly after the row");
+        gf2_vector_of<V>(rows_[row_idx]).plus_assign(gf2_vector_of<V>(eqn));
+
+        debug_assert_valid_representation();
     }
 
     Equation pop_row(std::size_t row_idx) override {

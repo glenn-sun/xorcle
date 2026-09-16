@@ -50,6 +50,7 @@ XORCLE_STAT(clauses, Count, learned_clauses, "learned_clauses", "Learned clauses
 XORCLE_STAT(clauses, Count, clauses_in_database, "clauses_in_database", "Clauses in database")
 XORCLE_STAT(clauses, Count, clauses_allocated, "clauses_allocated", "Clauses allocated")
 XORCLE_STAT(clauses, Real, average_learned_lbd, "average_learned_lbd", "Average learned LBD")
+XORCLE_STAT(clauses, Count, learned_equation_bits, "learned_equation_bits", "Learned equation bits")
 
 // --- Clause minimization, reported only when it ran -------------------------
 
