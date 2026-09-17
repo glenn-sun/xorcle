@@ -17,6 +17,9 @@
 
 #if !defined(NDEBUG) && (defined(__APPLE__) || defined(__unix__))
 #define XORCLE_HAS_DEATH_TESTS 1
+#include <csignal>
+#include <cstdio>
+
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -158,10 +161,12 @@ TEST_CASE_TEMPLATE("equation: assign_from rejects a bit-count mismatch", Tag, De
     constexpr EquationRepr repr = Tag::value;
 
     // A same-bit-count copy is an internal invariant, so a mismatch asserts. That
-    // can only be observed by watching a child process die.
+    // can only be observed by watching a child process die. The child inherits
+    // doctest's crash handler, which would report the expected abort as a failure.
     const pid_t child = ::fork();
     REQUIRE(child >= 0);
     if (child == 0) {
+        std::signal(SIGABRT, SIG_DFL);
         std::freopen("/dev/null", "w", stderr);
         Equation narrow(repr, 10);
         const Equation wide(repr, 20);
