@@ -37,6 +37,8 @@ TEST_CASE("random: the component tags keep their fixed values") {
     // change its value.
     CHECK(static_cast<std::uint64_t>(RngComponent::decision_phase) == 0x6a09e667f3bcc909ULL);
     CHECK(static_cast<std::uint64_t>(RngComponent::csids_equation) == 0xbb67ae8584caa73bULL);
+    CHECK(static_cast<std::uint64_t>(RngComponent::minimize_representative) ==
+          0x3c6ef372fe94f82bULL);
     CHECK(default_seed == 0u);
 }
 

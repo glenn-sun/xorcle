@@ -20,6 +20,7 @@
 #include "io/proof_raw_file.h"
 #include "util/index_set.h"
 #include "util/progress_reporter.h"
+#include "util/random.h"
 #include "util/stats.h"
 
 namespace xorcle {
@@ -66,6 +67,9 @@ struct SolverCounters {
     std::size_t num_minimized_clauses = 0; ///< Learned clauses minimization shrank.
     std::size_t minimize_width_before = 0; ///< Summed width at the asserting point.
     std::size_t minimize_width_after = 0;  ///< Summed width of the clauses as learned.
+
+    /// @brief Summed set bits, constant bit included, over all rows of every learned clause.
+    std::size_t learned_equation_bits = 0;
 
     std::size_t num_deletion_passes = 0;
     std::size_t num_deleted_clauses = 0;
@@ -253,6 +257,9 @@ private:
 
     /// @brief Whether conflict analysis minimizes the clauses it learns.
     bool minimize_;
+
+    /// @brief The stream each minimization step's representative is drawn from.
+    Rng representative_rng_;
 
     /// @brief Whether a conflict also bumps the clauses at the learned clause's
     /// pivots in the trail basis.

@@ -269,6 +269,8 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                                    : static_cast<double>(counters.sum_learned_lbd) /
                                          static_cast<double>(stats.learned_clauses);
 
+    stats.learned_equation_bits = counters.learned_equation_bits;
+
     stats.num_minimized_clauses = counters.num_minimized_clauses;
     stats.minimize_width_before = counters.minimize_width_before;
     stats.minimize_width_after = counters.minimize_width_after;

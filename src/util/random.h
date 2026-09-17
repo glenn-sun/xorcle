@@ -25,7 +25,8 @@ inline constexpr Seed default_seed = 0;
 /// @brief Stable RNG stream identifiers, fixed even under an enumerator rename.
 enum class RngComponent : std::uint64_t {
     decision_phase = 0x6a09e667f3bcc909ULL,
-    csids_equation = 0xbb67ae8584caa73bULL
+    csids_equation = 0xbb67ae8584caa73bULL,
+    minimize_representative = 0x3c6ef372fe94f82bULL
 };
 
 /// @brief `salt` distinguishes several streams of one component.

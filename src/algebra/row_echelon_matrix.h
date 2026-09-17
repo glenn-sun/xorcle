@@ -78,6 +78,19 @@ public:
         return interface_->reduce_get_coefficients(v);
     }
 
+    /// @brief Add `eqn` into the row at `row_idx`, in place.
+    ///
+    /// Changes the representative of the row, never the span or the echelon
+    /// order: the row keeps its leading column and every pivot table stays valid.
+    /// @pre `row_idx < rows()`, `eqn.num_bits() == cols()`, `eqn.repr() == repr()`.
+    /// @pre `eqn`'s leading bit is strictly after the row's leading column.
+    void add_to_row(std::size_t row_idx, const Equation& eqn) {
+        assert(row_idx < rows() && "add_to_row index is out of range");
+        assert(eqn.num_bits() == cols() && "add_to_row: bit count does not match the matrix");
+        assert(eqn.repr() == repr() && "add_to_row: representation does not match the matrix");
+        interface_->add_to_row(row_idx, eqn);
+    }
+
     /// @brief Remove the row at `row_idx`, returning it.
     /// @pre `row_idx < rows()`.
     Equation pop_row(std::size_t row_idx) {

@@ -46,6 +46,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
     assert((!deletion_.enabled || deletion_.key != DeletionKey::activity ||
             deletion_.activity != nullptr) &&
            "the activity key has no activity source");
+    // The run's seed lives on the decision procedure, so this waits for its null check.
+    representative_rng_ = make_rng(decisions_->base_seed(), RngComponent::minimize_representative);
     std::iota(active_var_to_original_.begin(), active_var_to_original_.end(), std::size_t{0});
 }
 
@@ -106,13 +108,18 @@ bool Solver::propagate_until_conflict() {
 
 void Solver::handle_non_root_conflict() {
     AssertingClause learned =
-        find_asserting_clause(trail_, selector_->clauses(), *decisions_, minimize_,
-                              deletion_.enabled, bump_learned_clause_pivots_, subsume_);
+        find_asserting_clause(trail_, selector_->clauses(), *decisions_, representative_rng_,
+                              minimize_, deletion_.enabled, bump_learned_clause_pivots_,
+                              subsume_);
     if (minimize_) {
         counters_.minimize_width_before += learned.width_before_minimize;
         counters_.minimize_width_after += learned.clause.rows();
         counters_.num_minimized_clauses +=
             learned.clause.rows() < learned.width_before_minimize ? 1 : 0;
+    }
+    // Density of the learned clause in variable space, not just its row count.
+    for (const Equation& row : learned.clause) {
+        counters_.learned_equation_bits += row.num_set_bits();
     }
     if (deletion_.enabled) {
         // Before the proof path reverses `reason_ids`, which `reason_lbds` parallels.
@@ -269,7 +276,7 @@ void Solver::write_root_unsat_proof() {
     }
     next_proof_clause_id_ = std::max(next_proof_clause_id_, selector_->num_clauses());
     proof_writer_->write_empty(next_proof_clause_id_++,
-                               find_root_conflict_reasons(trail_, selector_->clauses()));
+                               find_root_conflict_reasons(trail_, selector_->clauses(), representative_rng_));
 }
 
 void Solver::write_compaction_units() {
