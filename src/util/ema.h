@@ -26,12 +26,6 @@ public:
         initial_weight_ *= 1.0 - alpha_;
     }
 
-    /// @brief Forget every sample so far.
-    void reset() {
-        raw_ = 0.0;
-        initial_weight_ = 1.0;
-    }
-
     /// @return `0` before the first update, and the first sample exactly after it.
     double value() const {
         const double sampled_weight = 1.0 - initial_weight_;

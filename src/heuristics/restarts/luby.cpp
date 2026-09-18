@@ -51,11 +51,6 @@ Luby::Luby(const RestartConfig& config)
 }
 
 bool
-Luby::enabled() const {
-    return true;
-}
-
-bool
 Luby::should_restart_after_conflict(const ConflictSummary&) {
     ++conflicts_since_restart_;
     return conflicts_since_restart_ >= current_budget_;

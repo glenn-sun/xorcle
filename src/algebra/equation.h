@@ -112,10 +112,6 @@ public:
     /// @pre `!is_null()` and `num_bits() == transform.old_num_vars() + 1`.
     Equation compact(const CompactionTransform& transform) const;
 
-    /// @brief Compacted numbering back to the pre-compaction one.
-    /// @pre `!is_null()` and `num_bits() == transform.new_num_vars() + 1`.
-    Equation uncompact(const CompactionTransform& transform) const;
-
     /// @brief Ascending list of set bits; empty for a null handle.
     std::vector<std::size_t> bits() const;
 
@@ -171,11 +167,6 @@ template <GF2Vector V>
 V& gf2_vector_of(Equation& equation) noexcept {
     assert(equation.repr() == V::repr && "representation mismatch in gf2_vector_of");
     return static_cast<EquationTemplate<V>&>(equation.interface()).vector();
-}
-
-template <GF2Vector V>
-Equation make_equation_from_gf2_vector(V vec) {
-    return Equation(std::make_unique<EquationTemplate<V>>(std::move(vec)));
 }
 
 } // namespace xorcle

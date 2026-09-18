@@ -32,7 +32,7 @@ struct ParsedDimacs {
 /// from an input stream.
 ///
 /// Rows are echelonized on insertion, so a line with duplicate or linearly
-/// dependent literals yields fewer rows than tokens, in row-echelon order rather
+/// dependent equations yields fewer rows than tokens, in row-echelon order rather
 /// than source order.
 /// @throws DimacsError On any malformed input.
 ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr,

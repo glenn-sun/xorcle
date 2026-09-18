@@ -11,7 +11,7 @@
 #include <memory>
 #include <vector>
 
-#include "heuristics/restarts/lbd.h"
+#include "heuristics/restarts/lbd_restarts.h"
 #include "heuristics/restarts/luby.h"
 #include "heuristics/restarts/restart_policy.h"
 
@@ -20,7 +20,7 @@ namespace xorcle {
 namespace {
 
 /// @brief A conflict the fixed schedules ignore.
-constexpr ConflictSummary any_conflict{.lbd = 1, .trail_size = 1};
+constexpr ConflictSummary any_conflict{.lbd = 1, .trail_length = 1};
 
 /// @brief Feed conflicts to a policy and record the budget each restart took.
 ///
@@ -78,7 +78,6 @@ TEST_CASE("Luby: budgets are the unit times the sequence") {
     config.luby_unit_conflicts = 100;
 
     Luby policy(config);
-    CHECK(policy.enabled());
 
     const std::vector<std::size_t> expected = {100, 100, 200, 100, 100, 200, 400, 100, 100, 200};
     CHECK(observed_budgets(policy, expected.size()) == expected);
@@ -109,7 +108,6 @@ TEST_CASE("Luby: an enormous unit saturates rather than wrapping") {
 
 TEST_CASE("NoRestarts: never fires and consumes no budget") {
     NoRestarts policy;
-    CHECK_FALSE(policy.enabled());
     for (int i = 0; i < 10'000; ++i) {
         CHECK_FALSE(policy.should_restart_after_conflict(any_conflict));
     }
@@ -123,7 +121,6 @@ TEST_CASE("make_restart_policy: dispatches on the configured method") {
         CHECK(config.method == RestartMethod::none);
         auto policy = make_restart_policy(config);
         REQUIRE(policy != nullptr);
-        CHECK_FALSE(policy->enabled());
         CHECK_FALSE(policy->should_restart_after_conflict(any_conflict));
     }
 
@@ -133,7 +130,6 @@ TEST_CASE("make_restart_policy: dispatches on the configured method") {
         config.luby_unit_conflicts = 2;
         auto policy = make_restart_policy(config);
         REQUIRE(policy != nullptr);
-        CHECK(policy->enabled());
         CHECK(observed_budgets(*policy, 4) == std::vector<std::size_t>{2, 2, 4, 2});
     }
 
@@ -142,35 +138,33 @@ TEST_CASE("make_restart_policy: dispatches on the configured method") {
         config.method = RestartMethod::lbd;
         auto policy = make_restart_policy(config);
         REQUIRE(policy != nullptr);
-        CHECK(policy->enabled());
-        CHECK_FALSE(policy->should_restart_after_conflict({.lbd = 4, .trail_size = 20}));
+        CHECK_FALSE(policy->should_restart_after_conflict({.lbd = 4, .trail_length = 20}));
     }
 }
 
-TEST_CASE("Lbd: a steady stream of clauses never restarts") {
+TEST_CASE("LbdRestarts: a steady stream of clauses never restarts") {
     RestartConfig config;
     config.method = RestartMethod::lbd;
 
     // Both averages read back the same constant exactly, so no margin above 1
     // can ever be cleared.
-    Lbd policy(config);
-    CHECK(policy.enabled());
+    LbdRestarts policy(config);
     for (std::size_t conflict = 0; conflict < 10'000; ++conflict) {
-        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 4, .trail_size = 20}));
+        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 4, .trail_length = 20}));
     }
 }
 
-TEST_CASE("Lbd: clauses turning worse than the run's average restart") {
+TEST_CASE("LbdRestarts: clauses turning worse than the run's average restart") {
     RestartConfig config;
     config.method = RestartMethod::lbd;
 
-    Lbd policy(config);
+    LbdRestarts policy(config);
     for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
-        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_size = 20}));
+        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_length = 20}));
     }
 
     std::size_t conflicts_until_restart = 0;
-    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20})) {
+    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_length = 20})) {
         ++conflicts_until_restart;
         REQUIRE(conflicts_until_restart < 1'000);
     }
@@ -179,64 +173,66 @@ TEST_CASE("Lbd: clauses turning worse than the run's average restart") {
     CHECK(conflicts_until_restart < config.lbd_fast_window);
 }
 
-TEST_CASE("Lbd: a trail far above average blocks the restart") {
+TEST_CASE("LbdRestarts: a trail far above average blocks the restart") {
     RestartConfig config;
     config.method = RestartMethod::lbd;
 
-    Lbd policy(config);
+    LbdRestarts policy(config);
     for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
-        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_size = 20}));
+        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_length = 20}));
     }
-    for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
-        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 20, .trail_size = 400}));
+    // Not for long: the trail average has the slow window, so it catches up
+    // with the longer trail within about a thousand conflicts.
+    for (std::size_t conflict = 0; conflict < 100; ++conflict) {
+        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 20, .trail_length = 400}));
     }
 
     // The block is on the trail, not on the clauses: the same stream restarts
     // once the trail comes back down.
     std::size_t conflicts_until_restart = 0;
-    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20})) {
+    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_length = 20})) {
         ++conflicts_until_restart;
         REQUIRE(conflicts_until_restart < 1'000);
     }
 }
 
-TEST_CASE("Lbd: a zero trail ratio never blocks") {
+TEST_CASE("LbdRestarts: a zero trail ratio never blocks") {
     RestartConfig config;
     config.method = RestartMethod::lbd;
     config.lbd_trail_ratio = 0.0;
 
-    Lbd policy(config);
+    LbdRestarts policy(config);
     for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
-        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_size = 20}));
+        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_length = 20}));
     }
     std::size_t conflicts_until_restart = 0;
-    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_size = 400})) {
+    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_length = 400})) {
         ++conflicts_until_restart;
         REQUIRE(conflicts_until_restart < 1'000);
     }
 }
 
-TEST_CASE("Lbd: the minimum interval is waited out after a restart") {
+TEST_CASE("LbdRestarts: the minimum interval is waited out after a restart") {
     RestartConfig config;
     config.method = RestartMethod::lbd;
     config.lbd_min_conflicts = 500;
 
-    Lbd policy(config);
+    LbdRestarts policy(config);
     for (std::size_t conflict = 0; conflict < 1'000; ++conflict) {
-        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_size = 20}));
+        REQUIRE_FALSE(policy.should_restart_after_conflict({.lbd = 2, .trail_length = 20}));
     }
     std::size_t guard = 0;
-    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20})) {
+    while (!policy.should_restart_after_conflict({.lbd = 20, .trail_length = 20})) {
         REQUIRE(++guard < 1'000);
     }
     policy.note_restart();
 
-    // The averages call for another restart at once, the fast one reading back
-    // its first post-restart sample exactly; only the interval holds it back.
+    // The averages call for another restart at once, the fast one carrying its
+    // samples across the restart; only the interval holds it back.
     for (std::size_t conflict = 1; conflict < 500; ++conflict) {
-        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20}));
+        CHECK_FALSE(policy.should_restart_after_conflict({.lbd = 20, .trail_length = 20}));
     }
-    CHECK(policy.should_restart_after_conflict({.lbd = 20, .trail_size = 20}));
+    CHECK(policy.should_restart_after_conflict({.lbd = 20, .trail_length = 20}));
 }
 
 TEST_CASE("restart policies: note_restart is what advances the schedule") {

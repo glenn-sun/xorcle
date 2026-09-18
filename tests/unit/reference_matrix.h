@@ -51,7 +51,7 @@ public:
         return pivot_[col_idx];
     }
 
-    std::optional<std::size_t> add_row_get_index(const Bits& v);
+    std::optional<std::size_t> add_row_get_row_idx(const Bits& v);
 
     void reduce(Bits& v) const;
 

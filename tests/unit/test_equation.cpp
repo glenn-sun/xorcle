@@ -220,7 +220,7 @@ TEST_CASE_TEMPLATE("equation: copy and move semantics", Tag, DenseTag, SparseTag
     CHECK(moved == original);
 }
 
-TEST_CASE_TEMPLATE("equation: compact and uncompact round-trip", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("equation: compaction renumbers an equation", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     constexpr std::size_t old_num_vars = 8;
 
@@ -242,29 +242,6 @@ TEST_CASE_TEMPLATE("equation: compact and uncompact round-trip", Tag, DenseTag, 
         CHECK(bits_of(compacted) == std::vector<std::size_t>{0, 3, 5});
     }
 
-    SUBCASE("uncompact undoes compaction when nothing was eliminated") {
-        const Equation survivors_only =
-            make_equation_with(repr, old_num_vars, {0, 2, 7, old_num_vars});
-        const Equation compacted = survivors_only.compact(transform);
-        const Equation restored = compacted.uncompact(transform);
-        CHECK(restored.num_vars() == old_num_vars);
-        CHECK(restored == survivors_only);
-    }
-
-    SUBCASE("uncompact then compact is the identity on the compacted space") {
-        const Equation compacted = make_equation_with(repr, 5, {0, 4, 5});
-        const Equation restored = compacted.uncompact(transform);
-        CHECK(bits_of(restored) == std::vector<std::size_t>{0, 7, old_num_vars});
-        CHECK(restored.compact(transform) == compacted);
-    }
-
-    SUBCASE("the true and false equations survive the round-trip") {
-        const Equation eq_false = Equation::eq_false(repr, 5);
-        CHECK(eq_false.uncompact(transform).is_eq_false());
-        CHECK(eq_false.uncompact(transform).compact(transform).is_eq_false());
-        const Equation eq_true = Equation::eq_true(repr, 5);
-        CHECK(eq_true.uncompact(transform).is_eq_true());
-    }
 }
 
 TEST_CASE_TEMPLATE("equation: to_string", Tag, DenseTag, SparseTag) {

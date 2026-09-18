@@ -17,6 +17,7 @@
 
 namespace xorcle {
 
+/// @brief A clause to try, and the trigger the selector already knows holds.
 struct ClauseSelection {
     ClauseId id;
     std::optional<WatchType> trigger_hint;
@@ -30,18 +31,18 @@ enum class ClauseSelectorName {
 /// @brief How long a clause survives a deletion pass.
 enum class ClauseTier : std::uint8_t {
     core, ///< Kept forever.
-    tier2, ///< Demoted to `local` once enough conflicts go by unused.
-    local ///< Evicted by key at a deletion pass, unless it is a starting clause.
+    secondary, ///< Demoted to `local` once enough deletion passes go by unused.
+    local ///< Deleted by key at a deletion pass, unless it is a starting clause.
 };
 
 /// @brief The LBD of a clause no conflict has resolved against yet, which is
-/// where a starting clause begins: it is tiered by its first use, never evicted.
+/// where a starting clause begins: it is tiered by its first use, never deleted.
 inline constexpr std::size_t unset_clause_lbd = static_cast<std::size_t>(-1);
 
 /// @brief The LBD cutoffs a clause's tier is read off.
 struct ClauseTierConfig {
     std::size_t core_lbd = 2; ///< At most this enters `core`.
-    std::size_t tier2_lbd = 6; ///< At most this, and above `core_lbd`, enters `tier2`.
+    std::size_t secondary_lbd = 6; ///< At most this, and above `core_lbd`, enters `secondary`.
 };
 
 /// @brief What conflict analysis knows about a learned clause beyond its rows.
@@ -51,6 +52,11 @@ struct AssertingClauseInfo {
     /// @brief The number of decision levels just *discarded*, which after a restart
     /// is neither the asserting level nor its complement.
     std::size_t removed_levels;
+
+    /// @brief Whether this replaces a clause on-the-fly subsumption removed,
+    /// rather than closing the conflict. Only an asserting clause is guaranteed
+    /// to propagate, so only it is worth trying first.
+    bool is_replacement = false;
 };
 
 /// @brief Decides which clause the solver tries to propagate from next.
@@ -83,6 +89,10 @@ public:
     /// @brief Whether the clause was learned rather than read from the instance.
     bool is_clause_learned(ClauseId id) const;
 
+    /// @brief Mark a clause learned or not; what replaces an input clause takes
+    /// its standing, so it is never a deletion candidate either.
+    void set_clause_learned(ClauseId id, bool learned);
+
     /// @brief `unset_clause_lbd` until a use records one.
     std::size_t clause_lbd(ClauseId id) const;
     void set_clause_lbd(ClauseId id, std::size_t lbd);
@@ -93,14 +103,13 @@ public:
     bool is_clause_used_since_deletion(ClauseId id) const;
     void set_clause_used_since_deletion(ClauseId id, bool used);
 
-    /// @brief Conflicts the clause has gone unused, counted at the deletion
-    /// passes it sat through unlocked.
-    std::size_t clause_unused_conflicts(ClauseId id) const;
-    void set_clause_unused_conflicts(ClauseId id, std::size_t num_conflicts);
+    /// @brief Consecutive deletion passes the clause has sat through unlocked and unused.
+    std::size_t clause_unused_passes(ClauseId id) const;
+    void set_clause_unused_passes(ClauseId id, std::size_t num_passes);
 
     const ClauseTierConfig& tier_config() const noexcept { return tier_config_; }
 
-    /// @pre No clause has been added yet, and `config.core_lbd <= config.tier2_lbd`.
+    /// @pre No clause has been added yet, and `config.core_lbd <= config.secondary_lbd`.
     void set_tier_config(const ClauseTierConfig& config);
 
     /// @brief The tier a learned clause of this LBD enters.
@@ -109,6 +118,11 @@ public:
     /// @brief The next clause to try, or `std::nullopt` once propagation is quiescent.
     virtual std::optional<ClauseId> next() = 0;
 
+    /// @brief `next()`, plus why the clause stopped being a legal watch pair.
+    ///
+    /// @warning No selector overrides this, so the hint is always empty and the
+    /// propagator's path for a non-empty one never runs. A watchlist selector
+    /// knows the trigger it queued a clause under and could pass it here.
     virtual std::optional<ClauseSelection> next_with_hint();
 
     virtual void add_starting_clause(Clause clause); ///< Takes the next id.
@@ -127,7 +141,7 @@ public:
     virtual void update_with_decision_clause(std::optional<ClauseId> clause_id);
 
     /// @brief Note a watch move, which the default ignores.
-    void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
+    void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch, WatchType type,
                                const Trail& trail) override;
 
     /// @brief Note that every clause was rewritten into a compacted variable numbering.
@@ -153,7 +167,7 @@ protected:
     std::vector<std::uint8_t> clause_used_since_deletion_;
     std::vector<ClauseTier> clause_tier_;
     std::vector<std::size_t> clause_lbd_;
-    std::vector<std::size_t> clause_unused_conflicts_;
+    std::vector<std::size_t> clause_unused_passes_;
 };
 
 } // namespace xorcle

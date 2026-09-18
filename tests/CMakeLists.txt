@@ -73,9 +73,9 @@ add_test(NAME proof_roundtrip_no_compact
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --compact=false)
 set_tests_properties(proof_roundtrip_no_compact PROPERTIES SKIP_RETURN_CODE 77)
 
-# Compacting at every opportunity, so the proof is mostly the unit lines
-# post-processing derives from the root trails compaction threw away.
+# Compacting at every opportunity, so most reason clauses are proved again from
+# the root units compaction threw away before a chain cites them.
 add_test(NAME proof_roundtrip_compact_often
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --compact-every=1)
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --compact-cadence=1)
 set_tests_properties(proof_roundtrip_compact_often PROPERTIES SKIP_RETURN_CODE 77)

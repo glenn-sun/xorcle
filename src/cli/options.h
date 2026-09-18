@@ -177,8 +177,8 @@ inline const CsidsPreset* find_csids_preset(std::string_view spelling) {
 
 // --- Spelling --------------------------------------------------------------
 
-/// @brief The command-line spelling of a table name: `compact_every` becomes
-/// `--compact-every`.
+/// @brief The command-line spelling of a table name: `compact_cadence` becomes
+/// `--compact-cadence`.
 inline std::string cli_spelling(std::string_view table_name) {
     std::string out = "--";
     for (const char c : table_name) {
@@ -190,7 +190,7 @@ inline std::string cli_spelling(std::string_view table_name) {
 /// @brief The table name of a command-line option name, `--` already stripped.
 ///
 /// Dashes and underscores are interchangeable in an option name, so
-/// `--compact-every` and `--compact_every` are the same option. The dashed
+/// `--compact-cadence` and `--compact_cadence` are the same option. The dashed
 /// form is the one `--help` and the error messages use.
 inline std::string table_name_of(std::string_view spelling) {
     std::string out;
@@ -533,18 +533,15 @@ inline std::vector<ConfigEntry> option_settings(const Options& options) {
 }
 
 /// @brief Check the constraints that span more than one option.
-/// @throws CliError if a preset was combined with a manual CSIDS override, if
-/// `--restart=luby` was given without a budget, or if the deletion options do
-/// not agree with each other and with the heuristics they need.
+/// @throws CliError if a preset was combined with a manual CSIDS override, or if
+/// the restart and deletion options do not agree with each other and with the
+/// heuristics they need.
 inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (!options.csids_preset.empty() &&
         (seen.csids_initial || seen.csids_decay || seen.csids_bump)) {
         throw CliError("--decisions=" + options.csids_preset +
                        " is a preset and does not accept --csids-initial, --csids-decay "
                        "or --csids-bump");
-    }
-    if (options.restart == RestartMethod::luby && options.restart_luby_unit == 0) {
-        throw CliError("--restart=luby requires --restart-luby-unit=N");
     }
     // One check per `XORCLE_REQUIRES` row: an option given where nothing would
     // read it is refused, so a run never reports a setting it did not act on.
@@ -556,8 +553,12 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
 #include "cli/options.inc"
 
     // Trail reuse is a switch rather than a parameter, so it is checked against
-    // its value: left at its default `true` it claims the feature just as
-    // loudly, and only CSIDS ranks the levels a restart could keep.
+    // its value, however it came to be `true`.
+    if (options.restart_reuse_trail && options.restart == RestartMethod::none) {
+        throw CliError("--restart-reuse-trail requires a restart schedule; pass --restart=luby "
+                       "or --restart=lbd");
+    }
+    // Only CSIDS ranks the levels a restart could keep.
     if (options.restart != RestartMethod::none && options.restart_reuse_trail &&
         options.decisions != DecisionProcedureName::csids) {
         throw CliError("--restart-reuse-trail requires --decisions=csids, the only procedure that "
@@ -568,8 +569,8 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
         throw CliError("--report='" + options.report +
                        "' is not a comma-joined list of: " + progress_group_names());
     }
-    if (options.deletion_core_lbd > options.deletion_tier2_lbd) {
-        throw CliError("--deletion-core-lbd must not exceed --deletion-tier2-lbd");
+    if (options.deletion_core_lbd > options.deletion_secondary_lbd) {
+        throw CliError("--deletion-core-lbd must not exceed --deletion-secondary-lbd");
     }
     if (options.deletion && options.selection != ClauseSelectorName::cyclic) {
         throw CliError("--deletion requires --selection=cyclic");
@@ -603,6 +604,10 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     for (const std::string& argument : arguments) {
         if (argument == "--help" || argument == "-h") {
             print_help(help_out, program_name, version);
+            return std::nullopt;
+        }
+        if (argument == "--version") {
+            help_out << "xorcle " << version << "\n";
             return std::nullopt;
         }
         if (argument.starts_with("-") && !argument.starts_with("--")) {
@@ -652,17 +657,17 @@ inline CsidsConfig csids_config(const Options& options) {
 }
 
 inline CompactionConfig compaction_config(const Options& options) {
-    return CompactionConfig{.enabled = options.compact, .conflict_interval = options.compact_every};
+    return CompactionConfig{.enabled = options.compact, .cadence = options.compact_cadence};
 }
 
 /// @brief Everything but the activity source, which only the caller holding the
 /// decision procedure can supply.
 inline DeletionConfig deletion_config(const Options& options) {
     return DeletionConfig{.enabled = options.deletion,
-                          .conflict_interval = options.deletion_every,
-                          .demote_interval = options.deletion_tier2_demote_every,
+                          .cadence = options.deletion_cadence,
+                          .demote_cadence_in_passes = options.deletion_demote_cadence_in_passes,
                           .tiers = ClauseTierConfig{.core_lbd = options.deletion_core_lbd,
-                                                    .tier2_lbd = options.deletion_tier2_lbd},
+                                                    .secondary_lbd = options.deletion_secondary_lbd},
                           .key = options.deletion_key,
                           .activity = nullptr};
 }

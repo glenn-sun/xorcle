@@ -159,7 +159,7 @@ TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseT
         REQUIRE(clause.rows() == 3);
 
         // The propagator writes the new watch first, then reports it.
-        const ClauseRowIndex old_watch = clause.watched1;
+        const ClauseRowIdx old_watch = clause.watched1;
         clause.watched1 = 2;
         selector.update_with_new_watch(0, old_watch, WatchType::one, trail);
 
@@ -205,17 +205,17 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         CHECK(selector.clause_lbd(0) == unset_clause_lbd);
         CHECK(selector.clause_tier(0) == ClauseTier::local);
         CHECK_FALSE(selector.is_clause_used_since_deletion(0));
-        CHECK(selector.clause_unused_conflicts(0) == 0);
+        CHECK(selector.clause_unused_passes(0) == 0);
     }
 
     SUBCASE("a learned clause takes its LBD and the tier that LBD names") {
         const ClauseTierConfig& cutoffs = selector.tier_config();
         REQUIRE(cutoffs.core_lbd == 2);
-        REQUIRE(cutoffs.tier2_lbd == 6);
+        REQUIRE(cutoffs.secondary_lbd == 6);
 
-        const std::size_t lbds[] = {cutoffs.core_lbd, cutoffs.core_lbd + 1, cutoffs.tier2_lbd,
-                                    cutoffs.tier2_lbd + 1};
-        const ClauseTier tiers[] = {ClauseTier::core, ClauseTier::tier2, ClauseTier::tier2,
+        const std::size_t lbds[] = {cutoffs.core_lbd, cutoffs.core_lbd + 1, cutoffs.secondary_lbd,
+                                    cutoffs.secondary_lbd + 1};
+        const ClauseTier tiers[] = {ClauseTier::core, ClauseTier::secondary, ClauseTier::secondary,
                                     ClauseTier::local};
         for (std::size_t index = 0; index < std::size(lbds); ++index) {
             selector.add_asserting_clause(
@@ -228,7 +228,7 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
     }
 
     SUBCASE("the cutoffs are configurable before the first clause") {
-        selector.set_tier_config(ClauseTierConfig{.core_lbd = 1, .tier2_lbd = 1});
+        selector.set_tier_config(ClauseTierConfig{.core_lbd = 1, .secondary_lbd = 1});
         selector.add_asserting_clause(make_clause(repr, 4, {{0}}), trail,
                                       AssertingClauseInfo{.lbd = 2, .removed_levels = 0});
         CHECK(selector.clause_tier(0) == ClauseTier::local);
@@ -239,18 +239,18 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         selector.add_starting_clause(make_clause(repr, 4, {{1}}));
 
         selector.set_clause_used_since_deletion(1, true);
-        selector.set_clause_unused_conflicts(1, 2);
+        selector.set_clause_unused_passes(1, 2);
         selector.set_clause_tier(1, ClauseTier::local);
         selector.set_clause_lbd(1, 7);
 
         CHECK(selector.is_clause_used_since_deletion(1));
-        CHECK(selector.clause_unused_conflicts(1) == 2);
+        CHECK(selector.clause_unused_passes(1) == 2);
         CHECK(selector.clause_tier(1) == ClauseTier::local);
         CHECK(selector.clause_lbd(1) == 7);
         CHECK(selector.is_clause_active(1));
 
         CHECK_FALSE(selector.is_clause_used_since_deletion(0));
-        CHECK(selector.clause_unused_conflicts(0) == 0);
+        CHECK(selector.clause_unused_passes(0) == 0);
         CHECK(selector.clause_tier(0) == ClauseTier::local);
         CHECK(selector.clause_lbd(0) == unset_clause_lbd);
     }
@@ -260,7 +260,7 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         selector.add_asserting_clause(make_clause(repr, 4, {{1}}), trail,
                                       AssertingClauseInfo{.lbd = 5, .removed_levels = 0});
         selector.set_clause_used_since_deletion(1, true);
-        selector.set_clause_unused_conflicts(1, 3);
+        selector.set_clause_unused_passes(1, 3);
         selector.set_clause_active(0, false);
 
         const CompactionTransform transform;
@@ -269,9 +269,9 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         CHECK_FALSE(selector.is_clause_learned(0));
         CHECK(selector.is_clause_learned(1));
         CHECK(selector.clause_lbd(1) == 5);
-        CHECK(selector.clause_tier(1) == ClauseTier::tier2);
+        CHECK(selector.clause_tier(1) == ClauseTier::secondary);
         CHECK(selector.is_clause_used_since_deletion(1));
-        CHECK(selector.clause_unused_conflicts(1) == 3);
+        CHECK(selector.clause_unused_passes(1) == 3);
     }
 }
 

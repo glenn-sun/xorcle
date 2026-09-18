@@ -39,7 +39,7 @@ public:
 
     void reinitialize() override;
 
-    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
+    std::optional<Equation> make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
                            const std::vector<std::uint8_t>& clause_active) override;
 
     /// @brief Bump the leading variable of an equation resolved through.

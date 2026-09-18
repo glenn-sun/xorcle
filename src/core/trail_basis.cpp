@@ -1,6 +1,5 @@
 #include "core/trail_basis.h"
 
-#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <optional>
@@ -15,13 +14,14 @@ namespace {
 #ifndef NDEBUG
 bool trail_maps_are_consistent(const Trail& trail) {
     const std::size_t trail_rows = trail.span().rows();
-    if (trail.order_map().size() != trail_rows || trail.reverse_order_map().size() != trail_rows ||
+    if (trail.trail_idx_to_row_idx().size() != trail_rows ||
+        trail.row_idx_to_trail_idx().size() != trail_rows ||
         trail.reasons().size() != trail_rows) {
         return false;
     }
-    for (std::size_t trail_index = 0; trail_index < trail_rows; ++trail_index) {
-        const std::size_t row_idx = trail.order_map()[trail_index];
-        if (row_idx >= trail_rows || trail.reverse_order_map()[row_idx] != trail_index) {
+    for (std::size_t trail_idx = 0; trail_idx < trail_rows; ++trail_idx) {
+        const std::size_t row_idx = trail.trail_idx_to_row_idx()[trail_idx];
+        if (row_idx >= trail_rows || trail.row_idx_to_trail_idx()[row_idx] != trail_idx) {
             return false;
         }
     }
@@ -31,8 +31,7 @@ bool trail_maps_are_consistent(const Trail& trail) {
 
 } // namespace
 
-TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail,
-                                               std::vector<std::size_t>* row_leading_cols) {
+TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& trail) {
     assert(trail.span().rows() != 0 && "trail span is empty");
     assert(rs.cols() == trail.span().cols() &&
            "row space column count does not match the trail span");
@@ -42,9 +41,6 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
     TrailBasisSpace trail_basis(trail);
 
     const std::size_t num_coefficients = trail_basis.cols();
-    if (row_leading_cols != nullptr) {
-        row_leading_cols->clear();
-    }
 
     Equation reduced_eqn(trail.repr(), trail.num_vars());
     Equation trail_basis_row = Equation::with_num_bits(trail.repr(), num_coefficients);
@@ -57,17 +53,12 @@ TrailBasisSpace TrailBasisSpace::from_RowSpace(const RowSpace& rs, const Trail& 
         assert(reduced_eqn.is_eq_true() && "row space contains a row outside the trail span");
         assert(row_coefficients.size() == num_coefficients);
 
-        // Span row index -> trail order (`reverse_order_map`) -> reversed.
+        // Span row index -> trail order (`row_idx_to_trail_idx`) -> reversed.
         mapped_bits.clear();
         row_coefficients.for_each_set([&](std::size_t row_idx) {
-            mapped_bits.push_back(num_coefficients - trail.reverse_order_map()[row_idx] - 1);
+            mapped_bits.push_back(num_coefficients - trail.row_idx_to_trail_idx()[row_idx] - 1);
         });
         trail_basis_row.assign_bits(mapped_bits);
-        if (row_leading_cols != nullptr) {
-            assert(!mapped_bits.empty() && "a row space row is zero");
-            row_leading_cols->push_back(
-                *std::min_element(mapped_bits.begin(), mapped_bits.end()));
-        }
 
         // Echelonized into ascending leading-column order, i.e. most recent
         // trail equation first.
@@ -87,8 +78,9 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
     for (const Equation& trail_basis_row : *this) {
         row_space_eqn.set_eq_true();
         for (const std::size_t coefficient_bit : trail_basis_row.bits()) {
-            const std::size_t trail_index = num_coefficients - coefficient_bit - 1;
-            row_space_eqn.plus_assign(trail_->span().row(trail_->order_map()[trail_index]));
+            const std::size_t trail_idx = num_coefficients - coefficient_bit - 1;
+            row_space_eqn.plus_assign(
+                trail_->span().row(trail_->trail_idx_to_row_idx()[trail_idx]));
         }
         row_space.add_row(row_space_eqn);
     }
@@ -126,32 +118,50 @@ std::size_t TrailBasisSpace::asserting_level() const {
 
 std::size_t TrailBasisSpace::literal_block_distance() const {
     assert(rows() > 0 && "literal block distance of an empty trail-basis space");
+    return levels_reached(std::nullopt);
+}
 
+std::size_t TrailBasisSpace::literal_block_distance_with(std::size_t col_idx) const {
+    assert(col_idx < cols() && "the extra column is out of range");
+    return levels_reached(col_idx);
+}
+
+std::size_t TrailBasisSpace::levels_reached(std::optional<std::size_t> extra_col_idx) const {
     // The columns a level owns end where the next level up begins, and the root
     // level runs to the last column.
     const auto block_end_of = [this](std::size_t level) {
         return level == 0 ? trail_->span().rows() : columns_after_level(level - 1);
     };
 
-    // Columns ascend into the past exactly as levels descend, so one walk over
-    // the pivot columns enters each level's block at most once.
+    // Columns ascend into the past exactly as levels descend, so one ascending
+    // walk enters each level's block at most once.
     std::size_t level = trail_->level();
     std::size_t block_end = block_end_of(level);
     std::size_t blocks = 0;
     bool block_counted = false;
-
-    pivot_col_idxs().for_each_set([&](std::size_t col_idx) {
+    const auto visit = [&](std::size_t col_idx) {
         while (col_idx >= block_end) {
-            assert(level > 0 && "a pivot column lies past the root level");
+            assert(level > 0 && "a column lies past the root level");
             --level;
             block_end = block_end_of(level);
             block_counted = false;
         }
-        if (!block_counted) {
+        if (!block_counted && level > 0) {
             ++blocks;
             block_counted = true;
         }
+    };
+
+    pivot_col_idxs().for_each_set([&](std::size_t col_idx) {
+        if (extra_col_idx.has_value() && *extra_col_idx <= col_idx) {
+            visit(*extra_col_idx);
+            extra_col_idx.reset();
+        }
+        visit(col_idx);
     });
+    if (extra_col_idx.has_value()) {
+        visit(*extra_col_idx);
+    }
 
     return blocks;
 }

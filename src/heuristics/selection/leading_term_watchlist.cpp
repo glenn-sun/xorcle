@@ -27,7 +27,7 @@ LeadingTermWatchlist::LeadingTermWatchlist(std::size_t num_vars, std::size_t wai
     assert(wait_for_queue >= 1 && "a clause is queued on at least its first bottom push");
 }
 
-std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIndex row_idx) const {
+std::size_t LeadingTermWatchlist::bucket_of(const Clause& clause, ClauseRowIdx row_idx) const {
     // Stronger than `RowEchelonMatrix::row()`'s own bound check below: this says
     // the clause's *stored watch* is in range.
     assert(row_idx < clause.rows() && "watched row index out of range");
@@ -200,7 +200,7 @@ void LeadingTermWatchlist::update_with_new_equation(const Equation& reduced_eqn,
     append_top(by_leading_term_[bucket]);
 }
 
-void LeadingTermWatchlist::update_with_new_watch(ClauseId id, ClauseRowIndex old_watch,
+void LeadingTermWatchlist::update_with_new_watch(ClauseId id, ClauseRowIdx old_watch,
                                                 WatchType type, const Trail&) {
     assert(id < in_queue_.size() && "clause id is out of range");
     // The clause-database bound is checked by `is_clause_active()`.
@@ -214,7 +214,7 @@ void LeadingTermWatchlist::update_with_new_watch(ClauseId id, ClauseRowIndex old
 
     // The clause's watches were already updated by the propagator, so reading
     // them here gives the row the watch moved *to*.
-    ClauseRowIndex new_watch = 0;
+    ClauseRowIdx new_watch = 0;
     switch (type) {
         case WatchType::zero:
             new_watch = moved.watched0;

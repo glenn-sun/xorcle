@@ -27,16 +27,19 @@ trap 'rm -rf "$work"' EXIT INT TERM
 instance="$work/instance.xnf"
 proof="$work/proof.lrup"
 
-# random_kxnf needs no third-party generator dependency. This (family, seed)
-# is UNSAT.
+# random_kxnf needs no third-party generator dependency, and this (family,
+# seed) is UNSAT.
 "$python" "$root/tools/generate_xnf_tests.py" \
     --family random_kxnf --params 'n=14;k=3' --seed 1 --out "$instance"
 
-"$xorcle" --proof="$proof" "$@" "$instance" > "$work/solve.out" 2>&1 || {
-    echo "check_proof_roundtrip: solver failed" >&2
+# 20 is the solver's UNSAT exit code; anything else here is a real failure.
+status=0
+"$xorcle" --proof="$proof" "$@" "$instance" > "$work/solve.out" 2>&1 || status=$?
+if [ "$status" -ne 20 ]; then
+    echo "check_proof_roundtrip: solver exited $status, expected 20 (UNSAT)" >&2
     cat "$work/solve.out" >&2
     exit 1
-}
+fi
 
 if ! grep -q '^s UNSATISFIABLE' "$work/solve.out"; then
     echo "check_proof_roundtrip: expected UNSAT, got:" >&2

@@ -52,7 +52,7 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.equation_repr == EquationRepr::dense);
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
-    CHECK(options.compact_every == 16);
+    CHECK(options.compact_cadence == 16);
     CHECK(options.decisions == DecisionProcedureName::csids);
     CHECK(options.csids_initial == doctest::Approx(1.0));
     CHECK(options.csids_decay == doctest::Approx(0.98));
@@ -61,23 +61,22 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.selection == ClauseSelectorName::cyclic);
     CHECK(options.restart == RestartMethod::none);
     CHECK(options.deletion == true);
-    CHECK(options.deletion_every == 100);
+    CHECK(options.deletion_cadence == 100);
     CHECK(options.deletion_core_lbd == 2);
-    CHECK(options.deletion_tier2_lbd == 6);
-    CHECK(options.deletion_tier2_demote_every == 200);
+    CHECK(options.deletion_secondary_lbd == 6);
+    CHECK(options.deletion_demote_cadence_in_passes == 2);
     CHECK(options.deletion_key == DeletionKey::activity);
-    CHECK(options.bump_learned_clause_pivots == false);
+    CHECK(options.bump_responsible_clauses == false);
     CHECK(options.proof.empty());
     CHECK(options.stats_file.empty());
-    CHECK(options.report_every == 100);
+    CHECK(options.report_cadence == 100);
     CHECK(options.report == "default");
     CHECK(options.csids_preset.empty());
 }
 
 TEST_CASE("options: --name=value sets each kind") {
-    // `--deletion=false` because the selector cannot delete, and
-    // `--restart-reuse-trail=false` because a Luby restart would otherwise want
-    // levels only CSIDS ranks; both are now refusals rather than quiet demotions.
+    // `--deletion=false` and `--subsume=false` because the selector can do
+    // neither; both are refusals rather than quiet demotions.
     const Options options = parse_with_input({"--equation-repr=sparse",
                                               "--seed=42",
                                               "--compact=false",
@@ -107,12 +106,12 @@ TEST_CASE("options: --name=value sets each kind") {
 }
 
 TEST_CASE("options: a table name's underscores are dashes on the command line") {
-    CHECK(cli_spelling("compact_every") == "--compact-every");
-    CHECK(table_name_of("compact-every") == "compact_every");
-    CHECK(parse_with_input({"--compact-every=64"}).compact_every == 64);
+    CHECK(cli_spelling("compact_cadence") == "--compact-cadence");
+    CHECK(table_name_of("compact-cadence") == "compact_cadence");
+    CHECK(parse_with_input({"--compact-cadence=64"}).compact_cadence == 64);
     // Dashes and underscores are interchangeable in an option name, as in
     // CaDiCaL; the dashed form is the one `--help` and the errors show.
-    CHECK(parse_with_input({"--compact_every=64"}).compact_every == 64);
+    CHECK(parse_with_input({"--compact_cadence=64"}).compact_cadence == 64);
 }
 
 TEST_CASE("options: booleans accept on/off as well as true/false") {
@@ -124,7 +123,7 @@ TEST_CASE("options: booleans accept on/off as well as true/false") {
 
 TEST_CASE("options: values outside the table's bounds are rejected") {
     SUBCASE("a size below its minimum") {
-        CHECK(contains(rejection_message<CliError>({"--compact-every=0"}), "must be at least 1"));
+        CHECK(contains(rejection_message<CliError>({"--compact-cadence=0"}), "must be at least 1"));
         CHECK(contains(rejection_message<CliError>({"--restart-lbd-min-conflicts=0"}), "must be at least 1"));
     }
     SUBCASE("a real below its minimum") {
@@ -244,7 +243,7 @@ TEST_CASE("options: a preset rejects an accompanying manual override") {
 }
 
 TEST_CASE("options: --proof goes with compaction, and --proof-raw with either") {
-    // Post-processing derives the units compaction ate, so the two go together.
+    // Post-processing cites the units compaction ate, so the two go together.
     const Options options = parse_with_input({"--proof=out.lrup"});
     CHECK(options.compact);
     CHECK(options.proof == "out.lrup");
@@ -274,7 +273,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--seed=N"));
     CHECK(contains(text, "[default: 0; minimum 0]"));
     CHECK(contains(text, "--compact=true|false"));
-    CHECK(contains(text, "--compact-every=N"));
+    CHECK(contains(text, "--compact-cadence=N"));
     CHECK(contains(text, "[default: 16; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
     CHECK(contains(text, "[default: 0.98; range 0..1]"));
@@ -288,7 +287,8 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--deletion=true|false"));
     CHECK(contains(text, "periodically delete some learned clauses (only with cyclic selector) "
                        "[default: true]"));
-    CHECK(contains(text, "--deletion-every=N"));
+    CHECK(contains(text, "--deletion-cadence=N"));
+    CHECK(contains(text, "--deletion-demote-cadence-in-passes=N"));
     CHECK(contains(text, "--deletion-key=lbd|activity"));
 
     // The requirement table feeds the help, so a refusal is never a surprise.
@@ -297,15 +297,14 @@ TEST_CASE("options: --help is generated from the table") {
 
     CHECK(contains(text, "--restart=none|luby|lbd"));
     CHECK(contains(text, "restart schedule"));
-    CHECK(contains(text, "multiplier for luby schedule"));
+    CHECK(contains(text, "conflicts for a luby value of 1"));
     CHECK(contains(text, "window of the fast LBD average"));
 }
 
-TEST_CASE("options: luby refuses to invent a budget") {
-    CHECK(contains(rejection_message<CliError>({"--restart=luby"}),
-                   "requires --restart-luby-unit"));
-    // The budget is only required by the schedule that uses it.
-    CHECK_NOTHROW(parse_with_input({"--restart=lbd"}));
+TEST_CASE("options: the luby budget is a positive count") {
+    CHECK(contains(rejection_message<CliError>({"--restart=luby", "--restart-luby-unit=0"}),
+                   "--restart-luby-unit"));
+    CHECK_NOTHROW(parse_with_input({"--restart=luby"}));
     CHECK_NOTHROW(parse_with_input({"--restart=luby", "--restart-luby-unit=4000"}));
 }
 
@@ -317,7 +316,7 @@ TEST_CASE("options: deletion needs the heuristics it reads") {
                                                 "--decisions=variable_vsids"}),
                    "--deletion-key=activity requires --decisions=csids"));
     CHECK(contains(rejection_message<CliError>({"--deletion-core-lbd=7"}),
-                   "--deletion-core-lbd must not exceed --deletion-tier2-lbd"));
+                   "--deletion-core-lbd must not exceed --deletion-secondary-lbd"));
 
     // The key defaults to activity, so --deletion alone carries the requirement.
     const std::string defaulted =
@@ -330,7 +329,7 @@ TEST_CASE("options: deletion needs the heuristics it reads") {
     CHECK_NOTHROW(parse_with_input({"--deletion=true", "--deletion-key=activity"}));
     CHECK_NOTHROW(parse_with_input(
         {"--deletion=true", "--decisions=variable_vsids", "--deletion-key=lbd"}));
-    CHECK_NOTHROW(parse_with_input({"--deletion-core-lbd=7", "--deletion-tier2-lbd=9"}));
+    CHECK_NOTHROW(parse_with_input({"--deletion-core-lbd=7", "--deletion-secondary-lbd=9"}));
 }
 
 TEST_CASE("options: deletion refuses an incompatible choice rather than yielding") {
@@ -361,15 +360,15 @@ TEST_CASE("options: the configuration projections carry the values across") {
     const Options options = parse_with_input({"--compact=false",
                                               "--restart=lbd", "--restart-lbd-min-ratio=1.25",
                                               "--deletion=true",
-                                              "--deletion-every=25", "--deletion-core-lbd=2",
-                                              "--deletion-tier2-lbd=8", "--deletion-key=activity",
-                                              "--deletion-tier2-demote-every=75"});
+                                              "--deletion-cadence=25", "--deletion-core-lbd=2",
+                                              "--deletion-secondary-lbd=8", "--deletion-key=activity",
+                                              "--deletion-demote-cadence-in-passes=3"});
     const DeletionConfig deletion = deletion_config(options);
     CHECK(deletion.enabled == true);
-    CHECK(deletion.conflict_interval == 25);
-    CHECK(deletion.demote_interval == 75);
+    CHECK(deletion.cadence == 25);
+    CHECK(deletion.demote_cadence_in_passes == 3);
     CHECK(deletion.tiers.core_lbd == 2);
-    CHECK(deletion.tiers.tier2_lbd == 8);
+    CHECK(deletion.tiers.secondary_lbd == 8);
     CHECK(deletion.key == DeletionKey::activity);
     // Only the caller holding the decision procedure can fill this in.
     CHECK(deletion.activity == nullptr);
@@ -387,9 +386,9 @@ TEST_CASE("options: the configuration projections carry the values across") {
     CHECK(luby.luby_unit_conflicts == 50);
 
     const CompactionConfig interval =
-        compaction_config(parse_with_input({"--compact-every=8"}));
+        compaction_config(parse_with_input({"--compact-cadence=8"}));
     CHECK(interval.enabled == true);
-    CHECK(interval.conflict_interval == 8);
+    CHECK(interval.cadence == 8);
 }
 
 TEST_CASE("options: --report takes the progress group names") {
@@ -419,7 +418,7 @@ TEST_CASE("options: the recorded configuration is the whole table") {
         return std::string("<absent>");
     };
     CHECK(value_of("compact") == "true");
-    CHECK(value_of("compact_every") == "16");
+    CHECK(value_of("compact_cadence") == "16");
     CHECK(value_of("csids_decay") == "0.98");
     CHECK(value_of("decisions") == "csids");
     // An unset path records as empty, not as the help text's "unset".
@@ -446,7 +445,7 @@ TEST_CASE("options: a recorded value knows whether it is the default") {
         option_settings(parse_with_input({"--seed=7", "--minimize=false"}));
     CHECK(!entry_for(changed, "seed").is_default);
     CHECK(!entry_for(changed, "minimize").is_default);
-    CHECK(entry_for(changed, "compact_every").is_default);
+    CHECK(entry_for(changed, "compact_cadence").is_default);
 }
 
 TEST_CASE("options: a preset records as the triple it stands for") {
@@ -472,40 +471,43 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     const auto refusal = [](std::vector<std::string> arguments) {
         return rejection_message<CliError>(std::move(arguments));
     };
-    CHECK(refusal({"--compact=false", "--compact-every=8"}) ==
-          "--compact-every requires --compact=true; nothing would read it here");
+    CHECK(refusal({"--compact=false", "--compact-cadence=8"}) ==
+          "--compact-cadence requires --compact=true; nothing would read it here");
     CHECK(refusal({"--decisions=variable_vsids", "--deletion=false", "--csids-decay=0.5"})
               .starts_with("--csids-decay requires --decisions=csids"));
     CHECK(refusal({"--wait-for-queue=4"}).starts_with("--wait-for-queue requires"));
     CHECK(refusal({"--restart-lbd-min-ratio=1.2"}).starts_with("--restart-lbd-min-ratio requires"));
     CHECK(refusal({"--restart-luby-unit=50"}).starts_with("--restart-luby-unit requires"));
-    CHECK(refusal({"--deletion=false", "--deletion-every=25"})
-              .starts_with("--deletion-every requires"));
-    CHECK(refusal({"--deletion=false", "--deletion-tier2-demote-every=25"})
-              .starts_with("--deletion-tier2-demote-every requires"));
+    CHECK(refusal({"--deletion=false", "--deletion-cadence=25"})
+              .starts_with("--deletion-cadence requires"));
+    CHECK(refusal({"--deletion=false", "--deletion-demote-cadence-in-passes=3"})
+              .starts_with("--deletion-demote-cadence-in-passes requires"));
     // Only CSIDS scores clauses, so only CSIDS can bump the pivots.
     CHECK(refusal({"--decisions=variable_vsids", "--deletion=false",
-                   "--bump-learned-clause-pivots=true"})
-              .starts_with("--bump-learned-clause-pivots requires --decisions=csids"));
+                   "--bump-responsible-clauses=true"})
+              .starts_with("--bump-responsible-clauses requires --decisions=csids"));
     CHECK(refusal({"--stats-file=s.csv", "--report=all"}).starts_with("--report requires"));
-    CHECK(refusal({"--report-every=0", "--report=all"}).starts_with("--report requires"));
+    CHECK(refusal({"--report-cadence=0", "--report=all"}).starts_with("--report requires"));
 
     // The two that were inert while claiming to be on: --phase and --seed reach
     // only CSIDS, and trail reuse needs the procedure that ranks levels.
     CHECK(refusal({"--decisions=variable_vsids", "--deletion=false", "--phase=satisfy"})
               .starts_with("--phase requires --decisions=csids"));
-    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--seed=7"})
-              .starts_with("--seed requires --decisions=csids"));
-    CHECK(refusal({"--restart=lbd", "--decisions=variable_vsids", "--deletion=false"})
+    CHECK_NOTHROW(
+        parse_with_input({"--decisions=fixed_literals", "--deletion=false", "--seed=7"}));
+    CHECK(refusal({"--restart=lbd", "--restart-reuse-trail=true", "--decisions=variable_vsids",
+                   "--deletion=false"})
               .starts_with("--restart-reuse-trail requires --decisions=csids"));
+    CHECK_NOTHROW(parse_with_input({"--restart=lbd", "--decisions=variable_vsids", "--deletion=false"}));
 
-    // Trail reuse is moot without a schedule, so saying so is refused too; left
-    // at its default under --restart=none it is simply not read.
-    CHECK(refusal({"--restart-reuse-trail=false"}).starts_with("--restart-reuse-trail requires"));
-    CHECK(parse_with_input({}).restart_reuse_trail == true);
+    // Trail reuse is a switch, so it is checked against its value: asking for it
+    // without a schedule is refused, and turning it off is always allowed.
+    CHECK(refusal({"--restart-reuse-trail=true"}).starts_with("--restart-reuse-trail requires"));
+    CHECK_NOTHROW(parse_with_input({"--restart-reuse-trail=false"}));
+    CHECK(parse_with_input({}).restart_reuse_trail == false);
 
     // Each of these is given where something does read it.
-    CHECK(parse_with_input({"--compact-every=8"}).compact_every == 8);
+    CHECK(parse_with_input({"--compact-cadence=8"}).compact_cadence == 8);
     CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-min-ratio=1.2"}).restart_lbd_min_ratio ==
           doctest::Approx(1.2));
     CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false",

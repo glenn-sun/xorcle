@@ -12,7 +12,7 @@ void ClauseSelector::debug_assert_database_synchronized() const {
     assert(clauses_.size() == clause_learned_.size() &&
            clauses_.size() == clause_used_since_deletion_.size() &&
            clauses_.size() == clause_tier_.size() && clauses_.size() == clause_lbd_.size() &&
-           clauses_.size() == clause_unused_conflicts_.size() &&
+           clauses_.size() == clause_unused_passes_.size() &&
            "clause database and metadata are desynchronized");
 }
 
@@ -48,6 +48,13 @@ void ClauseSelector::set_clause_active(ClauseId id, bool active) {
     debug_assert_clause_id(id);
 #endif
     clause_active_[id] = active ? 1 : 0;
+}
+
+void ClauseSelector::set_clause_learned(ClauseId id, bool learned) {
+#ifndef NDEBUG
+    debug_assert_clause_id(id);
+#endif
+    clause_learned_[id] = learned ? 1 : 0;
 }
 
 bool ClauseSelector::is_clause_learned(ClauseId id) const {
@@ -99,24 +106,24 @@ void ClauseSelector::set_clause_used_since_deletion(ClauseId id, bool used) {
     clause_used_since_deletion_[id] = used ? 1 : 0;
 }
 
-std::size_t ClauseSelector::clause_unused_conflicts(ClauseId id) const {
+std::size_t ClauseSelector::clause_unused_passes(ClauseId id) const {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
 #endif
-    return clause_unused_conflicts_[id];
+    return clause_unused_passes_[id];
 }
 
-void ClauseSelector::set_clause_unused_conflicts(ClauseId id, std::size_t num_conflicts) {
+void ClauseSelector::set_clause_unused_passes(ClauseId id, std::size_t num_passes) {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
 #endif
-    clause_unused_conflicts_[id] = num_conflicts;
+    clause_unused_passes_[id] = num_passes;
 }
 
 void ClauseSelector::set_tier_config(const ClauseTierConfig& config) {
     assert(clauses_.empty() && "the tier cutoffs must be set before any clause is added");
-    assert(config.core_lbd <= config.tier2_lbd &&
-           "the core cutoff must not exceed the tier2 cutoff");
+    assert(config.core_lbd <= config.secondary_lbd &&
+           "the core cutoff must not exceed the secondary cutoff");
     tier_config_ = config;
 }
 
@@ -124,7 +131,7 @@ ClauseTier ClauseSelector::tier_for_lbd(std::size_t lbd) const {
     if (lbd <= tier_config_.core_lbd) {
         return ClauseTier::core;
     }
-    return lbd <= tier_config_.tier2_lbd ? ClauseTier::tier2 : ClauseTier::local;
+    return lbd <= tier_config_.secondary_lbd ? ClauseTier::secondary : ClauseTier::local;
 }
 
 std::optional<ClauseSelection> ClauseSelector::next_with_hint() {
@@ -158,7 +165,7 @@ void ClauseSelector::update_with_decision(const Equation& reduced_eqn, const Tra
 
 void ClauseSelector::update_with_decision_clause(std::optional<ClauseId>) {}
 
-void ClauseSelector::update_with_new_watch(ClauseId, ClauseRowIndex, WatchType, const Trail&) {}
+void ClauseSelector::update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&) {}
 
 void ClauseSelector::update_with_compaction(const CompactionTransform&, const Trail&) {}
 
@@ -168,10 +175,10 @@ void ClauseSelector::add_clause(Clause clause) {
     clause_learned_.push_back(0);
     clause_used_since_deletion_.push_back(0);
     // A starting clause enters `local` with no LBD: it is tiered by its first use
-    // and, being unlearned, is never an eviction candidate.
+    // and, being unlearned, is never a deletion candidate.
     clause_tier_.push_back(ClauseTier::local);
     clause_lbd_.push_back(unset_clause_lbd);
-    clause_unused_conflicts_.push_back(0);
+    clause_unused_passes_.push_back(0);
 }
 
 void ClauseSelector::update_with_new_equation(const Equation&, const Trail&) {}

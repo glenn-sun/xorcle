@@ -37,7 +37,7 @@ public:
 
     virtual const IndexSet& pivot_col_idxs() const noexcept = 0;
 
-    virtual std::optional<std::size_t> add_row_get_index(Equation v) = 0;
+    virtual std::optional<std::size_t> add_row_get_row_idx(Equation v) = 0;
 
     virtual void reduce(Equation& v) const = 0;
 
@@ -78,7 +78,7 @@ public:
     // `pivot_row_` points into another matrix's rows, so a copy has to rebuild it.
     RowEchelonMatrixTemplate(const RowEchelonMatrixTemplate& other)
         : rows_(other.rows_), pivot_col_idxs_(other.pivot_col_idxs_),
-          col_idx_to_row_idx_(other.col_idx_to_row_idx_), cols_(other.cols_) {
+          cols_(other.cols_) {
         if (!other.col_idx_to_row_.empty()) {
             build_col_idx_to_row();
         }
@@ -88,7 +88,6 @@ public:
         if (this != &other) {
             rows_ = other.rows_;
             pivot_col_idxs_ = other.pivot_col_idxs_;
-            col_idx_to_row_idx_ = other.col_idx_to_row_idx_;
             cols_ = other.cols_;
             col_idx_to_row_.clear();
             if (!other.col_idx_to_row_.empty()) {
@@ -115,7 +114,7 @@ public:
 
     const IndexSet& pivot_col_idxs() const noexcept override { return pivot_col_idxs_; }
 
-    std::optional<std::size_t> add_row_get_index(Equation v) override {
+    std::optional<std::size_t> add_row_get_row_idx(Equation v) override {
         // `v` is the caller's own copy, so it is reduced in place and stored.
         V& reduced_row = gf2_vector_of<V>(v);
         std::optional<std::size_t> leading_col_idx = reduced_row.leading_bit();
@@ -133,17 +132,7 @@ public:
         const std::size_t insert_row_idx = pivot_col_idxs_.count_below(new_pivot_col_idx);
 
         rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_row_idx), std::move(v));
-        if (!col_idx_to_row_idx_.empty()) {
-            pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
-                if (pivot_col_idx > new_pivot_col_idx) {
-                    ++col_idx_to_row_idx_[pivot_col_idx];
-                }
-            });
-        }
         pivot_col_idxs_.set(new_pivot_col_idx);
-        if (!col_idx_to_row_idx_.empty()) {
-            col_idx_to_row_idx_[new_pivot_col_idx] = insert_row_idx;
-        }
         // Inserting moves handles, never the equations they own, so the entries
         // for the other pivot columns stay valid.
         if (!col_idx_to_row_.empty()) {
@@ -211,14 +200,6 @@ public:
         pivot_col_idxs_.reset(*leading_col_idx);
         if (!col_idx_to_row_.empty()) {
             col_idx_to_row_[*leading_col_idx] = nullptr;
-        }
-        // Only the rows above the hole moved down.
-        if (!col_idx_to_row_idx_.empty()) {
-            pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
-                if (pivot_col_idx > *leading_col_idx) {
-                    --col_idx_to_row_idx_[pivot_col_idx];
-                }
-            });
         }
 
         debug_assert_valid_representation();
@@ -311,18 +292,15 @@ private:
 
     /// @brief The row holding the pivot in `col_idx`.
     std::size_t row_idx_for_col_idx(std::size_t col_idx) const noexcept {
-        return col_idx_to_row_idx_.empty() ? pivot_col_idxs_.count_below(col_idx)
-                                           : col_idx_to_row_idx_[col_idx];
+        return pivot_col_idxs_.count_below(col_idx);
     }
 
     void build_col_idx_to_row() {
-        col_idx_to_row_idx_.assign(cols_, 0);
-        pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
-            col_idx_to_row_idx_[pivot_col_idx] = pivot_col_idxs_.count_below(pivot_col_idx);
-        });
         col_idx_to_row_.assign(cols_, nullptr);
+        // `for_each_set` walks ascending, which is row-echelon order.
+        std::size_t row_idx = 0;
         pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
-            col_idx_to_row_[pivot_col_idx] = &gf2_vector_of<V>(rows_[row_idx_for_col_idx(pivot_col_idx)]);
+            col_idx_to_row_[pivot_col_idx] = &gf2_vector_of<V>(rows_[row_idx++]);
         });
     }
 
@@ -334,7 +312,6 @@ private:
     void debug_assert_valid_representation() const {
 #ifndef NDEBUG
         assert(pivot_col_idxs_.size() == cols());
-        assert(col_idx_to_row_idx_.empty() || col_idx_to_row_idx_.size() == cols());
         assert(pivot_col_idxs_.count() == rows_.size());
 
         std::optional<std::size_t> previous_pivot;
@@ -366,7 +343,6 @@ private:
 
     std::vector<Equation> rows_;
     IndexSet pivot_col_idxs_;
-    std::vector<std::size_t> col_idx_to_row_idx_;
 
     /// @brief Empty until the rows are a large enough fraction of the columns,
     /// since a table indexed by column costs a clause more than it saves it.

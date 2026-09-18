@@ -49,9 +49,6 @@ public:
     virtual std::unique_ptr<EquationInterface> compact(const CompactionTransform& transform)
         const = 0;
 
-    virtual std::unique_ptr<EquationInterface> uncompact(const CompactionTransform& transform)
-        const = 0;
-
     virtual std::vector<std::size_t> bits() const = 0;
 
     virtual std::size_t num_set_bits() const noexcept = 0;
@@ -153,17 +150,6 @@ public:
             if (mapped != CompactionTransform::npos) {
                 out.set_bit(mapped);
             }
-        });
-        return std::make_unique<EquationTemplate>(std::move(out));
-    }
-
-    std::unique_ptr<EquationInterface> uncompact(const CompactionTransform& transform)
-        const override {
-        V out(transform.old_num_vars() + 1);
-        const std::size_t old_constant_bit = transform.old_num_vars();
-        const std::size_t new_constant_bit = transform.new_num_vars();
-        vector_.for_each_set_bit([&](std::size_t new_bit) {
-            out.set_bit(new_bit == new_constant_bit ? old_constant_bit : transform.to_old(new_bit));
         });
         return std::make_unique<EquationTemplate>(std::move(out));
     }

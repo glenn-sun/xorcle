@@ -8,9 +8,9 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Whether `left` is evicted before `right`, ordered totally so that a tie
+/// @brief Whether `left` is deleted before `right`, ordered totally so that a tie
 /// does not depend on the sort.
-bool evicted_first(const DeletionState& state, ClauseId left, ClauseId right) {
+bool deleted_first(const DeletionState& state, ClauseId left, ClauseId right) {
     if (state.key == DeletionKey::activity) {
         const double left_activity = state.activity->clause_activity(left);
         const double right_activity = state.activity->clause_activity(right);
@@ -42,28 +42,27 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
     }
 
     DeletionPlan plan;
-    plan.unused_conflicts.resize(num_clauses);
+    plan.unused_passes.resize(num_clauses);
     std::vector<ClauseId> candidates;
 
     for (ClauseId id = 0; id < num_clauses; ++id) {
-        plan.unused_conflicts[id] = state.selector.clause_unused_conflicts(id);
+        plan.unused_passes[id] = state.selector.clause_unused_passes(id);
         // A starting clause is tiered and demoted like a learned one; only the
-        // eviction candidates below are restricted to learned clauses.
+        // deletion candidates below are restricted to learned clauses.
         if (!state.selector.is_clause_active(id) || is_locked[id] != 0) {
             continue;
         }
         switch (state.selector.clause_tier(id)) {
             case ClauseTier::core:
                 break;
-            case ClauseTier::tier2:
+            case ClauseTier::secondary:
                 if (state.selector.is_clause_used_since_deletion(id)) {
-                    plan.unused_conflicts[id] = 0;
-                } else if (plan.unused_conflicts[id] + state.conflict_interval >=
-                           state.demote_interval) {
+                    plan.unused_passes[id] = 0;
+                } else if (plan.unused_passes[id] + 1 >= state.demote_cadence_in_passes) {
                     plan.demoted.push_back(id);
-                    plan.unused_conflicts[id] = 0;
+                    plan.unused_passes[id] = 0;
                 } else {
-                    plan.unused_conflicts[id] += state.conflict_interval;
+                    ++plan.unused_passes[id];
                 }
                 break;
             case ClauseTier::local:
@@ -74,11 +73,11 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
         }
     }
 
-    const std::size_t evict_count = candidates.size() / 2;
+    const std::size_t delete_count = candidates.size() / 2;
     std::sort(candidates.begin(), candidates.end(),
-              [&](ClauseId left, ClauseId right) { return evicted_first(state, left, right); });
-    plan.evicted.assign(candidates.begin(), candidates.begin() + evict_count);
-    std::sort(plan.evicted.begin(), plan.evicted.end());
+              [&](ClauseId left, ClauseId right) { return deleted_first(state, left, right); });
+    plan.deleted.assign(candidates.begin(), candidates.begin() + delete_count);
+    std::sort(plan.deleted.begin(), plan.deleted.end());
     return plan;
 }
 

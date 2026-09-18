@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 
 #include "algebra/equation.h"
 #include "algebra/row_echelon_matrix.h"
@@ -24,13 +25,9 @@ public:
         : RowEchelonMatrix(trail.repr(), trail.span().rows()), trail_(&trail) {}
 
     /// @brief Rewrite a row space into trail-basis coordinates, echelonized.
-    ///
-    /// A non-null `row_leading_cols` receives each *input* row's leading
-    /// coordinate column, in `rs` order, before echelonization mixes the rows.
     /// @pre Every row of `rs` belongs to `trail.span()`, which is non-empty.
     /// @pre `rs.cols() == trail.span().cols()` and `rs.repr() == trail.repr()`.
-    static TrailBasisSpace from_RowSpace(const RowSpace& rs, const Trail& trail,
-                                         std::vector<std::size_t>* row_leading_cols = nullptr);
+    static TrailBasisSpace from_RowSpace(const RowSpace& rs, const Trail& trail);
 
     /// @brief Convert back out of trail-basis coordinates.
     ///
@@ -44,20 +41,30 @@ public:
     /// @note `O(trail.level())`, called twice per resolution step.
     std::size_t asserting_level() const;
 
-    /// @brief How many decision levels these rows reach into.
+    /// @brief How many decision levels above the root these rows reach into.
     ///
     /// The literal block distance of the clause they negate: the trail prefixes
     /// meet this subspace exactly at its pivot columns, so those columns stand
-    /// in for the literals counted in the Boolean case.
+    /// in for the literals counted in the Boolean case. Root pivots count for
+    /// nothing, as root literals do.
     /// @pre `rows() > 0`.
     /// @note `O(rows() + trail.level())`.
     std::size_t literal_block_distance() const;
+
+    /// @brief `literal_block_distance()` with column `col_idx` counted as one more
+    /// pivot.
+    /// @pre `col_idx < cols()`.
+    /// @note `O(rows() + trail.level())`.
+    std::size_t literal_block_distance_with(std::size_t col_idx) const;
 
 private:
     /// @brief The number of columns holding equations learned strictly after
     /// `level`, which are the columns below the returned index.
     /// @pre `level <= trail.level()`.
     std::size_t columns_after_level(std::size_t level) const;
+
+    /// @brief The levels above the root holding a pivot column or `extra_col_idx`.
+    std::size_t levels_reached(std::optional<std::size_t> extra_col_idx) const;
 
     /// @brief Held by pointer, not by reference, so the class stays assignable.
     const Trail* trail_;

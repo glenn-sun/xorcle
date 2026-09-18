@@ -49,15 +49,5 @@ TEST_CASE("Ema: a narrow window follows a step and a wide one lags it") {
     CHECK(slow.value() < 2.0);
 }
 
-TEST_CASE("Ema: reset forgets the samples so far") {
-    Ema ema(10);
-    for (int i = 0; i < 100; ++i) {
-        ema.update(9.0);
-    }
-    ema.reset();
-    CHECK(ema.value() == 0.0);
-    ema.update(2.0);
-    CHECK(ema.value() == doctest::Approx(2.0));
-}
 
 } // namespace xorcle

@@ -29,14 +29,14 @@ namespace xorcle {
 struct CompactionConfig {
     bool enabled = true;
 
-    std::size_t conflict_interval = 16; ///< Conflicts between two successful compactions.
+    std::size_t cadence = 16; ///< Conflicts between two successful compactions.
 };
 
 /// @brief Where the solver reports progress while it runs, and how often.
 struct ProgressConfig {
     ProgressReporter* reporter = nullptr; ///< Not owned; null reports nothing.
 
-    std::size_t conflict_interval = 0;    ///< Conflicts between report lines; 0 reports nothing.
+    std::size_t cadence = 0;    ///< Conflicts between report lines; 0 reports nothing.
 };
 
 struct Solution {
@@ -59,10 +59,14 @@ struct SolverCounters {
 
     /// @brief Summed LBD of the clauses learned, for their mean.
     std::size_t sum_learned_lbd = 0;
+
+    /// @brief Asserting clauses, which is what `sum_learned_lbd` averages over:
+    /// a root conflict learns none, and a subsumption replacement is not one.
+    std::size_t num_asserting_clauses = 0;
     /// @brief Summed trail level and rank *at* the conflicts, before their
     /// backjumps, for the means the progress line reports over an interval.
     std::size_t sum_conflict_level = 0;
-    std::size_t sum_conflict_rank = 0;
+    std::size_t sum_conflict_trail_length = 0;
 
     std::size_t num_minimized_clauses = 0; ///< Learned clauses minimization shrank.
     std::size_t minimize_width_before = 0; ///< Summed width at the asserting point.
@@ -101,7 +105,7 @@ public:
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
            RawProofWriter* proof_writer = nullptr, const CompactionConfig& compaction = {},
            const ProgressConfig& progress = {}, bool minimize = true,
-           const DeletionConfig& deletion = {}, bool bump_learned_clause_pivots = false,
+           const DeletionConfig& deletion = {}, bool bump_responsible_clauses = false,
            bool subsume = false);
 
     Solver(const Solver&) = delete;
@@ -120,7 +124,7 @@ public:
     /// @brief Original variable count, before compaction.
     std::size_t num_vars() const noexcept { return original_num_vars_; }
 
-    /// @brief Clause ids ever handed out; deletion tombstones rather than
+    /// @brief Clause ids ever handed out; deletion deactivates rather than
     /// reclaiming them, so this only grows. `num_active_clauses()` is the
     /// database as it stands.
     std::size_t num_clauses() const noexcept { return selector_->num_clauses(); }
@@ -150,18 +154,31 @@ private:
     /// @brief Record the final empty clause for a root conflict.
     void write_root_unsat_proof();
 
-    /// @brief Record the root trail a compaction is about to discard.
-    /// @pre The trail still holds it, and `proof_writer_` is non-null.
+    /// @brief Record the latest trail row, a root unit, as a learned line unless
+    /// its one-row reason clause already is that line.
+    /// @pre `proof_writer_` is non-null, the trail is at the root and not
+    /// conflicting, and `reason_id` propagated the latest trail row.
+    void write_root_unit(ClauseId reason_id);
+
+    /// @brief Record the root units a compaction is about to discard.
+    /// @pre The trail still holds them, and `proof_writer_` is non-null.
     void write_compaction_units();
+
+    std::vector<ClauseId> proof_ids(const std::vector<ClauseId>& clause_ids) const;
 
     /// @brief Discard every decision level above `level`, records included.
     /// @pre `level <= trail_.level()`.
     void backjump_to(std::size_t level);
 
-    void make_decision_step();
+    /// @return False when no clause offers a decision, which means every active
+    /// clause is satisfied and any completion of the trail is a model.
+    bool make_decision_step();
+
+    /// @brief Fill the variables no clause constrains and answer SAT.
+    Solution complete_satisfying_assignment();
 
     bool reports_progress() const noexcept {
-        return progress_.reporter != nullptr && progress_.conflict_interval != 0;
+        return progress_.reporter != nullptr && progress_.cadence != 0;
     }
 
     /// @brief Report progress if the conflict interval has elapsed since the last
@@ -192,7 +209,7 @@ private:
 
     /// @brief Bump the clause owning each of a learned clause's pivots: the
     /// reason of that trail row, or the clause its decision was sampled from.
-    void bump_pivot_clauses(const std::vector<std::size_t>& pivot_trail_idxs);
+    void bump_responsible_clauses(const std::vector<std::size_t>& responsible_trail_idxs);
 
     /// @brief The clause the decision at this trail row was sampled from, empty
     /// where the fallback literal basis supplied it.
@@ -208,7 +225,7 @@ private:
     /// @brief Delete learned clauses if the conflict interval has elapsed.
     void maybe_delete_clauses();
 
-    /// @brief Demote, tombstone and clear the used flags a prepared plan calls for.
+    /// @brief Demote, deactivate and clear the used flags a prepared plan calls for.
     void apply_deletion(const DeletionPlan& plan);
 
     EquationRepr repr_;
@@ -244,9 +261,22 @@ private:
 
     RawProofWriter* proof_writer_; ///< Not owned; null for no proof.
 
-    /// @brief The next proof clause id for a line no solver clause backs, from
-    /// the id space shared with the clause database.
+    /// @brief The next proof id, which every learned line takes in turn, root
+    /// units included.
     ClauseId next_proof_clause_id_ = 0;
+
+    /// @brief Each clause's proof id, indexed by clause id; empty for no proof.
+    std::vector<ClauseId> proof_id_of_clause_;
+
+    /// @brief The next proof id when the last compaction ran: the clauses below
+    /// it may since have been rewritten.
+    ClauseId first_proof_id_of_epoch_ = 0;
+
+    /// @brief The root units since the last compaction over the original
+    /// variables, each reduced by the ones before it.
+    RowSpace proof_root_span_;
+    std::vector<RawUnit> proof_root_units_;   ///< In trail order.
+    std::vector<ClauseId> proof_col_idx_to_unit_idx_; ///< Pivot column to the unit's proof id.
 
     Equation conflict_check_eqn_;
     Equation false_equation_; ///< A preallocated `0 = 1`.
@@ -263,7 +293,7 @@ private:
 
     /// @brief Whether a conflict also bumps the clauses at the learned clause's
     /// pivots in the trail basis.
-    bool bump_learned_clause_pivots_;
+    bool bump_responsible_clauses_;
 
     /// @brief Whether a learned clause deletes the reason clause it subsumes.
     bool subsume_;
@@ -272,7 +302,7 @@ private:
     /// interval between them rather than the run so far.
     std::size_t conflicts_at_last_report_ = 0;
     std::size_t sum_level_at_last_report_ = 0;
-    std::size_t sum_rank_at_last_report_ = 0;
+    std::size_t sum_trail_length_at_last_report_ = 0;
     double time_at_last_report_s_ = 0.0;
 
     std::chrono::steady_clock::time_point solve_start_;

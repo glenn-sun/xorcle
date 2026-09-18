@@ -8,6 +8,6 @@ namespace xorcle {
 using ClauseId = std::size_t;
 
 /// @brief A row index into a clause, not into the trail span.
-using ClauseRowIndex = std::size_t;
+using ClauseRowIdx = std::size_t;
 
 } // namespace xorcle

@@ -24,13 +24,13 @@ public:
 
     /// @brief Report that a watch of clause `id` moved, called *after*
     /// `watched0` / `watched1` are updated.
-    virtual void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
+    virtual void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch, WatchType type,
                                        const Trail& trail) = 0;
 };
 
 class IgnoreWatchUpdates final : public WatchUpdateHandler {
 public:
-    void update_with_new_watch(ClauseId, ClauseRowIndex, WatchType, const Trail&) override {}
+    void update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&) override {}
 };
 
 } // namespace xorcle

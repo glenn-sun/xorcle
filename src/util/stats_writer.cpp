@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <ostream>
@@ -60,14 +61,14 @@ void append_dimacs_assignment(std::ostringstream& output, const IndexSet& assign
 
     std::size_t line_literal_count = 0;
     output << "v";
-    for (std::size_t variable_index = 0; variable_index < assignment.size(); ++variable_index) {
+    for (std::size_t col_idx = 0; col_idx < assignment.size(); ++col_idx) {
         if (line_literal_count == assignment_literals_per_line) {
             output << "\nv";
             line_literal_count = 0;
         }
-        const int literal = assignment.test(variable_index)
-                                ? static_cast<int>(variable_index + 1)
-                                : -static_cast<int>(variable_index + 1);
+        const int literal = assignment.test(col_idx)
+                                ? static_cast<int>(col_idx + 1)
+                                : -static_cast<int>(col_idx + 1);
         output << " " << literal;
         ++line_literal_count;
     }
@@ -91,13 +92,7 @@ void append_ratio(std::ostringstream& output, const char* label,
 } // namespace
 
 void
-StatsWriter::log(const RunStats& stats) {
-    std::lock_guard<std::mutex> lock(mu_);
-    log_impl(stats);
-}
-
-void
-ConsoleStatsWriter::log_impl(const RunStats& stats) {
+ConsoleStatsWriter::log(const RunStats& stats) {
     std::ostringstream output;
 
     // One section's rows, in table order. The sections print in the order the
@@ -198,21 +193,36 @@ CsvStatsWriter::ensure_header(const RunStats& stats) {
                                  path_ + ": " + ec.message());
     }
 
-    if (size == 0) {
-        std::ostringstream header;
-        header << "run_id,timestamp_utc,file,result";
-        for (const ConfigEntry& entry : stats.config) {
-            header << ',' << config_column_prefix << entry.name;
-        }
+    std::ostringstream header;
+    header << "run_id,timestamp_utc,file,result";
+    for (const ConfigEntry& entry : stats.config) {
+        header << ',' << config_column_prefix << entry.name;
+    }
 #define XORCLE_STAT(section, kind, name, csv_name, label) header << ',' << csv_name;
 #include "util/stats_fields.inc"
-        header << '\n';
 
-        file_ << header.str();
+    if (size == 0) {
+        file_ << header.str() << '\n';
         if (!file_) {
             throw std::runtime_error("CsvStatsWriter::ensure_header: failed to write CSV header to " +
                                      path_);
         }
+        header_written_ = true;
+        return;
+    }
+
+    // Appending a row under a header that names other columns silently
+    // misaligns every field, so the run stops instead.
+    std::ifstream existing(path_);
+    std::string first_line;
+    if (!existing || !std::getline(existing, first_line)) {
+        throw std::runtime_error("CsvStatsWriter::ensure_header: cannot read the first line of " +
+                                 path_);
+    }
+    if (first_line != header.str()) {
+        throw std::runtime_error("CsvStatsWriter::ensure_header: " + path_ +
+                                 " has a header this build does not write; append to a new file "
+                                 "or remove it");
     }
 
     header_written_ = true;
@@ -238,7 +248,7 @@ CsvStatsWriter::csv_escape(const std::string& value) {
 }
 
 void
-CsvStatsWriter::log_impl(const RunStats& stats) {
+CsvStatsWriter::log(const RunStats& stats) {
     ensure_header(stats);
 
     // Every column is written whatever the configuration, so one file's schema
@@ -257,7 +267,7 @@ CsvStatsWriter::log_impl(const RunStats& stats) {
 
     file_.flush();
     if (!file_) {
-        throw std::runtime_error("CsvStatsWriter::log_impl: failed to write a CSV row to " + path_);
+        throw std::runtime_error("CsvStatsWriter::log: failed to write a CSV row to " + path_);
     }
 }
 

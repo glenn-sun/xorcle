@@ -22,32 +22,32 @@ struct RestartConfig {
     std::size_t luby_unit_conflicts = 0;
 
     std::size_t lbd_fast_window = 33;
-    std::size_t lbd_slow_window = 100000;
+    std::size_t lbd_slow_window = 1000;
     /// @brief How far the fast average must exceed the slow one.
     double lbd_min_ratio = 1.1;
-    std::size_t lbd_min_conflicts = 200; ///< Conflicts an LBD restart waits out.
+    std::size_t lbd_min_conflicts = 1000; ///< Conflicts an LBD restart waits out.
     /// @brief Trail length, relative to its average, that blocks a restart; `0` never blocks.
     double lbd_trail_ratio = 1.4;
 
     /// @brief Whether a restart keeps the decisions it would immediately re-make.
-    bool reuse_trail = true;
+    bool reuse_trail = false;
 
 };
 
 /// @brief What a conflict tells a restart policy.
 struct ConflictSummary {
     std::size_t lbd;        ///< Of the asserting clause just derived.
-    std::size_t trail_size; ///< Trail rows at the conflict, before the backjump.
+    std::size_t trail_length; ///< Trail rows at the conflict, before the backjump.
 };
 
 /// @brief What a policy can report about its own decisions.
 ///
-/// Only `Lbd` fills any of it; the fixed schedules have nothing to say, so the
+/// Only `LbdRestarts` fills any of it; the fixed schedules have nothing to say, so the
 /// base returns zeroes and the statistics report the section only when a
 /// schedule is in force.
 struct RestartStats {
-    /// @brief Restarts the trail-length guard suppressed.
-    std::size_t blocked = 0;
+    /// @brief Restarts the trail-length guard canceled once they were due.
+    std::size_t canceled = 0;
     double fast_lbd = 0.0; ///< The fast average as the run ended.
     double slow_lbd = 0.0; ///< The slow average as the run ended.
 };
@@ -55,11 +55,9 @@ struct RestartStats {
 /// @brief Stateful restart scheduler driven by the conflicts as they happen.
 class RestartPolicy {
 public:
-    explicit RestartPolicy(bool reuse_trail = true) : reuse_trail_(reuse_trail) {}
+    explicit RestartPolicy(bool reuse_trail = false) : reuse_trail_(reuse_trail) {}
 
     virtual ~RestartPolicy() = default;
-
-    virtual bool enabled() const = 0;
 
     /// @brief Whether a restart backjumps to the deepest level the decision
     /// procedure would rebuild anyway, rather than to the root.
@@ -84,8 +82,6 @@ private:
 
 class NoRestarts final : public RestartPolicy {
 public:
-    bool enabled() const override;
-
     bool should_restart_after_conflict(const ConflictSummary& conflict) override;
 
     void note_restart() override;

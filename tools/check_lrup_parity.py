@@ -133,7 +133,7 @@ def propagate_clause(clause_rows: List[int], basis: Basis, nvars: int):
     if len(uniq) == 1:
         g = nonzero[0]
         f = g ^ (1 << nvars)
-        if basis.contains(g) or basis.contains(f):
+        if basis.contains(f):
             return "none", None
         basis.add(f)
         return "deduced", f
@@ -158,7 +158,6 @@ def check_proof(xnf_path: str, proof_path: str, verbose: bool) -> int:
 
             try:
                 if tokens.count("0") == 1:
-                    mode = "delete"
                     ids_part = tokens[: tokens.index("0")]
                     ids = [int(t) for t in ids_part] if ids_part else []
                     for cid in ids:

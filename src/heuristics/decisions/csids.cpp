@@ -63,7 +63,7 @@ void Csids::reinitialize() {
     state_.reset_activity();
 }
 
-Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
+std::optional<Equation> Csids::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
                               const std::vector<std::uint8_t>& clause_active) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
@@ -97,8 +97,7 @@ Equation Csids::make_decision(const RowSpace& trail_span, const std::vector<Clau
     }
 
     state_.last_decision_clause.reset();
-    record_decision(true);
-    return decide_from_basis(state_.unit_eqns, trail_span);
+    return std::nullopt;
 }
 
 void Csids::update_with_asserting_clause(const Clause&) {

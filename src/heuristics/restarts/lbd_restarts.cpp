@@ -1,59 +1,54 @@
-#include "heuristics/restarts/lbd.h"
+#include "heuristics/restarts/lbd_restarts.h"
 
 #include <cassert>
 #include <cstddef>
 
 namespace xorcle {
 
-Lbd::Lbd(const RestartConfig& config)
+LbdRestarts::LbdRestarts(const RestartConfig& config)
     : RestartPolicy(config.reuse_trail),
       fast_lbd_(config.lbd_fast_window), slow_lbd_(config.lbd_slow_window),
-      trail_size_(config.lbd_slow_window),
+      trail_length_(config.lbd_slow_window),
       min_ratio_(config.lbd_min_ratio),
       trail_ratio_(config.lbd_trail_ratio), min_conflicts_(config.lbd_min_conflicts) {
     assert(config.lbd_min_conflicts != 0 && "LBD restart interval must be non-zero");
 }
 
 bool
-Lbd::enabled() const {
-    return true;
-}
-
-bool
-Lbd::should_restart_after_conflict(const ConflictSummary& conflict) {
+LbdRestarts::should_restart_after_conflict(const ConflictSummary& conflict) {
     ++conflicts_since_restart_;
 
     const double lbd = static_cast<double>(conflict.lbd);
     fast_lbd_.update(lbd);
     slow_lbd_.update(lbd);
 
-    const double trail_size = static_cast<double>(conflict.trail_size);
-    trail_size_.update(trail_size);
-    if (trail_ratio_ > 0.0 && trail_size > trail_ratio_ * trail_size_.value()) {
-        ++blocked_;
-        fast_lbd_.reset();
-        return false;
-    }
+    const double trail_length = static_cast<double>(conflict.trail_length);
+    trail_length_.update(trail_length);
 
     if (conflicts_since_restart_ < min_conflicts_) {
         return false;
     }
-    return fast_lbd_.value() > min_ratio_ * slow_lbd_.value();
+    if (fast_lbd_.value() <= min_ratio_ * slow_lbd_.value()) {
+        return false;
+    }
+    // Last, so that a cancellation counts only a restart that was otherwise due.
+    if (trail_ratio_ > 0.0 && trail_length > trail_ratio_ * trail_length_.value()) {
+        ++canceled_;
+        return false;
+    }
+    return true;
 }
 
 RestartStats
-Lbd::stats() const {
-    return RestartStats{.blocked = blocked_,
+LbdRestarts::stats() const {
+    return RestartStats{.canceled = canceled_,
                         .fast_lbd = fast_lbd_.value(),
                         .slow_lbd = slow_lbd_.value()};
 }
 
 void
-Lbd::note_restart() {
+LbdRestarts::note_restart() {
     conflicts_since_restart_ = 0;
-    // The clauses either side of a restart are not comparable, so the fast
-    // average is earned again rather than carried over.
-    fast_lbd_.reset();
 }
 
 } // namespace xorcle

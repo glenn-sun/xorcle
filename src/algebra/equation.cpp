@@ -89,12 +89,6 @@ Equation Equation::compact(const CompactionTransform& transform) const {
     return Equation(interface_->compact(transform));
 }
 
-Equation Equation::uncompact(const CompactionTransform& transform) const {
-    assert(interface_ != nullptr && "uncompact on a null equation handle");
-    assert(interface_->num_bits() == transform.new_num_vars() + 1 &&
-           "bit count mismatch in uncompact");
-    return Equation(interface_->uncompact(transform));
-}
 
 void Equation::assign_bits(std::span<const std::size_t> bits) {
     assert(interface_ != nullptr && "assign_bits on a null equation handle");

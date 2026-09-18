@@ -9,14 +9,14 @@ namespace {
 #ifndef NDEBUG
 void debug_assert_snapshot_valid(const TrailSnapshot& snapshot) {
     const std::size_t trail_rows = snapshot.span().rows();
-    assert(snapshot.order_map().size() == trail_rows);
-    assert(snapshot.reverse_order_map().size() == trail_rows);
+    assert(snapshot.trail_idx_to_row_idx().size() == trail_rows);
+    assert(snapshot.row_idx_to_trail_idx().size() == trail_rows);
     assert(snapshot.reasons().size() == trail_rows);
 
-    for (std::size_t trail_index = 0; trail_index < trail_rows; ++trail_index) {
-        const std::size_t row_idx = snapshot.order_map()[trail_index];
+    for (std::size_t trail_idx = 0; trail_idx < trail_rows; ++trail_idx) {
+        const std::size_t row_idx = snapshot.trail_idx_to_row_idx()[trail_idx];
         assert(row_idx < trail_rows);
-        assert(snapshot.reverse_order_map()[row_idx] == trail_index);
+        assert(snapshot.row_idx_to_trail_idx()[row_idx] == trail_idx);
     }
 }
 #endif
@@ -29,22 +29,22 @@ void TrailSnapshot::learn(const Equation& eqn, std::optional<ClauseId> reason) {
     assert(eqn.repr() == span_.repr() &&
            "learned equation does not match the snapshot's representation");
 
-    const std::optional<std::size_t> maybe_inserted_index = span_.add_row_get_index(eqn);
-    assert(maybe_inserted_index.has_value() && "learned an equation already in the span");
+    const std::optional<std::size_t> maybe_inserted_row_idx = span_.add_row_get_row_idx(eqn);
+    assert(maybe_inserted_row_idx.has_value() && "learned an equation already in the span");
 
-    const std::size_t inserted_index = *maybe_inserted_index;
+    const std::size_t inserted_row_idx = *maybe_inserted_row_idx;
     reasons_.push_back(reason);
 
     // Inserting a row shifts every row at or after it one place up.
-    for (std::size_t& row_idx : order_map_) {
-        if (row_idx >= inserted_index) {
+    for (std::size_t& row_idx : trail_idx_to_row_idx_) {
+        if (row_idx >= inserted_row_idx) {
             ++row_idx;
         }
     }
-    order_map_.push_back(inserted_index);
-    reverse_order_map_.insert(reverse_order_map_.begin() +
-                                  static_cast<std::ptrdiff_t>(inserted_index),
-                              order_map_.size() - 1);
+    trail_idx_to_row_idx_.push_back(inserted_row_idx);
+    row_idx_to_trail_idx_.insert(row_idx_to_trail_idx_.begin() +
+                                  static_cast<std::ptrdiff_t>(inserted_row_idx),
+                              trail_idx_to_row_idx_.size() - 1);
 
 #ifndef NDEBUG
     debug_assert_snapshot_valid(*this);

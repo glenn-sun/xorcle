@@ -74,7 +74,8 @@ void check_asserting_level(const TrailBasisSpace& basis, const Trail& trail,
 /// @brief The literal block distance read straight off the definition.
 ///
 /// Enumerates the subspace, intersects it with each prefix of the trail, and
-/// counts the levels the dimension jumps in. Nothing here consults a pivot.
+/// counts the levels above the root the dimension jumps in. Nothing here
+/// consults a pivot.
 std::size_t literal_block_distance_reference(const TrailBasisSpace& basis, const Trail& trail,
                                              const std::vector<std::size_t>& level_of_trail_step) {
     const std::size_t cols = basis.cols();
@@ -117,7 +118,7 @@ std::size_t literal_block_distance_reference(const TrailBasisSpace& basis, const
         const std::size_t dimension = dimension_of_intersection(prefix);
         if (dimension > previous_dimension) {
             const std::size_t level = level_of_trail_step[prefix - 1];
-            if (!level_seen[level]) {
+            if (level > 0 && !level_seen[level]) {
                 level_seen[level] = true;
                 ++blocks;
             }
@@ -130,7 +131,7 @@ std::size_t literal_block_distance_reference(const TrailBasisSpace& basis, const
 /// @brief A trail with a hand-checkable level structure.
 ///
 /// Eight learned equations over four decision levels, all unit and on distinct
-/// variables, so the trail span is exactly what was learned and `order_map()` is
+/// variables, so the trail span is exactly what was learned and `trail_idx_to_row_idx()` is
 /// the identity:
 ///
 /// | trail step | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
@@ -262,12 +263,12 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace maps trail step t to column m-1-t
     trail.learn(make_equation_with(repr, 4, {2}), ClauseId{0});
     trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{1});
     trail.learn(make_equation_with(repr, 4, {3, 4}), ClauseId{2});
-    REQUIRE(trail.order_map() == std::vector<std::size_t>{1, 0, 2});
+    REQUIRE(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{1, 0, 2});
 
     const std::size_t span_rows = trail.span().rows();
     for (std::size_t trail_step = 0; trail_step < span_rows; ++trail_step) {
         RowSpace one_row(repr, trail.num_vars());
-        one_row.add_row(trail.span().row(trail.order_map()[trail_step]));
+        one_row.add_row(trail.span().row(trail.trail_idx_to_row_idx()[trail_step]));
 
         const TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(one_row, trail);
         REQUIRE(basis.rows() == 1);
@@ -285,8 +286,8 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace rewrites a combination of trail r
     REQUIRE(trail.span().rows() == 8);
 
     // Steps 1 and 6 together, i.e. columns 8 - 1 - 1 = 6 and 8 - 6 - 1 = 1.
-    Equation combination = trail.span().row(trail.order_map()[1]);
-    combination.plus_assign(trail.span().row(trail.order_map()[6]));
+    Equation combination = trail.span().row(trail.trail_idx_to_row_idx()[1]);
+    combination.plus_assign(trail.span().row(trail.trail_idx_to_row_idx()[6]));
 
     RowSpace row_space(repr, trail.num_vars());
     row_space.add_row(combination);
@@ -491,9 +492,9 @@ TEST_CASE_TEMPLATE("trail basis: literal block distance with hand-computed answe
               literal_block_distance_reference(basis, trail, levels));
     }
 
-    SUBCASE("one row per level counts every level") {
+    SUBCASE("one row per level counts every level but the root") {
         const TrailBasisSpace basis = make_basis(trail, {{0}, {3}, {5}, {7}});
-        CHECK(basis.literal_block_distance() == 4);
+        CHECK(basis.literal_block_distance() == 3);
         CHECK(basis.literal_block_distance() ==
               literal_block_distance_reference(basis, trail, levels));
     }
@@ -513,10 +514,36 @@ TEST_CASE_TEMPLATE("trail basis: literal block distance with hand-computed answe
               literal_block_distance_reference(basis, trail, levels));
     }
 
-    SUBCASE("the whole coordinate basis reaches every level") {
-        const TrailBasisSpace basis = make_basis(trail, {{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}});
-        CHECK(basis.literal_block_distance() == trail.size());
+    SUBCASE("a row at the root counts nothing") {
+        const TrailBasisSpace basis = make_basis(trail, {{7}});
+        CHECK(basis.literal_block_distance() == 0);
+        CHECK(basis.literal_block_distance() ==
+              literal_block_distance_reference(basis, trail, levels));
     }
+
+    SUBCASE("the whole coordinate basis reaches every level above the root") {
+        const TrailBasisSpace basis = make_basis(trail, {{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}});
+        CHECK(basis.literal_block_distance() == trail.level());
+    }
+}
+
+TEST_CASE_TEMPLATE("trail basis: literal block distance with one more column", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Trail trail = make_levelled_trail(repr);
+
+    // Column 3 is level 2; the extra column adds its level only when new.
+    const TrailBasisSpace basis = make_basis(trail, {{3}});
+    CHECK(basis.literal_block_distance_with(0) == 2);
+    CHECK(basis.literal_block_distance_with(3) == 1);
+    CHECK(basis.literal_block_distance_with(4) == 1);
+    CHECK(basis.literal_block_distance_with(5) == 2);
+    CHECK(basis.literal_block_distance_with(7) == 1);
+
+    // With no rows the extra column is all there is.
+    const TrailBasisSpace empty(trail);
+    CHECK(empty.literal_block_distance_with(1) == 1);
+    CHECK(empty.literal_block_distance_with(7) == 0);
 }
 
 TEST_CASE_TEMPLATE("trail basis: literal block distance agrees with the definition on random input",
@@ -553,9 +580,8 @@ TEST_CASE_TEMPLATE("trail basis: literal block distance agrees with the definiti
         const std::size_t lbd = basis.literal_block_distance();
         CHECK(lbd == literal_block_distance_reference(basis, trail,
                                                       random_trail.level_of_trail_step));
-        CHECK(lbd >= 1);
         CHECK(lbd <= basis.rows());
-        CHECK(lbd <= trail.size());
+        CHECK(lbd <= trail.level());
     }
 }
 

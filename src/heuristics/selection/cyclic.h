@@ -23,6 +23,10 @@ public:
 
     std::optional<ClauseId> next() override;
 
+    /// @brief Try an asserting clause next, but keep the cursor for a replacement.
+    void add_asserting_clause(Clause clause, const Trail& trail,
+                              const AssertingClauseInfo& info) override;
+
     /// @brief Note that an equation was learned, restarting the cycle budget.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
@@ -39,7 +43,7 @@ protected:
 private:
     ClauseId id_ = 0;
     std::size_t count_ = 0; ///< Clauses handed out since the last equation was learned.
-    std::optional<ClauseId> pending_restart_clause_;
+    std::optional<ClauseId> pending_decision_clause_;
 };
 
 } // namespace xorcle

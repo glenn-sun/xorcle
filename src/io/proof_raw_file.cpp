@@ -14,7 +14,7 @@ namespace {
 
 /// @brief What every raw proof file starts with, and the format it names.
 constexpr char raw_proof_magic[] = {'X', 'R', 'A', 'W'};
-constexpr unsigned char raw_proof_version = 1;
+constexpr unsigned char raw_proof_version = 2;
 
 /// @brief The record tags, in the order `RawRecord` lists its alternatives.
 enum class RawTag : unsigned char {
@@ -151,6 +151,17 @@ void RawProofWriter::write_learned(ClauseId id, const Clause& clause,
     write_ids(reasons);
 }
 
+void RawProofWriter::write_learned(ClauseId id, std::span<const RawRow> rows,
+                                   const std::vector<ClauseId>& reasons) {
+    file_.out().put(static_cast<char>(RawTag::learned));
+    write_varint(id);
+    write_varint(rows.size());
+    for (const RawRow& row : rows) {
+        write_row(row);
+    }
+    write_ids(reasons);
+}
+
 void RawProofWriter::write_empty(ClauseId id, const std::vector<ClauseId>& reasons) {
     file_.out().put(static_cast<char>(RawTag::empty));
     write_varint(id);
@@ -162,7 +173,7 @@ void RawProofWriter::write_compaction(const std::vector<RawUnit>& units) {
     write_varint(units.size());
     for (const RawUnit& unit : units) {
         write_row(unit.row);
-        write_varint(unit.reason);
+        write_varint(unit.id);
     }
 }
 
@@ -264,7 +275,7 @@ bool RawProofFileSource::next(RawRecord& record) {
             compaction.units.resize(read_varint());
             for (RawUnit& unit : compaction.units) {
                 unit.row = read_row();
-                unit.reason = read_varint();
+                unit.id = read_varint();
             }
             record = std::move(compaction);
             return true;

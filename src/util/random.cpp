@@ -20,14 +20,14 @@ Seed mix_seed(Seed x) {
 } // namespace
 
 Seed
-derive_seed(Seed base_seed, RngComponent component, std::uint64_t salt) {
+derive_seed(Seed base_seed, RngComponent component) {
     const Seed component_seed = static_cast<Seed>(component);
-    return mix_seed(mix_seed(base_seed) ^ mix_seed(component_seed) ^ mix_seed(salt));
+    return mix_seed(mix_seed(base_seed) ^ mix_seed(component_seed) ^ mix_seed(0));
 }
 
 Rng
-make_rng(Seed base_seed, RngComponent component, std::uint64_t salt) {
-    return Rng(derive_seed(base_seed, component, salt));
+make_rng(Seed base_seed, RngComponent component) {
+    return Rng(derive_seed(base_seed, component));
 }
 
 int
@@ -48,11 +48,11 @@ random_nonzero_coefficients(std::size_t num_rows, Rng& rng) {
         coefficients.clear();
         for (std::size_t draw = 0; draw < draws_per_attempt; ++draw) {
             const std::uint64_t word = rng();
-            const std::size_t first_index = draw * bits_per_draw;
-            const std::size_t indices_this_draw = std::min(bits_per_draw, num_rows - first_index);
+            const std::size_t first_row_idx = draw * bits_per_draw;
+            const std::size_t indices_this_draw = std::min(bits_per_draw, num_rows - first_row_idx);
             for (std::size_t offset = 0; offset < indices_this_draw; ++offset) {
                 if ((word >> offset) & 1ULL) {
-                    coefficients.set(first_index + offset);
+                    coefficients.set(first_row_idx + offset);
                 }
             }
         }

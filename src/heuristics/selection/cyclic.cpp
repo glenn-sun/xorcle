@@ -12,11 +12,11 @@ std::optional<ClauseId> Cyclic::next() {
         return std::nullopt;
     }
 
-    if (pending_restart_clause_.has_value()) {
-        const ClauseId restart_id = *pending_restart_clause_;
-        pending_restart_clause_.reset();
-        if (restart_id < clauses_.size() && is_clause_active(restart_id)) {
-            id_ = restart_id;
+    if (pending_decision_clause_.has_value()) {
+        const ClauseId decision_clause_id = *pending_decision_clause_;
+        pending_decision_clause_.reset();
+        if (decision_clause_id < clauses_.size() && is_clause_active(decision_clause_id)) {
+            id_ = decision_clause_id;
             count_ = 0;
         }
     }
@@ -43,6 +43,17 @@ std::optional<ClauseId> Cyclic::next() {
     return std::nullopt;
 }
 
+void Cyclic::add_asserting_clause(Clause clause, const Trail& trail,
+                                  const AssertingClauseInfo& info) {
+    const ClauseId cursor = id_;
+    const std::size_t count = count_;
+    ClauseSelector::add_asserting_clause(std::move(clause), trail, info);
+    if (info.is_replacement) {
+        id_ = cursor;
+        count_ = count;
+    }
+}
+
 void Cyclic::add_clause(Clause clause) {
     ClauseSelector::add_clause(std::move(clause));
     id_ = clauses_.size() - 1;
@@ -58,9 +69,9 @@ void Cyclic::update_with_new_equation(const Equation&, const Trail&) {
 
 void Cyclic::update_with_decision_clause(std::optional<ClauseId> clause_id) {
     if (clause_id.has_value() && *clause_id < clauses_.size() && is_clause_active(*clause_id)) {
-        pending_restart_clause_ = clause_id;
+        pending_decision_clause_ = clause_id;
     } else {
-        pending_restart_clause_.reset();
+        pending_decision_clause_.reset();
     }
 }
 
@@ -68,7 +79,7 @@ void Cyclic::update_with_compaction(const CompactionTransform&, const Trail&) {
     if (clauses_.empty()) {
         id_ = 0;
         count_ = 0;
-        pending_restart_clause_.reset();
+        pending_decision_clause_.reset();
         return;
     }
 
@@ -84,9 +95,9 @@ void Cyclic::update_with_compaction(const CompactionTransform&, const Trail&) {
             }
         }
     }
-    if (pending_restart_clause_.has_value() && (*pending_restart_clause_ >= clauses_.size() ||
-                                                !is_clause_active(*pending_restart_clause_))) {
-        pending_restart_clause_.reset();
+    if (pending_decision_clause_.has_value() && (*pending_decision_clause_ >= clauses_.size() ||
+                                                !is_clause_active(*pending_decision_clause_))) {
+        pending_decision_clause_.reset();
     }
     count_ = 0;
 }

@@ -29,10 +29,9 @@ enum class RngComponent : std::uint64_t {
     minimize_representative = 0x3c6ef372fe94f82bULL
 };
 
-/// @brief `salt` distinguishes several streams of one component.
-Seed derive_seed(Seed base_seed, RngComponent component, std::uint64_t salt = 0);
+Seed derive_seed(Seed base_seed, RngComponent component);
 
-Rng make_rng(Seed base_seed, RngComponent component, std::uint64_t salt = 0);
+Rng make_rng(Seed base_seed, RngComponent component);
 
 /// @brief A uniform random integer in [0, upper_bound - 1].
 /// @pre `upper_bound > 0`.

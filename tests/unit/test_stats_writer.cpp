@@ -72,7 +72,7 @@ RunStats sample_stats() {
 
     stats.num_restarts = 2;
     stats.num_reused_levels = 0;
-    stats.num_blocked_restarts = 5;
+    stats.num_canceled_restarts = 5;
     stats.fast_lbd = 3.25;
     stats.slow_lbd = 4.5;
 
@@ -258,7 +258,7 @@ TEST_CASE("ConsoleStatsWriter: the restart lines appear only under a schedule") 
     const std::string output = console_output(stats);
     CHECK(output.find("c Restarts: 2\n"
                       "c Reused levels: 0\n"
-                      "c Blocked restarts: 5\n"
+                      "c Canceled restarts: 5\n"
                       "c Fast LBD average: 3.250\n"
                       "c Slow LBD average: 4.500\n") != std::string::npos);
 }
@@ -384,7 +384,7 @@ TEST_CASE("CsvStatsWriter: the header names the configuration and every field") 
     CHECK(row[static_cast<std::size_t>(column("compactions"))] == "4");
     // Written even though this run reported no deletion section on the console.
     CHECK(row[static_cast<std::size_t>(column("deletion_passes"))] == "4");
-    CHECK(row[static_cast<std::size_t>(column("blocked_restarts"))] == "5");
+    CHECK(row[static_cast<std::size_t>(column("canceled_restarts"))] == "5");
     CHECK(row[static_cast<std::size_t>(column("proof_postprocess_time_s"))] == "0");
 }
 

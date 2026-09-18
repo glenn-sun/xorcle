@@ -132,8 +132,8 @@ double write_lrup_proof(const Options& options, const PendingProof& pending) {
     }
 
     std::cout << "c Proof: " << summary.kept_learned << " of " << summary.raw_learned
-              << " learned lines kept, " << summary.unit_lines << " unit lines, "
-              << summary.inserted_units << " inserted unit ids, " << summary.deletion_lines
+              << " learned lines kept, " << summary.rewrite_lines << " rewrite lines citing "
+              << summary.rewrite_unit_ids << " unit ids, " << summary.deletion_lines
               << " deletion lines, post-processing " << std::fixed << std::setprecision(3)
               << elapsed.count() << " s\n";
     return elapsed.count();
@@ -186,7 +186,7 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     // Progress goes to stdout beside the DIMACS output, so a run writing its
     // statistics to a file reports nothing here: the file is the output then.
     std::unique_ptr<ProgressReporter> progress_reporter;
-    if (options.report_every != 0 && options.stats_file.empty()) {
+    if (options.report_cadence != 0 && options.stats_file.empty()) {
         const std::optional<unsigned> groups = parse_progress_groups(options.report);
         assert(groups.has_value() && "validate_options() should have checked --report");
         progress_reporter = std::make_unique<ConsoleProgressReporter>(std::cout, *groups);
@@ -209,17 +209,17 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                   make_restart_policy(restart_config(options)), proof_writer.get(),
                   compaction_config(options),
                   ProgressConfig{.reporter = progress_reporter.get(),
-                                 .conflict_interval = options.report_every},
-                  options.minimize, deletion, options.bump_learned_clause_pivots,
+                                 .cadence = options.report_cadence},
+                  options.minimize, deletion, options.bump_responsible_clauses,
                   options.subsume);
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
 
     const std::size_t start_clauses = solver.num_clauses();
-    const auto start = std::chrono::high_resolution_clock::now();
+    const auto start = std::chrono::steady_clock::now();
     Solution solution = solver.solve();
-    const std::chrono::duration<double> elapsed = std::chrono::high_resolution_clock::now() - start;
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
     const bool unsat = solution.result == SolveResult::unsat;
     if (proof_writer) {
@@ -253,7 +253,7 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     const RestartStats restarts = solver.restart_stats();
     stats.num_restarts = counters.num_restarts;
     stats.num_reused_levels = counters.num_reused_levels;
-    stats.num_blocked_restarts = restarts.blocked;
+    stats.num_canceled_restarts = restarts.canceled;
     stats.fast_lbd = restarts.fast_lbd;
     stats.slow_lbd = restarts.slow_lbd;
 
@@ -262,12 +262,11 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     stats.clauses_allocated = solver.num_clauses();
     stats.clauses_in_database = solver.num_active_clauses();
     stats.learned_clauses = solver.num_clauses() - start_clauses;
-    // Over the clauses learned, not over the conflicts: a root conflict ends the
-    // run without learning one, so it contributes no LBD to average.
     stats.average_learned_lbd =
-        stats.learned_clauses == 0 ? 0.0
-                                   : static_cast<double>(counters.sum_learned_lbd) /
-                                         static_cast<double>(stats.learned_clauses);
+        counters.num_asserting_clauses == 0
+            ? 0.0
+            : static_cast<double>(counters.sum_learned_lbd) /
+                  static_cast<double>(counters.num_asserting_clauses);
 
     stats.learned_equation_bits = counters.learned_equation_bits;
 
@@ -302,9 +301,11 @@ void require_readable_input(const std::string& input_path) {
 } // namespace xorcle
 
 /// @brief Entry point: parse, solve, report.
-/// @return 0 on success, SAT and UNSAT alike; 2 on a command line this build
-/// will not accept, and 1 on any other reported error. A harness sweeping
-/// options tells a rejected combination from a failed run by that difference.
+/// @return 10 for SAT and 20 for UNSAT, as the SAT competition spells them; 0
+/// when there is no instance to solve, such as `--help`; 2 on a command line
+/// this build will not accept, and 1 on any other reported error. A harness
+/// sweeping options tells a rejected combination from a failed run by that
+/// difference.
 int main(int argc, char* argv[]) {
     using namespace xorcle;
     try {
@@ -345,7 +346,7 @@ int main(int argc, char* argv[]) {
         if (!to_console) {
             writer->log(stats);
         }
-        return 0;
+        return stats.result == SolveResult::sat ? 10 : 20;
     } catch (const CliError& error) {
         std::cerr << "Error: " << error.what() << std::endl;
         return 2;

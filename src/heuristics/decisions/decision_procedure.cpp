@@ -51,6 +51,11 @@ void DecisionProcedure::record_decision(bool used_fallback) {
     }
 }
 
+void DecisionProcedure::note_filled_decisions(std::size_t num_decisions) {
+    decisions_ += num_decisions;
+    fallback_decisions_ += num_decisions;
+}
+
 void DecisionProcedure::reset_stats() noexcept {
     decisions_ = 0;
     fallback_decisions_ = 0;

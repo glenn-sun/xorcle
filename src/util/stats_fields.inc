@@ -40,7 +40,7 @@ XORCLE_STAT(search, Count, num_compactions, "compactions", "Compactions")
 
 XORCLE_STAT(restart, Count, num_restarts, "restarts", "Restarts")
 XORCLE_STAT(restart, Count, num_reused_levels, "reused_levels", "Reused levels")
-XORCLE_STAT(restart, Count, num_blocked_restarts, "blocked_restarts", "Blocked restarts")
+XORCLE_STAT(restart, Count, num_canceled_restarts, "canceled_restarts", "Canceled restarts")
 XORCLE_STAT(restart, Real, fast_lbd, "fast_lbd", "Fast LBD average")
 XORCLE_STAT(restart, Real, slow_lbd, "slow_lbd", "Slow LBD average")
 

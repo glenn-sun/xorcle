@@ -53,7 +53,10 @@ public:
     /// @pre `trail_span.cols() == num_vars() + 1` and `trail_span.repr() == repr()`.
     /// @pre At least one legal decision remains, i.e. `trail_span.rows() < num_vars()`.
     /// @pre `clause_active.size() == clauses.size()`.
-    virtual Equation make_decision(const RowSpace& trail_span,
+    /// @return Empty when no clause offers a decision, which for CSIDS means
+    /// every active clause is already satisfied. The procedures that decide a
+    /// variable rather than a clause always return one.
+    virtual std::optional<Equation> make_decision(const RowSpace& trail_span,
                                    const std::vector<Clause>& clauses,
                                    const std::vector<std::uint8_t>& clause_active) = 0;
 
@@ -114,6 +117,13 @@ public:
 
 protected:
     void record_decision(bool used_fallback);
+
+public:
+    /// @brief Record decisions the solver made itself, completing a model the
+    /// clauses no longer constrain.
+    void note_filled_decisions(std::size_t num_decisions);
+
+protected:
     void reset_stats() noexcept;
 
     void reset_phase_rng();

@@ -21,7 +21,6 @@ public:
     /// @pre `config.luby_unit_conflicts != 0`.
     explicit Luby(const RestartConfig& config = {});
 
-    bool enabled() const override;
     bool should_restart_after_conflict(const ConflictSummary& conflict) override;
     void note_restart() override;
 

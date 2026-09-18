@@ -81,10 +81,10 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
     const std::vector<std::uint8_t> active;
 
     const RowSpace empty(repr, 4);
-    CHECK(bits_of(procedure.make_decision(empty, clauses, active)) == std::vector<std::size_t>{0});
+    CHECK(bits_of(*procedure.make_decision(empty, clauses, active)) == std::vector<std::size_t>{0});
 
     const RowSpace span = make_row_space(repr, 4, {{0, 4}});
-    CHECK(bits_of(procedure.make_decision(span, clauses, active)) == std::vector<std::size_t>{1});
+    CHECK(bits_of(*procedure.make_decision(span, clauses, active)) == std::vector<std::size_t>{1});
 
     CHECK(procedure.decision_stats().decisions == 2);
     CHECK(procedure.decision_stats().fallback_decisions == 0);
@@ -102,7 +102,7 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
         CHECK(procedure.num_vars() == 3);
 
         const RowSpace compacted(repr, 3);
-        const Equation decision = procedure.make_decision(compacted, clauses, active);
+        const Equation decision = *procedure.make_decision(compacted, clauses, active);
         CHECK(decision.num_bits() == 4);
         CHECK(bits_of(decision) == std::vector<std::size_t>{0});
     }
@@ -117,7 +117,7 @@ TEST_CASE_TEMPLATE("variable vsids: activity drives the choice", Tag, DenseTag, 
 
     SUBCASE("bumping an asserting clause's rows moves them to the front") {
         procedure.update_with_asserting_clause(make_clause(repr, 4, {{2}}));
-        CHECK(bits_of(procedure.make_decision(empty, clauses, active)) ==
+        CHECK(bits_of(*procedure.make_decision(empty, clauses, active)) ==
               std::vector<std::size_t>{2});
     }
 
@@ -125,7 +125,7 @@ TEST_CASE_TEMPLATE("variable vsids: activity drives the choice", Tag, DenseTag, 
         procedure.update_with_critical_equation(make_equation_with(repr, 4, {3, 4}));
         // The heap only reorders on rebuild, which an asserting clause triggers.
         procedure.update_with_asserting_clause(make_clause(repr, 4, {{3}}));
-        CHECK(bits_of(procedure.make_decision(empty, clauses, active)) ==
+        CHECK(bits_of(*procedure.make_decision(empty, clauses, active)) ==
               std::vector<std::size_t>{3});
     }
 
@@ -133,7 +133,7 @@ TEST_CASE_TEMPLATE("variable vsids: activity drives the choice", Tag, DenseTag, 
         procedure.update_with_asserting_clause(make_clause(repr, 4, {{0}}));
         const RowSpace span = make_row_space(repr, 4, {{0, 1}});
         // x0 is the highest-activity literal but reduces to x1, which is legal.
-        CHECK(bits_of(procedure.make_decision(span, clauses, active)) ==
+        CHECK(bits_of(*procedure.make_decision(span, clauses, active)) ==
               std::vector<std::size_t>{1});
         CHECK(procedure.decision_stats().decisions == 1);
     }
@@ -148,7 +148,7 @@ TEST_CASE_TEMPLATE("variable vsids: activity drives the choice", Tag, DenseTag, 
         CHECK(procedure.num_vars() == 3);
 
         const RowSpace compacted(repr, 3);
-        const Equation decision = procedure.make_decision(compacted, clauses, active);
+        const Equation decision = *procedure.make_decision(compacted, clauses, active);
         CHECK(decision.num_bits() == 4);
         // Old x2 became new x1, and it kept its activity lead.
         CHECK(bits_of(decision) == std::vector<std::size_t>{1});
@@ -170,7 +170,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
 
     SUBCASE("a resolved clause outranks an untouched one") {
         procedure.update_with_resolved_clause(1);
-        CHECK(bits_of(procedure.make_decision(empty, clauses, active)) ==
+        CHECK(bits_of(*procedure.make_decision(empty, clauses, active)) ==
               std::vector<std::size_t>{1});
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
         CHECK(procedure.decision_stats().fallback_decisions == 0);
@@ -179,7 +179,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
     SUBCASE("a new asserting clause enters above every starting clause") {
         procedure.update_with_asserting_clause(clauses[2]);
         procedure.update_with_new_clause(clauses[2], 2);
-        CHECK(bits_of(procedure.make_decision(empty, clauses, active)) ==
+        CHECK(bits_of(*procedure.make_decision(empty, clauses, active)) ==
               std::vector<std::size_t>{2});
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{2});
     }
@@ -187,7 +187,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
     SUBCASE("the satisfy phase flips the sampled equation's constant column") {
         procedure.set_decision_phase(DecisionPhase::satisfy);
         procedure.update_with_resolved_clause(0);
-        CHECK(bits_of(procedure.make_decision(empty, clauses, active)) ==
+        CHECK(bits_of(*procedure.make_decision(empty, clauses, active)) ==
               std::vector<std::size_t>{0, 4});
     }
 
@@ -195,7 +195,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         procedure.update_with_resolved_clause(0);
         // x0 = 1 satisfies clause 0, so the next highest clause is used instead.
         const RowSpace span = make_row_space(repr, 4, {{0, 4}});
-        CHECK(bits_of(procedure.make_decision(span, clauses, active)) ==
+        CHECK(bits_of(*procedure.make_decision(span, clauses, active)) ==
               std::vector<std::size_t>{1});
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
     }
@@ -204,36 +204,40 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         procedure.update_with_resolved_clause(1);
         std::vector<std::uint8_t> deleted = active;
         deleted[1] = 0;
-        CHECK(bits_of(procedure.make_decision(empty, clauses, deleted)) ==
+        CHECK(bits_of(*procedure.make_decision(empty, clauses, deleted)) ==
               std::vector<std::size_t>{0});
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
     }
 
-    SUBCASE("an exhausted heap falls back to the literal basis") {
+    SUBCASE("an exhausted heap offers no decision") {
         Csids fallback(repr, 4, default_seed);
         const std::vector<Clause> no_clauses;
         const std::vector<std::uint8_t> no_active;
-        CHECK(bits_of(fallback.make_decision(empty, no_clauses, no_active)) ==
-              std::vector<std::size_t>{0});
+        // Every active clause is satisfied, so the solver completes the model
+        // rather than deciding the rest one variable at a time.
+        CHECK_FALSE(fallback.make_decision(empty, no_clauses, no_active).has_value());
         CHECK(fallback.decision_clause_hint() == std::nullopt);
-        CHECK(fallback.decision_stats().decisions == 1);
-        CHECK(fallback.decision_stats().fallback_decisions == 1);
+        CHECK(fallback.decision_stats().decisions == 0);
+
+        fallback.note_filled_decisions(4);
+        CHECK(fallback.decision_stats().decisions == 4);
+        CHECK(fallback.decision_stats().fallback_decisions == 4);
     }
 
     SUBCASE("reinitialize restores the sampling stream") {
         procedure.update_with_resolved_clause(1);
-        const Equation first = procedure.make_decision(empty, clauses, active);
+        const Equation first = *procedure.make_decision(empty, clauses, active);
         procedure.reinitialize();
         procedure.update_with_new_clause(clauses[0], 0);
         procedure.update_with_new_clause(clauses[1], 1);
         procedure.update_with_resolved_clause(1);
-        CHECK(procedure.make_decision(empty, clauses, active) == first);
+        CHECK(*procedure.make_decision(empty, clauses, active) == first);
         CHECK(procedure.decision_stats().decisions == 1);
     }
 
     SUBCASE("compaction adopts the new variable count and forgets a dropped decision clause") {
         procedure.update_with_resolved_clause(1);
-        (void)procedure.make_decision(empty, clauses, active);
+        (void)*procedure.make_decision(empty, clauses, active);
         REQUIRE(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
 
         IndexSet dropped(5);
@@ -268,7 +272,7 @@ TEST_CASE_TEMPLATE("csids: decay makes later bumps worth more", Tag, DenseTag, S
     procedure.update_with_new_clause(clauses[2], 2);
     procedure.update_with_resolved_clause(1);
 
-    CHECK(bits_of(procedure.make_decision(empty, clauses, active)) == std::vector<std::size_t>{1});
+    CHECK(bits_of(*procedure.make_decision(empty, clauses, active)) == std::vector<std::size_t>{1});
     CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
 }
 
@@ -332,7 +336,7 @@ TEST_CASE_TEMPLATE("csids: trail reuse keeps the levels outranking the next deci
         // Clause 0 was walked past on the satisfying trail; on the empty trail
         // it must still be the clause with the most activity.
         const RowSpace empty = make_row_space(repr, num_vars, {});
-        decisions.make_decision(empty, clauses, active);
+        *decisions.make_decision(empty, clauses, active);
         CHECK(decisions.decision_clause_hint() == std::optional<ClauseId>{0});
     }
 }

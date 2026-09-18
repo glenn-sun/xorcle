@@ -165,7 +165,7 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
 
         if (const std::optional<std::size_t> replacement =
                 find_replacement_cyclic(working_eqn_, working_eqn2_)) {
-            const ClauseRowIndex old_watch = *task.update_ptr;
+            const ClauseRowIdx old_watch = *task.update_ptr;
             *task.update_ptr = *replacement;
             ++num_watch_updates;
             handler.update_with_new_watch(id, old_watch, task.type, trail);

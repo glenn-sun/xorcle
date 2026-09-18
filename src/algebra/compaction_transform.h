@@ -27,29 +27,25 @@ public:
 
     std::size_t new_num_vars() const noexcept { return new_num_vars_; }
 
-    /// @brief The dropped columns in the old variable numbering.
-    const IndexSet& dropped_columns() const noexcept { return dropped_columns_; }
-
     /// @brief New numbering of a variable from the old numbering, or `npos` if dropped.
     /// @pre `old_col_idx < old_num_vars()`. The constant column has no image here;
     /// a caller mapping a whole equation handles bit `old_num_vars()` itself.
     std::size_t to_new(std::size_t old_col_idx) const noexcept {
         assert(old_col_idx < old_num_vars_ && "to_new: old_col_idx is not in the old numbering");
-        return old_to_new_[old_col_idx];
+        return old_col_idx_to_new_col_idx_[old_col_idx];
     }
 
     /// @pre `new_col_idx < new_num_vars()`, i.e. the constant column is excluded here too.
     std::size_t to_old(std::size_t new_col_idx) const noexcept {
         assert(new_col_idx < new_num_vars_ && "to_old: new_col_idx is not in the new numbering");
-        return new_to_old_[new_col_idx];
+        return new_col_idx_to_old_col_idx_[new_col_idx];
     }
 
 private:
     std::size_t old_num_vars_ = 0;
     std::size_t new_num_vars_ = 0;
-    IndexSet dropped_columns_;
-    std::vector<std::size_t> old_to_new_;
-    std::vector<std::size_t> new_to_old_;
+    std::vector<std::size_t> old_col_idx_to_new_col_idx_;
+    std::vector<std::size_t> new_col_idx_to_old_col_idx_;
 };
 
 } // namespace xorcle

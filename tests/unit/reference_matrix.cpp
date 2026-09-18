@@ -75,7 +75,7 @@ bool none_set(const Bits& bits) { return !first_set(bits).has_value(); }
 
 } // namespace
 
-std::optional<std::size_t> ReferenceMatrix::add_row_get_index(const Bits& v) {
+std::optional<std::size_t> ReferenceMatrix::add_row_get_row_idx(const Bits& v) {
     if (rows_.empty()) {
         const std::optional<std::size_t> leading = first_set(v);
         if (!leading) {

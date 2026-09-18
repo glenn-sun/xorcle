@@ -16,8 +16,8 @@ namespace xorcle {
 /// its span and the bookkeeping that relates the two.
 ///
 /// `span()` keeps its rows in row-echelon order, unrelated to the order
-/// equations were learned in. `order_map()` maps trail insertion order to the
-/// row index in `span()`, `reverse_order_map()` is its inverse permutation, and
+/// equations were learned in. `trail_idx_to_row_idx()` maps trail insertion order to the
+/// row index in `span()`, `row_idx_to_trail_idx()` is its inverse permutation, and
 /// `reasons()[t]` is the reason for the equation learned at trail order `t`, or
 /// empty when it was a decision. All three have length `span().rows()`.
 class TrailSnapshot {
@@ -32,17 +32,19 @@ public:
 
     const RowSpace& span() const noexcept { return span_; }
 
-    const std::vector<std::size_t>& order_map() const noexcept { return order_map_; }
+    const std::vector<std::size_t>& trail_idx_to_row_idx() const noexcept {
+        return trail_idx_to_row_idx_;
+    }
 
-    const std::vector<std::size_t>& reverse_order_map() const noexcept {
-        return reverse_order_map_;
+    const std::vector<std::size_t>& row_idx_to_trail_idx() const noexcept {
+        return row_idx_to_trail_idx_;
     }
 
     const std::vector<std::optional<ClauseId>>& reasons() const noexcept { return reasons_; }
 
 private:
-    std::vector<std::size_t> order_map_;
-    std::vector<std::size_t> reverse_order_map_;
+    std::vector<std::size_t> trail_idx_to_row_idx_;
+    std::vector<std::size_t> row_idx_to_trail_idx_;
     RowSpace span_;
     std::vector<std::optional<ClauseId>> reasons_;
 };
@@ -90,12 +92,12 @@ public:
     /// @brief The live snapshot's accessors, forwarded.
     const RowSpace& span() const noexcept { return snapshots_.back().span(); }
 
-    const std::vector<std::size_t>& order_map() const noexcept {
-        return snapshots_.back().order_map();
+    const std::vector<std::size_t>& trail_idx_to_row_idx() const noexcept {
+        return snapshots_.back().trail_idx_to_row_idx();
     }
 
-    const std::vector<std::size_t>& reverse_order_map() const noexcept {
-        return snapshots_.back().reverse_order_map();
+    const std::vector<std::size_t>& row_idx_to_trail_idx() const noexcept {
+        return snapshots_.back().row_idx_to_trail_idx();
     }
 
     const std::vector<std::optional<ClauseId>>& reasons() const noexcept {

@@ -31,9 +31,9 @@ void undo_one_compaction(IndexSet& assignment, const CompactionHistoryEntry& ent
            "compaction history does not line up with the assignment's variable count");
 
     IndexSet before(old_num_vars);
-    for (std::size_t new_index = 0; new_index < entry.transform.new_num_vars(); ++new_index) {
-        if (assignment.test(new_index)) {
-            before.set(entry.transform.to_old(new_index));
+    for (std::size_t new_col_idx = 0; new_col_idx < entry.transform.new_num_vars(); ++new_col_idx) {
+        if (assignment.test(new_col_idx)) {
+            before.set(entry.transform.to_old(new_col_idx));
         }
     }
 

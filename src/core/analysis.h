@@ -55,8 +55,8 @@ struct AssertingClause {
     /// empty when none were measured.
     std::vector<std::size_t> reason_lbds;
 
-    /// @brief How many decision levels the clause reaches into, measured on the
-    /// trail it was derived from.
+    /// @brief How many decision levels above the root the clause reaches into,
+    /// measured on the trail it was derived from.
     std::size_t lbd;
 
     /// @brief The clause's width when it first became asserting, which is
@@ -68,7 +68,7 @@ struct AssertingClause {
     ///
     /// Reading the trail as a flag of subspaces, these are the rows at which the
     /// intersection with the clause's subspace gains a dimension.
-    std::vector<std::size_t> pivot_trail_idxs;
+    std::vector<std::size_t> responsible_trail_idxs;
 
     /// @brief Every reason clause a resolvent subsumed, in derivation order, or
     /// empty when the walk was not asked to collect them.
@@ -85,11 +85,12 @@ struct AssertingClause {
 /// With `measure_reason_lbds`, every clause the derivation uses is measured and
 /// fills `reason_lbds`.
 ///
-/// With `report_pivot_trail_idxs`, the pivots of the clause as learned fill
-/// `pivot_trail_idxs`.
+/// With `report_responsible_trail_idxs`, the trail elements responsible for the
+/// clause as learned fill `responsible_trail_idxs`.
 ///
 /// With `collect_subsumed`, every resolution whose resolvent subsumes its
-/// reason clause records the resolvent in `subsumed_reasons`.
+/// reason clause records the resolvent in `subsumed_reasons`, and so does the
+/// first accepted one when it subsumes the conflicting clause.
 ///
 /// `representative_rng` makes each minimization step pick its resolvent
 /// uniformly at random from the family the step leaves free; see
@@ -104,7 +105,7 @@ struct AssertingClause {
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
                                       DecisionProcedure& decisions, Rng& representative_rng,
                                       bool minimize = true, bool measure_reason_lbds = false,
-                                      bool report_pivot_trail_idxs = false,
+                                      bool report_responsible_trail_idxs = false,
                                       bool collect_subsumed = false);
 
 /// @brief The clauses a root conflict actually depends on, in replay order.
@@ -123,7 +124,8 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
 struct ResolvedReason {
     ClauseId clause_id;
 
-    /// @brief The clause's literal block distance on this trail, when the step
+    /// @brief The clause's literal block distance on this trail, with the trail
+    /// equation it propagated counted at that equation's level, when the step
     /// was asked to measure it.
     std::optional<std::size_t> lbd;
 
@@ -140,18 +142,6 @@ struct ResolvedReason {
 /// @return The reason clause resolved against, measured when `measure_lbd`.
 /// @pre `asserting_basis` is non-empty and `pivot_col_idx` leads its first row.
 /// @pre `trail_basis_one` is the unit vector at column 0 of the basis.
-/// @pre `pivot_col_idx`'s trail step was propagated, with a reason id in `clauses`.
-/// @pre The trail is conflicting.
-/// @post `asserting_basis` is non-empty and its first row's leading column is
-/// past `pivot_col_idx`.
-/// The pivot leads the first row, so no row is free and `representative_rng` is
-/// only forwarded, never drawn from.
-ResolvedReason resolve_asserting_basis_with_reason(
-    TrailBasisSpace& asserting_basis, std::size_t pivot_col_idx, const Trail& trail,
-    const std::vector<Clause>& clauses, DecisionProcedure& decisions,
-    const Equation& trail_basis_one, Rng& representative_rng, bool measure_lbd = false,
-    std::vector<std::size_t>* reason_row_leading_cols = nullptr);
-
 /// @brief The same resolution step on any row, leaving the decision procedure
 /// untouched.
 ///
@@ -164,16 +154,12 @@ ResolvedReason resolve_asserting_basis_with_reason(
 /// the resolvent uniformly from that family.
 ///
 /// @return The reason clause resolved against, measured when `measure_lbd`.
-/// A non-null `reason_row_leading_cols` receives the reason clause's per-row
-/// leading coordinate columns, which a detected subsumption rebuilds the
-/// replacement clause from without touching the trail.
-/// @pre `pivot_col_idx` leads row `pivot_row_idx`; otherwise as
-/// `resolve_asserting_basis_with_reason()`.
+/// @pre `pivot_col_idx` leads row `pivot_row_idx`, its trail step was propagated
+/// with a reason id in `clauses`, and the trail is conflicting.
 /// @post No row from `pivot_row_idx` on leads at or before `pivot_col_idx`.
 ResolvedReason resolve_asserting_basis(
     TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx, std::size_t pivot_col_idx,
     const Trail& trail, const std::vector<Clause>& clauses, const Equation& trail_basis_one,
-    Rng& representative_rng, bool measure_lbd = false,
-    std::vector<std::size_t>* reason_row_leading_cols = nullptr);
+    Rng& representative_rng, bool measure_lbd = false);
 
 } // namespace xorcle

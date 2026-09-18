@@ -14,10 +14,10 @@ namespace xorcle {
 
 namespace {
 
-/// @brief The trail-order sequence of set columns, resolved through `order_map()`.
+/// @brief The trail-order sequence of set columns, resolved through `trail_idx_to_row_idx()`.
 std::vector<std::vector<std::size_t>> rows_in_trail_order(const TrailSnapshot& snapshot) {
     std::vector<std::vector<std::size_t>> out;
-    for (const std::size_t row_idx : snapshot.order_map()) {
+    for (const std::size_t row_idx : snapshot.trail_idx_to_row_idx()) {
         out.push_back(bits_of(snapshot.span().row(row_idx)));
     }
     return out;
@@ -35,8 +35,8 @@ TEST_CASE_TEMPLATE("trail: root snapshot", Tag, DenseTag, SparseTag) {
     CHECK(trail.num_vars() == 4);
     CHECK(trail.span().rows() == 0);
     CHECK(trail.span().cols() == 5);
-    CHECK(trail.order_map().empty());
-    CHECK(trail.reverse_order_map().empty());
+    CHECK(trail.trail_idx_to_row_idx().empty());
+    CHECK(trail.row_idx_to_trail_idx().empty());
     CHECK(trail.reasons().empty());
 }
 
@@ -91,27 +91,27 @@ TEST_CASE_TEMPLATE("trail: order maps are inverse permutations", Tag, DenseTag, 
     // Learned leading columns 2, 0, 3 in that order, so row-echelon order and
     // trail order genuinely disagree and the insertion shift is exercised.
     trail.learn(make_equation_with(repr, 4, {2}), ClauseId{0});
-    CHECK(trail.order_map() == std::vector<std::size_t>{0});
-    CHECK(trail.reverse_order_map() == std::vector<std::size_t>{0});
+    CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0});
+    CHECK(trail.row_idx_to_trail_idx() == std::vector<std::size_t>{0});
 
     trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{1});
-    CHECK(trail.order_map() == std::vector<std::size_t>{1, 0});
-    CHECK(trail.reverse_order_map() == std::vector<std::size_t>{1, 0});
+    CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{1, 0});
+    CHECK(trail.row_idx_to_trail_idx() == std::vector<std::size_t>{1, 0});
 
     trail.learn(make_equation_with(repr, 4, {3, 4}), ClauseId{2});
-    CHECK(trail.order_map() == std::vector<std::size_t>{1, 0, 2});
-    CHECK(trail.reverse_order_map() == std::vector<std::size_t>{1, 0, 2});
+    CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{1, 0, 2});
+    CHECK(trail.row_idx_to_trail_idx() == std::vector<std::size_t>{1, 0, 2});
 
     // Every trail step resolves to the row it created, up to reduction by the
     // rows already present.
     const std::vector<std::vector<std::size_t>> expected{{2}, {0, 4}, {3, 4}};
     CHECK(rows_in_trail_order(trail.back()) == expected);
 
-    for (std::size_t t = 0; t < trail.order_map().size(); ++t) {
-        CHECK(trail.reverse_order_map()[trail.order_map()[t]] == t);
+    for (std::size_t t = 0; t < trail.trail_idx_to_row_idx().size(); ++t) {
+        CHECK(trail.row_idx_to_trail_idx()[trail.trail_idx_to_row_idx()[t]] == t);
     }
-    for (std::size_t r = 0; r < trail.reverse_order_map().size(); ++r) {
-        CHECK(trail.order_map()[trail.reverse_order_map()[r]] == r);
+    for (std::size_t r = 0; r < trail.row_idx_to_trail_idx().size(); ++r) {
+        CHECK(trail.trail_idx_to_row_idx()[trail.row_idx_to_trail_idx()[r]] == r);
     }
     CHECK(trail.reasons().size() == trail.span().rows());
 }
@@ -131,7 +131,7 @@ TEST_CASE_TEMPLATE("trail: learning a partially reduced equation", Tag, DenseTag
     trail.learn(candidate, ClauseId{1});
 
     CHECK(trail.span().rows() == 2);
-    CHECK(trail.order_map() == std::vector<std::size_t>{0, 1});
+    CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0, 1});
     const std::vector<std::vector<std::size_t>> expected{{0, 1}, {1, 2}};
     CHECK(rows_in_trail_order(trail.back()) == expected);
 }
@@ -163,7 +163,7 @@ TEST_CASE_TEMPLATE("trail: resize truncates trailing levels", Tag, DenseTag, Spa
         CHECK(trail.span().rows() == 1);
         const std::vector<std::optional<ClauseId>> expected_reasons{std::optional<ClauseId>{9}};
         CHECK(trail.reasons() == expected_reasons);
-        CHECK(trail.order_map() == std::vector<std::size_t>{0});
+        CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0});
     }
 
     SUBCASE("truncating to the current size is a no-op") {

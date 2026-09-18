@@ -1,5 +1,6 @@
 #include "io/proof_postprocess.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <limits>
@@ -20,34 +21,34 @@ namespace {
 
 constexpr std::size_t no_index = std::numeric_limits<std::size_t>::max();
 
-/// @brief A line's own id in the post-processor's space: a solver clause id
-/// below `unit_node_base`, or `unit_node_base` plus a derived unit's index.
-using NodeId = std::size_t;
+/// @brief Above every id a raw proof can hold, so a corrupt one fails rather
+/// than allocating.
+constexpr ClauseId max_clause_id = std::size_t{1} << 48;
 
-/// @brief Above every clause id a clause store can hand out, so one lookup
-/// covers clauses and units alike.
-constexpr NodeId unit_node_base = std::size_t{1} << 48;
-
-/// @brief One line the proof may keep: the clause it proves and its reasons.
+/// @brief One line the proof may keep.
+///
+/// A reason is a reference: an input clause's 0-based id below
+/// `num_input_clauses`, and a derivation's index plus `num_input_clauses` above.
 struct Derivation {
-    NodeId node;
-    RawRow row; ///< The proof row of a unit line; unused for the other lines.
-    std::vector<NodeId> reasons;
+    std::vector<std::size_t> reasons;
+    std::vector<RawRow> rows; ///< A rewrite line's rows; a raw line's are read back.
+    bool rewrite = false;
 };
 
-/// @brief A root unit compaction eliminated.
-struct Unit {
-    NodeId node;               ///< Its own node, or the aliased clause's.
-    std::size_t derivation;    ///< `no_index` when it is an alias.
-};
-
-/// @brief A clause's proof rows, carried forward to the epoch it was last used in.
+/// @brief A clause as the proof currently cites it.
 struct ClauseCache {
-    std::vector<RawRow> rows;
-    std::vector<std::size_t> units; ///< The units bringing `rows` to `epoch` used.
-    std::size_t epoch = 0;
-    std::size_t derivation = no_index;
+    std::vector<RawRow> rows;          ///< What `current` proves.
+    std::size_t derivation = no_index; ///< The raw line's own.
+    std::size_t current = no_index;    ///< The reference a chain cites the clause by.
+    /// How many root units there were when `current` was proved.
+    std::size_t watermark = 0;
     bool known = false;
+};
+
+/// @brief A root unit of the cumulative echelon.
+struct RootUnit {
+    std::size_t line;
+    std::size_t compaction; ///< The 0-based index of the compaction record holding it.
 };
 
 /// @brief Turns a raw proof into an LRUP(⊕) proof in two passes over the source.
@@ -58,13 +59,16 @@ public:
         : num_vars_(num_vars),
           num_input_clauses_(num_input_clauses),
           repr_(repr),
-          unit_of_col_(num_vars + 1, no_index),
+          unit_echelon_(repr, num_vars),
+          col_idx_to_unit_idx_(num_vars + 1, no_index),
+          unit_stamps_(num_vars + 1, 0),
           scratch_(make_equation(repr, num_vars)) {
         assert(input_clause_rows.size() == num_input_clauses &&
                "postprocess_raw_proof: one row list per input clause");
         clauses_.resize(num_input_clauses);
         for (std::size_t id = 0; id < num_input_clauses; ++id) {
             clauses_[id].rows = input_clause_rows[id];
+            clauses_[id].current = id;
             clauses_[id].known = true;
         }
     }
@@ -77,7 +81,7 @@ public:
     }
 
 private:
-    // -- Pass 1: derive the unit lines and every final reason list. ----------
+    // -- Pass 1: every final reason list. ------------------------------------
 
     void scan(RawRecordSource& source) {
         source.rewind();
@@ -94,7 +98,6 @@ private:
                 for (const ClauseId id : std::get<RawDeleted>(record).ids) {
                     if (id < clauses_.size()) {
                         clauses_[id].rows = std::vector<RawRow>{};
-                        clauses_[id].units = std::vector<std::size_t>{};
                         clauses_[id].known = false;
                     }
                 }
@@ -110,13 +113,13 @@ private:
             throw std::runtime_error("the raw proof learns a clause with an input clause's id");
         }
         ++summary_.raw_learned;
-        std::vector<NodeId> reasons = final_reasons(learned.reasons);
+        std::vector<std::size_t> reasons = final_reasons(learned.reasons);
         ClauseCache& cache = clause(learned.id);
         cache.rows = learned.rows;
-        cache.units.clear();
-        cache.epoch = epochs_.size();
+        cache.watermark = unit_echelon_.rows();
         cache.known = true;
-        cache.derivation = add_derivation(learned.id, RawRow{}, std::move(reasons));
+        cache.derivation = add_derivation(std::move(reasons));
+        cache.current = num_input_clauses_ + cache.derivation;
     }
 
     void scan_empty(const RawEmpty& empty) {
@@ -124,131 +127,116 @@ private:
             throw std::runtime_error("the raw proof has more than one empty clause");
         }
         ++summary_.raw_learned;
-        std::vector<NodeId> reasons = final_reasons(empty.reasons);
+        std::vector<std::size_t> reasons = final_reasons(empty.reasons);
         ClauseCache& cache = clause(empty.id);
         cache.known = true;
-        cache.derivation = add_derivation(empty.id, RawRow{}, std::move(reasons));
+        cache.derivation = add_derivation(std::move(reasons));
+        cache.current = num_input_clauses_ + cache.derivation;
         empty_derivation_ = cache.derivation;
     }
 
-    /// @brief The reasons a compacted epoch's line needs: each raw reason, with
-    /// the units it propagates modulo inserted just before it.
-    std::vector<NodeId> final_reasons(const std::vector<ClauseId>& raw_reasons) {
-        std::vector<NodeId> reasons;
-        ++line_stamp_;
+    /// @brief The reasons a line needs: each raw reason's current line, after
+    /// proving it again if root units since that line reduce it.
+    std::vector<std::size_t> final_reasons(const std::vector<ClauseId>& raw_reasons) {
+        std::vector<std::size_t> reasons;
         for (const ClauseId id : raw_reasons) {
-            if (clause(id).derivation == no_index && id >= num_input_clauses_) {
+            ClauseCache& cache = clause(id);
+            if (!cache.known) {
                 throw std::runtime_error("the raw proof names an unknown reason clause");
             }
-            if (!epochs_.empty()) {
-                for (const std::size_t unit : bring_forward(id).units) {
-                    if (line_stamps_[unit] == line_stamp_) {
-                        continue;
-                    }
-                    line_stamps_[unit] = line_stamp_;
-                    reasons.push_back(units_[unit].node);
-                    ++summary_.inserted_units;
-                }
+            if (unit_echelon_.rows() > cache.watermark) {
+                reduce_by_units(cache);
             }
-            reasons.push_back(id);
+            reasons.push_back(cache.current);
         }
         return reasons;
     }
 
-    void scan_compaction(const RawCompaction& compaction) {
-        RowSpace echelon(repr_, num_vars_);
-        for (const RawUnit& unit : compaction.units) {
-            derive_unit(unit, echelon);
-        }
-        epochs_.push_back(std::move(echelon));
-    }
-
-    /// @brief Prove one root unit from its reason clause and the units before it.
-    void derive_unit(const RawUnit& raw, RowSpace& echelon) {
-        const ClauseCache& cache = bring_forward(raw.reason);
-        std::vector<RawRow> rows = cache.rows;
-        std::vector<std::size_t> same_epoch;
-        reduce_rows(rows, echelon, same_epoch);
-
-        // A trail row is reduced only on its leading bit, so the unit has to
-        // be brought all the way down before it can be compared, or written.
-        Equation unit_row = make_equation(repr_, num_vars_);
-        unit_row.assign_bits(raw.row);
-        echelon.reduce(unit_row);
-
-        // The self-check of the whole design: the reason clause must now
-        // propagate exactly this unit, in its linear negation.
-        const RawRow negated = negate(unit_row.bits());
-        bool propagates = false;
-        for (const RawRow& row : rows) {
+    /// @brief Add a line proving `cache`'s rows as the units on lines `units`
+    /// have reduced them, from those lines and then the clause as last proved,
+    /// and cite it from now on.
+    ///
+    /// The units' lines prove the compactions' echelon rows, so each propagates
+    /// past rows already reduced by all of them.
+    void rewrite(ClauseCache& cache, std::vector<std::size_t> units) {
+        Derivation derivation;
+        derivation.rewrite = true;
+        for (RawRow& row : cache.rows) {
             if (row.empty()) {
                 continue;
             }
-            if (row != negated) {
-                throw std::runtime_error("a root unit's reason clause does not propagate it");
-            }
-            propagates = true;
+            assert(!(row.size() == 1 && row[0] == num_vars_) &&
+                   "a clause the raw proof still names is not satisfied by root units");
+            derivation.rows.push_back(std::move(row));
         }
-        if (!propagates) {
-            throw std::runtime_error("a root unit's reason clause is already a conflict");
-        }
-
-        // An alias: the reason clause is already the unit line, so it needs none.
-        const bool alias =
-            cache.units.empty() && same_epoch.empty() && rows.size() == 1;
-        Unit unit{raw.reason, no_index};
-        if (!alias) {
-            unit.node = unit_node_base + units_.size();
-            std::vector<NodeId> reasons;
-            for (const std::size_t index : cache.units) {
-                reasons.push_back(units_[index].node);
-            }
-            for (const std::size_t index : same_epoch) {
-                reasons.push_back(units_[index].node);
-            }
-            reasons.push_back(raw.reason);
-            unit.derivation = add_derivation(unit.node, negated, std::move(reasons));
-        }
-
-        const std::size_t index = units_.size();
-        units_.push_back(unit);
-        unit_stamps_.push_back(0);
-        line_stamps_.push_back(0);
-
-        const std::optional<std::size_t> row_index =
-            echelon.add_row_get_index(std::move(unit_row));
-        if (!row_index) {
-            throw std::runtime_error("a root unit repeats one already eliminated");
-        }
-        const std::optional<std::size_t> pivot = echelon.row(*row_index).leading_bit();
-        assert(pivot && "a stored echelon row is never zero");
-        unit_of_col_[*pivot] = index;
+        cache.rows = derivation.rows;
+        derivation.reasons = std::move(units);
+        derivation.reasons.push_back(cache.current);
+        cache.current = num_input_clauses_ + add_derivation(std::move(derivation));
     }
 
-    /// @brief Reduce a clause's rows by every epoch echelon it has not met yet.
-    const ClauseCache& bring_forward(ClauseId id) {
-        ClauseCache& cache = clause(id);
-        if (!cache.known) {
-            throw std::runtime_error("the raw proof names an unknown reason clause");
+    /// @brief Append a compaction's units to the cumulative echelon, mapping
+    /// each pivot to its unit.
+    ///
+    /// A unit holds no pivot of an earlier compaction's units, which that
+    /// compaction eliminated, so inserting it changes no stored row.
+    void scan_compaction(const RawCompaction& compaction) {
+        const std::size_t index = num_compactions_++;
+        for (const RawUnit& unit : compaction.units) {
+            const std::size_t unit_derivation = clause(unit.id).derivation;
+            if (unit_derivation == no_index && unit.id >= num_input_clauses_) {
+                throw std::runtime_error("the raw proof names an unknown root unit line");
+            }
+            Equation unit_row = make_equation(repr_, num_vars_);
+            unit_row.assign_bits(unit.row);
+            Equation probe = unit_row;
+            bool holds_eliminated = false;
+            unit_echelon_.reduce_get_coefficients(probe).for_each_set([&](std::size_t row_idx) {
+                if (units_[unit_of(row_idx)].compaction != index) {
+                    holds_eliminated = true;
+                }
+            });
+            if (holds_eliminated) {
+                throw std::runtime_error(
+                    "a root unit holds a variable an earlier compaction eliminated");
+            }
+            // Stored unchanged, the row is exactly what the unit's line proves,
+            // so its pivot can stand for that line.
+            const std::optional<std::size_t> row_idx =
+                unit_echelon_.add_row_get_row_idx(std::move(unit_row));
+            if (!row_idx || unit_echelon_.row(*row_idx).bits() != unit.row) {
+                throw std::runtime_error("a root unit is not reduced by the ones before it");
+            }
+            const std::optional<std::size_t> pivot = unit_echelon_.row(*row_idx).leading_bit();
+            assert(pivot && "a stored echelon row is never zero");
+            col_idx_to_unit_idx_[*pivot] = units_.size();
+            units_.push_back(RootUnit{
+                unit_derivation == no_index ? unit.id : num_input_clauses_ + unit_derivation,
+                index});
         }
-        for (; cache.epoch < epochs_.size(); ++cache.epoch) {
-            reduce_rows(cache.rows, epochs_[cache.epoch], cache.units);
-        }
-        return cache;
     }
 
-    /// @brief Reduce `rows` in place, recording into `used` the units `echelon` used.
-    void reduce_rows(std::vector<RawRow>& rows, const RowSpace& echelon,
-                     std::vector<std::size_t>& used) {
+    /// @brief Reduce a clause about to be cited by every root unit, and prove
+    /// it again if any was used.
+    ///
+    /// The clause's rows hold no pivot of the units before its watermark, so
+    /// only units from there on take part. Their lines are cited compaction by
+    /// compaction, each in the order its rows first use them.
+    void reduce_by_units(ClauseCache& cache) {
         ++unit_stamp_;
-        for (RawRow& row : rows) {
+        std::vector<std::size_t> used;
+        for (RawRow& row : cache.rows) {
             scratch_.assign_bits(row);
-            const IndexSet coefficients = echelon.reduce_get_coefficients(scratch_);
-            coefficients.for_each_set([&](std::size_t row_index) {
-                const std::optional<std::size_t> pivot = echelon.row(row_index).leading_bit();
-                assert(pivot && "a stored echelon row is never zero");
-                const std::size_t unit = unit_of_col_[*pivot];
-                assert(unit != no_index && "an echelon pivot column names its unit");
+            const IndexSet coefficients = unit_echelon_.reduce_get_coefficients(scratch_);
+            if (coefficients.none()) {
+                continue;
+            }
+            coefficients.for_each_set([&](std::size_t row_idx) {
+                const std::size_t unit = unit_of(row_idx);
+                if (unit < cache.watermark) {
+                    throw std::runtime_error(
+                        "the raw proof learns a clause over a variable compaction eliminated");
+                }
                 if (unit_stamps_[unit] != unit_stamp_) {
                     unit_stamps_[unit] = unit_stamp_;
                     used.push_back(unit);
@@ -256,6 +244,29 @@ private:
             });
             row = scratch_.bits();
         }
+        cache.watermark = unit_echelon_.rows();
+        if (used.empty()) {
+            return;
+        }
+        const RawRow constant{num_vars_};
+        if (std::find(cache.rows.begin(), cache.rows.end(), constant) != cache.rows.end()) {
+            throw std::runtime_error("the raw proof names a reason clause root units satisfy");
+        }
+        std::stable_sort(used.begin(), used.end(), [&](std::size_t a, std::size_t b) {
+            return units_[a].compaction < units_[b].compaction;
+        });
+        std::vector<std::size_t> lines;
+        lines.reserve(used.size());
+        for (const std::size_t unit : used) {
+            lines.push_back(units_[unit].line);
+        }
+        rewrite(cache, std::move(lines));
+    }
+
+    std::size_t unit_of(std::size_t row_idx) const {
+        const std::optional<std::size_t> pivot = unit_echelon_.row(row_idx).leading_bit();
+        assert(pivot && "a stored echelon row is never zero");
+        return col_idx_to_unit_idx_[*pivot];
     }
 
     // -- Trimming, renumbering and deletion points. --------------------------
@@ -269,11 +280,13 @@ private:
         while (!stack.empty()) {
             const std::size_t index = stack.back();
             stack.pop_back();
-            for (const NodeId node : derivations_[index].reasons) {
-                const std::size_t next = derivation_of(node);
-                if (next == no_index) {
-                    input_used_[node] = 1;
-                } else if (!reached_[next]) {
+            for (const std::size_t reference : derivations_[index].reasons) {
+                if (reference < num_input_clauses_) {
+                    input_used_[reference] = 1;
+                    continue;
+                }
+                const std::size_t next = reference - num_input_clauses_;
+                if (!reached_[next]) {
                     reached_[next] = 1;
                     stack.push_back(next);
                 }
@@ -295,9 +308,10 @@ private:
             if (!reached_[index]) {
                 continue;
             }
-            for (const NodeId node : derivations_[index].reasons) {
-                const std::size_t used = derivation_of(node);
-                (used == no_index ? last_input_use[node] : last_use[used]) = index;
+            for (const std::size_t reference : derivations_[index].reasons) {
+                (reference < num_input_clauses_
+                     ? last_input_use[reference]
+                     : last_use[reference - num_input_clauses_]) = index;
             }
         }
 
@@ -345,22 +359,31 @@ private:
 
         source.rewind();
         RawRecord record;
-        std::size_t unit_index = 0;
+        std::size_t next_index = 0;
         while (source.next(record)) {
             if (const auto* learned = std::get_if<RawLearned>(&record)) {
-                summary_.kept_learned +=
-                    emit_line(out, clauses_[learned->id].derivation, learned->rows);
-            } else if (const auto* compaction = std::get_if<RawCompaction>(&record)) {
-                for (std::size_t i = 0; i < compaction->units.size(); ++i, ++unit_index) {
-                    const std::size_t index = units_[unit_index].derivation;
-                    if (index == no_index) {
-                        continue;
-                    }
-                    summary_.unit_lines +=
-                        emit_line(out, index, {&derivations_[index].row, 1});
-                }
+                const std::size_t index = clauses_[learned->id].derivation;
+                emit_rewrites(out, next_index, index);
+                summary_.kept_learned += emit_line(out, index, learned->rows);
+                next_index = index + 1;
             } else if (const auto* empty = std::get_if<RawEmpty>(&record)) {
-                summary_.kept_learned += emit_line(out, clauses_[empty->id].derivation, {});
+                const std::size_t index = clauses_[empty->id].derivation;
+                emit_rewrites(out, next_index, index);
+                summary_.kept_learned += emit_line(out, index, {});
+                next_index = index + 1;
+            }
+        }
+    }
+
+    /// @brief Write the rewrite lines among derivations `begin .. end - 1`,
+    /// which are all rewrite lines.
+    void emit_rewrites(std::ostream& out, std::size_t begin, std::size_t end) {
+        for (std::size_t index = begin; index < end; ++index) {
+            const Derivation& derivation = derivations_[index];
+            assert(derivation.rewrite && "only rewrite lines come between raw lines");
+            if (emit_line(out, index, derivation.rows)) {
+                ++summary_.rewrite_lines;
+                summary_.rewrite_unit_ids += derivation.reasons.size() - 1;
             }
         }
     }
@@ -376,8 +399,8 @@ private:
             write_token(out, row);
         }
         out << " 0";
-        for (const NodeId node : derivations_[index].reasons) {
-            out << ' ' << proof_id_of(node);
+        for (const std::size_t reference : derivations_[index].reasons) {
+            out << ' ' << proof_id_of(reference);
         }
         out << " 0\n";
         const std::span<const std::size_t> deletions(
@@ -416,13 +439,19 @@ private:
 
     // -- Small helpers. ------------------------------------------------------
 
-    std::size_t add_derivation(NodeId node, RawRow row, std::vector<NodeId> reasons) {
-        derivations_.push_back(Derivation{node, std::move(row), std::move(reasons)});
+    std::size_t add_derivation(std::vector<std::size_t> reasons) {
+        Derivation derivation;
+        derivation.reasons = std::move(reasons);
+        return add_derivation(std::move(derivation));
+    }
+
+    std::size_t add_derivation(Derivation derivation) {
+        derivations_.push_back(std::move(derivation));
         return derivations_.size() - 1;
     }
 
     ClauseCache& clause(ClauseId id) {
-        if (id >= unit_node_base) {
+        if (id >= max_clause_id) {
             throw std::runtime_error("the raw proof's clause ids are out of range");
         }
         if (id >= clauses_.size()) {
@@ -431,43 +460,25 @@ private:
         return clauses_[id];
     }
 
-    /// @return The line proving `node`, or `no_index` for an input clause.
-    std::size_t derivation_of(NodeId node) const {
-        return node >= unit_node_base ? units_[node - unit_node_base].derivation
-                                      : clauses_[node].derivation;
-    }
-
-    std::size_t proof_id_of(NodeId node) const {
-        const std::size_t index = derivation_of(node);
-        return index == no_index ? node + 1 : proof_ids_[index];
-    }
-
-    /// @brief A row's linear negation: the constant bit flipped.
-    RawRow negate(const RawRow& row) const {
-        RawRow negated = row;
-        if (!negated.empty() && negated.back() == num_vars_) {
-            negated.pop_back();
-        } else {
-            negated.push_back(num_vars_);
-        }
-        return negated;
+    std::size_t proof_id_of(std::size_t reference) const {
+        return reference < num_input_clauses_ ? reference + 1
+                                              : proof_ids_[reference - num_input_clauses_];
     }
 
     std::size_t num_vars_;
     std::size_t num_input_clauses_;
     EquationRepr repr_;
 
-    std::vector<RowSpace> epochs_;      ///< One echelon of eliminated units per compaction.
-    std::vector<std::size_t> unit_of_col_; ///< Pivot column to unit; columns are eliminated once.
-    std::vector<Unit> units_;
+    RowSpace unit_echelon_;                ///< Every compaction's units, in order.
+    std::vector<std::size_t> col_idx_to_unit_idx_; ///< Pivot column to `units_` index.
+    std::vector<RootUnit> units_;          ///< In insertion order.
+    std::size_t num_compactions_ = 0;
     std::vector<ClauseCache> clauses_;
     std::vector<Derivation> derivations_; ///< In emission order.
     std::size_t empty_derivation_ = no_index;
 
-    std::vector<std::size_t> unit_stamps_; ///< Per-reduction deduplication of units.
+    std::vector<std::size_t> unit_stamps_; ///< Per-citation deduplication of units.
     std::size_t unit_stamp_ = 0;
-    std::vector<std::size_t> line_stamps_; ///< Per-line deduplication of insertions.
-    std::size_t line_stamp_ = 0;
 
     std::vector<char> reached_;
     std::vector<char> input_used_;

@@ -131,7 +131,7 @@ struct Run {
 Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfig& compaction = {},
              std::unique_ptr<RestartPolicy> restarts = nullptr,
              std::unique_ptr<ClauseSelector> selector = nullptr,
-             bool bump_learned_clause_pivots = false) {
+             bool bump_responsible_clauses = false) {
     ParsedDimacs parsed = parse_dimacs_string(instance, repr);
 
     Run run;
@@ -142,7 +142,7 @@ Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfi
         selector != nullptr ? std::move(selector) : std::make_unique<Cyclic>(parsed.num_vars),
         std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
         restarts != nullptr ? std::move(restarts) : std::make_unique<NoRestarts>(), nullptr,
-        compaction, ProgressConfig{}, true, DeletionConfig{}, bump_learned_clause_pivots);
+        compaction, ProgressConfig{}, true, DeletionConfig{}, bump_responsible_clauses);
     for (Clause& clause : parsed.clauses) {
         run.solver->add_starting_clause(std::move(clause));
     }
@@ -167,7 +167,7 @@ std::size_t dimension_outside_span(const Clause& clause, const RowSpace& span) {
     RowSpace extended = span;
     std::size_t outside = 0;
     for (const Equation& row : clause) {
-        if (extended.add_row_get_index(row).has_value()) {
+        if (extended.add_row_get_row_idx(row).has_value()) {
             ++outside;
         }
     }

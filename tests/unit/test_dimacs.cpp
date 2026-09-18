@@ -93,10 +93,17 @@ TEST_CASE_TEMPLATE("dimacs: rows are echelonized, not stored verbatim", Tag, Den
         CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0}, {2}});
     }
 
-    SUBCASE("a repeated variable inside one XOR token is idempotent, not cancelling") {
+    SUBCASE("a variable repeated inside one XOR token cancels") {
+        // `x1 + x1 = 1` is `0 = 1`, whose linear negation is the zero space.
         const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\n1+1 0\n", repr);
         REQUIRE(parsed.clauses.size() == 1);
-        CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0}});
+        CHECK(rows_of(parsed.clauses[0]).empty());
+    }
+
+    SUBCASE("a variable repeated an odd number of times survives once") {
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\n1+2+1+1 0\n", repr);
+        REQUIRE(parsed.clauses.size() == 1);
+        CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0, 1}});
     }
 }
 

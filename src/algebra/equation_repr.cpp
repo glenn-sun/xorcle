@@ -58,8 +58,4 @@ Equation make_equation(EquationRepr repr, std::size_t num_vars) {
     return Equation(repr, num_vars);
 }
 
-RowEchelonMatrix make_row_echelon_matrix(EquationRepr repr, std::size_t cols) {
-    return RowEchelonMatrix(repr, cols);
-}
-
 } // namespace xorcle

@@ -25,7 +25,7 @@ class RecordingHandler final : public WatchUpdateHandler {
 public:
     struct Record {
         ClauseId id; ///< The clause whose watch moved.
-        ClauseRowIndex old_watch; ///< The row the watch pointed at before the move.
+        ClauseRowIdx old_watch; ///< The row the watch pointed at before the move.
         WatchType type; ///< Which watch moved.
         std::size_t watched0; ///< The clause's `watched0` as seen by the handler.
         std::size_t watched1; ///< The clause's `watched1` as seen by the handler.
@@ -34,7 +34,7 @@ public:
     /// @brief Observe `clause`, so the recorded watches reflect the update order.
     explicit RecordingHandler(const Clause& clause) : clause_(&clause) {}
 
-    void update_with_new_watch(ClauseId id, ClauseRowIndex old_watch, WatchType type,
+    void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch, WatchType type,
                                const Trail&) override {
         records.push_back({id, old_watch, type, clause_->watched0, clause_->watched1});
     }

@@ -22,7 +22,8 @@ public:
 
 private:
     friend bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
-                                          ClauseSatisfactionWorkspace& workspace);
+                                          ClauseSatisfactionWorkspace& workspace,
+                                          std::vector<Equation>* reduced_rows);
 
     void clear_local_basis();
 
@@ -45,10 +46,15 @@ private:
 const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span);
 
 /// @brief Whether the trail already satisfies a clause, under every extension.
+/// @param reduced_rows When non-null and the clause is not satisfied, receives
+/// each clause row reduced by `trail_span`, in row order. Compaction wants those
+/// rows and would otherwise reduce every one of them again; the decision path
+/// passes nothing and pays for nothing.
 /// @pre `clause.cols() == trail_span.cols()`, and `workspace` was configured for
 /// `trail_span.cols() - 1` variables in `trail_span`'s representation.
 bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
-                               ClauseSatisfactionWorkspace& workspace);
+                               ClauseSatisfactionWorkspace& workspace,
+                               std::vector<Equation>* reduced_rows = nullptr);
 
 /// @brief Compact a literal basis, preserving basis order.
 /// @return The first compacted equation for each new leading bit, in old basis order, then

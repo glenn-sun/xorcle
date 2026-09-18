@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file compaction.h
-/// @brief Eliminating the leading terms of all known units.
+/// @brief Dropping the leading variables of all known units.
 
 #include <cstddef>
 #include <cstdint>
@@ -17,7 +17,6 @@ namespace xorcle {
 /// @brief One committed compaction step, enough to undo it on an assignment.
 struct CompactionHistoryEntry {
     CompactionTransform transform;
-    std::vector<std::size_t> active_var_to_original_before;
     std::vector<Equation> trail_rows_before;
 };
 
@@ -38,7 +37,7 @@ struct CompactionState {
     bool has_compacted_once;
     std::size_t num_conflicts;
     std::size_t conflicts_at_last_compaction;
-    std::size_t compaction_conflict_interval;
+    std::size_t cadence;
 };
 
 /// @brief The one-row clause an id holds once it goes inactive.
@@ -46,11 +45,11 @@ struct CompactionState {
 Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row);
 
 /// @brief True when the trail is at the root, the conflict interval has elapsed,
-/// and at least one variable can be eliminated.
+/// and at least one variable can be dropped.
 /// @pre The trail span's pivot column set has size `state.active_num_vars + 1`.
 bool should_compact_before_decision(const CompactionState& state);
 
-/// @brief Build the change of basis eliminating the leading terms of all known units.
+/// @brief Build the renumbering dropping the leading variables of all known units.
 /// @pre The trail is at the root level, and its span's pivot column set has size
 /// `active_num_vars + 1` and does not include the constant column.
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars);

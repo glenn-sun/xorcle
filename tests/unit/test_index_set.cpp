@@ -32,10 +32,6 @@ TEST_CASE("index_set: construction and basic access") {
     col_idxs.clear();
     CHECK(col_idxs.none());
     CHECK(col_idxs.size() == 200);
-
-    col_idxs.reset_size(10);
-    CHECK(col_idxs.size() == 10);
-    CHECK(col_idxs.none());
 }
 
 TEST_CASE("index_set: count_below gives row-echelon insertion indices") {

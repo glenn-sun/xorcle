@@ -2,15 +2,10 @@
 
 #include <cassert>
 
-#include "heuristics/restarts/lbd.h"
+#include "heuristics/restarts/lbd_restarts.h"
 #include "heuristics/restarts/luby.h"
 
 namespace xorcle {
-
-bool
-NoRestarts::enabled() const {
-    return false;
-}
 
 bool
 NoRestarts::should_restart_after_conflict(const ConflictSummary&) {
@@ -28,7 +23,7 @@ make_restart_policy(const RestartConfig& config) {
         case RestartMethod::luby:
             return std::make_unique<Luby>(config);
         case RestartMethod::lbd:
-            return std::make_unique<Lbd>(config);
+            return std::make_unique<LbdRestarts>(config);
     }
     assert(false && "unhandled restart method");
     return std::make_unique<NoRestarts>();

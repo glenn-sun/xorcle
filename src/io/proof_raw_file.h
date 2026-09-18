@@ -88,15 +88,21 @@ public:
                        std::span<const std::size_t> active_var_to_original,
                        const std::vector<ClauseId>& reasons);
 
+    /// @brief Write a learned clause whose rows are already over the original
+    /// variables.
+    /// @pre `reasons` is in replay order and `finalize()` has not run.
+    void write_learned(ClauseId id, std::span<const RawRow> rows,
+                       const std::vector<ClauseId>& reasons);
+
     /// @brief Write the final empty clause.
     /// @pre `reasons` is in replay order and `finalize()` has not run.
     void write_empty(ClauseId id, const std::vector<ClauseId>& reasons);
 
-    /// @brief Write the root trail a compaction eliminated, in trail order.
+    /// @brief Write the root units a compaction eliminated, in trail order.
     /// @pre `finalize()` has not run.
     void write_compaction(const std::vector<RawUnit>& units);
 
-    /// @brief Write the clauses a deletion pass evicted.
+    /// @brief Write the clauses a deletion pass deleted.
     /// @pre `ids` is non-empty and `finalize()` has not run.
     void write_deleted(const std::vector<ClauseId>& ids);
 

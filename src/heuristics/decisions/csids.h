@@ -86,7 +86,7 @@ public:
     /// @brief Resets both RNG streams as well as activity and the counters.
     void reinitialize() override;
 
-    Equation make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
+    std::optional<Equation> make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
                            const std::vector<std::uint8_t>& clause_active) override;
 
     /// @brief Record the activity the next new clause will enter at, then decay.

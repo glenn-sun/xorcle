@@ -46,39 +46,26 @@ TEST_CASE("random: derive_seed reproduces its reference values") {
     struct Case {
         Seed base;
         RngComponent component;
-        std::uint64_t salt;
         Seed expected;
     };
 
     const std::vector<Case> cases = {
-        {0, RngComponent::decision_phase, 0, 10870759137850584762ULL},
-        {0, RngComponent::decision_phase, 1, 4995873258355806544ULL},
-        {0, RngComponent::decision_phase, 7, 1446151627655274582ULL},
-        {0, RngComponent::csids_equation, 0, 17133378899364576809ULL},
-        {0, RngComponent::csids_equation, 1, 16237881576802071655ULL},
-        {0, RngComponent::csids_equation, 7, 144748878502545452ULL},
-        {1, RngComponent::decision_phase, 0, 4995873258355806544ULL},
-        {1, RngComponent::decision_phase, 7, 3866014115903085722ULL},
-        {1, RngComponent::csids_equation, 0, 16237881576802071655ULL},
-        {42, RngComponent::decision_phase, 0, 12247817420404419398ULL},
-        {42, RngComponent::csids_equation, 0, 186222749232901458ULL},
-        {42, RngComponent::csids_equation, 7, 15196391863456397228ULL},
-        {12345, RngComponent::decision_phase, 0, 3235331413191061458ULL},
-        {12345, RngComponent::csids_equation, 0, 6898429099592197767ULL},
-        {18446744073709551615ULL, RngComponent::decision_phase, 0, 3189705271989274347ULL},
-        {18446744073709551615ULL, RngComponent::csids_equation, 0, 12351632284671268914ULL},
-        {18446744073709551615ULL, RngComponent::csids_equation, 7, 9501494962573633915ULL},
+        {0, RngComponent::decision_phase, 10870759137850584762ULL},
+        {0, RngComponent::csids_equation, 17133378899364576809ULL},
+        {1, RngComponent::decision_phase, 4995873258355806544ULL},
+        {1, RngComponent::csids_equation, 16237881576802071655ULL},
+        {42, RngComponent::decision_phase, 12247817420404419398ULL},
+        {42, RngComponent::csids_equation, 186222749232901458ULL},
+        {12345, RngComponent::decision_phase, 3235331413191061458ULL},
+        {12345, RngComponent::csids_equation, 6898429099592197767ULL},
+        {18446744073709551615ULL, RngComponent::decision_phase, 3189705271989274347ULL},
+        {18446744073709551615ULL, RngComponent::csids_equation, 12351632284671268914ULL},
     };
 
     for (const Case& c : cases) {
         CAPTURE(c.base);
-        CAPTURE(c.salt);
-        CHECK(derive_seed(c.base, c.component, c.salt) == c.expected);
+        CHECK(derive_seed(c.base, c.component) == c.expected);
     }
-
-    // The default salt is 0.
-    CHECK(derive_seed(42, RngComponent::decision_phase) ==
-          derive_seed(42, RngComponent::decision_phase, 0));
 
     // The two component streams are distinct for every seed tested.
     for (Seed base : {Seed{0}, Seed{1}, Seed{42}, Seed{12345}}) {
@@ -88,8 +75,8 @@ TEST_CASE("random: derive_seed reproduces its reference values") {
 }
 
 TEST_CASE("random: make_rng seeds from derive_seed") {
-    Rng expected(derive_seed(42, RngComponent::csids_equation, 3));
-    Rng actual = make_rng(42, RngComponent::csids_equation, 3);
+    Rng expected(derive_seed(42, RngComponent::csids_equation));
+    Rng actual = make_rng(42, RngComponent::csids_equation);
     for (int i = 0; i < 8; ++i) {
         CHECK(actual() == expected());
     }

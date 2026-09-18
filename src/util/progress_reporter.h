@@ -47,18 +47,18 @@ struct ProgressSnapshot {
     double conflicts_per_second = 0.0;
     std::size_t num_propagations = 0;
     std::size_t num_clauses = 0; ///< Live: deletion has already been subtracted.
-    /// @brief Decision level and trail rank averaged over the conflicts in the
+    /// @brief Decision level and trail length averaged over the conflicts in the
     /// interval, each sampled *at* its conflict. The instantaneous values are in
     /// the `search` group; these are the ones that trend.
     double average_decision_level = 0.0;
-    double average_trail_rank = 0.0;
+    double average_trail_length = 0.0;
     /// @brief Active variables less the root trail's rank: the dimension of the
     /// space still to be searched.
     std::size_t remaining_vars = 0;
 
     std::size_t decisions = 0;
     std::size_t decision_level = 0;
-    std::size_t trail_rank = 0;
+    std::size_t trail_length = 0;
     std::size_t num_restarts = 0;
     std::size_t num_reused_levels = 0;
 

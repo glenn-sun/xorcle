@@ -123,9 +123,9 @@ void push_variable(std::string_view term, std::string_view token, std::size_t nu
     bits.push_back(*variable - 1);
 }
 
-/// @brief Decode one literal token into the set bits of its stored row.
+/// @brief Decode one equation token into the set bits of its stored row.
 ///
-/// The stored row is the literal's linear negation, which is why a leading `-`
+/// The stored row is the equation's linear negation, which is why a leading `-`
 /// (right-hand side 0) sets the constant bit and a bare token does not.
 std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t num_vars,
                                             std::string_view origin, std::size_t line_number) {
@@ -134,10 +134,10 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
     if (token.find('+') == std::string_view::npos) {
         const std::optional<long long> literal = parse_signed(token);
         if (!literal) {
-            fail(origin, line_number, "not a literal token: " + std::string{token});
+            fail(origin, line_number, "not an equation token: " + std::string{token});
         }
         if (*literal == 0) {
-            fail(origin, line_number, "the clause terminator 0 is not a literal token");
+            fail(origin, line_number, "the clause terminator 0 is not an equation");
         }
         const unsigned long long magnitude =
             *literal < 0 ? 0ull - static_cast<unsigned long long>(*literal)
@@ -177,6 +177,18 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
             fail(origin, line_number, "empty variable in token: " + std::string{token});
         }
     }
+
+    // `+` is XOR, so a variable named an even number of times cancels out.
+    std::sort(bits.begin(), bits.end());
+    auto out = bits.begin();
+    for (auto it = bits.begin(); it != bits.end();) {
+        auto next = std::find_if(it, bits.end(), [&](std::size_t bit) { return bit != *it; });
+        if ((next - it) % 2 != 0) {
+            *out++ = *it;
+        }
+        it = next;
+    }
+    bits.erase(out, bits.end());
 
     if (rhs_is_zero) {
         bits.push_back(num_vars);

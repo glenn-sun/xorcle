@@ -64,6 +64,9 @@ TEST_CASE_TEMPLATE("raw proof file: every record round-trips", Tag, DenseTag, Sp
 
         writer.write_learned(ClauseId{4}, make_clause(repr, 2, {{0, 2}, {1}}),
                              active_var_to_original, std::vector<ClauseId>{0, 2, 3});
+        // Rows already over the original variables are written as they are.
+        const std::vector<RawRow> lifted{RawRow{0, 4}};
+        writer.write_learned(ClauseId{5}, lifted, std::vector<ClauseId>{4, 1});
         writer.write_compaction(std::vector<RawUnit>{RawUnit{RawRow{0, 5}, ClauseId{1}},
                                                      RawUnit{RawRow{2}, ClauseId{3}}});
         writer.write_deleted(std::vector<ClauseId>{2, 7});
@@ -77,7 +80,7 @@ TEST_CASE_TEMPLATE("raw proof file: every record round-trips", Tag, DenseTag, Sp
     CHECK(source.num_input_clauses() == 4);
 
     const std::vector<RawRecord> records = read_all(source);
-    REQUIRE(records.size() == 4);
+    REQUIRE(records.size() == 5);
 
     const RawLearned& learned = std::get<RawLearned>(records[0]);
     CHECK(learned.id == 4);
@@ -85,22 +88,27 @@ TEST_CASE_TEMPLATE("raw proof file: every record round-trips", Tag, DenseTag, Sp
     CHECK(learned.rows == std::vector<RawRow>{RawRow{1, 5}, RawRow{3}});
     CHECK(learned.reasons == std::vector<ClauseId>{0, 2, 3});
 
-    const RawCompaction& compaction = std::get<RawCompaction>(records[1]);
+    const RawLearned& unit = std::get<RawLearned>(records[1]);
+    CHECK(unit.id == 5);
+    CHECK(unit.rows == std::vector<RawRow>{RawRow{0, 4}});
+    CHECK(unit.reasons == std::vector<ClauseId>{4, 1});
+
+    const RawCompaction& compaction = std::get<RawCompaction>(records[2]);
     REQUIRE(compaction.units.size() == 2);
     CHECK(compaction.units[0].row == RawRow{0, 5});
-    CHECK(compaction.units[0].reason == 1);
+    CHECK(compaction.units[0].id == 1);
     CHECK(compaction.units[1].row == RawRow{2});
-    CHECK(compaction.units[1].reason == 3);
+    CHECK(compaction.units[1].id == 3);
 
-    CHECK(std::get<RawDeleted>(records[2]).ids == std::vector<ClauseId>{2, 7});
+    CHECK(std::get<RawDeleted>(records[3]).ids == std::vector<ClauseId>{2, 7});
 
-    const RawEmpty& empty = std::get<RawEmpty>(records[3]);
+    const RawEmpty& empty = std::get<RawEmpty>(records[4]);
     CHECK(empty.id == 9);
     CHECK(empty.reasons.empty());
 
     // Rewinding replays the same records from the first one.
     source.rewind();
-    CHECK(read_all(source).size() == 4);
+    CHECK(read_all(source).size() == 5);
 
     std::filesystem::remove(path);
 }

@@ -81,7 +81,8 @@ const Equation& decide_from_basis(const std::vector<Equation>& basis,
 }
 
 bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
-                               ClauseSatisfactionWorkspace& workspace) {
+                               ClauseSatisfactionWorkspace& workspace,
+                               std::vector<Equation>* reduced_rows) {
     assert(workspace.num_vars_ + 1 == trail_span.cols() &&
            "the workspace was configured for a different variable count");
     assert(workspace.repr_ == trail_span.repr() &&
@@ -90,6 +91,9 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
            "clause and trail span disagree on the column count");
 
     workspace.clear_local_basis();
+    if (reduced_rows != nullptr) {
+        reduced_rows->clear();
+    }
 
     // Reduced once by the trail span here, then incrementally by each clause row
     // as the local basis grows; recomputing per row costs quadratic for nothing.
@@ -103,7 +107,10 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
     for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
         workspace.scratch_row_.assign_from(clause.row(row_idx));
         trail_span.reduce(workspace.scratch_row_);
-        if (!workspace.local_basis_.add_row_get_index(workspace.scratch_row_).has_value()) {
+        if (reduced_rows != nullptr) {
+            reduced_rows->push_back(workspace.scratch_row_);
+        }
+        if (!workspace.local_basis_.add_row_get_row_idx(workspace.scratch_row_).has_value()) {
             // Dependent on the rows already in the local basis; it adds nothing.
             continue;
         }

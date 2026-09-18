@@ -14,26 +14,26 @@ namespace {
 
 struct Column {
     const char* name;
-    int width;
+    int column_chars;
     unsigned group;
 };
 
 /// @brief The columns, in print order; the header and every line share them.
 constexpr Column columns[]{
-    {"seconds", 9, progress_group::defaults},
-    {"conflicts", 12, progress_group::defaults},
-    {"confl/s", 10, progress_group::defaults},
-    {"propagations", 15, progress_group::defaults},
-    {"clauses", 10, progress_group::defaults},
-    {"avg decision level", 21, progress_group::defaults},
-    {"avg trail rank", 16, progress_group::defaults},
-    {"remaining vars", 17, progress_group::defaults},
+    {"time", 7, progress_group::defaults},
+    {"conflicts", 11, progress_group::defaults},
+    {"confl/s", 9, progress_group::defaults},
+    {"props", 9, progress_group::defaults},
+    {"clauses", 9, progress_group::defaults},
+    {"avg level", 11, progress_group::defaults},
+    {"avg trail", 11, progress_group::defaults},
+    {"vars left", 11, progress_group::defaults},
 
     {"decisions", 12, progress_group::search},
-    {"decision level", 17, progress_group::search},
-    {"trail rank", 13, progress_group::search},
+    {"level", 8, progress_group::search},
+    {"trail", 8, progress_group::search},
     {"restarts", 10, progress_group::search},
-    {"reused levels", 16, progress_group::search},
+    {"reused", 9, progress_group::search},
 
     {"deleted", 10, progress_group::deletion},
     {"demoted", 10, progress_group::deletion},
@@ -58,12 +58,12 @@ std::array<std::string, std::size(columns)> cells_of(const ProgressSnapshot& sna
         std::to_string(snapshot.num_propagations),
         std::to_string(snapshot.num_clauses),
         format_fixed(snapshot.average_decision_level, 1),
-        format_fixed(snapshot.average_trail_rank, 1),
+        format_fixed(snapshot.average_trail_length, 1),
         std::to_string(snapshot.remaining_vars),
 
         std::to_string(snapshot.decisions),
         std::to_string(snapshot.decision_level),
-        std::to_string(snapshot.trail_rank),
+        std::to_string(snapshot.trail_length),
         std::to_string(snapshot.num_restarts),
         std::to_string(snapshot.num_reused_levels),
 
@@ -143,7 +143,7 @@ ConsoleProgressReporter::write_header(std::ostream& output) {
     output << "c";
     for (const Column& column : columns) {
         if ((column.group & groups_) != 0) {
-            output << std::setw(column.width) << column.name;
+            output << std::setw(column.column_chars) << column.name;
         }
     }
     output << "\n";
@@ -165,7 +165,7 @@ ConsoleProgressReporter::report(const ProgressSnapshot& snapshot) {
     output << "c";
     for (std::size_t index = 0; index < cells.size(); ++index) {
         if ((columns[index].group & groups_) != 0) {
-            output << std::setw(columns[index].width) << cells[index];
+            output << std::setw(columns[index].column_chars) << cells[index];
         }
     }
     output << "\n";

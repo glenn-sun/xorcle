@@ -5,8 +5,9 @@
 /// while it runs, which post-processing turns into an LRUP(⊕) proof.
 ///
 /// Every row is over the *original* variables, whatever compaction has done to
-/// the solver's numbering. Ids are solver `ClauseId`s, 0-based, with the input
-/// clauses at `0 .. num_input_clauses - 1`; post-processing renumbers.
+/// the solver's numbering. Ids are 0-based, with the input clauses at
+/// `0 .. num_input_clauses - 1` and every later line taking the next one, root
+/// units included; post-processing renumbers.
 
 #include <cstddef>
 #include <utility>
@@ -34,15 +35,17 @@ struct RawEmpty {
     std::vector<ClauseId> reasons;
 };
 
-/// @brief One root trail row a compaction eliminated, and the clause that
-/// propagated it. Its derivation depends only on units before it in the record.
-/// The row is a trail row, so it is reduced only on its leading bit.
+/// @brief One root unit a compaction eliminated, and the line proving it.
+///
+/// The row is reduced by every unit before it in the record, so the rows stand
+/// as an echelon basis in record order, and the line proves the unit clause of
+/// exactly this equation.
 struct RawUnit {
     RawRow row;
-    ClauseId reason;
+    ClauseId id;
 };
 
-/// @brief A compaction: the whole root trail it eliminated, in trail order.
+/// @brief A compaction: every root unit it eliminated, in trail order.
 struct RawCompaction {
     std::vector<RawUnit> units;
 };

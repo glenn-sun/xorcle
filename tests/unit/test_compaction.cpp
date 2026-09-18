@@ -133,7 +133,6 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
         REQUIRE(plan.history_entry.trail_rows_before.size() == 1);
         CHECK(bits_of(plan.history_entry.trail_rows_before[0]) ==
               std::vector<std::size_t>{0, 4});
-        CHECK(plan.history_entry.active_var_to_original_before == var_map);
         CHECK(plan.history_entry.transform.new_num_vars() == 3);
     }
 }

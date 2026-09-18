@@ -6,7 +6,6 @@
 
 #include <fstream>
 #include <iosfwd>
-#include <mutex>
 #include <optional>
 #include <string>
 
@@ -22,25 +21,19 @@ namespace xorcle {
 /// a statistic, so they are never only in the file.
 void write_verdict(std::ostream& out, const RunStats& stats);
 
-/// @brief Thread-safe writer for solver statistics.
+/// @brief Writer for solver statistics.
 class StatsWriter {
 public:
     virtual ~StatsWriter() = default;
 
-    void log(const RunStats& stats);
-
-protected:
-    virtual void log_impl(const RunStats& stats) = 0;
-
-private:
-    std::mutex mu_;
+    virtual void log(const RunStats& stats) = 0;
 };
 
 /// @brief Log to stdout: the DIMACS-style `c` comment lines, then the verdict
 /// and any model that `write_verdict` writes.
 class ConsoleStatsWriter : public StatsWriter {
-protected:
-    void log_impl(const RunStats& stats) override;
+public:
+    void log(const RunStats& stats) override;
 };
 
 /// @brief Log solver statistics to a CSV file.
@@ -49,8 +42,7 @@ class CsvStatsWriter : public StatsWriter {
 public:
     explicit CsvStatsWriter(std::string path);
 
-protected:
-    void log_impl(const RunStats& stats) override;
+    void log(const RunStats& stats) override;
 
 private:
     std::string path_;

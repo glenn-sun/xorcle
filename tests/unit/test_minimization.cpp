@@ -128,7 +128,7 @@ std::size_t dimensions_outside_span(const Clause& clause, const RowSpace& span) 
     RowSpace enlarged = span;
     std::size_t added = 0;
     for (const Equation& row : clause) {
-        added += enlarged.add_row_get_index(row).has_value() ? 1 : 0;
+        added += enlarged.add_row_get_row_idx(row).has_value() ? 1 : 0;
     }
     return added;
 }
@@ -137,7 +137,7 @@ std::size_t dimensions_outside_span(const Clause& clause, const RowSpace& span) 
 bool spans_within(const RowEchelonMatrix& inner, const RowEchelonMatrix& outer) {
     RowEchelonMatrix enclosing = outer;
     for (const Equation& row : inner) {
-        if (enclosing.add_row_get_index(row).has_value()) {
+        if (enclosing.add_row_get_row_idx(row).has_value()) {
             return false;
         }
     }
@@ -279,6 +279,11 @@ TEST_CASE_TEMPLATE("minimize: a clause the walk can shrink", Tag, DenseTag, Spar
     CHECK(both.minimized.asserting_level == 1);
     CHECK(both.minimized.reason_ids == std::vector<ClauseId>{4, 3, 2, 0});
     check_minimization_invariants(both, conflict.trail);
+
+    // Clause 0 propagated [x5 = 1] at level 1 and brings in only [x0 = 0], also
+    // at level 1, so it reaches one level although the conflict is at level 2.
+    CHECK(both.plain.reason_lbds == std::vector<std::size_t>{2, 1, 1});
+    CHECK(both.minimized.reason_lbds == std::vector<std::size_t>{2, 1, 1, 1});
 }
 
 TEST_CASE_TEMPLATE("minimize: the parameter defaults to on", Tag, DenseTag, SparseTag) {
@@ -354,7 +359,8 @@ TEST_CASE_TEMPLATE("minimize: a minimizing run still writes a raw proof", Tag, D
         writer.finalize(true);
     }
 
-    // Learned clauses first, then exactly one empty clause, last.
+    // Learned clauses first, then exactly one empty clause, last. A root unit's
+    // line may cite its reason clause alone.
     RawProofFileSource source(path);
     RawRecord record;
     std::size_t learned = 0;
@@ -362,7 +368,7 @@ TEST_CASE_TEMPLATE("minimize: a minimizing run still writes a raw proof", Tag, D
     while (source.next(record)) {
         if (const RawLearned* line = std::get_if<RawLearned>(&record)) {
             CHECK(line->rows.size() > 0);
-            CHECK(line->reasons.size() >= 2);
+            CHECK(line->reasons.size() >= (line->rows.size() == 1 ? 1u : 2u));
             CHECK(empty == 0);
             ++learned;
         }

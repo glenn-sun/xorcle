@@ -53,19 +53,19 @@ TEST_CASE_TEMPLATE("row echelon: add_row insertion positions", Tag, DenseTag, Sp
 
     // Insert in an order that forces every kind of insertion: at the end, in
     // the middle, and at the front.
-    CHECK(matrix.add_row_get_index(make_equation_with(repr, 6, {3, 6})) ==
+    CHECK(matrix.add_row_get_row_idx(make_equation_with(repr, 6, {3, 6})) ==
           std::optional<std::size_t>(0));
     check_echelon_invariant(matrix);
 
-    CHECK(matrix.add_row_get_index(make_equation_with(repr, 6, {5})) ==
+    CHECK(matrix.add_row_get_row_idx(make_equation_with(repr, 6, {5})) ==
           std::optional<std::size_t>(1));
     check_echelon_invariant(matrix);
 
-    CHECK(matrix.add_row_get_index(make_equation_with(repr, 6, {1, 2})) ==
+    CHECK(matrix.add_row_get_row_idx(make_equation_with(repr, 6, {1, 2})) ==
           std::optional<std::size_t>(0));
     check_echelon_invariant(matrix);
 
-    CHECK(matrix.add_row_get_index(make_equation_with(repr, 6, {4, 6})) ==
+    CHECK(matrix.add_row_get_row_idx(make_equation_with(repr, 6, {4, 6})) ==
           std::optional<std::size_t>(2));
     check_echelon_invariant(matrix);
 
@@ -83,17 +83,17 @@ TEST_CASE_TEMPLATE("row echelon: add_row is idempotent on in-span rows", Tag, De
 
     const Equation a = make_equation_with(repr, 5, {0, 2});
     const Equation b = make_equation_with(repr, 5, {1, 5});
-    REQUIRE(matrix.add_row_get_index(a).has_value());
-    REQUIRE(matrix.add_row_get_index(b).has_value());
+    REQUIRE(matrix.add_row_get_row_idx(a).has_value());
+    REQUIRE(matrix.add_row_get_row_idx(b).has_value());
     REQUIRE(matrix.rows() == 2);
 
     // The row itself, a sum of stored rows, and the true equation are all in
     // the span and must be rejected without changing anything.
-    CHECK(matrix.add_row_get_index(a) == std::nullopt);
+    CHECK(matrix.add_row_get_row_idx(a) == std::nullopt);
     Equation sum = a;
     sum.plus_assign(b);
-    CHECK(matrix.add_row_get_index(sum) == std::nullopt);
-    CHECK(matrix.add_row_get_index(Equation::eq_true(repr, 5)) == std::nullopt);
+    CHECK(matrix.add_row_get_row_idx(sum) == std::nullopt);
+    CHECK(matrix.add_row_get_row_idx(Equation::eq_true(repr, 5)) == std::nullopt);
     CHECK(matrix.rows() == 2);
 
     matrix.add_row(a);
@@ -102,7 +102,7 @@ TEST_CASE_TEMPLATE("row echelon: add_row is idempotent on in-span rows", Tag, De
 
     // The false equation is not in this span, and its leading column is the
     // constant column.
-    CHECK(matrix.add_row_get_index(Equation::eq_false(repr, 5)) ==
+    CHECK(matrix.add_row_get_row_idx(Equation::eq_false(repr, 5)) ==
           std::optional<std::size_t>(2));
     CHECK(matrix.pivot_col_idxs().test(5));
     check_echelon_invariant(matrix);
@@ -187,7 +187,7 @@ TEST_CASE_TEMPLATE("row echelon: partial_reduce_with_extra matches an augmented 
         }
 
         RowSpace augmented = matrix;
-        REQUIRE(augmented.add_row_get_index(extra).has_value());
+        REQUIRE(augmented.add_row_get_row_idx(extra).has_value());
         check_echelon_invariant(augmented);
 
         const Equation v = to_equation(repr, random_bits(random, num_vars, 3));
@@ -254,8 +254,8 @@ TEST_CASE_TEMPLATE("row echelon: matches the reference matrix", Tag, DenseTag, S
         for (int step = 0; step < 40; ++step) {
             const Bits candidate = random_bits(random, num_vars, 4);
             const std::optional<std::size_t> actual =
-                matrix.add_row_get_index(to_equation(repr, candidate));
-            const std::optional<std::size_t> expected = reference.add_row_get_index(candidate);
+                matrix.add_row_get_row_idx(to_equation(repr, candidate));
+            const std::optional<std::size_t> expected = reference.add_row_get_row_idx(candidate);
             REQUIRE(actual == expected);
             check_matches_reference(matrix, reference);
             check_echelon_invariant(matrix);
@@ -330,7 +330,7 @@ TEST_CASE_TEMPLATE("row echelon: a reduced row never leads on a pivot column", T
         CHECK(fully.classify() == result);
 
         RowSpace extended = matrix;
-        CHECK(extended.add_row_get_index(original).has_value() ==
+        CHECK(extended.add_row_get_row_idx(original).has_value() ==
               (result.kind != ReduceResult::Kind::eq_true));
     }
 }
@@ -430,9 +430,9 @@ TEST_CASE("row echelon: the two representations agree") {
     for (int step = 0; step < 400; ++step) {
         const Bits candidate = random_bits(random, num_vars, 4);
         const std::optional<std::size_t> dense_index =
-            dense.add_row_get_index(to_equation(EquationRepr::dense, candidate));
+            dense.add_row_get_row_idx(to_equation(EquationRepr::dense, candidate));
         const std::optional<std::size_t> sparse_index =
-            sparse.add_row_get_index(to_equation(EquationRepr::sparse, candidate));
+            sparse.add_row_get_row_idx(to_equation(EquationRepr::sparse, candidate));
         REQUIRE(dense_index == sparse_index);
         REQUIRE(dense.rows() == sparse.rows());
 

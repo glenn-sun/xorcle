@@ -27,6 +27,7 @@ public:
     /// and with its watches possibly updated.
     ///
     /// @param trigger_hint A trigger the selector already computed, or empty.
+    /// No selector supplies one today, so this is always empty.
     /// @param num_watch_updates Incremented once per watch moved. An accumulator
     /// rather than a returned count: this runs on the propagation path, roughly
     /// 1,000x more often than conflict- or decision-scale work.

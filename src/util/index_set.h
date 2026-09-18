@@ -16,12 +16,6 @@ public:
 
     std::size_t size() const noexcept { return size_; }
 
-    /// @brief Resize to a new index domain, zeroing the whole set.
-    void reset_size(std::size_t size) {
-        size_ = size;
-        words_.assign(word_count(size), 0);
-    }
-
     /// @brief Remove every index, leaving the size unchanged.
     void clear() noexcept {
         for (std::uint64_t& word : words_) {
