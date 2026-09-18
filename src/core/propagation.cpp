@@ -78,6 +78,8 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
            "clause and trail use different representations");
     assert(clause.rows() >= 1 && "propagating from a clause with no rows");
 
+    found_satisfied_ = false;
+
     // A unit clause has nothing to watch.
     if (clause.rows() == 1) {
         assert(!trigger_hint.has_value() && "non-unit hint for a unit clause");
@@ -85,6 +87,8 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
         const ReduceResult reduced = trail.span().partial_reduce(working_eqn_);
         if (reduced.kind == ReduceResult::Kind::eq_false) {
             // Reduced to 1, so its negation is 0: already satisfied.
+            found_satisfied_ = true;
+            satisfying_row_idx_ = 0;
             return nullptr;
         }
         working_eqn_.plus_assign(false_equation_);
@@ -141,6 +145,15 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
     } else {
         working_eqn_.assign_from(clause.row(clause.watched0));
         const ReduceResult reduced0 = trail.span().partial_reduce(working_eqn_);
+        if (reduced0.kind == ReduceResult::Kind::eq_false) {
+            // This row's equation holds, so the clause does, and nothing it could
+            // imply is new. Free to notice: the reduction was needed anyway. The
+            // second watch cannot be read this way, being reduced against the
+            // span augmented with the first.
+            found_satisfied_ = true;
+            satisfying_row_idx_ = clause.watched0;
+            return nullptr;
+        }
         if (reduced0.kind == ReduceResult::Kind::eq_true) {
             tasks[num_tasks++] = {&clause.watched0, &clause.watched1, WatchType::zero};
         }
@@ -172,6 +185,8 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
         } else {
             if (complement.kind == ReduceResult::Kind::eq_false) {
                 // Complement reduced to 1: satisfied. A second task still runs.
+                found_satisfied_ = true;
+                satisfying_row_idx_ = *task.complement_ptr;
                 continue;
             }
             working_eqn2_.plus_assign(false_equation_);

@@ -36,6 +36,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       proof_root_span_(repr, num_vars),
       conflict_check_eqn_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)),
+      satisfied_probe_eqn_(repr, num_vars),
       progress_(progress),
       minimize_(minimize),
       bump_responsible_clauses_(bump_responsible_clauses),
@@ -86,12 +87,23 @@ bool Solver::propagate_until_conflict() {
         assert(selection->id < selector_->num_clauses() && "selector returned an unknown clause");
         assert(selector_->is_clause_active(selection->id) &&
                "selector returned an inactive clause");
+        Clause& clause = selector_->clause(selection->id);
+        // A clause an earlier level already satisfies can only tell us so again.
+        if (clause_is_known_satisfied(clause)) {
+            continue;
+        }
         ++counters_.num_attempt_props;
 
         Equation* propagated_eqn = propagator_.unit_propagate_one_clause(
-            selection->id, selector_->clause(selection->id), trail_, selection->trigger_hint,
+            selection->id, clause, trail_, selection->trigger_hint,
             counters_.num_watch_updates, *selector_);
         if (propagated_eqn == nullptr) {
+            if (propagator_.last_attempt_found_satisfied()) {
+                const std::size_t level = shallowest_satisfying_level(
+                    clause.row(propagator_.last_satisfying_row_idx()));
+                clause.satisfied_level = level;
+                clause.satisfied_stamp = level_stamp_[level];
+            }
             continue;
         }
 
@@ -368,6 +380,39 @@ std::vector<ClauseId> Solver::proof_ids(const std::vector<ClauseId>& clause_ids)
     return ids;
 }
 
+std::size_t Solver::level_of_trail_idx(std::size_t trail_idx) const {
+    // Snapshot sizes are non-decreasing in the level, so the level that learned
+    // the equation is the first whose span is long enough to hold it.
+    std::size_t low = 0;
+    std::size_t high = trail_.level();
+    while (low < high) {
+        const std::size_t mid = low + (high - low) / 2;
+        if (trail_[mid].span().rows() > trail_idx) {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    return low;
+}
+
+std::size_t Solver::shallowest_satisfying_level(const Equation& row) {
+    satisfied_probe_eqn_.assign_from(row);
+    const IndexSet used_row_idxs = trail_.span().reduce_get_coefficients(satisfied_probe_eqn_);
+    assert(satisfied_probe_eqn_.is_eq_false() && "the row does not reduce to 0 = 1");
+
+    const std::vector<std::size_t>& row_idx_to_trail_idx = trail_.row_idx_to_trail_idx();
+    std::size_t deepest_trail_idx = 0;
+    bool used_any = false;
+    used_row_idxs.for_each_set([&](const std::size_t row_idx) {
+        const std::size_t trail_idx = row_idx_to_trail_idx[row_idx];
+        deepest_trail_idx = used_any ? std::max(deepest_trail_idx, trail_idx) : trail_idx;
+        used_any = true;
+    });
+    // A row already `0 = 1` on its own needs nothing from the trail.
+    return used_any ? level_of_trail_idx(deepest_trail_idx) : 0;
+}
+
 void Solver::backjump_to(std::size_t level) {
     assert(level <= trail_.level() && "backjump target is above the current level");
     trail_.resize(level + 1);
@@ -388,6 +433,8 @@ bool Solver::make_decision_step() {
            "the decision procedure returned an equation the trail already decides");
 
     trail_.learn(decision_eqn, std::nullopt);
+    level_stamp_.resize(trail_.level() + 1);
+    level_stamp_[trail_.level()] = next_level_stamp_++;
     decision_clause_of_level_.push_back(decisions_->decision_clause_hint());
     assert(decision_clause_of_level_.size() == trail_.level() &&
            "the decision clause record fell out of step with the trail");
@@ -520,9 +567,11 @@ void Solver::apply_compaction(CompactionPlan plan) {
     propagator_.reconfigure(active_num_vars_);
     false_equation_ = Equation::eq_false(repr_, active_num_vars_);
     conflict_check_eqn_.resize(active_num_vars_);
+    satisfied_probe_eqn_.resize(active_num_vars_);
 
     // The root trail is thrown away on purpose; see the warning on this method.
     trail_ = Trail(repr_, active_num_vars_);
+    level_stamp_.assign(1, 1);
     decision_clause_of_level_.clear();
 
     selector_->update_with_compaction(plan.transform, trail_);

@@ -278,8 +278,35 @@ private:
     std::vector<RawUnit> proof_root_units_;   ///< In trail order.
     std::vector<ClauseId> proof_col_idx_to_unit_idx_; ///< Pivot column to the unit's proof id.
 
+    /// @brief A distinct stamp per decision level, reissued whenever a level is
+    /// built again after a backjump, so a clause's record of having been
+    /// satisfied cannot be read against a different level of the same depth.
+    /// Index 0 is the root, whose span only ever grows.
+    std::vector<std::size_t> level_stamp_{1};
+    std::size_t next_level_stamp_ = 2;
+
+    /// @brief The shallowest level whose span already satisfies @p row.
+    ///
+    /// Reducing @p row names the span rows it used, and a span row is never
+    /// rewritten once stored, so the deepest level among them is the level the
+    /// row first became satisfied at. Recording the shallowest, rather than the
+    /// current level, is what lets a record outlive a backjump.
+    /// @pre `row` reduces to `0 = 1` against the current span.
+    std::size_t shallowest_satisfying_level(const Equation& row);
+
+    /// @brief The decision level that learned the equation at @p trail_idx.
+    std::size_t level_of_trail_idx(std::size_t trail_idx) const;
+
+    /// @brief Whether `clause` is known to be satisfied by a level at or below
+    /// the current one, so that no attempt on it can find anything.
+    bool clause_is_known_satisfied(const Clause& clause) const noexcept {
+        return clause.satisfied_stamp != 0 && clause.satisfied_level <= trail_.level() &&
+               level_stamp_[clause.satisfied_level] == clause.satisfied_stamp;
+    }
+
     Equation conflict_check_eqn_;
     Equation false_equation_; ///< A preallocated `0 = 1`.
+    Equation satisfied_probe_eqn_; ///< Scratch for `shallowest_satisfying_level()`.
 
     SolverCounters counters_;
 

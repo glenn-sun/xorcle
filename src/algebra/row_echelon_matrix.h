@@ -187,6 +187,14 @@ public:
     /// @brief Where the next cyclic search for a replacement watch starts.
     std::size_t next_watch_search_start = 0;
 
+    /// @brief The decision level whose span was found to satisfy this clause,
+    /// and the stamp that level carried when it did. Spans nest, so a clause
+    /// satisfied at a level stays satisfied at every deeper one; the stamp is
+    /// what distinguishes that level from the different level of the same depth
+    /// a later branch builds. `satisfied_stamp == 0` is no record.
+    std::size_t satisfied_level = 0;
+    std::size_t satisfied_stamp = 0;
+
     std::string to_string(const PrintMode& mode = {}) const;
 };
 

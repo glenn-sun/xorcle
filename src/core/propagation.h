@@ -47,6 +47,15 @@ public:
                                         std::size_t& num_watch_updates,
                                         WatchUpdateHandler& handler);
 
+    /// @brief Whether the last call found the clause already satisfied, which is
+    /// the one `nullptr` the caller can remember: a satisfied clause stays
+    /// satisfied until the trail backjumps below the level that satisfied it.
+    bool last_attempt_found_satisfied() const noexcept { return found_satisfied_; }
+
+    /// @brief The row that satisfied the clause, valid only where
+    /// `last_attempt_found_satisfied()` holds.
+    std::size_t last_satisfying_row_idx() const noexcept { return satisfying_row_idx_; }
+
 private:
 #ifndef NDEBUG
     /// @brief Overwrites both scratch equations.
@@ -61,6 +70,9 @@ private:
     /// @brief A preallocated `0 = 1`; adding it to a falsified clause row undoes
     /// the linear negation, recovering the equation the clause implies.
     Equation false_equation_;
+
+    bool found_satisfied_ = false;
+    std::size_t satisfying_row_idx_ = 0;
 };
 
 } // namespace xorcle
