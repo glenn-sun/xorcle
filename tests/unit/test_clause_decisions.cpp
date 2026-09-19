@@ -14,7 +14,7 @@
 
 namespace xorcle {
 
-TEST_CASE_TEMPLATE("clause decisions: clause satisfaction", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("clause decisions: clause status", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     ClauseSatisfactionWorkspace workspace(repr, 4);
 
@@ -23,13 +23,29 @@ TEST_CASE_TEMPLATE("clause decisions: clause satisfaction", Tag, DenseTag, Spars
         // trail that row reduces to the false equation, so the clause holds.
         const RowSpace span = make_row_space(repr, 4, {{0, 4}});
         const Clause clause = make_clause(repr, 4, {{0}});
-        CHECK(clause_satisfied_by_trail(span, clause, workspace));
+        CHECK(clause_status_by_trail(span, clause, workspace) == ClauseStatus::satisfied);
     }
 
-    SUBCASE("a clause whose row is implied by the trail is not satisfied") {
+    SUBCASE("a clause whose every row is implied by the trail propagates") {
         const RowSpace span = make_row_space(repr, 4, {{0}});
         const Clause clause = make_clause(repr, 4, {{0}});
-        CHECK_FALSE(clause_satisfied_by_trail(span, clause, workspace));
+        CHECK(clause_status_by_trail(span, clause, workspace) == ClauseStatus::propagating);
+    }
+
+    SUBCASE("a clause of dimension one propagates rather than offering a decision") {
+        const RowSpace empty(repr, 4);
+        const Clause clause = make_clause(repr, 4, {{0}});
+        CHECK(clause_status_by_trail(empty, clause, workspace) == ClauseStatus::propagating);
+    }
+
+    SUBCASE("a wide clause stays open until the trail takes its dimension to one") {
+        const Clause clause = make_clause(repr, 4, {{0}, {1}, {2}});
+        const RowSpace one_row = make_row_space(repr, 4, {{0}});
+        CHECK(clause_status_by_trail(one_row, clause, workspace) == ClauseStatus::open);
+        const RowSpace two_rows = make_row_space(repr, 4, {{0}, {1}});
+        CHECK(clause_status_by_trail(two_rows, clause, workspace) == ClauseStatus::propagating);
+        const RowSpace every_row = make_row_space(repr, 4, {{0}, {1}, {2}});
+        CHECK(clause_status_by_trail(every_row, clause, workspace) == ClauseStatus::propagating);
     }
 
     SUBCASE("satisfaction can need a combination of rows") {
@@ -38,31 +54,34 @@ TEST_CASE_TEMPLATE("clause decisions: clause satisfaction", Tag, DenseTag, Spars
         const RowSpace span = make_row_space(repr, 4, {{0, 1, 4}});
         const Clause clause = make_clause(repr, 4, {{0}, {1}});
         REQUIRE(clause.rows() == 2);
-        CHECK(clause_satisfied_by_trail(span, clause, workspace));
+        CHECK(clause_status_by_trail(span, clause, workspace) == ClauseStatus::satisfied);
     }
 
     SUBCASE("an unrelated trail leaves the clause open") {
         const RowSpace span = make_row_space(repr, 4, {{3, 4}});
         const Clause clause = make_clause(repr, 4, {{0}, {1}});
-        CHECK_FALSE(clause_satisfied_by_trail(span, clause, workspace));
+        CHECK(clause_status_by_trail(span, clause, workspace) == ClauseStatus::open);
     }
 
     SUBCASE("everything is satisfied once the trail spans the false equation") {
         const RowSpace span = make_row_space(repr, 4, {{4}});
         const Clause clause = make_clause(repr, 4, {{0}, {1}});
-        CHECK(clause_satisfied_by_trail(span, clause, workspace));
+        CHECK(clause_status_by_trail(span, clause, workspace) == ClauseStatus::satisfied);
     }
 
     SUBCASE("the workspace is reusable across calls and variable counts") {
         const RowSpace wide_span = make_row_space(repr, 4, {{0, 4}});
         const Clause wide_clause = make_clause(repr, 4, {{0}, {1}});
-        CHECK(clause_satisfied_by_trail(wide_span, wide_clause, workspace));
-        CHECK(clause_satisfied_by_trail(wide_span, wide_clause, workspace));
+        CHECK(clause_status_by_trail(wide_span, wide_clause, workspace) ==
+              ClauseStatus::satisfied);
+        CHECK(clause_status_by_trail(wide_span, wide_clause, workspace) ==
+              ClauseStatus::satisfied);
 
         workspace.reconfigure(2);
         const RowSpace narrow_span = make_row_space(repr, 2, {{0}});
         const Clause narrow_clause = make_clause(repr, 2, {{0}});
-        CHECK_FALSE(clause_satisfied_by_trail(narrow_span, narrow_clause, workspace));
+        CHECK(clause_status_by_trail(narrow_span, narrow_clause, workspace) ==
+              ClauseStatus::propagating);
     }
 }
 
@@ -142,15 +161,6 @@ TEST_CASE_TEMPLATE("clause decisions: sample an equation from a clause", Tag, De
     const RowSpace span(repr, 4);
     Rng rng = make_rng(7, RngComponent::csids_equation);
 
-    SUBCASE("a unit clause always samples its only row") {
-        const Clause clause = make_clause(repr, 4, {{1, 4}});
-        for (int attempt = 0; attempt < 8; ++attempt) {
-            const SampledDecision sample = sample_equation_from_clause(clause, span, rng);
-            CHECK(bits_of(sample.candidate) == std::vector<std::size_t>{1, 4});
-            CHECK(sample.candidate == sample.reduced);
-        }
-    }
-
     SUBCASE("every sample is a non-zero combination of the rows") {
         const Clause clause = make_clause(repr, 4, {{0}, {1}});
         bool saw_sum = false;
@@ -168,12 +178,14 @@ TEST_CASE_TEMPLATE("clause decisions: sample an equation from a clause", Tag, De
 
     SUBCASE("rows already implied by the trail are rejected") {
         // x0 is on the trail, so the row [x0 = 0] reduces away and only
-        // combinations involving the second row can be returned.
+        // combinations involving the other two rows can be returned.
         const RowSpace determined = make_row_space(repr, 4, {{0}});
-        const Clause clause = make_clause(repr, 4, {{0}, {1}});
+        const Clause clause = make_clause(repr, 4, {{0}, {1}, {2}});
         for (int attempt = 0; attempt < 32; ++attempt) {
             const SampledDecision sample = sample_equation_from_clause(clause, determined, rng);
-            CHECK(bits_of(sample.reduced) == std::vector<std::size_t>{1});
+            const std::vector<std::size_t> bits = bits_of(sample.reduced);
+            CHECK((bits == std::vector<std::size_t>{1} || bits == std::vector<std::size_t>{2} ||
+                   bits == std::vector<std::size_t>{1, 2}));
         }
     }
 

@@ -9,6 +9,7 @@
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "core/watch.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -32,6 +33,9 @@ public:
     /// rather than a returned count: this runs on the propagation path, roughly
     /// 1,000x more often than conflict- or decision-scale work.
     /// @param handler Notified once per watch moved.
+    /// @param used_row_idxs When non-null and the clause propagates, receives the
+    /// trail-span rows the propagated equation's derivation uses, indexed by span
+    /// row. Filled by a pass of its own, which fewer than 0.5% of attempts reach.
     ///
     /// @return The implied equation, or `nullptr` if the clause implies nothing.
     /// It is this propagator's own scratch, valid until its next call and free
@@ -45,7 +49,8 @@ public:
     Equation* unit_propagate_one_clause(ClauseId id, Clause& clause, const Trail& trail,
                                         std::optional<WatchType> trigger_hint,
                                         std::size_t& num_watch_updates,
-                                        WatchUpdateHandler& handler);
+                                        WatchUpdateHandler& handler,
+                                        IndexSet* used_row_idxs = nullptr);
 
     /// @brief Whether the last call found the clause already satisfied, which is
     /// the one `nullptr` the caller can remember: a satisfied clause stays
@@ -56,7 +61,21 @@ public:
     /// `last_attempt_found_satisfied()` holds.
     std::size_t last_satisfying_row_idx() const noexcept { return satisfying_row_idx_; }
 
+    /// @brief The clause row the last call propagated from, valid only where it
+    /// returned an equation.
+    std::size_t last_propagating_row_idx() const noexcept { return propagating_row_idx_; }
+
 private:
+    /// @brief Fill `used_row_idxs` with the trail-span rows the propagation from
+    /// `propagating_row_idx` rests on.
+    ///
+    /// Every other row is either falsified, and owes the trail its own reduction,
+    /// or equal to the propagating row modulo the span, and owes it their sum.
+    /// The propagating row owes nothing unless it is falsified too, which is the
+    /// conflict.
+    void collect_used_rows(const Clause& clause, const Trail& trail,
+                           std::size_t propagating_row_idx, IndexSet& used_row_idxs);
+
 #ifndef NDEBUG
     /// @brief Overwrites both scratch equations.
     void debug_assert_watch_hint_holds(const Clause& clause, const Trail& trail, WatchType hint);
@@ -66,6 +85,8 @@ private:
 
     Equation working_eqn_;  ///< First watch's reduction, then candidate rows.
     Equation working_eqn2_; ///< Second watch's reduction, then the complement's.
+    Equation used_rows_eqn_;  ///< Scratch for `collect_used_rows()`.
+    Equation used_rows_eqn2_; ///< The propagating row's residue, for the same.
 
     /// @brief A preallocated `0 = 1`; adding it to a falsified clause row undoes
     /// the linear negation, recovering the equation the clause implies.
@@ -73,6 +94,7 @@ private:
 
     bool found_satisfied_ = false;
     std::size_t satisfying_row_idx_ = 0;
+    std::size_t propagating_row_idx_ = 0;
 };
 
 } // namespace xorcle

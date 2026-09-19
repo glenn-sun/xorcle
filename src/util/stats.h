@@ -32,6 +32,7 @@ enum class StatsSection {
     minimize,
     subsume,
     deletion,
+    propagate_budget,
     timing,
     proof
 };

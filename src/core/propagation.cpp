@@ -22,6 +22,8 @@ Propagator::Propagator(EquationRepr repr, std::size_t num_vars)
     : num_vars_(num_vars),
       working_eqn_(repr, num_vars),
       working_eqn2_(repr, num_vars),
+      used_rows_eqn_(repr, num_vars),
+      used_rows_eqn2_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)) {}
 
 void Propagator::reconfigure(std::size_t num_vars) {
@@ -30,6 +32,10 @@ void Propagator::reconfigure(std::size_t num_vars) {
     working_eqn2_.resize(num_vars);
     working_eqn_.set_eq_true();
     working_eqn2_.set_eq_true();
+    used_rows_eqn_.resize(num_vars);
+    used_rows_eqn_.set_eq_true();
+    used_rows_eqn2_.resize(num_vars);
+    used_rows_eqn2_.set_eq_true();
 
     false_equation_.resize(num_vars);
     false_equation_.set_eq_false();
@@ -69,7 +75,8 @@ void Propagator::debug_assert_watch_hint_holds(const Clause& clause, const Trail
 Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, const Trail& trail,
                                                 std::optional<WatchType> trigger_hint,
                                                 std::size_t& num_watch_updates,
-                                                WatchUpdateHandler& handler) {
+                                                WatchUpdateHandler& handler,
+                                                IndexSet* used_row_idxs) {
     assert(clause.cols() == num_vars_ + 1 &&
            "clause column count does not match the propagator's variable count");
     assert(trail.span().cols() == num_vars_ + 1 &&
@@ -92,6 +99,10 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
             return nullptr;
         }
         working_eqn_.plus_assign(false_equation_);
+        propagating_row_idx_ = 0;
+        if (used_row_idxs != nullptr) {
+            collect_used_rows(clause, trail, propagating_row_idx_, *used_row_idxs);
+        }
         return &working_eqn_;
     }
 
@@ -190,10 +201,53 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
                 continue;
             }
             working_eqn2_.plus_assign(false_equation_);
+            propagating_row_idx_ = *task.complement_ptr;
+            if (used_row_idxs != nullptr) {
+                collect_used_rows(clause, trail, propagating_row_idx_, *used_row_idxs);
+            }
             return &working_eqn2_;
         }
     }
     return nullptr;
+}
+
+void Propagator::collect_used_rows(const Clause& clause, const Trail& trail,
+                                   std::size_t propagating_row_idx, IndexSet& used_row_idxs) {
+    used_row_idxs = IndexSet(trail.span().rows());
+    const auto mark = [&used_row_idxs](const IndexSet& coefficients) {
+        coefficients.for_each_set([&used_row_idxs](std::size_t row_idx) {
+            used_row_idxs.set(row_idx);
+        });
+    };
+
+    const Equation& propagating_row = clause.row(propagating_row_idx);
+    used_rows_eqn2_.assign_from(propagating_row);
+    const IndexSet propagating_coefficients =
+        trail.span().reduce_get_coefficients(used_rows_eqn2_);
+    if (used_rows_eqn2_.is_eq_true()) {
+        // The propagating row is falsified too, so the clause is and the
+        // equation it implies is `0 = 1`: every row takes part.
+        mark(propagating_coefficients);
+    }
+
+    for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
+        if (row_idx == propagating_row_idx) {
+            continue;
+        }
+        used_rows_eqn_.assign_from(clause.row(row_idx));
+        const IndexSet coefficients = trail.span().reduce_get_coefficients(used_rows_eqn_);
+        if (used_rows_eqn_.is_eq_true()) {
+            mark(coefficients);
+            continue;
+        }
+        assert(used_rows_eqn_ == used_rows_eqn2_ &&
+               "a clause row is neither falsified nor equal to the propagating row");
+        used_rows_eqn_.assign_from(clause.row(row_idx));
+        used_rows_eqn_.plus_assign(propagating_row);
+        const IndexSet sum_coefficients = trail.span().reduce_get_coefficients(used_rows_eqn_);
+        assert(used_rows_eqn_.is_eq_true() && "the sum left the span it was reduced by");
+        mark(sum_coefficients);
+    }
 }
 
 } // namespace xorcle

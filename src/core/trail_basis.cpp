@@ -90,7 +90,7 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
 
 std::size_t TrailBasisSpace::columns_after_level(std::size_t level) const {
     assert(level <= trail_->level() && "decision level is out of range");
-    return trail_->span().rows() - (*trail_)[level].span().rows();
+    return trail_->span().rows() - trail_->rows_at_level(level);
 }
 
 std::size_t TrailBasisSpace::asserting_level() const {
@@ -114,6 +114,18 @@ std::size_t TrailBasisSpace::asserting_level() const {
     }
 
     return 0;
+}
+
+std::size_t TrailBasisSpace::dimension_at_top_level() const {
+    assert(rows() > 0 && "dimension at the top level of an empty trail-basis space");
+
+    // The top level owns the columns before the equations at the level below it,
+    // and the root level owns them all. Rows lead in strictly ascending columns,
+    // so the ones leading there are exactly what survives the levels below.
+    const std::size_t level = trail_->level();
+    const std::size_t block_end =
+        level == 0 ? trail_->span().rows() : columns_after_level(level - 1);
+    return pivot_col_idxs().count_below(block_end);
 }
 
 std::size_t TrailBasisSpace::literal_block_distance() const {

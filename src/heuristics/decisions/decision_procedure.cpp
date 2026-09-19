@@ -22,6 +22,10 @@ void DecisionProcedure::update_with_resolved_clause(ClauseId) {}
 
 void DecisionProcedure::update_with_subsumed_clause(ClauseId, ClauseId) {}
 
+// The procedures that walk their whole candidate set on every decision have
+// nothing to restore.
+void DecisionProcedure::update_with_undone_decision() {}
+
 std::size_t DecisionProcedure::reusable_levels(const RowSpace&, const std::vector<Clause>&,
                                               const std::vector<std::uint8_t>&,
                                               const std::vector<std::optional<ClauseId>>&) {

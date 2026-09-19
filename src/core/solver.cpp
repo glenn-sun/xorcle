@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <chrono>
 #include <numeric>
@@ -12,6 +13,7 @@
 
 #include "algebra/reduce_result.h"
 #include "core/analysis.h"
+#include "core/trail_basis.h"
 #include "heuristics/compaction/original_variables.h"
 
 namespace xorcle {
@@ -20,7 +22,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
                std::unique_ptr<DecisionProcedure> decisions,
                std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer,
                const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize,
-               const DeletionConfig& deletion, bool bump_responsible_clauses, bool subsume)
+               const DeletionConfig& deletion, bool bump_responsible_clauses, bool subsume,
+               const PropagationConfig& propagation)
     : repr_(repr),
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
@@ -34,9 +37,11 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       propagator_(repr, num_vars),
       proof_writer_(proof_writer),
       proof_root_span_(repr, num_vars),
-      conflict_check_eqn_(repr, num_vars),
+      propagated_row_eqn_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)),
       satisfied_probe_eqn_(repr, num_vars),
+      propagate_miss_rate_(propagation.miss_rate),
+      propagate_window_(propagation.window),
       progress_(progress),
       minimize_(minimize),
       bump_responsible_clauses_(bump_responsible_clauses),
@@ -49,6 +54,12 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
     assert((!deletion_.enabled || deletion_.key != DeletionKey::activity ||
             deletion_.activity != nullptr) &&
            "the activity key has no activity source");
+#ifdef NDEBUG
+    tracked_used_row_idxs_ = propagate_miss_rate_ != 0.0 ? &used_row_idxs_ : nullptr;
+#else
+    // Debug checks the attribution whether or not a budget is on.
+    tracked_used_row_idxs_ = &used_row_idxs_;
+#endif
     // The run's seed lives on the decision procedure, so this waits for its null check.
     representative_rng_ = make_rng(decisions_->base_seed(), RngComponent::minimize_representative);
     std::iota(active_var_to_original_.begin(), active_var_to_original_.end(), std::size_t{0});
@@ -77,62 +88,151 @@ void Solver::add_starting_clause(Clause clause) {
 bool Solver::propagate_until_conflict() {
     assert(active_var_to_original_.size() == active_num_vars_);
     assert(false_equation_.num_bits() == active_num_vars_ + 1);
-    assert(conflict_check_eqn_.num_bits() == active_num_vars_ + 1);
+    assert(propagated_row_eqn_.num_bits() == active_num_vars_ + 1);
+
+    selector_->set_attempt_budget(attempt_budget());
+    force_complete_sweep_ = false;
 
     while (true) {
         const std::optional<ClauseSelection> selection = selector_->next_with_hint();
         if (!selection.has_value()) {
+            counters_.num_deferred_runs += selector_->last_stop_was_budget() ? 1 : 0;
             return false;
         }
         assert(selection->id < selector_->num_clauses() && "selector returned an unknown clause");
-        assert(selector_->is_clause_active(selection->id) &&
-               "selector returned an inactive clause");
-        Clause& clause = selector_->clause(selection->id);
         // A clause an earlier level already satisfies can only tell us so again.
-        if (clause_is_known_satisfied(clause)) {
+        if (clause_is_known_satisfied(selector_->clause(selection->id))) {
             continue;
         }
-        ++counters_.num_attempt_props;
-
-        Equation* propagated_eqn = propagator_.unit_propagate_one_clause(
-            selection->id, clause, trail_, selection->trigger_hint,
-            counters_.num_watch_updates, *selector_);
-        if (propagated_eqn == nullptr) {
-            if (propagator_.last_attempt_found_satisfied()) {
-                const std::size_t level = shallowest_satisfying_level(
-                    clause.row(propagator_.last_satisfying_row_idx()));
-                clause.satisfied_level = level;
-                clause.satisfied_stamp = level_stamp_[level];
-            }
-            continue;
-        }
-
-        ++counters_.num_propagations;
-        assert(propagated_eqn->num_bits() == active_num_vars_ + 1);
-
-        // Re-normalize: the propagator reduced the clause row it propagated from,
-        // not the negation it returns, so the result can still hold span rows.
-        (void)trail_.span().partial_reduce(*propagated_eqn);
-        trail_.learn(*propagated_eqn, selection->id);
-        // The selector is notified even on the propagation that conflicts.
-        selector_->update_with_propagation(*propagated_eqn, trail_);
-
-        conflict_check_eqn_.assign_from(false_equation_);
-        if (trail_.span().partial_reduce(conflict_check_eqn_).kind ==
-            ReduceResult::Kind::eq_true) {
+        if (propagate_from_clause(selection->id, selection->trigger_hint) ==
+            PropagationOutcome::conflicting) {
             return true;
-        }
-        if (proof_writer_ != nullptr && trail_.level() == 0) {
-            write_root_unit(selection->id);
         }
     }
 }
 
+Solver::PropagationOutcome Solver::propagate_from_clause(ClauseId id,
+                                                         std::optional<WatchType> trigger_hint,
+                                                         bool count_learn_as_missed) {
+    assert(selector_->is_clause_active(id) && "propagating from an inactive clause");
+    Clause& clause = selector_->clause(id);
+    ++counters_.num_attempt_props;
+
+    Equation* propagated_eqn = propagator_.unit_propagate_one_clause(
+        id, clause, trail_, trigger_hint, counters_.num_watch_updates, *selector_,
+        tracked_used_row_idxs_);
+    if (propagated_eqn == nullptr) {
+        if (propagator_.last_attempt_found_satisfied()) {
+            const std::size_t satisfied_level =
+                shallowest_satisfying_level(clause.row(propagator_.last_satisfying_row_idx()));
+            clause.satisfied_level = satisfied_level;
+            clause.satisfied_stamp = level_stamp_[satisfied_level];
+        }
+        return PropagationOutcome::nothing;
+    }
+
+    assert(propagated_eqn->num_bits() == active_num_vars_ + 1);
+
+    const std::size_t current_level = trail_.level();
+    std::size_t level = current_level;
+    if (tracked_used_row_idxs_ != nullptr) {
+        const std::size_t true_level = level_of_used_rows(used_row_idxs_);
+        assert((budget_.has_value() || true_level == current_level) &&
+               "quiescent propagation derived an equation implied at a shallower level");
+        if (budget_.has_value()) {
+            level = true_level;
+        }
+    }
+
+    // The propagated equation is `0 = 1` exactly when the clause is falsified.
+    const bool conflicting = propagated_eqn->is_eq_false();
+    assert((!conflicting || !count_learn_as_missed) &&
+           "the clause was falsified again after the level falsifying it was undone");
+    if (conflicting && level < current_level) {
+        // The levels above hold nothing the analysis may keep, so discarding
+        // them here lets the `0 = 1` go in at the level it holds at.
+        backjump_to(level);
+    }
+    // A clause only the top level falsifies was propagating before that level's
+    // decision was taken, so the decision goes and the clause is met again on
+    // the trail it was missed on.
+    if (conflicting && level > 0 && budget_.has_value() && falsified_only_at_top_level(clause)) {
+        ++counters_.num_undone_decisions;
+        backjump_to(level - 1);
+        decisions_->update_with_undone_decision();
+        return propagate_from_clause(id, std::nullopt, true);
+    }
+
+    ++counters_.num_propagations;
+    const bool below_current_level = level < current_level;
+    counters_.num_out_of_order_learns += below_current_level ? 1 : 0;
+    if (budget_.has_value()) {
+        budget_->note_learn(below_current_level || count_learn_as_missed);
+    }
+
+    const Equation* learned_eqn = propagated_eqn;
+    if (budget_.has_value()) {
+        // The raw row, whose reduction `Trail::learn` redoes against the rows
+        // at `level` and below.
+        propagated_row_eqn_.assign_from(clause.row(propagator_.last_propagating_row_idx()));
+        propagated_row_eqn_.plus_assign(false_equation_);
+        learned_eqn = &propagated_row_eqn_;
+    } else {
+        // Re-normalize: the propagator reduced the clause row it propagated
+        // from, not the negation it returns, so the result can still hold
+        // span rows.
+        (void)trail_.span().partial_reduce(*propagated_eqn);
+    }
+    const std::size_t trail_idx = trail_.learn(*learned_eqn, id, level);
+    // The selector is notified even on the propagation that conflicts, and
+    // with the row as stored, which is the equation reduced by its own level.
+    selector_->update_with_propagation(
+        trail_.span().row(trail_.trail_idx_to_row_idx()[trail_idx]), trail_);
+
+    if (conflicting) {
+        conflict_clause_id_ = id;
+        conflict_level_ = level;
+        return PropagationOutcome::conflicting;
+    }
+    if (proof_writer_ != nullptr && level == 0) {
+        write_root_unit(id, trail_idx);
+    }
+    return PropagationOutcome::propagated;
+}
+
+std::size_t Solver::attempt_budget() {
+    if (!budget_.has_value() || force_complete_sweep_ || trail_.level() == 0) {
+        return 0;
+    }
+    const std::size_t num_clauses = std::max<std::size_t>(1, selector_->num_clauses());
+    budget_->set_num_clauses(num_clauses);
+    counters_.final_budget_fraction = budget_->fraction_of_clauses();
+    counters_.sum_budget_fraction += counters_.final_budget_fraction;
+    ++counters_.num_budgeted_runs;
+    const std::size_t attempts = budget_->attempts();
+    // A budget the length of a whole sweep is no budget: only quiescence can end
+    // such a run.
+    return attempts >= num_clauses ? 0 : attempts;
+}
+
+std::optional<Solution> Solver::handle_conflict() {
+    ++counters_.num_conflicts;
+    assert(trail_.level() == conflict_level_ &&
+           "the conflicting propagation left the trail above the level the conflict holds at");
+    if (level() == 0) {
+        write_root_unsat_proof();
+        return Solution{SolveResult::unsat, std::nullopt};
+    }
+    handle_non_root_conflict();
+    maybe_delete_clauses();
+    maybe_report();
+    return std::nullopt;
+}
+
 void Solver::handle_non_root_conflict() {
-    AssertingClause learned =
-        find_asserting_clause(trail_, selector_->clauses(), *decisions_, representative_rng_,
-                              minimize_, deletion_.enabled, bump_responsible_clauses_,
-                              subsume_);
+    AssertingClause learned = find_asserting_clause(
+        trail_, selector_->clauses(), conflict_clause_id_, *decisions_, representative_rng_,
+        minimize_, deletion_.enabled, bump_responsible_clauses_, subsume_);
     if (minimize_) {
         counters_.minimize_width_before += learned.width_before_minimize;
         counters_.minimize_width_after += learned.clause.rows();
@@ -307,19 +407,21 @@ void Solver::write_root_unsat_proof() {
     if (proof_writer_ == nullptr) {
         return;
     }
-    proof_writer_->write_empty(next_proof_clause_id_++,
-                               proof_ids(find_root_conflict_reasons(trail_, selector_->clauses(),
-                                                                    representative_rng_)));
+    proof_writer_->write_empty(
+        next_proof_clause_id_++,
+        proof_ids(find_root_conflict_reasons(trail_, selector_->clauses(), conflict_clause_id_,
+                                             representative_rng_)));
 }
 
-void Solver::write_root_unit(ClauseId reason_id) {
+void Solver::write_root_unit(ClauseId reason_id, std::size_t trail_idx) {
     assert(proof_writer_ != nullptr && "no proof to record a root unit in");
-    assert(trail_.level() == 0 && "a root unit is propagated at the root");
+    assert(trail_.level_of(trail_idx) == 0 && "the recorded row is not a root unit");
 
     // Reduced by the units before it, the row is what the compaction record
     // holds, so a pivot there names exactly this line.
-    const RawRow trail_row = lift_row(trail_.span().row(trail_.trail_idx_to_row_idx().back()),
-                                      active_var_to_original_, original_num_vars_);
+    const RawRow trail_row =
+        lift_row(trail_.span().row(trail_.trail_idx_to_row_idx()[trail_idx]),
+                 active_var_to_original_, original_num_vars_);
     Equation unit = Equation::from_bits(repr_, original_num_vars_, trail_row);
     proof_root_span_.reduce(unit);
     Equation negated_unit = unit;
@@ -363,7 +465,7 @@ void Solver::write_root_unit(ClauseId reason_id) {
 
 void Solver::write_compaction_units() {
     assert(proof_writer_ != nullptr && "no proof to record a compaction in");
-    assert(proof_root_units_.size() == trail_[0].span().rows() &&
+    assert(proof_root_units_.size() == trail_.rows_at_level(0) &&
            "a root trail row was never recorded as a unit");
     proof_writer_->write_compaction(proof_root_units_);
     proof_root_units_.clear();
@@ -380,27 +482,16 @@ std::vector<ClauseId> Solver::proof_ids(const std::vector<ClauseId>& clause_ids)
     return ids;
 }
 
-std::size_t Solver::level_of_trail_idx(std::size_t trail_idx) const {
-    // Snapshot sizes are non-decreasing in the level, so the level that learned
-    // the equation is the first whose span is long enough to hold it.
-    std::size_t low = 0;
-    std::size_t high = trail_.level();
-    while (low < high) {
-        const std::size_t mid = low + (high - low) / 2;
-        if (trail_[mid].span().rows() > trail_idx) {
-            high = mid;
-        } else {
-            low = mid + 1;
-        }
-    }
-    return low;
-}
-
 std::size_t Solver::shallowest_satisfying_level(const Equation& row) {
     satisfied_probe_eqn_.assign_from(row);
     const IndexSet used_row_idxs = trail_.span().reduce_get_coefficients(satisfied_probe_eqn_);
     assert(satisfied_probe_eqn_.is_eq_false() && "the row does not reduce to 0 = 1");
+    return level_of_used_rows(used_row_idxs);
+}
 
+std::size_t Solver::level_of_used_rows(const IndexSet& used_row_idxs) const {
+    assert(used_row_idxs.size() == trail_.span().rows() &&
+           "the used rows were collected against a different span");
     const std::vector<std::size_t>& row_idx_to_trail_idx = trail_.row_idx_to_trail_idx();
     std::size_t deepest_trail_idx = 0;
     bool used_any = false;
@@ -409,30 +500,44 @@ std::size_t Solver::shallowest_satisfying_level(const Equation& row) {
         deepest_trail_idx = used_any ? std::max(deepest_trail_idx, trail_idx) : trail_idx;
         used_any = true;
     });
-    // A row already `0 = 1` on its own needs nothing from the trail.
-    return used_any ? level_of_trail_idx(deepest_trail_idx) : 0;
+    // An equation needing nothing from the trail holds at the root.
+    return used_any ? trail_.level_of(deepest_trail_idx) : 0;
+}
+
+bool Solver::falsified_only_at_top_level(const Clause& clause) const {
+    const std::size_t dimension =
+        TrailBasisSpace::from_RowSpace(clause, trail_).dimension_at_top_level();
+    // The trail stands at the level the falsification is dated to, so the levels
+    // below it leave the clause a dimension to propagate.
+    assert(dimension > 0 && "the levels below the top one already falsify the clause");
+    return dimension == 1;
 }
 
 void Solver::backjump_to(std::size_t level) {
     assert(level <= trail_.level() && "backjump target is above the current level");
     trail_.resize(level + 1);
     decision_clause_of_level_.resize(level);
+    did_complete_sweep_ = false;
 }
 
-bool Solver::make_decision_step() {
-    std::optional<Equation> decision =
+Solver::DecisionStep Solver::make_decision_step() {
+    DecisionResult decision =
         decisions_->make_decision(trail_.span(), selector_->clauses(), selector_->active_flags());
-    if (!decision.has_value()) {
-        return false;
+    if (decision.propagating_clause.has_value()) {
+        propagating_clause_id_ = *decision.propagating_clause;
+        return DecisionStep::propagating;
     }
-    Equation decision_eqn = *std::move(decision);
+    if (!decision.equation.has_value()) {
+        return DecisionStep::exhausted;
+    }
+    Equation decision_eqn = *std::move(decision.equation);
     [[maybe_unused]] const ReduceResult reduced = trail_.span().partial_reduce(decision_eqn);
     assert(decision_eqn.num_bits() == active_num_vars_ + 1);
     // A decision must be neither 0 (already implied) nor 1 (already refuted).
     assert(reduced.kind == ReduceResult::Kind::leading &&
            "the decision procedure returned an equation the trail already decides");
 
-    trail_.learn(decision_eqn, std::nullopt);
+    trail_.learn(decision_eqn, std::nullopt, trail_.level() + 1);
     level_stamp_.resize(trail_.level() + 1);
     level_stamp_[trail_.level()] = next_level_stamp_++;
     decision_clause_of_level_.push_back(decisions_->decision_clause_hint());
@@ -440,10 +545,32 @@ bool Solver::make_decision_step() {
            "the decision clause record fell out of step with the trail");
     selector_->update_with_decision(decision_eqn, trail_);
     selector_->update_with_decision_clause(decisions_->decision_clause_hint());
-    return true;
+    return DecisionStep::decided;
 }
 
 #ifndef NDEBUG
+bool Solver::every_active_clause_is_satisfied(const RowSpace& model) const {
+    Equation reduced(repr_, active_num_vars_);
+    for (ClauseId id = 0; id < selector_->num_clauses(); ++id) {
+        if (!selector_->is_clause_active(id)) {
+            continue;
+        }
+        bool satisfied = false;
+        for (const Equation& row : selector_->clause(id)) {
+            reduced.assign_from(row);
+            // A row the model refutes is an equation of the clause that holds.
+            satisfied = model.partial_reduce(reduced).kind == ReduceResult::Kind::eq_false;
+            if (satisfied) {
+                break;
+            }
+        }
+        if (!satisfied) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool Solver::active_clause_count_is_consistent() const {
     const std::vector<std::uint8_t>& active = selector_->active_flags();
     return num_active_clauses_ ==
@@ -497,7 +624,7 @@ ProgressSnapshot Solver::progress_snapshot() const {
             per_conflict(counters_.sum_conflict_level - sum_level_at_last_report_),
         .average_trail_length = per_conflict(counters_.sum_conflict_trail_length -
                                             sum_trail_length_at_last_report_),
-        .remaining_vars = active_num_vars_ - trail_[0].span().rows(),
+        .remaining_vars = active_num_vars_ - trail_.rows_at_level(0),
         .decisions = decisions_->decision_stats().decisions,
         .decision_level = trail_.level(),
         .trail_length = trail_.span().rows(),
@@ -566,11 +693,12 @@ void Solver::apply_compaction(CompactionPlan plan) {
 
     propagator_.reconfigure(active_num_vars_);
     false_equation_ = Equation::eq_false(repr_, active_num_vars_);
-    conflict_check_eqn_.resize(active_num_vars_);
+    propagated_row_eqn_.resize(active_num_vars_);
     satisfied_probe_eqn_.resize(active_num_vars_);
 
     // The root trail is thrown away on purpose; see the warning on this method.
     trail_ = Trail(repr_, active_num_vars_);
+    did_complete_sweep_ = false;
     level_stamp_.assign(1, 1);
     decision_clause_of_level_.clear();
 
@@ -615,13 +743,10 @@ void Solver::bump_responsible_clauses(const std::vector<std::size_t>& responsibl
 std::optional<ClauseId> Solver::decision_clause_at(std::size_t trail_idx) const {
     // A level opens with its decision, so that decision sits where the level
     // below it ended.
-    for (std::size_t level = 1; level <= trail_.level(); ++level) {
-        if (trail_[level - 1].span().rows() == trail_idx) {
-            return decision_clause_of_level_[level - 1];
-        }
-    }
-    assert(false && "no decision level opens at this trail row");
-    return std::nullopt;
+    const std::size_t level = trail_.level_of(trail_idx);
+    assert(level > 0 && trail_.rows_at_level(level - 1) == trail_idx &&
+           "no decision level opens at this trail row");
+    return decision_clause_of_level_[level - 1];
 }
 
 void Solver::maybe_delete_clauses() {
@@ -673,6 +798,11 @@ Solution Solver::solve() {
     assert(active_clause_count_is_consistent() &&
            "the starting clauses left the live-clause count wrong");
 
+    if (propagate_miss_rate_ != 0.0) {
+        budget_.emplace(propagate_miss_rate_, propagate_window_,
+                        std::max<std::size_t>(1, selector_->num_clauses()));
+    }
+
     solve_start_ = std::chrono::steady_clock::now();
     if (reports_progress()) {
         report_progress();
@@ -680,20 +810,23 @@ Solution Solver::solve() {
 
     while (true) {
         if (propagate_until_conflict()) {
-            ++counters_.num_conflicts;
-            if (level() == 0) {
-                write_root_unsat_proof();
-                return Solution{SolveResult::unsat, std::nullopt};
+            if (const std::optional<Solution> solution = handle_conflict()) {
+                return *solution;
             }
-            handle_non_root_conflict();
-            maybe_delete_clauses();
-            maybe_report();
             continue;
         }
 
         // Quiescent at full rank: the trail is a total assignment.
         if (trail_.span().rows() == active_num_vars_) {
-            return complete_satisfying_assignment();
+            if (did_complete_sweep_ || !selector_->last_stop_was_budget()) {
+                return complete_satisfying_assignment();
+            }
+            // Full rank reached on a budgeted run is not yet quiescence, and one
+            // unbudgeted run settles it. The flag is what keeps that from
+            // repeating.
+            did_complete_sweep_ = true;
+            force_complete_sweep_ = true;
+            continue;
         }
 
         if (compaction_.enabled && maybe_compact_before_decision()) {
@@ -701,8 +834,27 @@ Solution Solver::solve() {
             continue;
         }
 
-        if (!make_decision_step()) {
-            return complete_satisfying_assignment();
+        switch (make_decision_step()) {
+            case DecisionStep::decided:
+                break;
+            case DecisionStep::propagating: {
+                ++counters_.num_decision_propagations;
+                // Unit or falsified modulo the trail, so the watch logic has an
+                // equation to return whichever pair of rows it is watching.
+                const PropagationOutcome outcome =
+                    propagate_from_clause(propagating_clause_id_);
+                assert(outcome != PropagationOutcome::nothing &&
+                       "a clause the decision step handed back propagated nothing");
+                if (outcome == PropagationOutcome::conflicting) {
+                    ++counters_.num_decision_conflicts;
+                    if (const std::optional<Solution> solution = handle_conflict()) {
+                        return *solution;
+                    }
+                }
+                break;
+            }
+            case DecisionStep::exhausted:
+                return complete_satisfying_assignment();
         }
     }
 }
@@ -727,6 +879,8 @@ Solution Solver::complete_satisfying_assignment() {
     }
     decisions_->note_filled_decisions(num_filled);
     assert(complete.rows() == active_num_vars_ && "the completed trail is not a total assignment");
+    assert(every_active_clause_is_satisfied(complete) &&
+           "the model reported as satisfying falsifies an active clause");
 
     IndexSet original_assignment = reconstruct_original_assignment(
         complete.unique_solution(), compaction_history_, active_var_to_original_,

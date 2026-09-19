@@ -15,6 +15,8 @@
 #include "core/solver.h"
 #include "core/trail.h"
 #include "heuristics/decisions/csids.h"
+#include "heuristics/decisions/decision_procedure.h"
+#include "heuristics/decisions/fixed_literals.h"
 #include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/luby.h"
 #include "heuristics/restarts/restart_policy.h"
@@ -63,6 +65,18 @@ constexpr std::string_view search_unsat_instance = "p cnf 3 8\n"
                                                    "-1 2 -3 0\n"
                                                    "-1 -2 3 0\n"
                                                    "-1 -2 -3 0\n";
+
+/// @brief SAT, and built so that one clause is left unit three levels before the
+/// decision that falsifies it.
+///
+/// Deciding `x1 = 0`, `x2 = 0`, `x3 = 0`, `x4 = 0` in turn leaves `[x1 v x4]`
+/// unit from level 1 on, implying `x4 = 1`, and falsified by the decision at
+/// level 4. The other two clauses hold under that decision order, so the run
+/// ends SAT once `x5` is decided.
+constexpr std::string_view missed_unit_instance = "p cnf 5 3\n"
+                                                  "1 4 0\n"
+                                                  "-2 -3 0\n"
+                                                  "-3 -5 0\n";
 
 /// @brief SAT, with three root-level determined variables for compaction to
 /// eliminate.
@@ -127,11 +141,12 @@ struct Run {
 /// @brief Parse an instance and build a solver over it with the CLI's default
 /// heuristics, so that a run here is the run `xorcle <file>` performs.
 ///
-/// Null `restarts`/`selector` mean `NoRestarts` and `Cyclic`.
+/// Null `restarts`/`selector`/`decisions` mean `NoRestarts`, `Cyclic` and `Csids`.
 Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfig& compaction = {},
              std::unique_ptr<RestartPolicy> restarts = nullptr,
              std::unique_ptr<ClauseSelector> selector = nullptr,
-             bool bump_responsible_clauses = false) {
+             bool bump_responsible_clauses = false, const PropagationConfig& propagation = {},
+             std::unique_ptr<DecisionProcedure> decisions = nullptr) {
     ParsedDimacs parsed = parse_dimacs_string(instance, repr);
 
     Run run;
@@ -140,9 +155,11 @@ Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfi
     run.solver = std::make_unique<Solver>(
         repr, parsed.num_vars,
         selector != nullptr ? std::move(selector) : std::make_unique<Cyclic>(parsed.num_vars),
-        std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
+        decisions != nullptr ? std::move(decisions)
+                             : std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
         restarts != nullptr ? std::move(restarts) : std::make_unique<NoRestarts>(), nullptr,
-        compaction, ProgressConfig{}, true, DeletionConfig{}, bump_responsible_clauses);
+        compaction, ProgressConfig{}, true, DeletionConfig{}, bump_responsible_clauses, false,
+        propagation);
     for (Clause& clause : parsed.clauses) {
         run.solver->add_starting_clause(std::move(clause));
     }
@@ -264,6 +281,132 @@ private:
     std::optional<Trail> last_trail_;
 };
 
+/// @brief A cyclic selector that defers after a single attempt whenever the
+/// solver gives it a budget at all, and records how each propagated row landed
+/// on the trail.
+///
+/// Deferring that early leaves plenty for the decision step to meet, which is
+/// what this is for. It ignores the size of the budget on purpose, since the
+/// size the solver hands out is an adaptive figure.
+class BudgetedRecordingSelector final : public ClauseSelector {
+public:
+    struct Record {
+        std::size_t level = 0;       ///< The level the row was recorded at.
+        std::size_t trail_level = 0; ///< The level the trail stood at.
+        bool has_reason = false;
+        /// @brief Whether the run had already stopped, so the solver was
+        /// propagating a clause the decision step handed back.
+        bool after_the_run = false;
+    };
+
+    std::optional<ClauseId> next() override {
+        const bool spent = budgeted_ && attempts_ == 1;
+        if (clauses_.empty() || spent || count_ >= clauses_.size()) {
+            stopped_on_budget_ = spent && count_ < clauses_.size();
+            count_ = 0;
+            attempts_ = 0;
+            run_is_over_ = true;
+            return std::nullopt;
+        }
+        for (std::size_t tries = 0; tries < clauses_.size(); ++tries) {
+            const ClauseId current = id_;
+            id_ = (id_ + 1) % clauses_.size();
+            ++count_;
+            if (is_clause_active(current)) {
+                ++attempts_;
+                stopped_on_budget_ = false;
+                return current;
+            }
+            if (count_ >= clauses_.size()) {
+                break;
+            }
+        }
+        count_ = 0;
+        attempts_ = 0;
+        stopped_on_budget_ = false;
+        run_is_over_ = true;
+        return std::nullopt;
+    }
+
+    void set_attempt_budget(std::size_t budget) override {
+        budgeted_ = budget != 0;
+        attempts_ = 0;
+        run_is_over_ = false;
+    }
+
+    bool last_stop_was_budget() const noexcept override { return stopped_on_budget_; }
+
+    void update_with_propagation(const Equation& reduced_eqn, const Trail& trail) override {
+        for (std::size_t row_idx = 0; row_idx < trail.span().rows(); ++row_idx) {
+            if (trail.span().row(row_idx) == reduced_eqn) {
+                const std::size_t trail_idx = trail.row_idx_to_trail_idx()[row_idx];
+                propagations.push_back(Record{trail.level_of(trail_idx), trail.level(),
+                                              trail.reasons()[trail_idx].has_value(),
+                                              run_is_over_});
+                break;
+            }
+        }
+        ClauseSelector::update_with_propagation(reduced_eqn, trail);
+    }
+
+    void update_with_new_equation(const Equation&, const Trail&) override { count_ = 0; }
+
+    std::vector<Record> propagations; ///< Oldest first.
+
+protected:
+    void add_clause(Clause clause) override {
+        ClauseSelector::add_clause(std::move(clause));
+        id_ = clauses_.size() - 1;
+        count_ = 0;
+    }
+
+private:
+    ClauseId id_ = 0;
+    std::size_t count_ = 0;
+    std::size_t attempts_ = 0;
+    bool budgeted_ = false;
+    bool stopped_on_budget_ = false;
+    bool run_is_over_ = false;
+};
+
+/// @brief A selector that hands out one clause on one propagation run and defers
+/// on every other, so that a test can place a single attempt where it wants one.
+class ScriptedSelector final : public ClauseSelector {
+public:
+    /// @param id The clause to hand out.
+    /// @param run The propagation run to hand it out on, counted from one.
+    ScriptedSelector(ClauseId id, std::size_t run) : id_(id), run_(run) {}
+
+    std::optional<ClauseId> next() override {
+        if (runs_ != run_ || handed_out_) {
+            return std::nullopt;
+        }
+        handed_out_ = true;
+        return id_;
+    }
+
+    void set_attempt_budget(std::size_t) override {
+        ++runs_;
+        handed_out_ = false;
+    }
+
+    bool last_stop_was_budget() const noexcept override { return false; }
+
+    void update_with_propagation(const Equation& reduced_eqn, const Trail& trail) override {
+        propagations.push_back(trail);
+        ClauseSelector::update_with_propagation(reduced_eqn, trail);
+    }
+
+    /// @brief The trail as it stood at each propagation, oldest first.
+    std::vector<Trail> propagations;
+
+private:
+    ClauseId id_;
+    std::size_t run_;
+    std::size_t runs_ = 0;
+    bool handed_out_ = false;
+};
+
 } // namespace
 
 TEST_CASE_TEMPLATE("solver: a root conflict, proved with no decisions", Tag, DenseTag, SparseTag) {
@@ -327,6 +470,104 @@ TEST_CASE_TEMPLATE("solver: UNSAT found by search", Tag, DenseTag, SparseTag) {
     // solver has to decide, conflict, and learn its way through them.
     CHECK(run.solver->decision_stats().decisions > 0);
     CHECK(run.solver->num_clauses() > run.clauses.size());
+}
+
+TEST_CASE_TEMPLATE("solver: a clause the decision step hands back propagates with a reason", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    auto recorder = std::make_unique<BudgetedRecordingSelector>();
+    BudgetedRecordingSelector& recorded = *recorder;
+    // The recorder defers after one attempt above the root, so the decision step
+    // is what meets the clauses the trail has left unit. A window of one takes
+    // the budget off its opening whole sweep within the first few learns.
+    Run run = make_run(repr, search_unsat_instance, CompactionConfig{}, nullptr,
+                       std::move(recorder), false,
+                       PropagationConfig{.miss_rate = 0.01, .window = 1});
+    REQUIRE(run.num_vars == 3);
+
+    CHECK(run.solver->solve().result == SolveResult::unsat);
+
+    const SolverCounters& counters = run.solver->counters();
+    CHECK(counters.num_decision_propagations > 0);
+    // More clauses came back than conflicted, so at least one was unit rather
+    // than refuted, which is the case that used to be decided on instead.
+    CHECK(counters.num_decision_propagations > counters.num_decision_conflicts);
+
+    REQUIRE_FALSE(recorded.propagations.empty());
+    std::size_t after_the_run = 0;
+    for (const BudgetedRecordingSelector::Record& record : recorded.propagations) {
+        CHECK(record.has_reason);
+        CHECK(record.level <= record.trail_level);
+        after_the_run += record.after_the_run ? 1 : 0;
+    }
+    CHECK(after_the_run == counters.num_decision_propagations);
+}
+
+TEST_CASE_TEMPLATE("solver: a decision a missed propagation forbids is undone", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    // `[x1 v x4]` is handed out for the first time on the fifth run, by which
+    // point four decisions have been taken and the last of them falsifies it.
+    auto scripted = std::make_unique<ScriptedSelector>(ClauseId{0}, 5);
+    ScriptedSelector& recorded = *scripted;
+    Run run = make_run(repr, missed_unit_instance, CompactionConfig{}, nullptr,
+                       std::move(scripted), false,
+                       PropagationConfig{.miss_rate = 0.5, .window = 1},
+                       std::make_unique<FixedLiterals>(repr, 5, default_seed));
+    REQUIRE(run.num_vars == 5);
+
+    check_satisfies(run.clauses, run.solver->solve(), run.num_vars);
+
+    const SolverCounters& counters = run.solver->counters();
+    CHECK(counters.num_undone_decisions == 1);
+    // The clause was met, not analysed: no conflict, and nothing learned.
+    CHECK(counters.num_conflicts == 0);
+    CHECK(run.solver->num_clauses() == run.clauses.size());
+    CHECK(run.solver->decision_stats().decisions == 5);
+    // The one equation the run put on the trail, recorded below the level the
+    // undone decision had opened.
+    CHECK(counters.num_propagations == 1);
+    CHECK(counters.num_out_of_order_learns == 1);
+    // That single learn reached the budget as a miss, which holds it at the whole
+    // sweep it starts on; a hit would have taken it down by a factor of `e`.
+    CHECK(counters.final_budget_fraction == doctest::Approx(1.0));
+
+    REQUIRE(recorded.propagations.size() == 1);
+    const Trail& trail = recorded.propagations.front();
+    // Only the top level went: the decisions at levels 1, 2 and 3 stand, with
+    // the propagated equation in beside the first of them.
+    CHECK(trail.level() == 3);
+    CHECK(trail.rows_at_level(0) == 0);
+    CHECK(trail.rows_at_level(1) == 2);
+    CHECK(trail.rows_at_level(2) == 3);
+    CHECK(trail.rows_at_level(3) == 4);
+
+    std::vector<std::size_t> reason_trail_idxs;
+    for (std::size_t trail_idx = 0; trail_idx < trail.reasons().size(); ++trail_idx) {
+        if (trail.reasons()[trail_idx].has_value()) {
+            reason_trail_idxs.push_back(trail_idx);
+        }
+    }
+    REQUIRE(reason_trail_idxs.size() == 1);
+    const std::size_t propagated_idx = reason_trail_idxs.front();
+    CHECK(trail.reasons()[propagated_idx] == std::optional<ClauseId>{0});
+    CHECK(trail.level_of(propagated_idx) == 1);
+    // `x4 = 1`, which the decision at level 4 had just denied.
+    CHECK(trail.span().row(trail.trail_idx_to_row_idx()[propagated_idx]) ==
+          make_equation_with(repr, run.num_vars, {3, 5}));
+}
+
+TEST_CASE_TEMPLATE("solver: a budget leaves the verdicts alone", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const PropagationConfig budgeted{.miss_rate = 0.01, .window = 4};
+
+    Run unsat = make_run(repr, search_unsat_instance, CompactionConfig{}, nullptr, nullptr, false,
+                         budgeted);
+    CHECK(unsat.solver->solve().result == SolveResult::unsat);
+
+    Run sat = make_run(repr, compaction_sat_instance, CompactionConfig{}, nullptr, nullptr, false,
+                       budgeted);
+    check_satisfies(sat.clauses, sat.solver->solve(), sat.num_vars);
 }
 
 TEST_CASE_TEMPLATE("solver: bumping the learned clause's pivots leaves the answers alone", Tag,

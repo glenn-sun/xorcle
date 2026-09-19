@@ -47,10 +47,10 @@ public:
     void reinitialize() override {}
 
     /// @brief Unused; conflict analysis never decides.
-    std::optional<Equation> make_decision(const RowSpace&, const std::vector<Clause>&,
-                                          const std::vector<std::uint8_t>&) override {
+    DecisionResult make_decision(const RowSpace&, const std::vector<Clause>&,
+                                 const std::vector<std::uint8_t>&) override {
         CHECK_MESSAGE(false, "conflict analysis must not make decisions");
-        return Equation(repr(), num_vars());
+        return DecisionResult{Equation(repr(), num_vars()), std::nullopt};
     }
 
     void update_with_resolved_clause(ClauseId id) override {
@@ -117,6 +117,9 @@ std::vector<std::vector<std::size_t>> rows_of(const RowEchelonMatrix& matrix) {
 struct Conflict {
     Trail trail;
     std::vector<Clause> clauses; ///< The clause database, in clause-id order.
+
+    /// @brief The clause whose propagation made the trail conflicting.
+    ClauseId conflict_clause_id() const { return *trail.reasons().back(); }
 };
 
 /// @brief The smallest conflict that needs exactly one resolution step: three
@@ -141,10 +144,10 @@ Conflict make_one_step_conflict(EquationRepr repr) {
     clauses.push_back(make_clause(repr, num_vars, {{1, 3}, {2, 3}})); // 2: the conflict
 
     Trail trail(repr, num_vars);
-    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {1, 3}), ClauseId{0});
-    trail.learn(make_equation_with(repr, num_vars, {2, 3}), ClauseId{1});
-    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2});
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {1, 3}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {2, 3}), ClauseId{1}, trail.level());
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2}, trail.level());
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -179,13 +182,13 @@ Conflict make_two_level_conflict(EquationRepr repr, ClauseId conflict_clause_id)
     clauses.push_back(make_clause(repr, num_vars, {{3, 4}, {5, 6}}));
 
     Trail trail(repr, num_vars);
-    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {5, 6}), ClauseId{0});
-    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {2, 6}), ClauseId{1});
-    trail.learn(make_equation_with(repr, num_vars, {3, 6}), ClauseId{2});
-    trail.learn(make_equation_with(repr, num_vars, {4, 6}), ClauseId{3});
-    trail.learn(Equation::eq_false(repr, num_vars), conflict_clause_id);
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {5, 6}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {2, 6}), ClauseId{1}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {3, 6}), ClauseId{2}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {4, 6}), ClauseId{3}, trail.level());
+    trail.learn(Equation::eq_false(repr, num_vars), conflict_clause_id, trail.level());
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -205,10 +208,10 @@ Conflict make_decision_pivot_conflict(EquationRepr repr) {
     clauses.push_back(make_clause(repr, num_vars, {{1}, {2, 3}})); // 1: the conflict
 
     Trail trail(repr, num_vars);
-    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {2, 3}), ClauseId{0});
-    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{1});
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {2, 3}), ClauseId{0}, trail.level());
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{1}, trail.level());
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -250,10 +253,10 @@ Conflict make_root_conflict(EquationRepr repr) {
     clauses.push_back(make_clause(repr, num_vars, {{0, 4}, {2, 4}})); // 3: the conflict
 
     Trail trail(repr, num_vars);
-    trail.learn(make_equation_with(repr, num_vars, {0, 4}), ClauseId{0});
-    trail.learn(make_equation_with(repr, num_vars, {1, 4}), ClauseId{1});
-    trail.learn(make_equation_with(repr, num_vars, {2, 4}), ClauseId{2});
-    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{3});
+    trail.learn(make_equation_with(repr, num_vars, {0, 4}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {1, 4}), ClauseId{1}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {2, 4}), ClauseId{2}, trail.level());
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{3}, trail.level());
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -305,9 +308,9 @@ TEST_CASE_TEMPLATE("analysis: the fixtures really do conflict", Tag, DenseTag, S
     check_conflicting(two_level);
     CHECK(two_level.trail.level() == 2);
     CHECK(two_level.trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0, 5, 1, 2, 3, 4, 6});
-    CHECK(two_level.trail[0].span().rows() == 0);
-    CHECK(two_level.trail[1].span().rows() == 2);
-    CHECK(two_level.trail[2].span().rows() == 7);
+    CHECK(two_level.trail.rows_at_level(0) == 0);
+    CHECK(two_level.trail.rows_at_level(1) == 2);
+    CHECK(two_level.trail.rows_at_level(2) == 7);
 }
 
 TEST_CASE_TEMPLATE("analysis: a conflict resolved in one step", Tag, DenseTag, SparseTag) {
@@ -317,7 +320,8 @@ TEST_CASE_TEMPLATE("analysis: a conflict resolved in one step", Tag, DenseTag, S
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, representative_rng);
+        find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                              decisions, representative_rng);
 
     // Resolving [x1 = 0] v [x2 = 0] against [x1 = 0] v [x2 = 1] on x2 leaves the
     // unit clause [x1 = 0], stored as its linear negation [x1 = 1] = {1, 3}.
@@ -345,7 +349,8 @@ TEST_CASE_TEMPLATE("analysis: a conflict needing several resolution steps", Tag,
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, representative_rng);
+        find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                              decisions, representative_rng);
 
     // Clause 4 = [x3 + x4 = 1] v [x2 = 0] v [x5 = 0]. Resolving away x4 (reason
     // clause 3) and then x3 (reason clause 2) leaves [x2 = 0] v [x5 = 0], whose
@@ -375,9 +380,11 @@ TEST_CASE_TEMPLATE("analysis: every reason is measured when asked", Tag, DenseTa
     Rng unmeasured_rng = make_rng(default_seed, RngComponent::minimize_representative);
     Rng measured_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause unmeasured = find_asserting_clause(
-        conflict.trail, conflict.clauses, unmeasured_decisions, unmeasured_rng, true, false);
+        conflict.trail, conflict.clauses, conflict.conflict_clause_id(), unmeasured_decisions,
+        unmeasured_rng, true, false);
     const AssertingClause measured = find_asserting_clause(
-        conflict.trail, conflict.clauses, measured_decisions, measured_rng, true, true);
+        conflict.trail, conflict.clauses, conflict.conflict_clause_id(), measured_decisions,
+        measured_rng, true, true);
 
     CHECK(unmeasured.reason_lbds.empty());
 
@@ -404,11 +411,13 @@ TEST_CASE_TEMPLATE("analysis: the learned clause's pivots name trail rows", Tag,
 
         Rng reported_rng = make_rng(default_seed, RngComponent::minimize_representative);
         const AssertingClause reported =
-            find_asserting_clause(conflict.trail, conflict.clauses, decisions, reported_rng, true,
+            find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                                  decisions, reported_rng, true,
                                   false, true);
         RecordingDecisions plain_decisions(repr, conflict.trail.num_vars());
         Rng plain_rng = make_rng(default_seed, RngComponent::minimize_representative);
         const AssertingClause plain = find_asserting_clause(conflict.trail, conflict.clauses,
+                                                            conflict.conflict_clause_id(),
                                                             plain_decisions, plain_rng);
         CHECK(plain.responsible_trail_idxs.empty());
         CHECK(rows_of(reported.clause) == rows_of(plain.clause));
@@ -426,14 +435,15 @@ TEST_CASE_TEMPLATE("analysis: the learned clause's pivots name trail rows", Tag,
 
         Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
         const AssertingClause learned =
-            find_asserting_clause(conflict.trail, conflict.clauses, decisions, representative_rng,
+            find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                                  decisions, representative_rng,
                                   true, false, true);
         // The unit [x1 = 1], which is trail step 1 negated.
         CHECK(rows_of(learned.clause) == std::vector<std::vector<std::size_t>>{{1}});
         CHECK(learned.responsible_trail_idxs == std::vector<std::size_t>{1});
         CHECK_FALSE(conflict.trail.reasons()[1].has_value());
         // Level 2 opens with that decision, so it sits where level 1 ended.
-        CHECK(conflict.trail[1].span().rows() == 1);
+        CHECK(conflict.trail.rows_at_level(1) == 1);
     }
 }
 
@@ -445,7 +455,8 @@ TEST_CASE_TEMPLATE("analysis: an already-asserting conflict clause is learned un
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, representative_rng);
+        find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                              decisions, representative_rng);
 
     // Clause 5 = [x3 + x4 = 1] v [x5 = 0] is already asserting -- its first row
     // spans two current-level trail rows at once -- so the loop body never runs.
@@ -465,7 +476,8 @@ TEST_CASE_TEMPLATE("analysis: the one-step resolvent subsumes both operands", Ta
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, representative_rng, true,
+        find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                              decisions, representative_rng, true,
                               false, false, true);
 
     // The resolvent [x1 = 0] has one row where both operands have two, so it
@@ -507,7 +519,8 @@ TEST_CASE_TEMPLATE("analysis: the one-step resolvent subsumes both operands", Ta
     RecordingDecisions plain_decisions(repr, conflict.trail.num_vars());
     Rng plain_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause plain =
-        find_asserting_clause(conflict.trail, conflict.clauses, plain_decisions, plain_rng, true,
+        find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                              plain_decisions, plain_rng, true,
                               false, false, false);
     CHECK(plain.subsumed_reasons.empty());
     CHECK(rows_of(plain.clause) == rows_of(learned.clause));
@@ -535,11 +548,11 @@ Conflict make_subsumed_reason_conflict(EquationRepr repr) {
     clauses.push_back(make_clause(repr, num_vars, {{3, 5}, {1}})); // 2: the conflict
 
     Trail trail(repr, num_vars);
-    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {2, 5}), ClauseId{0});
-    trail.learn(make_equation_with(repr, num_vars, {3, 5}), ClauseId{1});
-    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2});
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {2, 5}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {3, 5}), ClauseId{1}, trail.level());
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2}, trail.level());
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -552,7 +565,8 @@ TEST_CASE_TEMPLATE("analysis: a subsumed reason keeps its replacement when the w
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, representative_rng, true,
+        find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                              decisions, representative_rng, true,
                               false, false, true);
 
     CHECK(rows_of(learned.clause) == std::vector<std::vector<std::size_t>>{{0}, {1}});
@@ -596,11 +610,11 @@ Conflict make_asserting_conflict_subsumed_past_first_row(EquationRepr repr) {
     clauses.push_back(make_clause(repr, num_vars, {{3}, {2, 4}, {1, 4}, {0}})); // 2: the conflict
 
     Trail trail(repr, num_vars);
-    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {1, 4}), ClauseId{0});
-    trail.learn(make_equation_with(repr, num_vars, {2, 4}), ClauseId{1});
-    trail.learn(make_equation_with(repr, num_vars, {3}), std::nullopt);
-    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2});
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {1, 4}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {2, 4}), ClauseId{1}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {3}), std::nullopt, trail.level() + 1);
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2}, trail.level());
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -613,7 +627,8 @@ TEST_CASE_TEMPLATE("analysis: a minimization step past row 0 subsumes the confli
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, representative_rng, true,
+        find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                              decisions, representative_rng, true,
                               false, false, true);
 
     // Both steps are accepted, each taking a row off; the coins leave the rows
@@ -649,7 +664,8 @@ TEST_CASE_TEMPLATE("analysis: no subsumption is recorded when no rank drops", Ta
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const AssertingClause learned =
-        find_asserting_clause(conflict.trail, conflict.clauses, decisions, representative_rng, true,
+        find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                              decisions, representative_rng, true,
                               false, false, true);
 
     // Both resolutions and both minimization trials keep every rank, so the
@@ -735,7 +751,8 @@ TEST_CASE_TEMPLATE("analysis: a root conflict names only the reasons it uses", T
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const std::vector<ClauseId> reasons =
-        find_root_conflict_reasons(conflict.trail, conflict.clauses, representative_rng);
+        find_root_conflict_reasons(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                                   representative_rng);
 
     // Clause 1 propagated [x1 = 1], which nothing in the derivation needs.
     CHECK(reasons == std::vector<ClauseId>{0, 2, 3});

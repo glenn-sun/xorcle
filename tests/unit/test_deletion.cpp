@@ -74,7 +74,7 @@ Trail make_trail_with_reasons(EquationRepr repr, std::size_t num_vars,
                               const std::vector<ClauseId>& reasons) {
     Trail trail(repr, num_vars);
     for (std::size_t index = 0; index < reasons.size(); ++index) {
-        trail.learn(make_equation_with(repr, num_vars, {index}), reasons[index]);
+        trail.learn(make_equation_with(repr, num_vars, {index}), reasons[index], trail.level());
     }
     return trail;
 }
@@ -300,7 +300,7 @@ TEST_CASE_TEMPLATE("deletion: a deleted clause is compaction's placeholder", Tag
     // The shape a compaction plan writes for a clause the root trail satisfies.
     Trail trail(repr, 5);
     // `x1 = 1` satisfies the clause below, which is `[x1 = 1] v [x2 = 1]`.
-    trail.learn(make_equation_with(repr, 5, {0, 5}), ClauseId{0});
+    trail.learn(make_equation_with(repr, 5, {0, 5}), ClauseId{0}, trail.level());
     const std::vector<Clause> clauses{make_clause(repr, 5, {{0}, {1}})};
     const std::vector<std::uint8_t> active{1};
     const std::vector<std::size_t> var_map{0, 1, 2, 3, 4};

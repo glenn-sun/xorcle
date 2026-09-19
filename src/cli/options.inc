@@ -93,6 +93,16 @@ XORCLE_ENUM_VALUE(selection, "leading_term_watchlist", ClauseSelectorName::leadi
 XORCLE_OPTION(wait_for_queue, Size, 1, 1, SIZE_MAX,
               "for watchlists of earlier variables, do not queue until requested N times")
 
+// --- Propagation -----------------------------------------------------------
+
+XORCLE_OPTION(propagate_miss_rate, Real, 0.04, 0.0, 1.0,
+              "target fraction of propagated equations learned out of order; 0 propagates\n"
+              "to a fixed point, and so does the default under any other selector")
+
+XORCLE_OPTION(propagate_window, Size, 2000, 1, SIZE_MAX,
+              "learned equations over which the attempt budget decays by a factor of e\n"
+              "when none is missed")
+
 // --- Restarts --------------------------------------------------------------
 
 XORCLE_ENUM_OPTION(restart, RestartMethod, RestartMethod::none, "restart schedule")
@@ -179,6 +189,16 @@ XORCLE_REQUIRES(phase, options.decisions == DecisionProcedureName::csids,
 
 XORCLE_REQUIRES(wait_for_queue, options.selection == ClauseSelectorName::leading_term_watchlist,
                 "--selection=leading_term_watchlist")
+
+// A rate of 0 is complete propagation, which every selector does, so only a
+// nonzero one needs the selector that runs an attempt budget; the default has
+// already resolved to 0 under any other.
+XORCLE_REQUIRES(propagate_miss_rate,
+                options.propagate_miss_rate == 0.0 ||
+                    options.selection == ClauseSelectorName::cyclic,
+                "--selection=cyclic")
+XORCLE_REQUIRES(propagate_window, options.propagate_miss_rate != 0.0,
+                "a nonzero --propagate-miss-rate")
 
 XORCLE_REQUIRES(restart_luby_unit, options.restart == RestartMethod::luby, "--restart=luby")
 XORCLE_REQUIRES(restart_lbd_fast, options.restart == RestartMethod::lbd, "--restart=lbd")

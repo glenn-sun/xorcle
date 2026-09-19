@@ -14,6 +14,11 @@
 
 namespace xorcle {
 
+/// @brief What a trail leaves of a clause: one every extension satisfies, one of
+/// dimension two or more, or one of dimension one or zero, which implies an
+/// equation or a contradiction rather than offering a decision.
+enum class ClauseStatus { satisfied, open, propagating };
+
 class ClauseSatisfactionWorkspace {
 public:
     ClauseSatisfactionWorkspace(EquationRepr repr, std::size_t num_vars);
@@ -21,9 +26,9 @@ public:
     void reconfigure(std::size_t num_vars);
 
 private:
-    friend bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
-                                          ClauseSatisfactionWorkspace& workspace,
-                                          std::vector<Equation>* reduced_rows);
+    friend ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& clause,
+                                               ClauseSatisfactionWorkspace& workspace,
+                                               std::vector<Equation>* reduced_rows);
 
     void clear_local_basis();
 
@@ -45,16 +50,16 @@ private:
 /// `trail_span`'s representation, and some legal decision remains.
 const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowSpace& trail_span);
 
-/// @brief Whether the trail already satisfies a clause, under every extension.
+/// @brief What the trail leaves of a clause, under every extension.
 /// @param reduced_rows When non-null and the clause is not satisfied, receives
 /// each clause row reduced by `trail_span`, in row order. Compaction wants those
 /// rows and would otherwise reduce every one of them again; the decision path
 /// passes nothing and pays for nothing.
 /// @pre `clause.cols() == trail_span.cols()`, and `workspace` was configured for
 /// `trail_span.cols() - 1` variables in `trail_span`'s representation.
-bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
-                               ClauseSatisfactionWorkspace& workspace,
-                               std::vector<Equation>* reduced_rows = nullptr);
+ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& clause,
+                                    ClauseSatisfactionWorkspace& workspace,
+                                    std::vector<Equation>* reduced_rows = nullptr);
 
 /// @brief Compact a literal basis, preserving basis order.
 /// @return The first compacted equation for each new leading bit, in old basis order, then
@@ -74,7 +79,7 @@ struct SampledDecision {
 /// @brief Sample a random combination of a clause's rows that is a legal decision, by
 /// rejection sampling as in arXiv:2605.15002.
 /// @pre `clause.cols() == trail_span.cols()`, `clause.repr() == trail_span.repr()`,
-/// `clause.rows() > 0`, and the trail does not satisfy the clause.
+/// `clause.rows() > 0`, and the trail leaves the clause `ClauseStatus::open`.
 SampledDecision sample_equation_from_clause(const Clause& clause, const RowSpace& trail_span,
                                             Rng& rng);
 

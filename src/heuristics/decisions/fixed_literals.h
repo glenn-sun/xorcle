@@ -26,8 +26,8 @@ public:
 
     void reinitialize() override;
 
-    std::optional<Equation> make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
-                           const std::vector<std::uint8_t>& clause_active) override;
+    DecisionResult make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
+                                 const std::vector<std::uint8_t>& clause_active) override;
 
     void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
                                 const std::vector<Clause>& clauses,

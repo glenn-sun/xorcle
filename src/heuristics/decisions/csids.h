@@ -86,8 +86,8 @@ public:
     /// @brief Resets both RNG streams as well as activity and the counters.
     void reinitialize() override;
 
-    std::optional<Equation> make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
-                           const std::vector<std::uint8_t>& clause_active) override;
+    DecisionResult make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
+                                 const std::vector<std::uint8_t>& clause_active) override;
 
     /// @brief Record the activity the next new clause will enter at, then decay.
     void update_with_asserting_clause(const Clause& clause) override;
@@ -96,6 +96,9 @@ public:
     void update_with_new_clause(const Clause& clause, ClauseId id) override;
 
     void update_with_resolved_clause(ClauseId id) override;
+
+    /// @brief Put the clauses the discarded level satisfied back in the heap.
+    void update_with_undone_decision() override;
 
     /// @brief The replacement inherits the subsumed clause's activity when larger.
     void update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id) override;

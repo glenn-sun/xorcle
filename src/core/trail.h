@@ -12,23 +12,58 @@
 
 namespace xorcle {
 
-/// @brief Every equation learned up to and including one decision level, plus
-/// its span and the bookkeeping that relates the two.
+/// @brief The solver trail: every equation assumed or derived, ordered by
+/// `(level, derivation order within the level)`, plus its span and the
+/// bookkeeping that relates the two.
 ///
-/// `span()` keeps its rows in row-echelon order, unrelated to the order
-/// equations were learned in. `trail_idx_to_row_idx()` maps trail insertion order to the
-/// row index in `span()`, `row_idx_to_trail_idx()` is its inverse permutation, and
-/// `reasons()[t]` is the reason for the equation learned at trail order `t`, or
-/// empty when it was a decision. All three have length `span().rows()`.
-class TrailSnapshot {
+/// `span()` keeps its rows in row-echelon order, unrelated to trail order.
+/// `trail_idx_to_row_idx()` maps trail order to the row index in `span()`,
+/// `row_idx_to_trail_idx()` is its inverse permutation, and `reasons()[t]` is the
+/// reason for the equation at trail order `t`, or empty when it was a decision.
+/// All three have length `span().rows()`.
+///
+/// The span's rows are echelonized in trail order, so every stored row lies in
+/// the span of the equations at or below its own equation's level.
+class Trail {
 public:
-    TrailSnapshot(EquationRepr repr, std::size_t num_vars) : span_(repr, num_vars) {}
+    /// @brief A trail holding nothing, at the root level.
+    Trail(EquationRepr repr, std::size_t num_vars);
 
-    /// @brief Learn a new equation, with `reason` empty for a decision.
-    /// @pre `eqn.num_bits() == span().cols()`, `eqn.repr() == span().repr()`, and
-    /// `eqn` is reduced by `span()` so it is not already in the span.
+    /// @brief Learn a new equation at `level`, with `reason` empty for a decision.
+    /// @return The trail order index the equation took.
+    /// @pre `eqn.num_bits() == span().cols()` and `eqn.repr() == span().repr()`.
+    /// @pre `eqn` is not in the span of the equations at `level` or below.
+    /// @pre `level == level() + 1` for a decision, which opens that level, and
+    /// `level <= level()` otherwise.
     /// @pre If `reason` is provided, `eqn + [0 = 1]` belongs to it. Not asserted.
-    void learn(const Equation& eqn, std::optional<ClauseId> reason);
+    std::size_t learn(const Equation& eqn, std::optional<ClauseId> reason, std::size_t level);
+
+    std::size_t level() const noexcept { return level_end_.size() - 1; }
+
+    /// @brief How many equations the trail holds at `level` or below, which are
+    /// the first that many in trail order.
+    /// @pre `level <= level()`.
+    std::size_t rows_at_level(std::size_t level) const {
+        assert(level < level_end_.size() && "decision level is out of range");
+        return level_end_[level];
+    }
+
+    /// @brief The decision level of the equation at trail order `trail_idx`.
+    /// @pre `trail_idx < span().rows()`.
+    std::size_t level_of(std::size_t trail_idx) const {
+        assert(trail_idx < levels_.size() && "trail order index is out of range");
+        return levels_[trail_idx];
+    }
+
+    /// @brief Discard every decision level above `num_levels - 1`.
+    ///
+    /// Backjumping is `resize(asserting_level + 1)`; restarting is `resize(1)`.
+    /// @pre `1 <= num_levels <= level() + 1`.
+    void resize(std::size_t num_levels);
+
+    EquationRepr repr() const noexcept { return span_.repr(); }
+
+    std::size_t num_vars() const noexcept { return span_.num_vars(); }
 
     const RowSpace& span() const noexcept { return span_; }
 
@@ -43,69 +78,30 @@ public:
     const std::vector<std::optional<ClauseId>>& reasons() const noexcept { return reasons_; }
 
 private:
+    /// @brief Learn at the level the trail is already at, where the equation's
+    /// row goes straight in.
+    std::size_t learn_in_order(const Equation& eqn, std::optional<ClauseId> reason,
+                               std::size_t level);
+
+    /// @brief Learn below the current level, taking the rows above it out and
+    /// putting them back so each is reduced only by rows at or below its level.
+    std::size_t learn_out_of_order(const Equation& eqn, std::optional<ClauseId> reason,
+                                   std::size_t level, std::size_t trail_idx);
+
+    void rebuild_row_idx_to_trail_idx();
+
+#ifndef NDEBUG
+    void debug_assert_valid() const;
+#endif
+
+    RowSpace span_;
     std::vector<std::size_t> trail_idx_to_row_idx_;
     std::vector<std::size_t> row_idx_to_trail_idx_;
-    RowSpace span_;
     std::vector<std::optional<ClauseId>> reasons_;
-};
+    std::vector<std::size_t> levels_;
 
-/// @brief The solver trail, stored as one immutable snapshot per decision level.
-///
-/// `back()` is the live state; `operator[](k)` is the state at the end of
-/// decision level `k`. Every non-root snapshot begins, in trail order, with that
-/// level's decision equation, and `size() == level() + 1`.
-///
-/// @note Each snapshot is a full independent copy.
-class Trail {
-public:
-    /// @brief A trail holding a single empty root snapshot.
-    Trail(EquationRepr repr, std::size_t num_vars);
-
-    /// @brief Learn a new equation, opening a new decision level when `reason` is
-    /// empty.
-    /// @pre The same as `TrailSnapshot::learn()`.
-    void learn(const Equation& eqn, std::optional<ClauseId> reason);
-
-    std::size_t size() const noexcept { return snapshots_.size(); }
-
-    std::size_t level() const noexcept { return snapshots_.size() - 1; }
-
-    /// @brief The snapshot at the end of decision level `index`.
-    /// @pre `index < size()`.
-    const TrailSnapshot& operator[](std::size_t index) const {
-        assert(index < snapshots_.size() && "decision level is out of range");
-        return snapshots_[index];
-    }
-
-    const TrailSnapshot& back() const noexcept { return snapshots_.back(); }
-
-    /// @brief Discard trailing decision levels, keeping `num_levels` snapshots.
-    ///
-    /// Backjumping is `resize(asserting_level + 1)`; restarting is `resize(1)`.
-    /// @pre `1 <= num_levels <= size()`.
-    void resize(std::size_t num_levels);
-
-    EquationRepr repr() const noexcept { return span().repr(); }
-
-    std::size_t num_vars() const noexcept { return span().num_vars(); }
-
-    /// @brief The live snapshot's accessors, forwarded.
-    const RowSpace& span() const noexcept { return snapshots_.back().span(); }
-
-    const std::vector<std::size_t>& trail_idx_to_row_idx() const noexcept {
-        return snapshots_.back().trail_idx_to_row_idx();
-    }
-
-    const std::vector<std::size_t>& row_idx_to_trail_idx() const noexcept {
-        return snapshots_.back().row_idx_to_trail_idx();
-    }
-
-    const std::vector<std::optional<ClauseId>>& reasons() const noexcept {
-        return snapshots_.back().reasons();
-    }
-
-private:
-    std::vector<TrailSnapshot> snapshots_;
+    /// @brief How many equations lie at each level or below, indexed by level.
+    std::vector<std::size_t> level_end_;
 };
 
 } // namespace xorcle

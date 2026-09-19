@@ -37,6 +37,9 @@ namespace {
 struct Conflict {
     Trail trail;
     std::vector<Clause> clauses; ///< The clause database, in clause-id order.
+
+    /// @brief The clause whose propagation made the trail conflicting.
+    ClauseId conflict_clause_id() const { return *trail.reasons().back(); }
 };
 
 /// @brief The conflict of the extended example of arXiv:2605.15002, over
@@ -64,11 +67,11 @@ Conflict make_extended_example(EquationRepr repr) {
     clauses.push_back(make_clause(repr, num_vars, {{1, 4, 5}, {2, 3, 5}}));
 
     Trail trail(repr, num_vars);
-    trail.learn(make_equation_with(repr, num_vars, {1, 2}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {0, 1, 3, 5}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {3, 4}), ClauseId{0});
-    trail.learn(make_equation_with(repr, num_vars, {2, 4, 5}), ClauseId{1});
-    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2});
+    trail.learn(make_equation_with(repr, num_vars, {1, 2}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {0, 1, 3, 5}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {3, 4}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {2, 4, 5}), ClauseId{1}, trail.level());
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{2}, trail.level());
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -102,13 +105,13 @@ Conflict make_shrinkable_conflict(EquationRepr repr) {
     clauses.push_back(make_clause(repr, num_vars, {{3, 4}, {2, 6}, {5, 6}, {0}}));
 
     Trail trail(repr, num_vars);
-    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {5, 6}), ClauseId{0});
-    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt);
-    trail.learn(make_equation_with(repr, num_vars, {2, 6}), ClauseId{1});
-    trail.learn(make_equation_with(repr, num_vars, {3, 6}), ClauseId{2});
-    trail.learn(make_equation_with(repr, num_vars, {4, 6}), ClauseId{3});
-    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{4});
+    trail.learn(make_equation_with(repr, num_vars, {0}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {5, 6}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {1}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, num_vars, {2, 6}), ClauseId{1}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {3, 6}), ClauseId{2}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {4, 6}), ClauseId{3}, trail.level());
+    trail.learn(Equation::eq_false(repr, num_vars), ClauseId{4}, trail.level());
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
@@ -169,9 +172,11 @@ BothWays learn_both_ways(const Conflict& conflict, EquationRepr repr) {
     // A stream each, so both walks draw the same coins.
     Rng plain_rng = make_rng(default_seed, RngComponent::minimize_representative);
     Rng minimizing_rng = make_rng(default_seed, RngComponent::minimize_representative);
-    return BothWays{find_asserting_clause(conflict.trail, conflict.clauses, *plain_decisions,
+    return BothWays{find_asserting_clause(conflict.trail, conflict.clauses,
+                                          conflict.conflict_clause_id(), *plain_decisions,
                                           plain_rng, false, true),
-                    find_asserting_clause(conflict.trail, conflict.clauses, *minimizing_decisions,
+                    find_asserting_clause(conflict.trail, conflict.clauses,
+                                          conflict.conflict_clause_id(), *minimizing_decisions,
                                           minimizing_rng, true, true)};
 }
 
@@ -297,9 +302,11 @@ TEST_CASE_TEMPLATE("minimize: the parameter defaults to on", Tag, DenseTag, Spar
         Rng implicit_rng = make_rng(default_seed, RngComponent::minimize_representative);
         Rng explicit_rng = make_rng(default_seed, RngComponent::minimize_representative);
         const AssertingClause implicit =
-            find_asserting_clause(conflict.trail, conflict.clauses, *defaulted, implicit_rng);
+            find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
+                                  *defaulted, implicit_rng);
         const AssertingClause explicit_on = find_asserting_clause(
-            conflict.trail, conflict.clauses, *explicitly_on, explicit_rng, true);
+            conflict.trail, conflict.clauses, conflict.conflict_clause_id(), *explicitly_on,
+            explicit_rng, true);
 
         CHECK(rows_of(implicit.clause) == rows_of(explicit_on.clause));
         CHECK(implicit.asserting_level == explicit_on.asserting_level);

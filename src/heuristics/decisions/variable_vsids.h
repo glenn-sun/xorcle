@@ -31,22 +31,25 @@ struct VsidsParams {
 /// One heap element per variable. Activity is bumped for the leading variable of each
 /// equation conflict analysis resolves through, and of each asserting clause row.
 ///
-/// @note Rejected candidates stay extracted from the heap until the next
-/// `update_with_asserting_clause()` rebuilds it, which bears on the search order.
+/// @note Rejected candidates stay extracted from the heap until a rebuild puts
+/// them back, which bears on the search order.
 class VariableVsids final : public DecisionProcedure {
 public:
     VariableVsids(EquationRepr repr, std::size_t num_vars, Seed seed);
 
     void reinitialize() override;
 
-    std::optional<Equation> make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
-                           const std::vector<std::uint8_t>& clause_active) override;
+    DecisionResult make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
+                                 const std::vector<std::uint8_t>& clause_active) override;
 
     /// @brief Bump the leading variable of an equation resolved through.
     void update_with_critical_equation(const Equation& eqn) override;
 
     /// @brief Bump every row of the asserting clause, then decay and rebuild.
     void update_with_asserting_clause(const Clause& clause) override;
+
+    /// @brief Put the candidates the discarded level determined back in the heap.
+    void update_with_undone_decision() override;
 
     void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
                                 const std::vector<Clause>& clauses,

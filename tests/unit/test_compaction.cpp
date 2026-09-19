@@ -45,19 +45,19 @@ TEST_CASE_TEMPLATE("compaction: when it should run", Tag, DenseTag, SparseTag) {
     }
 
     SUBCASE("a non-empty root trail is compactable") {
-        trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0});
+        trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0}, trail.level());
         CHECK(should_compact_before_decision(state(false, 0, 0)));
     }
 
     SUBCASE("only the root level is compactable") {
-        trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0});
-        trail.learn(make_equation_with(repr, 4, {2}), std::nullopt);
-        REQUIRE(trail.size() == 2);
+        trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0}, trail.level());
+        trail.learn(make_equation_with(repr, 4, {2}), std::nullopt, trail.level() + 1);
+        REQUIRE(trail.level() == 1);
         CHECK_FALSE(should_compact_before_decision(state(false, 0, 0)));
     }
 
     SUBCASE("the conflict interval gates repeat compactions") {
-        trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0});
+        trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0}, trail.level());
         CHECK_FALSE(should_compact_before_decision(state(true, 10, 0)));
         CHECK(should_compact_before_decision(state(true, 16, 0)));
     }
@@ -66,8 +66,8 @@ TEST_CASE_TEMPLATE("compaction: when it should run", Tag, DenseTag, SparseTag) {
 TEST_CASE_TEMPLATE("compaction: building the transform", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
-    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0});
-    trail.learn(make_equation_with(repr, 4, {2, 3}), ClauseId{1});
+    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, 4, {2, 3}), ClauseId{1}, trail.level());
 
     const CompactionTransform transform = build_compaction_transform(trail, 4);
     CHECK(transform.old_num_vars() == 4);
@@ -82,7 +82,7 @@ TEST_CASE_TEMPLATE("compaction: building the transform", Tag, DenseTag, SparseTa
 TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
-    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}); // x0 = 1
+    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
 
     std::vector<Clause> clauses;
     clauses.push_back(make_clause(repr, 4, {{0}}));           // [x0 = 1], already satisfied
@@ -141,7 +141,7 @@ TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, De
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
-    trail.learn(make_equation_with(repr, 4, {0, 1}), ClauseId{0}); // x0 + x1 = 0
+    trail.learn(make_equation_with(repr, 4, {0, 1}), ClauseId{0}, trail.level()); // x0 + x1 = 0
 
     // Both rows reduce to x2, so the rewritten clause has a single row.
     std::vector<Clause> clauses;
@@ -175,7 +175,7 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
 
     SUBCASE("one compaction is undone by back-substitution") {
         Trail trail(repr, 4);
-        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}); // x0 = 1
+        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
 
         const std::vector<Clause> clauses;
         const std::vector<std::uint8_t> active;
@@ -199,7 +199,7 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
 
     SUBCASE("back-substitution reads the other variables of the eliminated row") {
         Trail trail(repr, 4);
-        trail.learn(make_equation_with(repr, 4, {0, 2}), ClauseId{0}); // x0 + x2 = 0
+        trail.learn(make_equation_with(repr, 4, {0, 2}), ClauseId{0}, trail.level()); // x0 + x2 = 0
 
         const std::vector<Clause> clauses;
         const std::vector<std::uint8_t> active;
@@ -228,7 +228,9 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
 
     SUBCASE("two compactions are undone newest first") {
         Trail first_trail(repr, 4);
-        first_trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}); // x0 = 1
+        // x0 = 1
+        first_trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0},
+                          first_trail.level());
 
         const std::vector<Clause> clauses;
         const std::vector<std::uint8_t> active;
@@ -241,7 +243,9 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         // After the first step the active variables are old x1, x2, x3.
         const std::vector<std::size_t> second_map{1, 2, 3};
         Trail second_trail(repr, 3);
-        second_trail.learn(make_equation_with(repr, 3, {0, 1}), ClauseId{0}); // x1 + x2 = 0
+        // x1 + x2 = 0
+        second_trail.learn(make_equation_with(repr, 3, {0, 1}), ClauseId{0},
+                           second_trail.level());
         const CompactionState second_state{second_trail, clauses, active, second_map, 3,
                                            true,         16,      0,      16};
         const CompactionTransform second_transform = build_compaction_transform(second_trail, 3);

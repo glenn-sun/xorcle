@@ -15,6 +15,7 @@
 #include "heuristics/compaction/compaction.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/deletion/deletion.h"
+#include "heuristics/propagation/attempt_budget.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
 #include "io/proof_raw_file.h"
@@ -30,6 +31,17 @@ struct CompactionConfig {
     bool enabled = true;
 
     std::size_t cadence = 16; ///< Conflicts between two successful compactions.
+};
+
+/// @brief How far a propagation run may go before deferring to a decision.
+struct PropagationConfig {
+    /// @brief The fraction of propagated equations the attempt budget steers
+    /// toward learning out of order; `0` runs every propagation to quiescence.
+    double miss_rate = 0.0;
+
+    /// @brief Learned equations over which the attempt budget falls by a factor
+    /// of `e` when none of them is missed.
+    std::size_t window = 2000;
 };
 
 /// @brief Where the solver reports progress while it runs, and how often.
@@ -83,6 +95,26 @@ struct SolverCounters {
     std::size_t num_subsumed_clauses = 0;      ///< Reason clauses deleted as subsumed.
     std::size_t num_subsumed_conflicting_clauses = 0; ///< Of those, subsumed as the conflicting clause.
     std::size_t num_subsume_replacements = 0;  ///< Subsuming resolvents added as clauses.
+
+    /// @brief Propagation runs a budget stopped short of quiescence.
+    std::size_t num_deferred_runs = 0;
+    /// @brief Equations learned below the level the solver stood at.
+    std::size_t num_out_of_order_learns = 0;
+    /// @brief Decisions taken off the trail because a clause a missed
+    /// propagation had left unit turned out to forbid them.
+    std::size_t num_undone_decisions = 0;
+    /// @brief Clauses the decision procedure handed back to propagation rather
+    /// than deciding on.
+    std::size_t num_decision_propagations = 0;
+    /// @brief Of those, the ones that propagated `0 = 1`.
+    std::size_t num_decision_conflicts = 0;
+
+    /// @brief Summed budget as a fraction of the clause count, over the runs
+    /// that got one, for their mean.
+    double sum_budget_fraction = 0.0;
+    std::size_t num_budgeted_runs = 0;
+    /// @brief That fraction at the last such run.
+    double final_budget_fraction = 0.0;
 };
 
 /// @brief The CDCL(⊕) solver.
@@ -106,7 +138,7 @@ public:
            RawProofWriter* proof_writer = nullptr, const CompactionConfig& compaction = {},
            const ProgressConfig& progress = {}, bool minimize = true,
            const DeletionConfig& deletion = {}, bool bump_responsible_clauses = false,
-           bool subsume = false);
+           bool subsume = false, const PropagationConfig& propagation = {});
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -145,8 +177,47 @@ public:
     RestartStats restart_stats() const { return restarts_->stats(); }
 
 private:
-    /// @brief Propagate to quiescence; true if the trail now holds `0 = 1`.
+    /// @brief What one decision step found.
+    enum class DecisionStep {
+        decided,
+        propagating, ///< `propagating_clause_id_` names a clause to propagate from.
+        exhausted    ///< Every active clause is satisfied; any completion is a model.
+    };
+
+    /// @brief What one clause's propagation attempt left behind.
+    enum class PropagationOutcome {
+        nothing,     ///< A watch moved, or the clause turned out to be satisfied.
+        propagated,  ///< An equation went on the trail.
+        conflicting  ///< That equation was `0 = 1`.
+    };
+
+    /// @brief Propagate until quiescence or the attempt budget runs out; true if
+    /// the trail now holds `0 = 1`, in which case `conflict_clause_id_` names the
+    /// clause that propagated it and `conflict_level_` the level it holds at.
     bool propagate_until_conflict();
+
+    /// @brief Attempts a fruitless stretch gets before the run defers, or `0`
+    /// for quiescence; also follows the database and samples the fractions
+    /// reported.
+    std::size_t attempt_budget();
+
+    /// @brief Try to propagate from one clause, recording whatever it implies at
+    /// the level that implies it.
+    ///
+    /// A clause only the trail's top level falsifies is met by taking that level
+    /// off and propagating it again, which is a miss rather than a conflict.
+    /// @param trigger_hint Passed through to the propagator.
+    /// @param count_learn_as_missed Whether the attempt budget counts what this
+    /// learns as missed whatever level it lands at.
+    /// @pre `id` names an active clause of the solver's variable count.
+    PropagationOutcome propagate_from_clause(ClauseId id,
+                                             std::optional<WatchType> trigger_hint = std::nullopt,
+                                             bool count_learn_as_missed = false);
+
+    /// @brief Analyse the conflict and learn; a solution once it turns out to
+    /// hold at the root.
+    /// @pre The trail stands at `conflict_level_`.
+    std::optional<Solution> handle_conflict();
 
     /// @brief Analyse, backjump or restart, and learn.
     void handle_non_root_conflict();
@@ -154,11 +225,11 @@ private:
     /// @brief Record the final empty clause for a root conflict.
     void write_root_unsat_proof();
 
-    /// @brief Record the latest trail row, a root unit, as a learned line unless
-    /// its one-row reason clause already is that line.
-    /// @pre `proof_writer_` is non-null, the trail is at the root and not
-    /// conflicting, and `reason_id` propagated the latest trail row.
-    void write_root_unit(ClauseId reason_id);
+    /// @brief Record the trail row at `trail_idx`, a root unit, as a learned line
+    /// unless its one-row reason clause already is that line.
+    /// @pre `proof_writer_` is non-null, the trail is not conflicting, the row at
+    /// `trail_idx` is at the root and `reason_id` propagated it.
+    void write_root_unit(ClauseId reason_id, std::size_t trail_idx);
 
     /// @brief Record the root units a compaction is about to discard.
     /// @pre The trail still holds them, and `proof_writer_` is non-null.
@@ -170,9 +241,7 @@ private:
     /// @pre `level <= trail_.level()`.
     void backjump_to(std::size_t level);
 
-    /// @return False when no clause offers a decision, which means every active
-    /// clause is satisfied and any completion of the trail is a model.
-    bool make_decision_step();
+    DecisionStep make_decision_step();
 
     /// @brief Fill the variables no clause constrains and answer SAT.
     Solution complete_satisfying_assignment();
@@ -217,6 +286,10 @@ private:
     std::optional<ClauseId> decision_clause_at(std::size_t trail_idx) const;
 
 #ifndef NDEBUG
+    /// @brief Whether every active clause has an equation that holds under
+    /// `model`, a trail span of full rank.
+    bool every_active_clause_is_satisfied(const RowSpace& model) const;
+
     /// @brief Whether the tracked live-clause count still matches the flags it
     /// summarises. Recounting is linear, so this is a debug check only.
     bool active_clause_count_is_consistent() const;
@@ -287,15 +360,21 @@ private:
 
     /// @brief The shallowest level whose span already satisfies @p row.
     ///
-    /// Reducing @p row names the span rows it used, and a span row is never
-    /// rewritten once stored, so the deepest level among them is the level the
-    /// row first became satisfied at. Recording the shallowest, rather than the
+    /// Reducing @p row names the span rows it used, and the level filtration
+    /// only ever grows, so the deepest level among them is the level the row
+    /// first became satisfied at. Recording the shallowest, rather than the
     /// current level, is what lets a record outlive a backjump.
     /// @pre `row` reduces to `0 = 1` against the current span.
     std::size_t shallowest_satisfying_level(const Equation& row);
 
-    /// @brief The decision level that learned the equation at @p trail_idx.
-    std::size_t level_of_trail_idx(std::size_t trail_idx) const;
+    /// @brief The deepest level among the trail rows `used_row_idxs` names, which
+    /// is `0` when it names none.
+    std::size_t level_of_used_rows(const IndexSet& used_row_idxs) const;
+
+    /// @brief Whether the trail falsifies `clause` only at its top level, so that
+    /// taking that level off leaves the clause at dimension one.
+    /// @pre The trail falsifies `clause` and stands at the level that does.
+    bool falsified_only_at_top_level(const Clause& clause) const;
 
     /// @brief Whether `clause` is known to be satisfied by a level at or below
     /// the current one, so that no attempt on it can find anything.
@@ -304,7 +383,44 @@ private:
                level_stamp_[clause.satisfied_level] == clause.satisfied_stamp;
     }
 
-    Equation conflict_check_eqn_;
+    /// @brief The clause whose propagation made the trail conflicting, valid
+    /// only between `propagate_until_conflict()` returning true and the analysis
+    /// that consumes it.
+    ClauseId conflict_clause_id_ = 0;
+
+    /// @brief The level the conflicting `0 = 1` was implied at, which the trail
+    /// has been brought down to by the time the analysis reads it.
+    std::size_t conflict_level_ = 0;
+
+    /// @brief The clause the last decision step handed back to propagation.
+    ClauseId propagating_clause_id_ = 0;
+
+    double propagate_miss_rate_;
+    std::size_t propagate_window_;
+
+    /// @brief The attempt budget the miss rate steers, engaged for a nonzero one
+    /// and rebuilt when a solve starts.
+    std::optional<AttemptBudget> budget_;
+
+    /// @brief Whether the next run ignores the budget, set where full rank has to
+    /// be confirmed by a run to quiescence.
+    bool force_complete_sweep_ = false;
+
+    /// @brief Whether such a run has already happened on this trail, so that a
+    /// second one cannot spin.
+    bool did_complete_sweep_ = false;
+
+    /// @brief The trail rows the last propagation's derivation used.
+    IndexSet used_row_idxs_;
+
+    /// @brief `&used_row_idxs_` where the level a propagation holds at can differ
+    /// from the current one, and null where it cannot.
+    IndexSet* tracked_used_row_idxs_ = nullptr;
+
+    /// @brief The raw propagated row plus `0 = 1`, which is what a budgeted run
+    /// learns so that the trail reduces it against its own level.
+    Equation propagated_row_eqn_;
+
     Equation false_equation_; ///< A preallocated `0 = 1`.
     Equation satisfied_probe_eqn_; ///< Scratch for `shallowest_satisfying_level()`.
 

@@ -23,11 +23,15 @@ public:
 
     std::optional<ClauseId> next() override;
 
+    void set_attempt_budget(std::size_t budget) override;
+
+    bool last_stop_was_budget() const noexcept override;
+
     /// @brief Try an asserting clause next, but keep the cursor for a replacement.
     void add_asserting_clause(Clause clause, const Trail& trail,
                               const AssertingClauseInfo& info) override;
 
-    /// @brief Note that an equation was learned, restarting the cycle budget.
+    /// @brief Note that an equation was learned, restarting both budgets.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
     /// @brief Prefer the decision procedure's clause on the next call to `next()`.
@@ -41,8 +45,19 @@ protected:
     void add_clause(Clause clause) override;
 
 private:
+    /// @brief End a run, recording whether the budget rather than quiescence
+    /// ended it.
+    void stop(bool by_budget);
+
     ClauseId id_ = 0;
     std::size_t count_ = 0; ///< Clauses handed out since the last equation was learned.
+
+    /// @brief Clauses handed out since the last equation was learned or the run
+    /// began, whichever is later.
+    std::size_t budget_count_ = 0;
+    std::size_t budget_ = 0;
+    bool last_stop_was_budget_ = false;
+
     std::optional<ClauseId> pending_decision_clause_;
 };
 

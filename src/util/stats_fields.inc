@@ -71,6 +71,16 @@ XORCLE_STAT(deletion, Count, num_deleted_clauses, "deleted_clauses", "Deleted cl
 XORCLE_STAT(deletion, Count, num_demoted_clauses, "demoted_clauses", "Tier demotions")
 XORCLE_STAT(deletion, Count, num_promoted_clauses, "promoted_clauses", "Tier promotions")
 
+// --- Deferred propagation, reported only under a budget ---------------------
+
+XORCLE_STAT(propagate_budget, Count, num_deferred_runs, "deferred_runs", "Deferred propagation runs")
+XORCLE_STAT(propagate_budget, Count, num_out_of_order_learns, "out_of_order_learns", "Out-of-order learns")
+XORCLE_STAT(propagate_budget, Count, num_undone_decisions, "undone_decisions", "Decisions undone by a missed propagation")
+XORCLE_STAT(propagate_budget, Count, num_decision_propagations, "decision_propagations", "Decision-time propagations")
+XORCLE_STAT(propagate_budget, Count, num_decision_conflicts, "decision_conflicts", "Decision-time conflicts")
+XORCLE_STAT(propagate_budget, Real, mean_budget_fraction, "mean_budget_fraction", "Mean attempt budget (clause fraction)")
+XORCLE_STAT(propagate_budget, Real, final_budget_fraction, "final_budget_fraction", "Final attempt budget (clause fraction)")
+
 // --- Timing ----------------------------------------------------------------
 
 XORCLE_STAT(timing, Real, parse_time_s, "parse_time_s", "Parse time (s)")

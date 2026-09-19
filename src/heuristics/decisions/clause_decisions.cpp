@@ -13,11 +13,11 @@ namespace xorcle {
 namespace {
 
 #ifndef NDEBUG
-/// @brief Whether some combination of a clause's rows reduces to a legal
-/// decision, by echelonizing the rows after reduction by the trail span.
+/// @brief Whether the trail leaves the clause `ClauseStatus::open`, by
+/// echelonizing its rows after reduction by the trail span.
 ///
 /// This is `sample_equation_from_clause()`'s precondition, checked directly.
-bool clause_admits_a_legal_decision(const Clause& clause, const RowSpace& trail_span) {
+bool clause_is_open_by_trail(const Clause& clause, const RowSpace& trail_span) {
     RowSpace reduced_clause_space(clause.repr(), clause.num_vars());
     Equation reduced_row(clause.repr(), clause.num_vars());
     for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
@@ -25,7 +25,7 @@ bool clause_admits_a_legal_decision(const Clause& clause, const RowSpace& trail_
         trail_span.reduce(reduced_row);
         reduced_clause_space.add_row(reduced_row);
     }
-    if (reduced_clause_space.rows() == 0) {
+    if (reduced_clause_space.rows() < 2) {
         return false;
     }
     // In row-echelon form the constant column is a pivot exactly when some row
@@ -80,9 +80,9 @@ const Equation& decide_from_basis(const std::vector<Equation>& basis,
     return basis.front();
 }
 
-bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
-                               ClauseSatisfactionWorkspace& workspace,
-                               std::vector<Equation>* reduced_rows) {
+ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& clause,
+                                    ClauseSatisfactionWorkspace& workspace,
+                                    std::vector<Equation>* reduced_rows) {
     assert(workspace.num_vars_ + 1 == trail_span.cols() &&
            "the workspace was configured for a different variable count");
     assert(workspace.repr_ == trail_span.repr() &&
@@ -101,7 +101,7 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
     trail_span.reduce(workspace.scratch_false_);
     if (workspace.scratch_false_.is_eq_true()) {
         // 1 is already in the trail span, so every clause is vacuously satisfied.
-        return true;
+        return ClauseStatus::satisfied;
     }
 
     for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
@@ -116,10 +116,12 @@ bool clause_satisfied_by_trail(const RowSpace& trail_span, const Clause& clause,
         }
         if (workspace.local_basis_.partial_reduce(workspace.scratch_false_).kind ==
             ReduceResult::Kind::eq_true) {
-            return true;
+            return ClauseStatus::satisfied;
         }
     }
-    return false;
+    // What the local basis spans is the clause modulo the trail, so its rank is
+    // the clause's dimension there.
+    return workspace.local_basis_.rows() <= 1 ? ClauseStatus::propagating : ClauseStatus::open;
 }
 
 std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basis,
@@ -162,8 +164,8 @@ SampledDecision sample_equation_from_clause(const Clause& clause, const RowSpace
            "sample_equation_from_clause: clause and trail span disagree on the column count");
     assert(clause.repr() == trail_span.repr() &&
            "sample_equation_from_clause: clause and trail span use different representations");
-    assert(clause_admits_a_legal_decision(clause, trail_span) &&
-           "sample_equation_from_clause: the clause is already decided or satisfied");
+    assert(clause_is_open_by_trail(clause, trail_span) &&
+           "sample_equation_from_clause: the trail has left the clause unit, refuted or satisfied");
 
     SampledDecision sample{Equation(trail_span.repr(), trail_span.num_vars()),
                            Equation(trail_span.repr(), trail_span.num_vars())};

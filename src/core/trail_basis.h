@@ -13,7 +13,7 @@ namespace xorcle {
 /// represent `[0 = 1]`, @f$f_m, \dots, f_1@f$ respectively, instead of
 /// @f$x_1, \dots, x_n@f$, `[0 = 1]`.
 ///
-/// The reverse chronological ordering of columns with row echelon form
+/// The reverse level-major ordering of columns with row echelon form
 /// automatically performs the change of basis necessary to isolate the latest
 /// used equation, so that it can be eliminated by addition. See
 /// arXiv:2605.15002 for details.
@@ -40,6 +40,12 @@ public:
     /// @pre `rows() > 0`.
     /// @note `O(trail.level())`, called twice per resolution step.
     std::size_t asserting_level() const;
+
+    /// @brief How many dimensions these rows span at the top decision level,
+    /// i.e. their dimension modulo the levels below it.
+    /// @pre `rows() > 0`.
+    /// @note `O(cols())`.
+    std::size_t dimension_at_top_level() const;
 
     /// @brief How many decision levels above the root these rows reach into.
     ///

@@ -62,6 +62,40 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
         CHECK(drain(selector) == std::vector<ClauseId>{2, 1});
     }
 
+    SUBCASE("an attempt budget stops a run short of quiescence") {
+        selector.set_attempt_budget(2);
+        CHECK(drain(selector) == std::vector<ClauseId>{2, 0});
+        CHECK(selector.last_stop_was_budget());
+
+        // The next run gets the whole budget again, from where the cut left off.
+        selector.set_attempt_budget(2);
+        CHECK(drain(selector) == std::vector<ClauseId>{1, 2});
+        CHECK(selector.last_stop_was_budget());
+    }
+
+    SUBCASE("a learned equation refreshes the attempt budget too") {
+        selector.set_attempt_budget(2);
+        CHECK(selector.next() == std::optional<ClauseId>{2});
+        CHECK(selector.next() == std::optional<ClauseId>{0});
+        selector.update_with_propagation(make_equation_with(repr, 4, {3}), trail);
+        // The budget bounds a fruitless stretch, so the stretch that just
+        // produced an equation does not count against the next one.
+        CHECK(drain(selector) == std::vector<ClauseId>{1, 2});
+        CHECK(selector.last_stop_was_budget());
+    }
+
+    SUBCASE("a budget as long as the database leaves quiescence the reason") {
+        selector.set_attempt_budget(3);
+        CHECK(drain(selector) == std::vector<ClauseId>{2, 0, 1});
+        CHECK_FALSE(selector.last_stop_was_budget());
+    }
+
+    SUBCASE("quiescence inside the budget is not a budget stop") {
+        selector.set_attempt_budget(100);
+        CHECK(drain(selector) == std::vector<ClauseId>{2, 0, 1});
+        CHECK_FALSE(selector.last_stop_was_budget());
+    }
+
     SUBCASE("a decision clause hint moves the cursor once") {
         selector.update_with_decision_clause(ClauseId{1});
         CHECK(selector.next() == std::optional<ClauseId>{1});
@@ -114,7 +148,7 @@ TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseT
         // leading on column 2. Bucket 2 is the exact match; bucket 0 is a pivot
         // below it, so row reduction could lift such a row up to column 2. Bucket 1
         // is below but is not a pivot, so clause 1 stays asleep.
-        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0});
+        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level());
         selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
 
         const std::vector<ClauseId> woken = drain(selector);
@@ -130,7 +164,7 @@ TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseT
         // The unit clause is already queued. Learning an equation leading on
         // column 2 pushes bucket 2 to the top and bucket 0 -- a pivot below --
         // to the bottom, so the queued unit clause ends up between them.
-        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0});
+        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level());
         selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
 
         CHECK(drain(selector) == std::vector<ClauseId>{1, 2, 0});

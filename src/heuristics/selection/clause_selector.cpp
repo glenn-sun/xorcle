@@ -134,6 +134,10 @@ ClauseTier ClauseSelector::tier_for_lbd(std::size_t lbd) const {
     return lbd <= tier_config_.secondary_lbd ? ClauseTier::secondary : ClauseTier::local;
 }
 
+void ClauseSelector::set_attempt_budget(std::size_t) {}
+
+bool ClauseSelector::last_stop_was_budget() const noexcept { return false; }
+
 std::optional<ClauseSelection> ClauseSelector::next_with_hint() {
     const std::optional<ClauseId> id = next();
     if (!id.has_value()) {

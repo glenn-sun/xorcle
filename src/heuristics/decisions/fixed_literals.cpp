@@ -21,8 +21,8 @@ void FixedLiterals::reinitialize() {
     }
 }
 
-std::optional<Equation> FixedLiterals::make_decision(const RowSpace& trail_span, const std::vector<Clause>&,
-                                      const std::vector<std::uint8_t>&) {
+DecisionResult FixedLiterals::make_decision(const RowSpace& trail_span, const std::vector<Clause>&,
+                                            const std::vector<std::uint8_t>&) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
     assert(trail_span.repr() == repr() &&
@@ -30,7 +30,7 @@ std::optional<Equation> FixedLiterals::make_decision(const RowSpace& trail_span,
     assert(trail_span.rows() < num_vars() && "no legal decision remains");
 
     record_decision(false);
-    return decide_from_basis(decision_basis_, trail_span);
+    return DecisionResult{decide_from_basis(decision_basis_, trail_span), std::nullopt};
 }
 
 void FixedLiterals::update_with_compaction(const CompactionTransform& transform, const RowSpace&,

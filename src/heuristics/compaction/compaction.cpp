@@ -37,7 +37,7 @@ Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row)
 }
 
 bool should_compact_before_decision(const CompactionState& state) {
-    if (state.trail.size() != 1) {
+    if (state.trail.level() != 0) {
         return false; // compaction is only sound against the root trail
     }
     if (state.trail.span().rows() < 1) {
@@ -56,7 +56,7 @@ bool should_compact_before_decision(const CompactionState& state) {
 }
 
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars) {
-    assert(trail.size() == 1 && "compaction is only sound against the root trail");
+    assert(trail.level() == 0 && "compaction is only sound against the root trail");
     // The pivot set's size and its constant column are checked one layer down, by
     // `CompactionTransform::from_dropped_columns()`.
     return CompactionTransform::from_dropped_columns(active_num_vars,
@@ -66,7 +66,7 @@ CompactionTransform build_compaction_transform(const Trail& trail, std::size_t a
 CompactionPlan build_compaction_plan(const CompactionState& state,
                                      const CompactionTransform& transform) {
     const std::size_t num_clauses = state.clauses.size();
-    assert(state.trail.size() == 1 && "compaction is only sound against the root trail");
+    assert(state.trail.level() == 0 && "compaction is only sound against the root trail");
     assert(state.clause_is_active.size() == num_clauses &&
            "clause active flags are desynchronized");
     assert(state.active_var_to_original.size() == state.active_num_vars &&
@@ -88,8 +88,9 @@ CompactionPlan build_compaction_plan(const CompactionState& state,
         const Clause& active_clause = state.clauses[clause_id];
         const bool was_active = state.clause_is_active[clause_id] != 0;
         const bool becomes_inactive =
-            !was_active || clause_satisfied_by_trail(state.trail.span(), active_clause,
-                                                     satisfaction_workspace, &reduced_rows);
+            !was_active || clause_status_by_trail(state.trail.span(), active_clause,
+                                                  satisfaction_workspace,
+                                                  &reduced_rows) == ClauseStatus::satisfied;
 
         if (becomes_inactive) {
             // Kept as a placeholder so clause ids stay stable; never selected.

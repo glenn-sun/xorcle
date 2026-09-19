@@ -6,9 +6,15 @@ namespace xorcle {
 
 Cyclic::Cyclic(std::size_t) {}
 
+void Cyclic::stop(const bool by_budget) {
+    count_ = 0;
+    budget_count_ = 0;
+    last_stop_was_budget_ = by_budget;
+}
+
 std::optional<ClauseId> Cyclic::next() {
     if (clauses_.empty()) {
-        count_ = 0;
+        stop(false);
         return std::nullopt;
     }
 
@@ -22,7 +28,11 @@ std::optional<ClauseId> Cyclic::next() {
     }
 
     if (count_ >= clauses_.size()) {
-        count_ = 0;
+        stop(false);
+        return std::nullopt;
+    }
+    if (budget_ != 0 && budget_count_ >= budget_) {
+        stop(true);
         return std::nullopt;
     }
 
@@ -30,18 +40,32 @@ std::optional<ClauseId> Cyclic::next() {
         const ClauseId current = id_;
         id_ = (id_ + 1) % clauses_.size();
         ++count_;
+        ++budget_count_;
         if (is_clause_active(current)) {
             return current;
         }
         if (count_ >= clauses_.size()) {
-            count_ = 0;
+            stop(false);
+            return std::nullopt;
+        }
+        if (budget_ != 0 && budget_count_ >= budget_) {
+            stop(true);
             return std::nullopt;
         }
     }
 
-    count_ = 0;
+    stop(false);
     return std::nullopt;
 }
+
+void Cyclic::set_attempt_budget(const std::size_t budget) {
+    budget_ = budget;
+    // The run this opens gets the whole budget however the last one ended: a
+    // conflict leaves the count standing, since it never asks for a next clause.
+    budget_count_ = 0;
+}
+
+bool Cyclic::last_stop_was_budget() const noexcept { return last_stop_was_budget_; }
 
 void Cyclic::add_asserting_clause(Clause clause, const Trail& trail,
                                   const AssertingClauseInfo& info) {
@@ -61,10 +85,12 @@ void Cyclic::add_clause(Clause clause) {
 }
 
 void Cyclic::update_with_new_equation(const Equation&, const Trail&) {
-    // The cursor deliberately stays where it is: only the quiescence budget is
-    // refreshed, so propagation resumes from the clause after the one that just
-    // produced an equation.
+    // The cursor deliberately stays where it is: only the budgets are refreshed,
+    // so propagation resumes from the clause after the one that just produced an
+    // equation. The attempt budget bounds a fruitless stretch, so a stretch that
+    // produced something starts it over.
     count_ = 0;
+    budget_count_ = 0;
 }
 
 void Cyclic::update_with_decision_clause(std::optional<ClauseId> clause_id) {
@@ -78,8 +104,8 @@ void Cyclic::update_with_decision_clause(std::optional<ClauseId> clause_id) {
 void Cyclic::update_with_compaction(const CompactionTransform&, const Trail&) {
     if (clauses_.empty()) {
         id_ = 0;
-        count_ = 0;
         pending_decision_clause_.reset();
+        stop(false);
         return;
     }
 
@@ -99,7 +125,7 @@ void Cyclic::update_with_compaction(const CompactionTransform&, const Trail&) {
                                                 !is_clause_active(*pending_decision_clause_))) {
         pending_decision_clause_.reset();
     }
-    count_ = 0;
+    stop(false);
 }
 
 } // namespace xorcle

@@ -100,11 +100,13 @@ struct AssertingClause {
 ///
 /// @pre `trail.level() > 0`.
 /// @pre The trail is conflicting: `0 = 1` is in the span, its equations are
-/// reduced, and the one that made it conflicting is the most recent learned.
+/// reduced, and `conflict_clause_id` propagated the one that made it so, which
+/// is the last in trail order.
 /// @pre Every non-decision trail row carries a reason id in `clauses`.
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
-                                      DecisionProcedure& decisions, Rng& representative_rng,
-                                      bool minimize = true, bool measure_reason_lbds = false,
+                                      ClauseId conflict_clause_id, DecisionProcedure& decisions,
+                                      Rng& representative_rng, bool minimize = true,
+                                      bool measure_reason_lbds = false,
                                       bool report_responsible_trail_idxs = false,
                                       bool collect_subsumed = false);
 
@@ -114,10 +116,12 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 /// point to stop at: it runs until nothing is left to resolve, which is the
 /// empty clause. Root propagations the conflict does not use are left out.
 ///
-/// @pre `trail.level() == 0` and the trail is conflicting.
+/// @pre `trail.level() == 0`, the trail is conflicting, and
+/// `conflict_clause_id` propagated the row that made it so.
 /// @pre Every trail row carries a reason id in `clauses`, which the root does.
 std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
                                                  const std::vector<Clause>& clauses,
+                                                 ClauseId conflict_clause_id,
                                                  Rng& representative_rng);
 
 /// @brief The reason clause a resolution step used.

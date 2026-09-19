@@ -509,8 +509,9 @@ inline std::string format_option_value(OptionKind::Name, std::string_view value)
 ///
 /// This is what makes a statistics row a reproduction recipe, so it is taken
 /// from the resolved `Options`: a `--decisions=` preset has already become the
-/// CSIDS triple it stands for, and a selector that deletion cannot run under
-/// has already been refused rather than resolved.
+/// CSIDS triple it stands for, a miss rate no selector would read has already
+/// become 0, and a selector that deletion cannot run under has already been
+/// refused rather than resolved.
 inline std::vector<ConfigEntry> option_settings(const Options& options) {
     std::vector<ConfigEntry> settings;
 
@@ -641,6 +642,11 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
         options.csids_initial = preset->config.initial_activity;
         options.csids_decay = preset->config.decay;
         options.csids_bump = preset->config.bump;
+    }
+    // Only the cyclic selector runs an attempt budget, so under any other one
+    // the miss rate resolves to complete propagation unless it was given.
+    if (!seen.propagate_miss_rate && options.selection != ClauseSelectorName::cyclic) {
+        options.propagate_miss_rate = 0.0;
     }
 
     validate_options(options, seen);

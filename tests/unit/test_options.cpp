@@ -512,7 +512,30 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
           doctest::Approx(1.2));
     CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false",
                             "--subsume=false", "--wait-for-queue=4"}).wait_for_queue == 4);
+    CHECK(refusal({"--selection=leading_term_watchlist", "--deletion=false", "--subsume=false",
+                   "--propagate-miss-rate=1"})
+              .starts_with("--propagate-miss-rate requires --selection=cyclic"));
+    CHECK(parse_with_input({"--propagate-miss-rate=0.5"}).propagate_miss_rate ==
+          doctest::Approx(0.5));
+    CHECK(refusal({"--propagate-miss-rate=0", "--propagate-window=500"})
+              .starts_with("--propagate-window requires a nonzero --propagate-miss-rate"));
+    CHECK(parse_with_input({"--propagate-miss-rate=0.02", "--propagate-window=500"})
+              .propagate_window == 500);
     CHECK(parse_with_input({"--report=all"}).report == "all");
+}
+
+TEST_CASE("options: the default miss rate follows the selector") {
+    const auto watchlist = std::vector<std::string>{"--selection=leading_term_watchlist",
+                                                    "--deletion=false", "--subsume=false"};
+    CHECK(parse_with_input({}).propagate_miss_rate == doctest::Approx(0.04));
+    CHECK(parse_with_input(watchlist).propagate_miss_rate == 0.0);
+
+    std::vector<std::string> asked = watchlist;
+    asked.emplace_back("--propagate-miss-rate=0.04");
+    CHECK(rejection_message<CliError>(std::move(asked))
+              .starts_with("--propagate-miss-rate requires --selection=cyclic"));
+
+    CHECK(parse_with_input({"--propagate-miss-rate=0"}).propagate_miss_rate == 0.0);
 }
 
 } // namespace xorcle

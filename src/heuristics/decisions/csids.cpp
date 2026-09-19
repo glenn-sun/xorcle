@@ -63,8 +63,9 @@ void Csids::reinitialize() {
     state_.reset_activity();
 }
 
-std::optional<Equation> Csids::make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
-                              const std::vector<std::uint8_t>& clause_active) {
+DecisionResult Csids::make_decision(const RowSpace& trail_span,
+                                    const std::vector<Clause>& clauses,
+                                    const std::vector<std::uint8_t>& clause_active) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
     assert(trail_span.repr() == repr() &&
@@ -82,9 +83,16 @@ std::optional<Equation> Csids::make_decision(const RowSpace& trail_span, const s
             continue;
         }
         const Clause& clause = clauses[id];
-        if (clause_satisfied_by_trail(trail_span, clause, clause_sat_workspace_)) {
+        const ClauseStatus status =
+            clause_status_by_trail(trail_span, clause, clause_sat_workspace_);
+        if (status == ClauseStatus::satisfied) {
             state_.activity.activity_heap.extract_max();
             continue;
+        }
+        if (status == ClauseStatus::propagating) {
+            // Still a candidate, so it stays in the heap, and it names no
+            // decision, so the last-decision record stands.
+            return DecisionResult{std::nullopt, id};
         }
         state_.last_decision_clause = id;
 
@@ -93,11 +101,11 @@ std::optional<Equation> Csids::make_decision(const RowSpace& trail_span, const s
 
         record_decision(false);
         apply_decision_phase(sample.reduced);
-        return std::move(sample.reduced);
+        return DecisionResult{std::move(sample.reduced), std::nullopt};
     }
 
     state_.last_decision_clause.reset();
-    return std::nullopt;
+    return DecisionResult{};
 }
 
 void Csids::update_with_asserting_clause(const Clause&) {
@@ -109,6 +117,10 @@ void Csids::update_with_asserting_clause(const Clause&) {
     } else {
         state_.activity.inc_amt *= (1.0 / state_.activity.decay);
     }
+    state_.activity.activity_heap.rebuild();
+}
+
+void Csids::update_with_undone_decision() {
     state_.activity.activity_heap.rebuild();
 }
 
@@ -165,7 +177,8 @@ std::size_t Csids::reusable_levels(
     while (!state_.activity.activity_heap.empty()) {
         const ClauseId id = state_.activity.activity_heap.peek_max();
         if (id < clauses.size() && clause_active[id] != 0 &&
-            !clause_satisfied_by_trail(trail_span, clauses[id], clause_sat_workspace_)) {
+            clause_status_by_trail(trail_span, clauses[id], clause_sat_workspace_) !=
+                ClauseStatus::satisfied) {
             next = id;
             break;
         }

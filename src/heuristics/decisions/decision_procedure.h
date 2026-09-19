@@ -24,6 +24,18 @@ enum class DecisionProcedureName {
     csids
 };
 
+/// @brief What choosing a decision found.
+///
+/// Exactly one member is engaged, or neither once nothing is left to decide
+/// from.
+struct DecisionResult {
+    std::optional<Equation> equation;
+
+    /// @brief A clause the trail has left at dimension one or zero, which
+    /// propagates an equation or `0 = 1` rather than offering a decision.
+    std::optional<ClauseId> propagating_clause;
+};
+
 /// @brief Picks the equation the solver decides on next.
 ///
 /// A decision `f` is legal when neither `f` nor `f + [0 = 1]` lies in the trail span.
@@ -53,12 +65,12 @@ public:
     /// @pre `trail_span.cols() == num_vars() + 1` and `trail_span.repr() == repr()`.
     /// @pre At least one legal decision remains, i.e. `trail_span.rows() < num_vars()`.
     /// @pre `clause_active.size() == clauses.size()`.
-    /// @return Empty when no clause offers a decision, which for CSIDS means
-    /// every active clause is already satisfied. The procedures that decide a
-    /// variable rather than a clause always return one.
-    virtual std::optional<Equation> make_decision(const RowSpace& trail_span,
-                                   const std::vector<Clause>& clauses,
-                                   const std::vector<std::uint8_t>& clause_active) = 0;
+    /// @return Both members empty when no clause offers a decision, which for
+    /// CSIDS means every active clause is already satisfied. The procedures that
+    /// decide a variable rather than a clause always return an equation.
+    virtual DecisionResult make_decision(const RowSpace& trail_span,
+                                         const std::vector<Clause>& clauses,
+                                         const std::vector<std::uint8_t>& clause_active) = 0;
 
     /// @brief Note an equation resolved through during conflict analysis.
     /// @pre `eqn` has `num_vars() + 1` bits and a variable leading bit.
@@ -79,6 +91,10 @@ public:
     /// be deleted: the replacement inherits the larger of the two activities.
     /// @pre Both ids are already registered.
     virtual void update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id);
+
+    /// @brief Note a decision taken off the trail with nothing learned, which
+    /// leaves the candidates it had ruled out to be offered again.
+    virtual void update_with_undone_decision();
 
     /// @brief The clause the last decision came from, for the selector to prioritize.
     virtual std::optional<ClauseId> decision_clause_hint() const;

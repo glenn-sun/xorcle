@@ -15,21 +15,20 @@ namespace xorcle {
 namespace {
 
 /// @brief The trail-order sequence of set columns, resolved through `trail_idx_to_row_idx()`.
-std::vector<std::vector<std::size_t>> rows_in_trail_order(const TrailSnapshot& snapshot) {
+std::vector<std::vector<std::size_t>> rows_in_trail_order(const Trail& trail) {
     std::vector<std::vector<std::size_t>> out;
-    for (const std::size_t row_idx : snapshot.trail_idx_to_row_idx()) {
-        out.push_back(bits_of(snapshot.span().row(row_idx)));
+    for (const std::size_t row_idx : trail.trail_idx_to_row_idx()) {
+        out.push_back(bits_of(trail.span().row(row_idx)));
     }
     return out;
 }
 
 } // namespace
 
-TEST_CASE_TEMPLATE("trail: root snapshot", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("trail: an empty trail", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const Trail trail(repr, 4);
 
-    CHECK(trail.size() == 1);
     CHECK(trail.level() == 0);
     CHECK(trail.repr() == repr);
     CHECK(trail.num_vars() == 4);
@@ -44,44 +43,41 @@ TEST_CASE_TEMPLATE("trail: propagations stay on the current level", Tag, DenseTa
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
 
-    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{7});
-    CHECK(trail.size() == 1);
+    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{7}, trail.level());
     CHECK(trail.level() == 0);
     CHECK(trail.span().rows() == 1);
     REQUIRE(trail.reasons().size() == 1);
     CHECK(trail.reasons()[0] == std::optional<ClauseId>{7});
 
-    trail.learn(make_equation_with(repr, 4, {1}), ClauseId{2});
-    CHECK(trail.size() == 1);
+    trail.learn(make_equation_with(repr, 4, {1}), ClauseId{2}, trail.level());
+    CHECK(trail.level() == 0);
     CHECK(trail.span().rows() == 2);
     CHECK(trail.reasons()[1] == std::optional<ClauseId>{2});
 }
 
-TEST_CASE_TEMPLATE("trail: decisions push an independent snapshot", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("trail: decisions open a level", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
 
-    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{7});
-    trail.learn(make_equation_with(repr, 4, {1}), std::nullopt);
+    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{7}, trail.level());
+    trail.learn(make_equation_with(repr, 4, {1}), std::nullopt, trail.level() + 1);
 
-    CHECK(trail.size() == 2);
     CHECK(trail.level() == 1);
     CHECK(trail.span().rows() == 2);
     CHECK(trail.reasons()[1] == std::nullopt);
 
-    // The earlier level keeps its own matrix. Computing the asserting level
-    // reads `trail[k].span().rows()` per level, so this must not be shared.
-    CHECK(trail[0].span().rows() == 1);
-    CHECK(trail[1].span().rows() == 2);
-    CHECK(trail[0].reasons().size() == 1);
+    // Computing the asserting level reads `rows_at_level(k)` per level.
+    CHECK(trail.rows_at_level(0) == 1);
+    CHECK(trail.rows_at_level(1) == 2);
+    CHECK(trail.level_of(0) == 0);
 
-    // A non-root snapshot begins, in trail order, with that level's decision.
-    CHECK(rows_in_trail_order(trail[1])[1] == std::vector<std::size_t>{1});
+    // A level begins, in trail order, with its decision.
+    CHECK(rows_in_trail_order(trail)[1] == std::vector<std::size_t>{1});
 
-    trail.learn(make_equation_with(repr, 4, {2}), ClauseId{5});
-    CHECK(trail.size() == 2);
-    CHECK(trail[0].span().rows() == 1);
-    CHECK(trail[1].span().rows() == 3);
+    trail.learn(make_equation_with(repr, 4, {2}), ClauseId{5}, trail.level());
+    CHECK(trail.level() == 1);
+    CHECK(trail.rows_at_level(0) == 1);
+    CHECK(trail.rows_at_level(1) == 3);
 }
 
 TEST_CASE_TEMPLATE("trail: order maps are inverse permutations", Tag, DenseTag, SparseTag) {
@@ -90,22 +86,22 @@ TEST_CASE_TEMPLATE("trail: order maps are inverse permutations", Tag, DenseTag, 
 
     // Learned leading columns 2, 0, 3 in that order, so row-echelon order and
     // trail order genuinely disagree and the insertion shift is exercised.
-    trail.learn(make_equation_with(repr, 4, {2}), ClauseId{0});
+    trail.learn(make_equation_with(repr, 4, {2}), ClauseId{0}, trail.level());
     CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0});
     CHECK(trail.row_idx_to_trail_idx() == std::vector<std::size_t>{0});
 
-    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{1});
+    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{1}, trail.level());
     CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{1, 0});
     CHECK(trail.row_idx_to_trail_idx() == std::vector<std::size_t>{1, 0});
 
-    trail.learn(make_equation_with(repr, 4, {3, 4}), ClauseId{2});
+    trail.learn(make_equation_with(repr, 4, {3, 4}), ClauseId{2}, trail.level());
     CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{1, 0, 2});
     CHECK(trail.row_idx_to_trail_idx() == std::vector<std::size_t>{1, 0, 2});
 
     // Every trail step resolves to the row it created, up to reduction by the
     // rows already present.
     const std::vector<std::vector<std::size_t>> expected{{2}, {0, 4}, {3, 4}};
-    CHECK(rows_in_trail_order(trail.back()) == expected);
+    CHECK(rows_in_trail_order(trail) == expected);
 
     for (std::size_t t = 0; t < trail.trail_idx_to_row_idx().size(); ++t) {
         CHECK(trail.row_idx_to_trail_idx()[trail.trail_idx_to_row_idx()[t]] == t);
@@ -120,7 +116,7 @@ TEST_CASE_TEMPLATE("trail: learning a partially reduced equation", Tag, DenseTag
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
 
-    trail.learn(make_equation_with(repr, 4, {0, 1}), ClauseId{0});
+    trail.learn(make_equation_with(repr, 4, {0, 1}), ClauseId{0}, trail.level());
 
     // The solver always partially reduces before learning, which is what the
     // precondition on `learn()` asks for.
@@ -128,29 +124,28 @@ TEST_CASE_TEMPLATE("trail: learning a partially reduced equation", Tag, DenseTag
     const ReduceResult reduced = trail.span().partial_reduce(candidate);
     CHECK(reduced == ReduceResult::leading(1));
     CHECK(bits_of(candidate) == std::vector<std::size_t>{1, 2});
-    trail.learn(candidate, ClauseId{1});
+    trail.learn(candidate, ClauseId{1}, trail.level());
 
     CHECK(trail.span().rows() == 2);
     CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0, 1});
     const std::vector<std::vector<std::size_t>> expected{{0, 1}, {1, 2}};
-    CHECK(rows_in_trail_order(trail.back()) == expected);
+    CHECK(rows_in_trail_order(trail) == expected);
 }
 
 TEST_CASE_TEMPLATE("trail: resize truncates trailing levels", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
 
-    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{9});
-    trail.learn(make_equation_with(repr, 4, {1}), std::nullopt);
-    trail.learn(make_equation_with(repr, 4, {2}), ClauseId{3});
-    trail.learn(make_equation_with(repr, 4, {3}), std::nullopt);
-    REQUIRE(trail.size() == 3);
+    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{9}, trail.level());
+    trail.learn(make_equation_with(repr, 4, {1}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, 4, {2}), ClauseId{3}, trail.level());
+    trail.learn(make_equation_with(repr, 4, {3}), std::nullopt, trail.level() + 1);
+    REQUIRE(trail.level() == 2);
     REQUIRE(trail.span().rows() == 4);
 
     SUBCASE("backjump to an intermediate level") {
         const std::size_t asserting_level = 1;
         trail.resize(asserting_level + 1);
-        CHECK(trail.size() == 2);
         CHECK(trail.level() == 1);
         CHECK(trail.span().rows() == 3);
         CHECK(trail.reasons().size() == 3);
@@ -158,7 +153,6 @@ TEST_CASE_TEMPLATE("trail: resize truncates trailing levels", Tag, DenseTag, Spa
 
     SUBCASE("restart back to the root") {
         trail.resize(1);
-        CHECK(trail.size() == 1);
         CHECK(trail.level() == 0);
         CHECK(trail.span().rows() == 1);
         const std::vector<std::optional<ClauseId>> expected_reasons{std::optional<ClauseId>{9}};
@@ -166,9 +160,9 @@ TEST_CASE_TEMPLATE("trail: resize truncates trailing levels", Tag, DenseTag, Spa
         CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0});
     }
 
-    SUBCASE("truncating to the current size is a no-op") {
-        trail.resize(trail.size());
-        CHECK(trail.size() == 3);
+    SUBCASE("truncating to the current level is a no-op") {
+        trail.resize(trail.level() + 1);
+        CHECK(trail.level() == 2);
         CHECK(trail.span().rows() == 4);
     }
 }
@@ -178,18 +172,50 @@ TEST_CASE_TEMPLATE("trail: learning after a backjump reuses the restored level",
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
 
-    trail.learn(make_equation_with(repr, 4, {0}), std::nullopt);
-    trail.learn(make_equation_with(repr, 4, {1}), std::nullopt);
-    REQUIRE(trail.size() == 3);
+    trail.learn(make_equation_with(repr, 4, {0}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, 4, {1}), std::nullopt, trail.level() + 1);
+    REQUIRE(trail.level() == 2);
 
     trail.resize(1);
-    trail.learn(make_equation_with(repr, 4, {2, 4}), ClauseId{4});
+    trail.learn(make_equation_with(repr, 4, {2, 4}), ClauseId{4}, trail.level());
 
-    CHECK(trail.size() == 1);
+    CHECK(trail.level() == 0);
     CHECK(trail.span().rows() == 1);
     CHECK(bits_of(trail.span().row(0)) == std::vector<std::size_t>{2, 4});
     const std::vector<std::optional<ClauseId>> expected_reasons{std::optional<ClauseId>{4}};
     CHECK(trail.reasons() == expected_reasons);
+}
+
+TEST_CASE_TEMPLATE("trail: learning below the current level", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Trail trail(repr, 6);
+
+    trail.learn(make_equation_with(repr, 6, {1}), std::nullopt, 1);
+    trail.learn(make_equation_with(repr, 6, {2, 3}), std::nullopt, 2);
+
+    // Reduced against the level-2 row this would become `x3 + x4 = 0`, which no
+    // level-1 equation implies.
+    trail.learn(make_equation_with(repr, 6, {2, 4}), ClauseId{0}, 1);
+
+    REQUIRE(trail.level() == 2);
+    REQUIRE(trail.span().rows() == 3);
+    CHECK(trail.rows_at_level(1) == 2);
+    CHECK(trail.level_of(0) == 1);
+    CHECK(trail.level_of(1) == 1);
+    CHECK(trail.level_of(2) == 2);
+    CHECK(trail.reasons()[1] == std::optional<ClauseId>{0});
+
+    // The span is unchanged as a subspace, and the level-2 element is the one
+    // whose representative moved.
+    const std::vector<std::vector<std::size_t>> expected{{1}, {2, 4}, {3, 4}};
+    CHECK(rows_in_trail_order(trail) == expected);
+
+    // Every level-1 row lies in the span of the level-1 equations, which is what
+    // makes the trail-basis columns a reverse-topological order.
+    trail.resize(2);
+    CHECK(trail.level() == 1);
+    CHECK(trail.span().rows() == 2);
+    CHECK(rows_in_trail_order(trail) == std::vector<std::vector<std::size_t>>{{1}, {2, 4}});
 }
 
 } // namespace xorcle

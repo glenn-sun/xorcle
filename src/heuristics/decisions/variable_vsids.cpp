@@ -113,8 +113,8 @@ void VariableVsids::refill_decision_heap() {
     }
 }
 
-std::optional<Equation> VariableVsids::make_decision(const RowSpace& trail_span, const std::vector<Clause>&,
-                                      const std::vector<std::uint8_t>&) {
+DecisionResult VariableVsids::make_decision(const RowSpace& trail_span, const std::vector<Clause>&,
+                                            const std::vector<std::uint8_t>&) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
     assert(trail_span.repr() == repr() &&
@@ -130,7 +130,7 @@ std::optional<Equation> VariableVsids::make_decision(const RowSpace& trail_span,
         }
         if (trail_span.partial_reduce(*candidate).is_leading()) {
             record_decision(false);
-            return std::move(*candidate);
+            return DecisionResult{std::move(*candidate), std::nullopt};
         }
     }
 }
@@ -150,6 +150,10 @@ void VariableVsids::update_with_asserting_clause(const Clause& clause) {
         vsids_params_.bump_activity(unit_eqns_[leading.bit]);
     }
     vsids_params_.inc_amt *= (1.0 / vsids_params_.decay);
+    vsids_params_.activity_heap.rebuild();
+}
+
+void VariableVsids::update_with_undone_decision() {
     vsids_params_.activity_heap.rebuild();
 }
 

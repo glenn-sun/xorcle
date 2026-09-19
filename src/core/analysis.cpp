@@ -112,18 +112,17 @@ ResolvedReason resolve_asserting_basis(
 
 std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
                                                  const std::vector<Clause>& clauses,
+                                                 ClauseId conflict_clause_id,
                                                  Rng& representative_rng) {
     assert(trail.level() == 0 && "the root conflict chain is only defined at the root");
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail_is_conflicting(trail) && "the root conflict trail does not contain 1");
+    assert(conflict_clause_id < clauses.size() && "conflicting reason id is out of range");
+    assert(trail.reasons().back() == std::optional<ClauseId>{conflict_clause_id} &&
+           "the conflicting clause did not propagate the last trail row");
 
-    // `reasons()` is in trail order, so its last entry closed the conflict.
-    const std::optional<ClauseId> conflict_clause_id = trail.reasons().back();
-    assert(conflict_clause_id.has_value() && "the conflicting trail row has no reason");
-    assert(*conflict_clause_id < clauses.size() && "conflicting reason id is out of range");
-
-    std::vector<ClauseId> reason_ids{*conflict_clause_id};
-    TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(clauses[*conflict_clause_id], trail);
+    std::vector<ClauseId> reason_ids{conflict_clause_id};
+    TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(clauses[conflict_clause_id], trail);
     const Equation trail_basis_one = make_trail_basis_one(trail);
 
     // At the root every row has a reason, so the walk resolves the basis away.
@@ -143,22 +142,21 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
 }
 
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
-                                      DecisionProcedure& decisions, Rng& representative_rng,
-                                      bool minimize, bool measure_reason_lbds,
+                                      ClauseId conflict_clause_id, DecisionProcedure& decisions,
+                                      Rng& representative_rng, bool minimize,
+                                      bool measure_reason_lbds,
                                       bool report_responsible_trail_idxs, bool collect_subsumed) {
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail.level() > 0 && "a root conflict is UNSAT and is not analysed");
     assert(trail_is_conflicting(trail) && "conflict analysis on a trail that does not contain 1");
+    assert(conflict_clause_id < clauses.size() && "conflicting reason id is out of range");
+    assert(trail.reasons().back() == std::optional<ClauseId>{conflict_clause_id} &&
+           "the conflicting clause did not propagate the last trail row");
 
-    // `reasons()` is in trail order, so its last entry closed the conflict.
-    const std::optional<ClauseId> conflict_clause_id = trail.reasons()[trail.span().rows() - 1];
-    assert(conflict_clause_id.has_value() && "the conflicting trail row has no reason");
-    assert(*conflict_clause_id < clauses.size() && "conflicting reason id is out of range");
+    std::vector<ClauseId> reason_ids{conflict_clause_id};
 
-    std::vector<ClauseId> reason_ids{*conflict_clause_id};
-
-    TrailBasisSpace asserting_basis = TrailBasisSpace::from_RowSpace(
-        clauses[*conflict_clause_id], trail);
+    TrailBasisSpace asserting_basis =
+        TrailBasisSpace::from_RowSpace(clauses[conflict_clause_id], trail);
     const std::size_t conflict_clause_width = asserting_basis.rows();
 
     std::vector<std::size_t> reason_lbds;
@@ -194,7 +192,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     const auto maybe_record_subsumed_conflicting = [&]() {
         if (conflicting_clause_check_open && asserting_basis.rows() + 1 == conflict_clause_width) {
             const std::size_t conflict_trail_idx = trail.span().rows() - 1;
-            record_replacement(asserting_basis, *conflict_clause_id, conflict_trail_idx,
+            record_replacement(asserting_basis, conflict_clause_id, conflict_trail_idx,
                                reason_ids.size(), to_clause(asserting_basis), true);
         }
         conflicting_clause_check_open = false;
@@ -235,6 +233,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 
     // The 1-UIP walk: resolve on the latest trail element the clause still uses
     // until it asserts. The pivot always leads row 0 here, so no row is free.
+    // The trail is at the conflict's own level, so this reads against that.
     std::size_t resolution_steps = 0;
     while (asserting_basis.asserting_level() == trail.level()) {
         const std::optional<std::size_t> pivot_col_idx = asserting_basis.row(0).leading_bit();
@@ -245,7 +244,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         if (resolution_steps == 1) {
             // The other operand of the first resolution, resolved like any reason.
             // A conflicting clause that already asserts is resolved with nothing.
-            decisions.update_with_resolved_clause(*conflict_clause_id);
+            decisions.update_with_resolved_clause(conflict_clause_id);
         }
         const ResolvedReason reason =
             resolve_asserting_basis(asserting_basis, 0, *pivot_col_idx, trail, clauses,

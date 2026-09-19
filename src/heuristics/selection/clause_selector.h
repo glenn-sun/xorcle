@@ -115,8 +115,20 @@ public:
     /// @brief The tier a learned clause of this LBD enters.
     ClauseTier tier_for_lbd(std::size_t lbd) const;
 
-    /// @brief The next clause to try, or `std::nullopt` once propagation is quiescent.
+    /// @brief The next clause to try, or `std::nullopt` once propagation is
+    /// quiescent or the attempt budget is spent.
     virtual std::optional<ClauseId> next() = 0;
+
+    /// @brief Open a propagation run, capping the attempts it may make; `0` is
+    /// uncapped.
+    ///
+    /// The default ignores the cap, so a selector that does not implement one
+    /// always runs to quiescence.
+    virtual void set_attempt_budget(std::size_t budget);
+
+    /// @brief Whether the last `std::nullopt` from `next()` was the budget rather
+    /// than quiescence.
+    virtual bool last_stop_was_budget() const noexcept;
 
     /// @brief `next()`, plus why the clause stopped being a legal watch pair.
     ///

@@ -17,6 +17,7 @@ add_executable(xorcle_tests
     unit/main.cpp
     unit/reference_matrix.cpp
     unit/test_analysis.cpp
+    unit/test_attempt_budget.cpp
     unit/test_clause_decisions.cpp
     unit/test_clause_selector.cpp
     unit/test_compaction.cpp
@@ -79,3 +80,10 @@ add_test(NAME proof_roundtrip_compact_often
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --compact-cadence=1)
 set_tests_properties(proof_roundtrip_compact_often PROPERTIES SKIP_RETURN_CODE 77)
+
+# The default miss rate leaves propagation short of a fixed point, so this is
+# the variant that covers the derivations a complete propagation writes.
+add_test(NAME proof_roundtrip_complete_propagation
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --propagate-miss-rate=0)
+set_tests_properties(proof_roundtrip_complete_propagation PROPERTIES SKIP_RETURN_CODE 77)

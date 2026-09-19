@@ -25,14 +25,14 @@ namespace {
 std::size_t removable_levels_reference(const TrailBasisSpace& basis, const Trail& trail) {
     REQUIRE(basis.rows() > 0);
     if (basis.rows() == 1) {
-        return trail.size() - 1;
+        return trail.level();
     }
 
     const std::vector<std::size_t> second_row = bits_of(basis.row(1));
     std::size_t removable_levels = 1;
-    while (removable_levels < trail.size()) {
+    while (removable_levels <= trail.level()) {
         const std::size_t earlier_trail_rows =
-            trail[trail.size() - 1 - removable_levels].span().rows();
+            trail.rows_at_level(trail.level() - removable_levels);
         const std::size_t columns_after_level = trail.span().rows() - earlier_trail_rows;
 
         bool second_row_suffix_any = false;
@@ -111,7 +111,7 @@ std::size_t literal_block_distance_reference(const TrailBasisSpace& basis, const
         return static_cast<std::size_t>(std::countr_zero(members));
     };
 
-    std::vector<bool> level_seen(trail.size(), false);
+    std::vector<bool> level_seen(trail.level() + 1, false);
     std::size_t blocks = 0;
     std::size_t previous_dimension = 0;
     for (std::size_t prefix = 1; prefix <= cols; ++prefix) {
@@ -139,17 +139,20 @@ std::size_t literal_block_distance_reference(const TrailBasisSpace& basis, const
 /// | level | 0 | 1 | 1 | 2 | 2 | 3 | 3 | 3 |
 /// | trail-basis column | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
 ///
-/// So `trail[k].span().rows()` is 1, 3, 5, 8 for k = 0, 1, 2, 3.
+/// So `trail.rows_at_level(k)` is 1, 3, 5, 8 for k = 0, 1, 2, 3.
 Trail make_levelled_trail(EquationRepr repr) {
     Trail trail(repr, 8);
-    trail.learn(make_equation_with(repr, 8, {0, 8}), ClauseId{0}); // step 0, level 0
-    trail.learn(make_equation_with(repr, 8, {1}), std::nullopt); // step 1, level 1
-    trail.learn(make_equation_with(repr, 8, {2, 8}), ClauseId{1}); // step 2, level 1
-    trail.learn(make_equation_with(repr, 8, {3}), std::nullopt); // step 3, level 2
-    trail.learn(make_equation_with(repr, 8, {4, 8}), ClauseId{2}); // step 4, level 2
-    trail.learn(make_equation_with(repr, 8, {5}), std::nullopt); // step 5, level 3
-    trail.learn(make_equation_with(repr, 8, {6, 8}), ClauseId{3}); // step 6, level 3
-    trail.learn(make_equation_with(repr, 8, {7}), ClauseId{4}); // step 7, level 3
+    trail.learn(make_equation_with(repr, 8, {0, 8}), ClauseId{0}, trail.level()); // step 0, level 0
+    // step 1, level 1
+    trail.learn(make_equation_with(repr, 8, {1}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, 8, {2, 8}), ClauseId{1}, trail.level()); // step 2, level 1
+    // step 3, level 2
+    trail.learn(make_equation_with(repr, 8, {3}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, 8, {4, 8}), ClauseId{2}, trail.level()); // step 4, level 2
+    // step 5, level 3
+    trail.learn(make_equation_with(repr, 8, {5}), std::nullopt, trail.level() + 1);
+    trail.learn(make_equation_with(repr, 8, {6, 8}), ClauseId{3}, trail.level()); // step 6, level 3
+    trail.learn(make_equation_with(repr, 8, {7}), ClauseId{4}, trail.level()); // step 7, level 3
     return trail;
 }
 
@@ -216,7 +219,8 @@ RandomTrail make_random_trail(EquationRepr repr, TestRandom& rng, std::size_t nu
         eqn.assign_bits(std::span<const std::size_t>(col_idxs));
 
         const bool decide = rng.chance(2);
-        trail.learn(eqn, decide ? std::optional<ClauseId>{} : std::optional<ClauseId>{step});
+        trail.learn(eqn, decide ? std::optional<ClauseId>{} : std::optional<ClauseId>{step},
+                    decide ? trail.level() + 1 : trail.level());
         level_of_trail_step.push_back(trail.level());
     }
     return RandomTrail{std::move(trail), std::move(level_of_trail_step)};
@@ -260,9 +264,9 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace maps trail step t to column m-1-t
 
     // Learned leading columns 2, 0, 3, so row-echelon order and trail order
     // disagree.
-    trail.learn(make_equation_with(repr, 4, {2}), ClauseId{0});
-    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{1});
-    trail.learn(make_equation_with(repr, 4, {3, 4}), ClauseId{2});
+    trail.learn(make_equation_with(repr, 4, {2}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{1}, trail.level());
+    trail.learn(make_equation_with(repr, 4, {3, 4}), ClauseId{2}, trail.level());
     REQUIRE(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{1, 0, 2});
 
     const std::size_t span_rows = trail.span().rows();
@@ -380,12 +384,37 @@ TEST_CASE_TEMPLATE("trail basis: asserting level with a hand-computed answer", T
     }
 }
 
+TEST_CASE_TEMPLATE("trail basis: dimension at the top level counts the rows leading there", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Trail trail = make_levelled_trail(repr);
+    REQUIRE(trail.level() == 3);
+
+    // Columns 0, 1 and 2 are level 3's block; a row leading at column 3 or later
+    // lies in the span of the levels below and counts for nothing.
+    CHECK(make_basis(trail, {{0}}).dimension_at_top_level() == 1);
+    CHECK(make_basis(trail, {{3}}).dimension_at_top_level() == 0);
+    CHECK(make_basis(trail, {{0}, {1}}).dimension_at_top_level() == 2);
+    CHECK(make_basis(trail, {{0}, {3}}).dimension_at_top_level() == 1);
+    CHECK(make_basis(trail, {{1, 4}, {3}}).dimension_at_top_level() == 1);
+    CHECK(make_basis(trail, {{3}, {5}, {7}}).dimension_at_top_level() == 0);
+    CHECK(make_basis(trail, {{0}, {1}, {2}, {3}}).dimension_at_top_level() == 3);
+
+    // At the root the top level owns every column, so every row leads in it.
+    Trail root(repr, 4);
+    root.learn(make_equation_with(repr, 4, {0}), ClauseId{0}, root.level());
+    root.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{1}, root.level());
+    REQUIRE(root.level() == 0);
+    CHECK(make_basis(root, {{0}}).dimension_at_top_level() == 1);
+    CHECK(make_basis(root, {{0}, {1}}).dimension_at_top_level() == 2);
+}
+
 TEST_CASE_TEMPLATE("trail basis: asserting level on a single-level trail is the root", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
-    trail.learn(make_equation_with(repr, 4, {0}), ClauseId{0});
-    trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{1});
+    trail.learn(make_equation_with(repr, 4, {0}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{1}, trail.level());
     REQUIRE(trail.level() == 0);
 
     // With no decisions there is nothing to discard and nothing to keep, and

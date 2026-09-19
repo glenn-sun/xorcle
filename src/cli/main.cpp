@@ -210,8 +210,9 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                   compaction_config(options),
                   ProgressConfig{.reporter = progress_reporter.get(),
                                  .cadence = options.report_cadence},
-                  options.minimize, deletion, options.bump_responsible_clauses,
-                  options.subsume);
+                  options.minimize, deletion, options.bump_responsible_clauses, options.subsume,
+                  PropagationConfig{.miss_rate = options.propagate_miss_rate,
+                                    .window = options.propagate_window});
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
@@ -245,6 +246,16 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     stats.num_attempt_props = counters.num_attempt_props;
     stats.num_watch_updates = counters.num_watch_updates;
     stats.num_compactions = counters.num_compactions;
+    stats.num_deferred_runs = counters.num_deferred_runs;
+    stats.num_out_of_order_learns = counters.num_out_of_order_learns;
+    stats.num_undone_decisions = counters.num_undone_decisions;
+    stats.num_decision_propagations = counters.num_decision_propagations;
+    stats.num_decision_conflicts = counters.num_decision_conflicts;
+    stats.mean_budget_fraction =
+        counters.num_budgeted_runs == 0
+            ? 0.0
+            : counters.sum_budget_fraction / static_cast<double>(counters.num_budgeted_runs);
+    stats.final_budget_fraction = counters.final_budget_fraction;
 
     const DecisionProcedure::DecisionStats decisions = solver.decision_stats();
     stats.decisions = decisions.decisions;
