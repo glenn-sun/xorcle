@@ -118,9 +118,14 @@ Solver::PropagationOutcome Solver::propagate_from_clause(ClauseId id,
     Clause& clause = selector_->clause(id);
     ++counters_.num_attempt_props;
 
+    const std::size_t current_level = trail_.level();
+    // A propagation holds at the current level or below, so at the root there is
+    // nothing an attribution could find.
+    const bool attribute = tracked_used_row_idxs_ != nullptr && current_level != 0;
+
     Equation* propagated_eqn = propagator_.unit_propagate_one_clause(
         id, clause, trail_, trigger_hint, counters_.num_watch_updates, *selector_,
-        tracked_used_row_idxs_);
+        attribute ? tracked_used_row_idxs_ : nullptr);
     if (propagated_eqn == nullptr) {
         if (propagator_.last_attempt_found_satisfied()) {
             const std::size_t satisfied_level =
@@ -133,9 +138,8 @@ Solver::PropagationOutcome Solver::propagate_from_clause(ClauseId id,
 
     assert(propagated_eqn->num_bits() == active_num_vars_ + 1);
 
-    const std::size_t current_level = trail_.level();
     std::size_t level = current_level;
-    if (tracked_used_row_idxs_ != nullptr) {
+    if (attribute) {
         const std::size_t true_level = level_of_used_rows(used_row_idxs_);
         assert((budget_.has_value() || true_level == current_level) &&
                "quiescent propagation derived an equation implied at a shallower level");
@@ -171,9 +175,10 @@ Solver::PropagationOutcome Solver::propagate_from_clause(ClauseId id,
     }
 
     const Equation* learned_eqn = propagated_eqn;
-    if (budget_.has_value()) {
-        // The raw row, whose reduction `Trail::learn` redoes against the rows
-        // at `level` and below.
+    if (below_current_level) {
+        // The propagator reduced against the levels above `level` too, so the
+        // raw row goes in and `Trail::learn` reduces it against the rows at
+        // `level` and below.
         propagated_row_eqn_.assign_from(clause.row(propagator_.last_propagating_row_idx()));
         propagated_row_eqn_.plus_assign(false_equation_);
         learned_eqn = &propagated_row_eqn_;
@@ -484,9 +489,9 @@ std::vector<ClauseId> Solver::proof_ids(const std::vector<ClauseId>& clause_ids)
 
 std::size_t Solver::shallowest_satisfying_level(const Equation& row) {
     satisfied_probe_eqn_.assign_from(row);
-    const IndexSet used_row_idxs = trail_.span().reduce_get_coefficients(satisfied_probe_eqn_);
+    trail_.span().reduce_get_coefficients(satisfied_probe_eqn_, satisfied_probe_row_idxs_);
     assert(satisfied_probe_eqn_.is_eq_false() && "the row does not reduce to 0 = 1");
-    return level_of_used_rows(used_row_idxs);
+    return level_of_used_rows(satisfied_probe_row_idxs_);
 }
 
 std::size_t Solver::level_of_used_rows(const IndexSet& used_row_idxs) const {

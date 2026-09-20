@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -146,6 +147,87 @@ TEST_CASE_TEMPLATE("row echelon: reduce and partial_reduce", Tag, DenseTag, Spar
     }
 }
 
+TEST_CASE_TEMPLATE("row echelon: partial_reduce_below skips the rows the bound excludes", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    RowSpace matrix(repr, 4);
+    matrix.add_row(make_equation_with(repr, 4, {0, 2}));
+    matrix.add_row(make_equation_with(repr, 4, {1, 3}));
+    // The row pivoting column 1 comes first in the order, the one pivoting
+    // column 0 second.
+    const std::vector<std::size_t> row_idx_to_order{1, 0};
+
+    SUBCASE("a row below the bound reduces") {
+        Equation v = make_equation_with(repr, 4, {1, 2});
+        CHECK(matrix.partial_reduce_below(v, row_idx_to_order, 1) == ReduceResult::leading(2));
+        CHECK(bits_of(v) == std::vector<std::size_t>{2, 3});
+    }
+
+    SUBCASE("a row at the bound stops the reduction on its own pivot") {
+        Equation v = make_equation_with(repr, 4, {0, 3});
+        CHECK(matrix.partial_reduce_below(v, row_idx_to_order, 1) == ReduceResult::leading(0));
+        CHECK(bits_of(v) == std::vector<std::size_t>{0, 3});
+    }
+
+    SUBCASE("a bound of zero reduces by nothing") {
+        Equation v = make_equation_with(repr, 4, {0, 1});
+        CHECK(matrix.partial_reduce_below(v, row_idx_to_order, 0) == ReduceResult::leading(0));
+        CHECK(bits_of(v) == std::vector<std::size_t>{0, 1});
+    }
+
+    SUBCASE("a bound above every order behaves as partial_reduce") {
+        Equation v = make_equation_with(repr, 4, {0, 1});
+        Equation reference = make_equation_with(repr, 4, {0, 1});
+        const ReduceResult result = matrix.partial_reduce_below(v, row_idx_to_order, 2);
+        CHECK(result == matrix.partial_reduce(reference));
+        CHECK(bits_of(v) == bits_of(reference));
+    }
+
+    SUBCASE("a row in the span of the rows below the bound reduces to the true equation") {
+        Equation v = make_equation_with(repr, 4, {1, 3});
+        CHECK(matrix.partial_reduce_below(v, row_idx_to_order, 1) == ReduceResult::eq_true());
+        CHECK(v.is_eq_true());
+    }
+}
+
+TEST_CASE_TEMPLATE("row echelon: partial_reduce_below matches a matrix of the rows below the bound",
+                   Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    constexpr std::size_t num_vars = 20;
+    TestRandom random(24680);
+
+    for (int trial = 0; trial < 300; ++trial) {
+        RowSpace matrix(repr, num_vars);
+        const std::size_t basis_size = random.next(num_vars);
+        for (std::size_t i = 0; i < basis_size; ++i) {
+            matrix.add_row(to_equation(repr, random_bits(random, num_vars, 3)));
+        }
+
+        std::vector<std::size_t> row_idx_to_order(matrix.rows());
+        for (std::size_t row_idx = 0; row_idx < row_idx_to_order.size(); ++row_idx) {
+            row_idx_to_order[row_idx] = row_idx;
+        }
+        for (std::size_t i = row_idx_to_order.size(); i-- > 1;) {
+            std::swap(row_idx_to_order[i], row_idx_to_order[random.next(i + 1)]);
+        }
+        const std::size_t bound = random.next(matrix.rows() + 1);
+
+        RowSpace below(repr, num_vars);
+        for (std::size_t row_idx = 0; row_idx < matrix.rows(); ++row_idx) {
+            if (row_idx_to_order[row_idx] < bound) {
+                below.add_row(matrix.row(row_idx));
+            }
+        }
+
+        const Bits probe = random_bits(random, num_vars, 3);
+        Equation restricted = to_equation(repr, probe);
+        Equation reference = to_equation(repr, probe);
+        const ReduceResult result = matrix.partial_reduce_below(restricted, row_idx_to_order, bound);
+        CHECK(result == below.partial_reduce(reference));
+        CHECK(bits_of(restricted) == bits_of(reference));
+    }
+}
+
 TEST_CASE_TEMPLATE("row echelon: reduce records its coefficients", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     RowSpace matrix(repr, 5);
@@ -165,6 +247,37 @@ TEST_CASE_TEMPLATE("row echelon: reduce records its coefficients", Tag, DenseTag
     coefficients.for_each_set([&](std::size_t index) { rebuilt.plus_assign(matrix.row(index)); });
     CHECK(rebuilt == v);
     CHECK(coefficients.count() > 0);
+}
+
+TEST_CASE_TEMPLATE("row echelon: reduce writes its coefficients into a caller's set", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    RowSpace matrix(repr, 5);
+    matrix.add_row(make_equation_with(repr, 5, {0, 3}));
+    matrix.add_row(make_equation_with(repr, 5, {1, 4, 5}));
+    matrix.add_row(make_equation_with(repr, 5, {2, 5}));
+    REQUIRE(matrix.rows() == 3);
+
+    // A set arriving with a stale size and stale indices, as a reused one does.
+    IndexSet coefficients(7);
+    coefficients.set(0);
+    coefficients.set(6);
+
+    Equation v = make_equation_with(repr, 5, {0, 2, 4});
+    Equation by_value = v;
+    const IndexSet expected = matrix.reduce_get_coefficients(by_value);
+
+    matrix.reduce_get_coefficients(v, coefficients);
+    CHECK(coefficients.size() == matrix.rows());
+    CHECK(coefficients == expected);
+    CHECK(v == by_value);
+
+    SUBCASE("a reduction using no row leaves the set empty") {
+        Equation independent = make_equation_with(repr, 5, {3});
+        matrix.reduce_get_coefficients(independent, coefficients);
+        CHECK(coefficients.size() == matrix.rows());
+        CHECK(coefficients.none());
+    }
 }
 
 TEST_CASE_TEMPLATE("row echelon: partial_reduce_with_extra matches an augmented matrix", Tag,

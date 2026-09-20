@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <vector>
@@ -22,6 +23,62 @@ std::vector<std::vector<std::size_t>> rows_in_trail_order(const Trail& trail) {
     }
     return out;
 }
+
+/// @brief An equation with each bit set independently with probability `1 / 3`.
+Equation random_equation(TestRandom& random, EquationRepr repr, std::size_t num_vars) {
+    std::vector<std::size_t> bits;
+    for (std::size_t bit = 0; bit <= num_vars; ++bit) {
+        if (random.chance(3)) {
+            bits.push_back(bit);
+        }
+    }
+    return Equation::from_bits(repr, num_vars, bits);
+}
+
+/// @brief The rows a trail holds, kept in trail order, where a learn at
+/// `trail_idx` re-reduces every row from there on against the rows before it.
+class ReferenceTrail {
+public:
+    void learn(const Equation& eqn, std::size_t trail_idx) {
+        std::vector<Equation> above(rows_.begin() + static_cast<std::ptrdiff_t>(trail_idx),
+                                    rows_.end());
+        rows_.resize(trail_idx);
+        rows_.push_back(reduced(eqn));
+        for (const Equation& row : above) {
+            rows_.push_back(reduced(row));
+        }
+    }
+
+    std::vector<std::vector<std::size_t>> rows_in_trail_order() const {
+        std::vector<std::vector<std::size_t>> out;
+        for (const Equation& row : rows_) {
+            out.push_back(bits_of(row));
+        }
+        return out;
+    }
+
+private:
+    /// @brief `eqn` with every leading column an already stored row holds eliminated.
+    Equation reduced(const Equation& eqn) const {
+        Equation out = eqn;
+        while (true) {
+            const std::optional<std::size_t> leading_col_idx = out.leading_bit();
+            if (!leading_col_idx) {
+                return out;
+            }
+            const auto same_leading = [&](const Equation& row) {
+                return row.leading_bit() == leading_col_idx;
+            };
+            const auto it = std::find_if(rows_.begin(), rows_.end(), same_leading);
+            if (it == rows_.end()) {
+                return out;
+            }
+            out.plus_assign(*it);
+        }
+    }
+
+    std::vector<Equation> rows_;
+};
 
 } // namespace
 
@@ -216,6 +273,116 @@ TEST_CASE_TEMPLATE("trail: learning below the current level", Tag, DenseTag, Spa
     CHECK(trail.level() == 1);
     CHECK(trail.span().rows() == 2);
     CHECK(rows_in_trail_order(trail) == std::vector<std::vector<std::size_t>>{{1}, {2, 4}});
+}
+
+TEST_CASE_TEMPLATE("trail: an out-of-order learn on a free column leaves every row alone", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Trail trail(repr, 7);
+
+    trail.learn(make_equation_with(repr, 7, {0}), std::nullopt, 1);
+    trail.learn(make_equation_with(repr, 7, {1}), std::nullopt, 2);
+    trail.learn(make_equation_with(repr, 7, {3}), ClauseId{0}, 1);
+
+    const std::vector<std::vector<std::size_t>> expected{{0}, {3}, {1}};
+    CHECK(rows_in_trail_order(trail) == expected);
+    CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0, 2, 1});
+    CHECK(trail.rows_at_level(1) == 2);
+    CHECK(trail.level_of(1) == 1);
+}
+
+TEST_CASE_TEMPLATE("trail: an out-of-order learn takes the pivot of a later row", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Trail trail(repr, 7);
+
+    // Level 1 holds `x1 = 0` and level 2 decides `x2 = 0`; learning
+    // `x1 + x2 + x3 = 0` at level 1 stores `x2 + x3 = 0` there and leaves the
+    // decision holding `x3 = 0`.
+    trail.learn(make_equation_with(repr, 7, {0}), std::nullopt, 1);
+    trail.learn(make_equation_with(repr, 7, {1}), std::nullopt, 2);
+    trail.learn(make_equation_with(repr, 7, {0, 1, 2}), ClauseId{0}, 1);
+
+    const std::vector<std::vector<std::size_t>> expected{{0}, {1, 2}, {2}};
+    CHECK(rows_in_trail_order(trail) == expected);
+    CHECK(trail.level_of(1) == 1);
+    CHECK(trail.level_of(2) == 2);
+    CHECK(trail.reasons()[1] == std::optional<ClauseId>{0});
+}
+
+TEST_CASE_TEMPLATE("trail: an out-of-order learn displaces a row twice over", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Trail trail(repr, 7);
+
+    trail.learn(make_equation_with(repr, 7, {0}), std::nullopt, 1);
+    trail.learn(make_equation_with(repr, 7, {1, 2}), std::nullopt, 2);
+    trail.learn(make_equation_with(repr, 7, {2, 4}), ClauseId{1}, 2);
+
+    trail.learn(make_equation_with(repr, 7, {0, 1, 3}), ClauseId{2}, 1);
+
+    // Column 1 goes to the new row, column 2 to the row that held column 1, and
+    // the row that held column 2 ends up on the free column 3.
+    const std::vector<std::vector<std::size_t>> expected{{0}, {1, 3}, {2, 3}, {3, 4}};
+    CHECK(rows_in_trail_order(trail) == expected);
+    CHECK(trail.rows_at_level(1) == 2);
+    CHECK(trail.level_of(1) == 1);
+    CHECK(trail.level_of(2) == 2);
+}
+
+TEST_CASE_TEMPLATE("trail: a displaced row reduces by an earlier row before colliding again", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Trail trail(repr, 7);
+
+    trail.learn(make_equation_with(repr, 7, {0}), std::nullopt, 1);
+    trail.learn(make_equation_with(repr, 7, {2}), std::nullopt, 2);
+    trail.learn(make_equation_with(repr, 7, {1, 2}), ClauseId{1}, 2);
+    trail.learn(make_equation_with(repr, 7, {3, 5}), ClauseId{2}, 2);
+
+    trail.learn(make_equation_with(repr, 7, {0, 1, 3}), ClauseId{3}, 1);
+
+    // The row displaced from column 1 becomes `x3 + x4 = 0`, which the earlier
+    // decision on column 2 reduces to `x4 = 0` before it takes column 3.
+    const std::vector<std::vector<std::size_t>> expected{{0}, {1, 3}, {2}, {3}, {5}};
+    CHECK(rows_in_trail_order(trail) == expected);
+    CHECK(trail.trail_idx_to_row_idx() == std::vector<std::size_t>{0, 1, 2, 3, 4});
+    CHECK(trail.rows_at_level(1) == 2);
+}
+
+TEST_CASE_TEMPLATE("trail: learning matches reinsertion on random trails", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    constexpr std::size_t num_vars = 12;
+    TestRandom random(20260920);
+
+    std::size_t out_of_order_learns = 0;
+    for (int trial = 0; trial < 300; ++trial) {
+        Trail trail(repr, num_vars);
+        ReferenceTrail reference;
+
+        for (int step = 0; step < 16; ++step) {
+            const Equation candidate = random_equation(random, repr, num_vars);
+            Equation reduced = candidate;
+            trail.span().reduce(reduced);
+            if (reduced.is_eq_true()) {
+                continue; // `learn` takes only an equation the span does not hold
+            }
+
+            const bool decide = trail.span().rows() == 0 || random.chance(3);
+            const std::size_t level = decide ? trail.level() + 1 : random.next(trail.level() + 1);
+            const std::size_t trail_idx =
+                decide ? trail.span().rows() : trail.rows_at_level(level);
+            const std::optional<ClauseId> reason =
+                decide ? std::nullopt : std::optional<ClauseId>{ClauseId{1}};
+
+            REQUIRE(trail.learn(candidate, reason, level) == trail_idx);
+            reference.learn(candidate, trail_idx);
+            out_of_order_learns += trail_idx + 1 < trail.span().rows() ? 1 : 0;
+            REQUIRE(rows_in_trail_order(trail) == reference.rows_in_trail_order());
+        }
+    }
+    CHECK(out_of_order_learns > 1000);
 }
 
 } // namespace xorcle

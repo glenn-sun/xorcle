@@ -83,15 +83,22 @@ private:
     std::size_t learn_in_order(const Equation& eqn, std::optional<ClauseId> reason,
                                std::size_t level);
 
-    /// @brief Learn below the current level, taking the rows above it out and
-    /// putting them back so each is reduced only by rows at or below its level.
+    /// @brief Learn below the current level, rewriting only the rows along the
+    /// chain of pivot columns the new row displaces.
     std::size_t learn_out_of_order(const Equation& eqn, std::optional<ClauseId> reason,
                                    std::size_t level, std::size_t trail_idx);
 
     void rebuild_row_idx_to_trail_idx();
 
+    void rebuild_trail_idx_to_row_idx();
+
 #ifndef NDEBUG
     void debug_assert_valid() const;
+
+    /// @brief Check the rows and order maps a chain insert at `trail_idx`
+    /// produced against taking every row above it out and putting it back.
+    void debug_assert_matches_reinsertion(const Trail& before, const Equation& eqn,
+                                          std::size_t trail_idx) const;
 #endif
 
     RowSpace span_;

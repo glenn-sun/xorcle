@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -43,6 +44,10 @@ public:
 
     virtual IndexSet reduce_get_coefficients(Equation& v) const = 0;
 
+    /// @brief Reduce `v` in place and record the participating rows in
+    /// `coefficients`, resized to `rows()` and emptied first.
+    virtual void reduce_get_coefficients(Equation& v, IndexSet& coefficients) const = 0;
+
     /// @brief Reduce `v` in place only until its leading column is not a pivot,
     /// reading the last column as the constant.
     virtual ReduceResult partial_reduce(Equation& v) const = 0;
@@ -50,6 +55,12 @@ public:
     /// @brief Partially reduce `v` against this matrix augmented with `extra`,
     /// reading the last column as the constant.
     virtual ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const = 0;
+
+    /// @brief Partially reduce `v` by the rows whose `row_idx_to_order` entry is
+    /// below `bound`, reading the last column as the constant.
+    virtual ReduceResult partial_reduce_below(Equation& v,
+                                              std::span<const std::size_t> row_idx_to_order,
+                                              std::size_t bound) const = 0;
 
     /// @brief Add `eqn` into the row at `row_idx`, which must keep its pivot.
     virtual void add_to_row(std::size_t row_idx, const Equation& eqn) = 0;
@@ -157,7 +168,13 @@ public:
     }
 
     IndexSet reduce_get_coefficients(Equation& v) const override {
-        IndexSet coefficients(rows_.size());
+        IndexSet coefficients;
+        reduce_get_coefficients(v, coefficients);
+        return coefficients;
+    }
+
+    void reduce_get_coefficients(Equation& v, IndexSet& coefficients) const override {
+        coefficients.resize(rows_.size());
         V& row = gf2_vector_of<V>(v);
         for (auto col_idx = row.leading_bit(); col_idx; col_idx = row.next_bit(*col_idx)) {
             if (pivot_col_idxs_.test(*col_idx)) {
@@ -166,7 +183,6 @@ public:
                 coefficients.set(row_idx);
             }
         }
-        return coefficients;
     }
 
     ReduceResult partial_reduce(Equation& v) const override {
@@ -176,6 +192,26 @@ public:
     ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const override {
         return col_idx_to_row_.empty() ? partial_reduce_with_extra_impl<false>(v, extra)
                                   : partial_reduce_with_extra_impl<true>(v, extra);
+    }
+
+    ReduceResult partial_reduce_below(Equation& v, std::span<const std::size_t> row_idx_to_order,
+                                      std::size_t bound) const override {
+        // The order table is indexed by row, so `col_idx_to_row_` saves nothing.
+        V& row = gf2_vector_of<V>(v);
+        std::optional<std::size_t> col_idx = row.leading_bit();
+        while (true) {
+            if (!col_idx) {
+                return ReduceResult::eq_true();
+            }
+            if (!pivot_col_idxs_.test(*col_idx)) {
+                return classify_col_idx(*col_idx);
+            }
+            const std::size_t row_idx = row_idx_for_col_idx(*col_idx);
+            if (row_idx_to_order[row_idx] >= bound) {
+                return classify_col_idx(*col_idx);
+            }
+            col_idx = row.plus_assign_and_next_bit(gf2_vector_of<V>(rows_[row_idx]), *col_idx);
+        }
     }
 
     void add_to_row(std::size_t row_idx, const Equation& eqn) override {

@@ -23,6 +23,22 @@ public:
         }
     }
 
+    /// @brief Draw from `[0, size)` instead, removing every index and keeping
+    /// whatever storage is already held.
+    void resize(std::size_t size) {
+        size_ = size;
+        words_.assign(word_count(size), 0);
+    }
+
+    /// @brief Add every index of `other`.
+    /// @pre `other.size() == size()`.
+    void or_with(const IndexSet& other) noexcept {
+        assert(other.size_ == size_ && "IndexSet::or_with size mismatch");
+        for (std::size_t w = 0; w < words_.size(); ++w) {
+            words_[w] |= other.words_[w];
+        }
+    }
+
     /// @pre `i < size()`, here and in `set()` and `reset()`.
     bool test(std::size_t i) const noexcept {
         assert(i < size_ && "IndexSet::test index is out of range");

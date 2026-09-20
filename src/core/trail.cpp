@@ -23,6 +23,63 @@ std::vector<std::size_t> row_idxs_after_dropping(const std::vector<std::uint8_t>
     return after;
 }
 
+#ifndef NDEBUG
+/// @brief A span and the trail order over it.
+struct SpanInTrailOrder {
+    RowSpace span;
+    std::vector<std::size_t> trail_idx_to_row_idx;
+};
+
+/// @brief Insert `eqn` at `trail_idx` by taking every row from there on out of
+/// `span` and putting it back after the new one.
+SpanInTrailOrder reinsert_above(const RowSpace& span,
+                                const std::vector<std::size_t>& trail_idx_to_row_idx,
+                                const std::vector<std::size_t>& row_idx_to_trail_idx,
+                                const Equation& eqn, std::size_t trail_idx) {
+    const std::size_t old_rows = span.rows();
+    const std::size_t num_above = old_rows - trail_idx;
+    SpanInTrailOrder out{span, std::vector<std::size_t>(old_rows + 1, 0)};
+
+    std::vector<std::uint8_t> is_above(old_rows, 0);
+    for (std::size_t t = trail_idx; t < old_rows; ++t) {
+        is_above[trail_idx_to_row_idx[t]] = 1;
+    }
+    // Descending row index, so each pop leaves the rows still to come in place.
+    std::vector<std::size_t> pop_order(trail_idx_to_row_idx.begin() +
+                                           static_cast<std::ptrdiff_t>(trail_idx),
+                                       trail_idx_to_row_idx.end());
+    std::sort(pop_order.begin(), pop_order.end(), std::greater<>{});
+
+    std::vector<std::optional<Equation>> above(num_above);
+    for (const std::size_t row_idx : pop_order) {
+        above[row_idx_to_trail_idx[row_idx] - trail_idx] = out.span.pop_row(row_idx);
+    }
+
+    // Row indices in the new trail order, each bumped as a later insert shifts it.
+    const std::vector<std::size_t> after_popping = row_idxs_after_dropping(is_above);
+    for (std::size_t t = 0; t < trail_idx; ++t) {
+        out.trail_idx_to_row_idx[t] = after_popping[trail_idx_to_row_idx[t]];
+    }
+
+    const auto insert_row = [&](Equation row, std::size_t at) {
+        const std::optional<std::size_t> row_idx = out.span.add_row_get_row_idx(std::move(row));
+        assert(row_idx.has_value() && "an inserted row added no rank");
+        for (std::size_t t = 0; t < at; ++t) {
+            if (out.trail_idx_to_row_idx[t] >= *row_idx) {
+                ++out.trail_idx_to_row_idx[t];
+            }
+        }
+        out.trail_idx_to_row_idx[at] = *row_idx;
+    };
+
+    insert_row(eqn, trail_idx);
+    for (std::size_t i = 0; i < num_above; ++i) {
+        insert_row(*std::move(above[i]), trail_idx + 1 + i);
+    }
+    return out;
+}
+#endif
+
 } // namespace
 
 Trail::Trail(EquationRepr repr, std::size_t num_vars) : span_(repr, num_vars), level_end_{0} {}
@@ -78,54 +135,61 @@ std::size_t Trail::learn_in_order(const Equation& eqn, std::optional<ClauseId> r
 
 std::size_t Trail::learn_out_of_order(const Equation& eqn, std::optional<ClauseId> reason,
                                       std::size_t level, std::size_t trail_idx) {
-    const std::size_t old_rows = span_.rows();
-    const std::size_t num_above = old_rows - trail_idx;
-
-    std::vector<std::uint8_t> is_above(old_rows, 0);
-    for (std::size_t t = trail_idx; t < old_rows; ++t) {
-        is_above[trail_idx_to_row_idx_[t]] = 1;
-    }
-    // Descending row index, so each pop leaves the rows still to come in place.
-    std::vector<std::size_t> pop_order(trail_idx_to_row_idx_.begin() +
-                                           static_cast<std::ptrdiff_t>(trail_idx),
-                                       trail_idx_to_row_idx_.end());
-    std::sort(pop_order.begin(), pop_order.end(), std::greater<>{});
-
-    std::vector<std::optional<Equation>> above(num_above);
-    for (const std::size_t row_idx : pop_order) {
-        above[row_idx_to_trail_idx_[row_idx] - trail_idx] = span_.pop_row(row_idx);
-    }
-    assert(span_.rows() == trail_idx && "popping left a row above the level");
-
-    // Row indices in the new trail order, each bumped as a later insert shifts it.
-    const std::vector<std::size_t> after_popping = row_idxs_after_dropping(is_above);
-    std::vector<std::size_t> updated(old_rows + 1);
-    for (std::size_t t = 0; t < trail_idx; ++t) {
-        updated[t] = after_popping[trail_idx_to_row_idx_[t]];
+#ifndef NDEBUG
+    const Trail before = *this;
+#endif
+    // The elements from `trail_idx` on each move one place up in trail order.
+    for (std::size_t& t : row_idx_to_trail_idx_) {
+        t += t >= trail_idx ? 1 : 0;
     }
 
-    const auto insert_row = [&](Equation row, std::size_t at) {
-        const std::optional<std::size_t> row_idx = span_.add_row_get_row_idx(std::move(row));
-        assert(row_idx.has_value() && "an inserted row added no rank");
-        for (std::size_t t = 0; t < at; ++t) {
-            if (updated[t] >= *row_idx) {
-                ++updated[t];
-            }
+    // The row of the element at `row_trail_idx`, which is the one element the
+    // span is currently missing.
+    Equation row = eqn;
+    std::size_t row_trail_idx = trail_idx;
+    while (true) {
+        const ReduceResult reduced =
+            span_.partial_reduce_below(row, row_idx_to_trail_idx_, row_trail_idx);
+        assert(reduced != ReduceResult::eq_true() &&
+               "a learned row was already in the span of the elements before it");
+        const std::size_t leading_col_idx = reduced.is_leading() ? reduced.bit : span_.cols() - 1;
+
+        // A row of a later element holding that column loses it to this row.
+        std::optional<Equation> displaced;
+        std::size_t displaced_trail_idx = 0;
+        if (span_.pivot_col_idxs().test(leading_col_idx)) {
+            const std::size_t displaced_row_idx =
+                span_.pivot_col_idxs().count_below(leading_col_idx);
+            displaced_trail_idx = row_idx_to_trail_idx_[displaced_row_idx];
+            assert(displaced_trail_idx > row_trail_idx &&
+                   "the reduction stopped on the pivot of an earlier element");
+            displaced = span_.pop_row(displaced_row_idx);
+            row_idx_to_trail_idx_.erase(row_idx_to_trail_idx_.begin() +
+                                        static_cast<std::ptrdiff_t>(displaced_row_idx));
         }
-        updated[at] = *row_idx;
-    };
 
-    // The new equation is independent of the whole span, so it gains a
-    // dimension and each row put back after it gains one too.
-    insert_row(eqn, trail_idx);
-    for (std::size_t i = 0; i < num_above; ++i) {
-        insert_row(*std::move(above[i]), trail_idx + 1 + i);
+        const std::optional<std::size_t> inserted_row_idx =
+            span_.add_row_get_row_idx(std::move(row));
+        assert(inserted_row_idx.has_value() && "an inserted row added no rank");
+        row_idx_to_trail_idx_.insert(
+            row_idx_to_trail_idx_.begin() + static_cast<std::ptrdiff_t>(*inserted_row_idx),
+            row_trail_idx);
+
+        if (!displaced.has_value()) {
+            break;
+        }
+        row = *std::move(displaced);
+        row.plus_assign(span_.row(*inserted_row_idx));
+        row_trail_idx = displaced_trail_idx;
     }
 
-    trail_idx_to_row_idx_ = std::move(updated);
     reasons_.insert(reasons_.begin() + static_cast<std::ptrdiff_t>(trail_idx), std::move(reason));
     levels_.insert(levels_.begin() + static_cast<std::ptrdiff_t>(trail_idx), level);
-    rebuild_row_idx_to_trail_idx();
+    rebuild_trail_idx_to_row_idx();
+
+#ifndef NDEBUG
+    debug_assert_matches_reinsertion(before, eqn, trail_idx);
+#endif
     return trail_idx;
 }
 
@@ -174,7 +238,29 @@ void Trail::rebuild_row_idx_to_trail_idx() {
     }
 }
 
+void Trail::rebuild_trail_idx_to_row_idx() {
+    trail_idx_to_row_idx_.assign(row_idx_to_trail_idx_.size(), 0);
+    for (std::size_t row_idx = 0; row_idx < row_idx_to_trail_idx_.size(); ++row_idx) {
+        trail_idx_to_row_idx_[row_idx_to_trail_idx_[row_idx]] = row_idx;
+    }
+}
+
 #ifndef NDEBUG
+void Trail::debug_assert_matches_reinsertion(const Trail& before, const Equation& eqn,
+                                             std::size_t trail_idx) const {
+    const SpanInTrailOrder reference =
+        reinsert_above(before.span_, before.trail_idx_to_row_idx_, before.row_idx_to_trail_idx_,
+                       eqn, trail_idx);
+    assert(reference.trail_idx_to_row_idx == trail_idx_to_row_idx_ &&
+           "the chain insert put a row where reinsertion would not");
+    for (std::size_t row_idx = 0; row_idx < span_.rows(); ++row_idx) {
+        assert(reference.trail_idx_to_row_idx[row_idx_to_trail_idx_[row_idx]] == row_idx &&
+               "the chain insert left the order maps disagreeing with reinsertion");
+        assert(reference.span.row(row_idx) == span_.row(row_idx) &&
+               "the chain insert stored a row reinsertion would not");
+    }
+}
+
 void Trail::debug_assert_valid() const {
     const std::size_t trail_rows = span_.rows();
     assert(trail_idx_to_row_idx_.size() == trail_rows);

@@ -101,7 +101,8 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
         working_eqn_.plus_assign(false_equation_);
         propagating_row_idx_ = 0;
         if (used_row_idxs != nullptr) {
-            collect_used_rows(clause, trail, propagating_row_idx_, *used_row_idxs);
+            collect_used_rows(clause, trail, propagating_row_idx_,
+                              reduced.kind == ReduceResult::Kind::eq_true, *used_row_idxs);
         }
         return &working_eqn_;
     }
@@ -203,7 +204,8 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
             working_eqn2_.plus_assign(false_equation_);
             propagating_row_idx_ = *task.complement_ptr;
             if (used_row_idxs != nullptr) {
-                collect_used_rows(clause, trail, propagating_row_idx_, *used_row_idxs);
+                collect_used_rows(clause, trail, propagating_row_idx_,
+                                  complement.kind == ReduceResult::Kind::eq_true, *used_row_idxs);
             }
             return &working_eqn2_;
         }
@@ -212,22 +214,17 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
 }
 
 void Propagator::collect_used_rows(const Clause& clause, const Trail& trail,
-                                   std::size_t propagating_row_idx, IndexSet& used_row_idxs) {
-    used_row_idxs = IndexSet(trail.span().rows());
-    const auto mark = [&used_row_idxs](const IndexSet& coefficients) {
-        coefficients.for_each_set([&used_row_idxs](std::size_t row_idx) {
-            used_row_idxs.set(row_idx);
-        });
-    };
+                                   std::size_t propagating_row_idx,
+                                   bool propagating_row_is_falsified, IndexSet& used_row_idxs) {
+    used_row_idxs.resize(trail.span().rows());
 
     const Equation& propagating_row = clause.row(propagating_row_idx);
-    used_rows_eqn2_.assign_from(propagating_row);
-    const IndexSet propagating_coefficients =
-        trail.span().reduce_get_coefficients(used_rows_eqn2_);
-    if (used_rows_eqn2_.is_eq_true()) {
-        // The propagating row is falsified too, so the clause is and the
-        // equation it implies is `0 = 1`: every row takes part.
-        mark(propagating_coefficients);
+    if (propagating_row_is_falsified) {
+        // The clause is falsified too, and the equation it implies is `0 = 1`:
+        // every row takes part.
+        used_rows_eqn2_.assign_from(propagating_row);
+        trail.span().reduce_get_coefficients(used_rows_eqn2_, used_row_idxs);
+        assert(used_rows_eqn2_.is_eq_true() && "the propagating row was not falsified after all");
     }
 
     for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
@@ -235,18 +232,16 @@ void Propagator::collect_used_rows(const Clause& clause, const Trail& trail,
             continue;
         }
         used_rows_eqn_.assign_from(clause.row(row_idx));
-        const IndexSet coefficients = trail.span().reduce_get_coefficients(used_rows_eqn_);
-        if (used_rows_eqn_.is_eq_true()) {
-            mark(coefficients);
-            continue;
+        trail.span().reduce_get_coefficients(used_rows_eqn_, row_coefficients_);
+        if (!used_rows_eqn_.is_eq_true()) {
+            // What is left is the propagating row's own residue, so the trail
+            // owes this row and that one only their sum.
+            used_rows_eqn_.assign_from(clause.row(row_idx));
+            used_rows_eqn_.plus_assign(propagating_row);
+            trail.span().reduce_get_coefficients(used_rows_eqn_, row_coefficients_);
+            assert(used_rows_eqn_.is_eq_true() && "the sum left the span it was reduced by");
         }
-        assert(used_rows_eqn_ == used_rows_eqn2_ &&
-               "a clause row is neither falsified nor equal to the propagating row");
-        used_rows_eqn_.assign_from(clause.row(row_idx));
-        used_rows_eqn_.plus_assign(propagating_row);
-        const IndexSet sum_coefficients = trail.span().reduce_get_coefficients(used_rows_eqn_);
-        assert(used_rows_eqn_.is_eq_true() && "the sum left the span it was reduced by");
-        mark(sum_coefficients);
+        used_row_idxs.or_with(row_coefficients_);
     }
 }
 

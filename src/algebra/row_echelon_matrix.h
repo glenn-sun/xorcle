@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 
 #include "algebra/equation.h"
@@ -76,6 +77,17 @@ public:
         assert(v.repr() == repr() &&
                "reduce_get_coefficients: representation does not match the matrix");
         return interface_->reduce_get_coefficients(v);
+    }
+
+    /// @brief Reduce `v` in place and record the participating rows in
+    /// `coefficients`, resized to `rows()` and emptied first.
+    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`.
+    void reduce_get_coefficients(Equation& v, IndexSet& coefficients) const {
+        assert(v.num_bits() == cols() &&
+               "reduce_get_coefficients: bit count does not match the matrix");
+        assert(v.repr() == repr() &&
+               "reduce_get_coefficients: representation does not match the matrix");
+        interface_->reduce_get_coefficients(v, coefficients);
     }
 
     /// @brief Add `eqn` into the row at `row_idx`, in place.
@@ -166,6 +178,22 @@ public:
         assert((!extra.leading_bit() || !pivot_col_idxs().test(*extra.leading_bit())) &&
                "extra must already be partially reduced by this matrix");
         return interface().partial_reduce_with_extra(v, extra);
+    }
+
+    /// @brief Reduce `v` in place by the stored rows whose `row_idx_to_order`
+    /// entry is below `bound`, stopping at the first leading column none of
+    /// them pivots.
+    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`.
+    /// @pre `row_idx_to_order.size() == rows()`.
+    ReduceResult partial_reduce_below(Equation& v, std::span<const std::size_t> row_idx_to_order,
+                                      std::size_t bound) const {
+        assert(v.num_bits() == cols() &&
+               "partial_reduce_below: bit count does not match the matrix");
+        assert(v.repr() == repr() &&
+               "partial_reduce_below: representation does not match the matrix");
+        assert(row_idx_to_order.size() == rows() &&
+               "partial_reduce_below: the order table does not match the matrix");
+        return interface().partial_reduce_below(v, row_idx_to_order, bound);
     }
 
     /// @brief The unique satisfying assignment, indexed by variable.

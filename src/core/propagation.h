@@ -35,7 +35,8 @@ public:
     /// @param handler Notified once per watch moved.
     /// @param used_row_idxs When non-null and the clause propagates, receives the
     /// trail-span rows the propagated equation's derivation uses, indexed by span
-    /// row. Filled by a pass of its own, which fewer than 0.5% of attempts reach.
+    /// row, resized to the span's row count. Filled by a pass of its own, which
+    /// fewer than 0.5% of attempts reach.
     ///
     /// @return The implied equation, or `nullptr` if the clause implies nothing.
     /// It is this propagator's own scratch, valid until its next call and free
@@ -74,7 +75,8 @@ private:
     /// The propagating row owes nothing unless it is falsified too, which is the
     /// conflict.
     void collect_used_rows(const Clause& clause, const Trail& trail,
-                           std::size_t propagating_row_idx, IndexSet& used_row_idxs);
+                           std::size_t propagating_row_idx, bool propagating_row_is_falsified,
+                           IndexSet& used_row_idxs);
 
 #ifndef NDEBUG
     /// @brief Overwrites both scratch equations.
@@ -87,6 +89,9 @@ private:
     Equation working_eqn2_; ///< Second watch's reduction, then the complement's.
     Equation used_rows_eqn_;  ///< Scratch for `collect_used_rows()`.
     Equation used_rows_eqn2_; ///< The propagating row's residue, for the same.
+
+    /// @brief One clause row's coefficients, before they join `used_row_idxs`.
+    IndexSet row_coefficients_;
 
     /// @brief A preallocated `0 = 1`; adding it to a falsified clause row undoes
     /// the linear negation, recovering the equation the clause implies.

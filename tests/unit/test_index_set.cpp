@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "algebra_test_support.h"
+#include "allocation_counter.h"
 #include "util/index_set.h"
 
 namespace xorcle {
@@ -32,6 +33,36 @@ TEST_CASE("index_set: construction and basic access") {
     col_idxs.clear();
     CHECK(col_idxs.none());
     CHECK(col_idxs.size() == 200);
+}
+
+TEST_CASE("index_set: resize empties and or_with unions") {
+    IndexSet row_idxs(200);
+    row_idxs.set(3);
+    row_idxs.set(199);
+
+    row_idxs.resize(70);
+    CHECK(row_idxs.size() == 70);
+    CHECK(row_idxs.none());
+
+    row_idxs.resize(300);
+    CHECK(row_idxs.size() == 300);
+    CHECK(row_idxs.none());
+
+    // Shrinking to a size already held leaves the storage alone.
+    const std::size_t before = allocation_count();
+    row_idxs.resize(70);
+    CHECK(allocation_count() == before);
+
+    row_idxs.set(1);
+    row_idxs.set(69);
+    IndexSet other(70);
+    other.set(1);
+    other.set(64);
+    row_idxs.or_with(other);
+    CHECK(row_idxs.count() == 3);
+    CHECK(row_idxs.test(1));
+    CHECK(row_idxs.test(64));
+    CHECK(row_idxs.test(69));
 }
 
 TEST_CASE("index_set: count_below gives row-echelon insertion indices") {

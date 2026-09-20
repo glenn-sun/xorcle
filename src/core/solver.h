@@ -423,6 +423,7 @@ private:
 
     Equation false_equation_; ///< A preallocated `0 = 1`.
     Equation satisfied_probe_eqn_; ///< Scratch for `shallowest_satisfying_level()`.
+    IndexSet satisfied_probe_row_idxs_; ///< The rows that reduction used.
 
     SolverCounters counters_;
 
