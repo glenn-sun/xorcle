@@ -67,6 +67,7 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.deletion_demote_cadence_in_passes == 2);
     CHECK(options.deletion_key == DeletionKey::activity);
     CHECK(options.bump_responsible_clauses == false);
+    CHECK(options.implication_graph == true);
     CHECK(options.proof.empty());
     CHECK(options.stats_file.empty());
     CHECK(options.report_cadence == 100);
@@ -277,7 +278,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "[default: 16; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
     CHECK(contains(text, "[default: 0.98; range 0..1]"));
-    CHECK(contains(text, "--decisions=csids|variable_vsids|fixed_literals|berkmin|cmtf"));
+    CHECK(contains(text, "--decisions=csids|fixed_literals|berkmin|cmtf"));
     CHECK(contains(text, "--phase=falsify|satisfy|random"));
     CHECK(contains(text, "--selection=cyclic|leading_term_watchlist"));
     CHECK(contains(text, "--proof=PATH"));
@@ -313,22 +314,20 @@ TEST_CASE("options: deletion needs the heuristics it reads") {
         rejection_message<CliError>({"--deletion=true", "--selection=leading_term_watchlist"}),
         "--deletion requires --selection=cyclic"));
     CHECK(contains(rejection_message<CliError>({"--deletion=true", "--deletion-key=activity",
-                                                "--decisions=variable_vsids"}),
+                                                "--decisions=fixed_literals"}),
                    "--deletion-key=activity requires --decisions=csids"));
     CHECK(contains(rejection_message<CliError>({"--deletion-core-lbd=7"}),
                    "--deletion-core-lbd must not exceed --deletion-secondary-lbd"));
 
     // The key defaults to activity, so --deletion alone carries the requirement.
     const std::string defaulted =
-        rejection_message<CliError>({"--deletion=true", "--decisions=variable_vsids"});
+        rejection_message<CliError>({"--deletion=true", "--decisions=fixed_literals"});
     CHECK(contains(defaulted, "requires --decisions=csids"));
-    CHECK(contains(rejection_message<CliError>({"--deletion=true", "--decisions=fixed_literals"}),
-                   "requires --decisions=csids"));
 
     // Each constraint binds only where deletion actually reads the heuristic.
     CHECK_NOTHROW(parse_with_input({"--deletion=true", "--deletion-key=activity"}));
-    CHECK_NOTHROW(parse_with_input(
-        {"--deletion=true", "--decisions=variable_vsids", "--deletion-key=lbd"}));
+    CHECK_NOTHROW(
+        parse_with_input({"--deletion=true", "--decisions=fixed_literals", "--deletion-key=lbd"}));
     CHECK_NOTHROW(parse_with_input({"--deletion-core-lbd=7", "--deletion-secondary-lbd=9"}));
 }
 
@@ -339,14 +338,13 @@ TEST_CASE("options: deletion refuses an incompatible choice rather than yielding
         return rejection_message<CliError>(std::move(arguments));
     };
     CHECK(refusal({"--selection=leading_term_watchlist"}).find("--deletion requires") == 0);
-    CHECK(refusal({"--decisions=variable_vsids"}).find("--deletion-key=activity") == 0);
     CHECK(refusal({"--decisions=fixed_literals"}).find("--deletion-key=activity") == 0);
 
     // Saying what you want is always accepted.
     CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false",
                             "--subsume=false"}).deletion == false);
-    CHECK(parse_with_input({"--decisions=variable_vsids", "--deletion=false"}).deletion == false);
-    CHECK(parse_with_input({"--decisions=variable_vsids", "--deletion-key=lbd"}).deletion == true);
+    CHECK(parse_with_input({"--decisions=fixed_literals", "--deletion=false"}).deletion == false);
+    CHECK(parse_with_input({"--decisions=fixed_literals", "--deletion-key=lbd"}).deletion == true);
 
     // A compatible choice needs nothing said.
     CHECK(parse_with_input({}).deletion == true);
@@ -473,7 +471,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     };
     CHECK(refusal({"--compact=false", "--compact-cadence=8"}) ==
           "--compact-cadence requires --compact=true; nothing would read it here");
-    CHECK(refusal({"--decisions=variable_vsids", "--deletion=false", "--csids-decay=0.5"})
+    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--csids-decay=0.5"})
               .starts_with("--csids-decay requires --decisions=csids"));
     CHECK(refusal({"--wait-for-queue=4"}).starts_with("--wait-for-queue requires"));
     CHECK(refusal({"--restart-lbd-min-ratio=1.2"}).starts_with("--restart-lbd-min-ratio requires"));
@@ -483,7 +481,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(refusal({"--deletion=false", "--deletion-demote-cadence-in-passes=3"})
               .starts_with("--deletion-demote-cadence-in-passes requires"));
     // Only CSIDS scores clauses, so only CSIDS can bump the pivots.
-    CHECK(refusal({"--decisions=variable_vsids", "--deletion=false",
+    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false",
                    "--bump-responsible-clauses=true"})
               .starts_with("--bump-responsible-clauses requires --decisions=csids"));
     CHECK(refusal({"--stats-file=s.csv", "--report=all"}).starts_with("--report requires"));
@@ -491,14 +489,15 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
 
     // The two that were inert while claiming to be on: --phase and --seed reach
     // only CSIDS, and trail reuse needs the procedure that ranks levels.
-    CHECK(refusal({"--decisions=variable_vsids", "--deletion=false", "--phase=satisfy"})
+    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--phase=satisfy"})
               .starts_with("--phase requires --decisions=csids"));
     CHECK_NOTHROW(
         parse_with_input({"--decisions=fixed_literals", "--deletion=false", "--seed=7"}));
-    CHECK(refusal({"--restart=lbd", "--restart-reuse-trail=true", "--decisions=variable_vsids",
+    CHECK(refusal({"--restart=lbd", "--restart-reuse-trail=true", "--decisions=fixed_literals",
                    "--deletion=false"})
               .starts_with("--restart-reuse-trail requires --decisions=csids"));
-    CHECK_NOTHROW(parse_with_input({"--restart=lbd", "--decisions=variable_vsids", "--deletion=false"}));
+    CHECK_NOTHROW(
+        parse_with_input({"--restart=lbd", "--decisions=fixed_literals", "--deletion=false"}));
 
     // Trail reuse is a switch, so it is checked against its value: asking for it
     // without a schedule is refused, and turning it off is always allowed.
@@ -510,16 +509,16 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     // once a compaction rewrites the database against them.
     CHECK(refusal({"--implication-graph=true", "--compact=false"})
               .starts_with("--implication-graph requires --compact=true"));
-    CHECK(refusal({"--implication-graph-clause-cadence=8"})
+    CHECK(refusal({"--implication-graph=false", "--implication-graph-clause-cadence=8"})
               .starts_with("--implication-graph-clause-cadence requires --implication-graph=true"));
-    CHECK(parse_with_input({"--implication-graph=true", "--implication-graph-clause-cadence=8"})
+    CHECK(parse_with_input({"--implication-graph-clause-cadence=8"})
               .implication_graph_clause_cadence == 8);
-    CHECK(refusal({"--implication-graph-max-pairs=8"})
+    CHECK(refusal({"--implication-graph=false", "--implication-graph-max-pairs=8"})
               .starts_with("--implication-graph-max-pairs requires --implication-graph=true"));
-    CHECK(refusal({"--implication-graph-max-descendants=8"})
+    CHECK(refusal({"--implication-graph=false", "--implication-graph-max-descendants=8"})
               .starts_with(
                   "--implication-graph-max-descendants requires --implication-graph=true"));
-    CHECK(parse_with_input({"--implication-graph=true", "--implication-graph-max-pairs=8",
+    CHECK(parse_with_input({"--implication-graph-max-pairs=8",
                             "--implication-graph-max-descendants=4"})
               .implication_graph_max_descendants == 4);
     CHECK_NOTHROW(parse_with_input({"--implication-graph=false", "--compact=false"}));
@@ -556,6 +555,17 @@ TEST_CASE("options: the default miss rate follows the selector") {
               .starts_with("--propagate-miss-rate requires --selection=cyclic"));
 
     CHECK(parse_with_input({"--propagate-miss-rate=0"}).propagate_miss_rate == 0.0);
+}
+
+TEST_CASE("options: the default implication graph follows compaction") {
+    CHECK(parse_with_input({}).implication_graph == true);
+    CHECK(parse_with_input({"--compact=false"}).implication_graph == false);
+    CHECK(implication_graph_config(parse_with_input({"--compact=false"})).enabled == false);
+
+    CHECK(rejection_message<CliError>({"--compact=false", "--implication-graph=true"})
+              .starts_with("--implication-graph requires --compact=true"));
+
+    CHECK(parse_with_input({"--implication-graph=false"}).implication_graph == false);
 }
 
 } // namespace xorcle

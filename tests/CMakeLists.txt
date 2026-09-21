@@ -103,3 +103,11 @@ add_test(NAME proof_roundtrip_implication_graph
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> rand_qp "n=15;m=30;planted=0" 1
             --implication-graph=true)
 set_tests_properties(proof_roundtrip_implication_graph PROPERTIES SKIP_RETURN_CODE 77)
+
+# The implication graph is on by default and writes its own derivations, so this
+# is the variant that covers a proof with none of them in it.
+add_test(NAME proof_roundtrip_no_implication_graph
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> rand_qp "n=15;m=30;planted=0" 1
+            --implication-graph=false)
+set_tests_properties(proof_roundtrip_no_implication_graph PROPERTIES SKIP_RETURN_CODE 77)

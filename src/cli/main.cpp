@@ -23,7 +23,6 @@
 #include "heuristics/decisions/csids.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/decisions/fixed_literals.h"
-#include "heuristics/decisions/variable_vsids.h"
 #include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
@@ -54,10 +53,6 @@ std::unique_ptr<DecisionProcedure> make_decision_procedure(const Options& option
         case DecisionProcedureName::fixed_literals:
             procedure =
                 std::make_unique<FixedLiterals>(options.equation_repr, num_vars, options.seed);
-            break;
-        case DecisionProcedureName::variable_vsids:
-            procedure =
-                std::make_unique<VariableVsids>(options.equation_repr, num_vars, options.seed);
             break;
         case DecisionProcedureName::csids:
             procedure = std::make_unique<Csids>(options.equation_repr, num_vars, options.seed,

@@ -134,6 +134,32 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
     }
 }
 
+TEST_CASE_TEMPLATE("compaction: an inactive clause is left out of the plan", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Trail trail(repr, 4);
+    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
+
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, 4, {{1}, {2}}));
+    clauses.push_back(make_clause(repr, 4, {{2}, {3}}));
+    clauses.push_back(make_clause(repr, 4, {{1}, {3}}));
+    const std::vector<std::uint8_t> active{1, 0, 1};
+    const std::vector<std::size_t> var_map{0, 1, 2, 3};
+
+    const CompactionState state{trail, clauses, active, var_map, 4, true};
+    const CompactionTransform transform = build_compaction_transform(trail, 4);
+    const CompactionPlan plan = build_compaction_plan(state, transform);
+
+    REQUIRE(plan.rewritten_clauses.size() == 2);
+    REQUIRE(plan.clause_is_active.size() == 3);
+    CHECK(plan.clause_is_active[0] == 1);
+    CHECK(plan.clause_is_active[1] == 0);
+    CHECK(plan.clause_is_active[2] == 1);
+    CHECK(bits_of(plan.rewritten_clauses[0].row(0)) == std::vector<std::size_t>{0});
+    CHECK(bits_of(plan.rewritten_clauses[1].row(1)) == std::vector<std::size_t>{2});
+}
+
 TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;

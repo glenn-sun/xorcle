@@ -583,7 +583,8 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
         options.decisions != DecisionProcedureName::csids) {
         throw CliError("--deletion-key=activity requires --decisions=csids");
     }
-    // A switch rather than a parameter, so it is checked against its value.
+    // A switch rather than a parameter, so it is checked against its value,
+    // which the default has already resolved to false under --compact=false.
     if (options.implication_graph && !options.compact) {
         throw CliError("--implication-graph requires --compact=true: without a compaction after "
                        "each feed, which basis of the fed units the rule happened to pick would "
@@ -653,6 +654,11 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     // the miss rate resolves to complete propagation unless it was given.
     if (!seen.propagate_miss_rate && options.selection != ClauseSelectorName::cyclic) {
         options.propagate_miss_rate = 0.0;
+    }
+    // The rule needs a compaction after each feed, so without compaction the
+    // implication graph resolves to off unless it was given.
+    if (!seen.implication_graph && !options.compact) {
+        options.implication_graph = false;
     }
 
     validate_options(options, seen);

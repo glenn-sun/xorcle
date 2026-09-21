@@ -20,7 +20,6 @@ namespace xorcle {
 
 enum class DecisionProcedureName {
     fixed_literals, ///< Debug baseline only.
-    variable_vsids,
     csids
 };
 

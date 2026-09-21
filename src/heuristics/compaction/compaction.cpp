@@ -81,14 +81,12 @@ CompactionPlan build_compaction_plan(const CompactionState& state,
     const Equation false_clause_row = Equation::eq_false(repr, transform.new_num_vars());
 
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
+        if (state.clause_is_active[clause_id] == 0) {
+            continue;
+        }
         const Clause& active_clause = state.clauses[clause_id];
-        const bool was_active = state.clause_is_active[clause_id] != 0;
-        const bool becomes_inactive =
-            !was_active || clause_status_by_trail(state.trail.span(), active_clause,
-                                                  satisfaction_workspace,
-                                                  &reduced_rows) == ClauseStatus::satisfied;
-
-        if (becomes_inactive) {
+        if (clause_status_by_trail(state.trail.span(), active_clause, satisfaction_workspace,
+                                   &reduced_rows) == ClauseStatus::satisfied) {
             // Kept as a placeholder so clause ids stay stable; never selected.
             plan.clause_is_active[clause_id] = 0;
             plan.rewritten_clauses.push_back(inactive_clause_placeholder(repr, false_clause_row));
@@ -104,7 +102,6 @@ CompactionPlan build_compaction_plan(const CompactionState& state,
         assert(rewritten.rows() != 0 && "an active clause compacted to zero rows");
 
         rebuild_clause_watch_metadata(rewritten);
-        plan.clause_is_active[clause_id] = 1;
         plan.rewritten_clauses.push_back(std::move(rewritten));
     }
 

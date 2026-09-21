@@ -78,8 +78,9 @@ DecisionResult Csids::make_decision(const RowSpace& trail_span,
         const ClauseId id = state_.activity.activity_heap.peek_max();
         if (id >= clauses.size() || clause_active[id] == 0) {
             // Stale: left over from before a compaction shrank the database, or
-            // naming a clause since deleted.
-            state_.activity.activity_heap.extract_max();
+            // naming a clause since deleted. Neither is ever undone, so the id
+            // is no candidate again and the heap need not carry it.
+            state_.activity.activity_heap.discard_max();
             continue;
         }
         const Clause& clause = clauses[id];
@@ -176,9 +177,12 @@ std::size_t Csids::reusable_levels(
     std::optional<ClauseId> next;
     while (!state_.activity.activity_heap.empty()) {
         const ClauseId id = state_.activity.activity_heap.peek_max();
-        if (id < clauses.size() && clause_active[id] != 0 &&
-            clause_status_by_trail(trail_span, clauses[id], clause_sat_workspace_) !=
-                ClauseStatus::satisfied) {
+        if (id >= clauses.size() || clause_active[id] == 0) {
+            state_.activity.activity_heap.discard_max();
+            continue;
+        }
+        if (clause_status_by_trail(trail_span, clauses[id], clause_sat_workspace_) !=
+            ClauseStatus::satisfied) {
             next = id;
             break;
         }

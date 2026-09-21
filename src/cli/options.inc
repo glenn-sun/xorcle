@@ -61,7 +61,6 @@ XORCLE_ENUM_OPTION(decisions, DecisionProcedureName, DecisionProcedureName::csid
                    "decision procedure (berkmin/cmtf are CSIDS presets; fixed_literals is a\n"
                    "debug baseline)")
 XORCLE_ENUM_VALUE(decisions, "csids", DecisionProcedureName::csids)
-XORCLE_ENUM_VALUE(decisions, "variable_vsids", DecisionProcedureName::variable_vsids)
 XORCLE_ENUM_VALUE(decisions, "fixed_literals", DecisionProcedureName::fixed_literals)
 XORCLE_ENUM_VALUE(decisions, "berkmin", DecisionProcedureName::csids)
 XORCLE_ENUM_VALUE(decisions, "cmtf", DecisionProcedureName::csids)
@@ -159,9 +158,10 @@ XORCLE_ENUM_VALUE(deletion_key, "activity", DeletionKey::activity)
 
 // --- The implication graph --------------------------------------------------
 
-XORCLE_OPTION(implication_graph, Bool, false, false, true,
+XORCLE_OPTION(implication_graph, Bool, true, false, true,
               "add to the root trail the equations that hold on both sides of a vertex of\n"
-              "the implication graph of the width-2 clauses; needs --compact=true")
+              "the implication graph of the width-2 clauses; needs --compact=true, and the\n"
+              "default is off without it")
 XORCLE_OPTION(implication_graph_clause_cadence, Size, 16, 1, SIZE_MAX,
               "clauses that became width at most 2 between implication graph runs")
 XORCLE_OPTION(implication_graph_cadence, Size, 1000, 1, SIZE_MAX,

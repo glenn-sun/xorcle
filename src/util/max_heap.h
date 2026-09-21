@@ -2,243 +2,207 @@
 
 #include <cassert>
 #include <cstddef>
-#include <functional>
+#include <limits>
 #include <optional>
-#include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace xorcle {
 
-/// @brief Max-heap keyed by activity values stored externally.
+/// @brief Max-heap over integer keys, ranked by activity and then by ascending key.
 ///
-/// The activity map outlives the heap: an element removed by `extract_max()`
-/// keeps its score and can be put back by `rebuild()`. Ties are broken by heap
-/// position, so the insertion order of equal-activity elements is observable in
-/// the solver's search order.
-template <typename T, typename Hash = std::hash<T>, typename KeyEqual = std::equal_to<T>>
+/// Keys index the activity and heap-position tables, so they are dense and small;
+/// a key never named has activity `0`. The order is total, so the maximum of a
+/// set is one key whatever the order of insertions that built the heap. An
+/// activity outlives the heap: a key removed by `extract_max()` keeps its score
+/// and comes back on `rebuild()`, and one removed by `discard_max()` keeps its
+/// score without coming back.
 class MaxHeap {
 public:
-    MaxHeap() = default;
+    using Key = std::size_t;
 
-    static_assert(std::is_copy_constructible<T>::value || std::is_move_constructible<T>::value,
-                  "T must be copyable or movable");
-
-    /// @brief Add `delta` to the activity of `element`; a negative `delta` does nothing.
-    /// @pre `element` has an activity entry.
-    void increase_key(const T& element, double delta) {
+    /// @brief Add `delta` to the activity of `key`; a negative `delta` does nothing.
+    void increase_key(Key key, double delta) {
         if (delta < 0.0) return;
-        auto act_it = activity_map_.find(element);
-        assert(act_it != activity_map_.end() && "increase_key requires existing activity entry");
+        grow_for(key);
 
-        const double old_value = act_it->second;
-        act_it->second = old_value + delta;
+        const double old_value = activity_[key];
+        const double new_value = old_value + delta;
+        activity_[key] = new_value;
 
-        auto pos_it = pos_map_.find(element);
-        if (pos_it == pos_map_.end()) return;
+        const std::size_t heap_idx = key_to_heap_idx_[key];
+        if (heap_idx == not_in_heap) return;
 
-        const std::size_t pos = pos_it->second;
-        if (act_it->second > old_value) {
-            sift_up(pos);
-        } else if (act_it->second < old_value) {
-            sift_down(pos);
+        heap_[heap_idx].activity = new_value;
+        if (new_value > old_value) {
+            sift_up(heap_idx);
+        } else if (new_value < old_value) {
+            sift_down(heap_idx);
         }
     }
 
-    /// @brief The activity of `element`, or `0` if it has no activity entry.
-    double get_priority(const T& element) const {
-        auto it = activity_map_.find(element);
-        if (it == activity_map_.end()) return 0.0;
-        return it->second;
+    double get_priority(Key key) const {
+        return key < activity_.size() ? activity_[key] : 0.0;
     }
 
-    /// @brief `std::nullopt` if empty; the element is remembered as popped and
-    /// comes back on `rebuild()`.
-    std::optional<T> extract_max() {
+    /// @brief `std::nullopt` if empty; the key is remembered as popped and comes
+    /// back on `rebuild()`.
+    std::optional<Key> extract_max() {
         if (heap_.empty()) return std::nullopt;
-
-        T top_value = std::move(heap_.front());
-        pos_map_.erase(top_value);
-        popped_.push_back(top_value);
-
-        const std::size_t last = heap_.size() - 1;
-        if (last == 0) {
-            heap_.pop_back();
-            return top_value;
-        }
-
-        heap_[0] = std::move(heap_[last]);
-        heap_.pop_back();
-        pos_map_[heap_[0]] = 0;
-        sift_down(0);
-        return top_value;
+        const Key top_key = take_max();
+        popped_.push_back(top_key);
+        return top_key;
     }
 
-    /// @brief Multiply all priorities by `k`.
+    /// @brief Remove the highest-ranked key without remembering it as popped.
+    /// @pre `!empty()`.
+    void discard_max() {
+        assert(!heap_.empty() && "discard_max on empty heap");
+        take_max();
+    }
+
+    /// @brief Multiply all activities by `k`.
     /// @pre `k >= 0`.
     void rescale(double k) {
         assert(k >= 0.0 && "rescale requires k >= 0");
-        for (auto& entry : activity_map_) entry.second *= k;
+        for (double& value : activity_) value *= k;
+        for (Entry& entry : heap_) entry.activity *= k;
+        // Scaling can bring two activities together, which reranks the pair.
+        heapify();
     }
 
     void reset() noexcept {
         heap_.clear();
-        pos_map_.clear();
-        activity_map_.clear();
+        key_to_heap_idx_.clear();
+        activity_.clear();
         popped_.clear();
     }
 
-    /// @brief The highest-priority element still in the heap.
+    /// @brief The highest-ranked key still in the heap.
     /// @pre `!empty()`.
-    const T& peek_max() const {
+    Key peek_max() const {
         assert(!heap_.empty() && "peek_max on empty heap");
-        return heap_.front();
+        return heap_.front().key;
     }
 
     bool empty() const noexcept { return heap_.empty(); }
 
-    /// @brief Set an activity score without inserting into the heap.
-    void set_activity(const T& element, double value) {
-        double old_value = 0.0;
-        bool had_entry = false;
-        auto it = activity_map_.find(element);
-        if (it != activity_map_.end()) {
-            old_value = it->second;
-            had_entry = true;
-            it->second = value;
-        } else {
-            activity_map_.emplace(element, value);
-        }
+    /// @brief Set an activity without inserting into the heap.
+    void set_activity(Key key, double value) {
+        grow_for(key);
 
-        auto pos_it = pos_map_.find(element);
-        if (pos_it == pos_map_.end()) return;
+        const double old_value = activity_[key];
+        activity_[key] = value;
 
-        const std::size_t pos = pos_it->second;
-        if (!had_entry || value > old_value) {
-            sift_up(pos);
+        const std::size_t heap_idx = key_to_heap_idx_[key];
+        if (heap_idx == not_in_heap) return;
+
+        heap_[heap_idx].activity = value;
+        if (value > old_value) {
+            sift_up(heap_idx);
         } else if (value < old_value) {
-            sift_down(pos);
+            sift_down(heap_idx);
         }
     }
 
-    /// @brief Put an element into the heap; a no-op if it is already there.
-    /// @pre `element` has an activity entry, i.e. `set_activity()` has run for it.
-    void insert(const T& element) {
-        if (pos_map_.find(element) != pos_map_.end()) return;
-        assert(activity_map_.find(element) != activity_map_.end() &&
-               "insert requires existing activity entry");
-        const std::size_t idx = heap_.size();
-        heap_.push_back(element);
-        pos_map_.emplace(heap_.back(), idx);
-        sift_up(idx);
+    /// @brief Put a key into the heap; a no-op if it is already there.
+    void insert(Key key) {
+        grow_for(key);
+        if (key_to_heap_idx_[key] != not_in_heap) return;
+        const std::size_t heap_idx = heap_.size();
+        heap_.push_back(Entry{key, activity_[key]});
+        key_to_heap_idx_[key] = heap_idx;
+        sift_up(heap_idx);
     }
 
     void rebuild() {
-        for (const auto& element : popped_) {
-            if (pos_map_.find(element) == pos_map_.end()) {
-                insert(element);
-            }
-        }
+        for (const Key key : popped_) insert(key);
         popped_.clear();
-    }
-
-    /// @brief A copy of the heap's state, for callers that remap the keys.
-    struct StateSnapshot {
-        std::vector<T> heap;                                    ///< Live elements, in heap order.
-        std::vector<T> popped;                                  ///< Awaiting `rebuild()`.
-        std::unordered_map<T, double, Hash, KeyEqual> activity;
-    };
-
-    StateSnapshot snapshot() const {
-        StateSnapshot out;
-        out.heap = heap_;
-        out.popped = popped_;
-        out.activity = activity_map_;
-        return out;
-    }
-
-    /// @brief Replace the heap's state, dropping duplicate keys and keys without
-    /// an activity entry.
-    void load_snapshot(StateSnapshot state) {
-        heap_.clear();
-        popped_.clear();
-        pos_map_.clear();
-        activity_map_ = std::move(state.activity);
-        popped_ = std::move(state.popped);
-
-        heap_.reserve(state.heap.size());
-        for (const T& key : state.heap) {
-            if (activity_map_.find(key) == activity_map_.end()) {
-                continue;
-            }
-            if (pos_map_.find(key) != pos_map_.end()) {
-                continue;
-            }
-            pos_map_[key] = heap_.size();
-            heap_.push_back(key);
-        }
-        if (!heap_.empty()) {
-            for (std::size_t i = heap_.size() / 2; i-- > 0;) {
-                sift_down(i);
-            }
-        }
     }
 
 private:
-    std::vector<T> heap_;                                        ///< Binary heap (0-based).
-    std::unordered_map<T, std::size_t, Hash, KeyEqual> pos_map_; ///< Element -> index in heap_.
-    std::unordered_map<T, double, Hash, KeyEqual> activity_map_;
-    std::vector<T> popped_;                                      ///< Extracted since last rebuild.
+    struct Entry {
+        Key key;
+        double activity;
+    };
+
+    static constexpr std::size_t not_in_heap = std::numeric_limits<std::size_t>::max();
+
+    std::vector<Entry> heap_;                  ///< Binary heap (0-based).
+    std::vector<std::size_t> key_to_heap_idx_;
+    std::vector<double> activity_;
+    std::vector<Key> popped_;                  ///< Extracted since the last rebuild.
+
+    void grow_for(Key key) {
+        if (key < activity_.size()) return;
+        activity_.resize(key + 1, 0.0);
+        key_to_heap_idx_.resize(key + 1, not_in_heap);
+    }
 
     static std::size_t parent(std::size_t i) { return (i - 1) / 2; }
     static std::size_t left(std::size_t i) { return 2 * i + 1; }
     static std::size_t right(std::size_t i) { return 2 * i + 2; }
 
-    /// @brief The activity of an element held in the heap.
-    double activity_of(const T& element) const {
-        auto it = activity_map_.find(element);
-        // Stronger than any documented precondition: every element in the heap
-        // has an activity entry.
-        assert(it != activity_map_.end() && "activity lookup missing");
-        return it->second;
+    static bool outranks(const Entry& lhs, const Entry& rhs) {
+        if (lhs.activity != rhs.activity) return lhs.activity > rhs.activity;
+        return lhs.key < rhs.key;
+    }
+
+    Key take_max() {
+        const Key top_key = heap_.front().key;
+        key_to_heap_idx_[top_key] = not_in_heap;
+
+        const std::size_t last = heap_.size() - 1;
+        if (last == 0) {
+            heap_.pop_back();
+            return top_key;
+        }
+
+        heap_[0] = heap_[last];
+        heap_.pop_back();
+        key_to_heap_idx_[heap_[0].key] = 0;
+        sift_down(0);
+        return top_key;
     }
 
     void swap_positions(std::size_t a, std::size_t b) {
         if (a == b) return;
         std::swap(heap_[a], heap_[b]);
-        pos_map_[heap_[a]] = a;
-        pos_map_[heap_[b]] = b;
+        key_to_heap_idx_[heap_[a].key] = a;
+        key_to_heap_idx_[heap_[b].key] = b;
     }
 
-    void sift_up(std::size_t pos) {
-        while (pos > 0) {
-            const std::size_t p = parent(pos);
-            if (activity_of(heap_[pos]) > activity_of(heap_[p])) {
-                swap_positions(pos, p);
-                pos = p;
+    void sift_up(std::size_t heap_idx) {
+        while (heap_idx > 0) {
+            const std::size_t p = parent(heap_idx);
+            if (outranks(heap_[heap_idx], heap_[p])) {
+                swap_positions(heap_idx, p);
+                heap_idx = p;
             } else {
                 break;
             }
         }
     }
 
-    void sift_down(std::size_t pos) {
+    void sift_down(std::size_t heap_idx) {
         const std::size_t n = heap_.size();
         while (true) {
-            const std::size_t l = left(pos);
-            const std::size_t r = right(pos);
-            std::size_t largest = pos;
+            const std::size_t l = left(heap_idx);
+            const std::size_t r = right(heap_idx);
+            std::size_t largest = heap_idx;
 
-            if (l < n && activity_of(heap_[l]) > activity_of(heap_[largest])) largest = l;
-            if (r < n && activity_of(heap_[r]) > activity_of(heap_[largest])) largest = r;
+            if (l < n && outranks(heap_[l], heap_[largest])) largest = l;
+            if (r < n && outranks(heap_[r], heap_[largest])) largest = r;
 
-            if (largest != pos) {
-                swap_positions(pos, largest);
-                pos = largest;
-            } else {
-                break;
-            }
+            if (largest == heap_idx) break;
+            swap_positions(heap_idx, largest);
+            heap_idx = largest;
+        }
+    }
+
+    void heapify() {
+        for (std::size_t i = heap_.size() / 2; i-- > 0;) {
+            sift_down(i);
         }
     }
 };

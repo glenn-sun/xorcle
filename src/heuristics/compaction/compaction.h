@@ -22,7 +22,10 @@ struct CompactionHistoryEntry {
 
 struct CompactionPlan {
     CompactionTransform transform;
+
+    /// @brief One clause per id active before the compaction, in clause-id order.
     std::vector<Clause> rewritten_clauses;
+
     std::vector<std::uint8_t> clause_is_active;
     CompactionHistoryEntry history_entry;
 };
@@ -58,8 +61,9 @@ CompactionTransform build_compaction_transform(const Trail& trail, std::size_t a
 /// @brief Rewrite the active problem into the compacted numbering, in clause-id order.
 ///
 /// A clause the trail satisfies becomes a single inactive `0 = 1` row, so clause ids stay
-/// stable. Applying the plan replaces the root trail with an empty one, so root-level units
-/// are not recoverable from the clause database afterwards.
+/// stable; an id already inactive is left to whatever it holds. Applying the plan replaces
+/// the root trail with an empty one, so root-level units are not recoverable from the clause
+/// database afterwards.
 ///
 /// @pre `state.trail` is at the root level, `state.clause_is_active` and
 /// `state.active_var_to_original` are sized by clause id and by active variable, and

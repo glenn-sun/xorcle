@@ -49,7 +49,6 @@ add_library(xorcle_core
     src/heuristics/decisions/decision_procedure.cpp
     src/heuristics/decisions/fixed_literals.cpp
     src/heuristics/decisions/phase.cpp
-    src/heuristics/decisions/variable_vsids.cpp
     src/heuristics/deletion/deletion.cpp
     src/heuristics/implication_graph/implication_graph.cpp
     src/heuristics/implication_graph/span_intersection.cpp

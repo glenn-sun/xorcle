@@ -687,13 +687,18 @@ void Solver::apply_compaction(CompactionPlan plan) {
     }
 
     const std::size_t num_clauses = selector_->num_clauses();
-    assert(plan.rewritten_clauses.size() == num_clauses);
     assert(plan.clause_is_active.size() == num_clauses);
 
     num_active_clauses_ = 0;
+    std::size_t rewritten_idx = 0;
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
+        if (!selector_->is_clause_active(clause_id)) {
+            assert(plan.clause_is_active[clause_id] == 0 &&
+                   "the plan activated a clause the compaction never rewrote");
+            continue;
+        }
         const std::size_t width_before = selector_->clause(clause_id).rows();
-        selector_->clause(clause_id) = std::move(plan.rewritten_clauses[clause_id]);
+        selector_->clause(clause_id) = std::move(plan.rewritten_clauses[rewritten_idx++]);
         const bool active = plan.clause_is_active[clause_id] != 0;
         selector_->set_clause_active(clause_id, active);
         num_active_clauses_ += active ? 1 : 0;
@@ -701,6 +706,8 @@ void Solver::apply_compaction(CompactionPlan plan) {
             ++counters_.num_compaction_narrowed_to_width_2;
         }
     }
+    assert(rewritten_idx == plan.rewritten_clauses.size() &&
+           "the plan does not cover every clause active before the compaction");
 
     // Composed through the numbering being retired, not replaced.
     const std::size_t new_num_vars = plan.transform.new_num_vars();

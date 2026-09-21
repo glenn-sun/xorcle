@@ -5,7 +5,6 @@
 
 #include <cstddef>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -15,11 +14,13 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Drain a heap into the order it hands elements back.
-template <typename Heap>
-std::vector<int> drain(Heap& heap) {
-    std::vector<int> order;
-    while (std::optional<int> next = heap.extract_max()) {
+using Key = MaxHeap::Key;
+using Order = std::vector<Key>;
+
+/// @brief Drain a heap into the order it hands keys back.
+Order drain(MaxHeap& heap) {
+    Order order;
+    while (std::optional<Key> next = heap.extract_max()) {
         order.push_back(*next);
     }
     return order;
@@ -28,43 +29,43 @@ std::vector<int> drain(Heap& heap) {
 } // namespace
 
 TEST_CASE("MaxHeap: an empty heap") {
-    MaxHeap<int> heap;
+    MaxHeap heap;
     CHECK(heap.empty());
     CHECK_FALSE(heap.extract_max().has_value());
     CHECK(heap.get_priority(3) == 0.0);
 }
 
-TEST_CASE("MaxHeap: elements come out in descending activity") {
-    const std::vector<std::pair<int, double>> entries = {
+TEST_CASE("MaxHeap: keys come out in descending activity") {
+    const std::vector<std::pair<Key, double>> entries = {
         {10, 1.0}, {20, 5.0}, {30, 3.0}, {40, 4.0}, {50, 2.0}};
 
-    MaxHeap<int> heap;
-    for (const auto& [id, activity] : entries) {
-        heap.set_activity(id, activity);
-        heap.insert(id);
+    MaxHeap heap;
+    for (const auto& [key, activity] : entries) {
+        heap.set_activity(key, activity);
+        heap.insert(key);
     }
     CHECK(heap.peek_max() == 20);
-    CHECK(drain(heap) == std::vector<int>{20, 40, 30, 50, 10});
+    CHECK(drain(heap) == Order{20, 40, 30, 50, 10});
     CHECK(heap.empty());
 }
 
 TEST_CASE("MaxHeap: set_activity without insert registers a score only") {
-    MaxHeap<int> heap;
+    MaxHeap heap;
     heap.set_activity(7, 9.0);
     CHECK(heap.get_priority(7) == 9.0);
     CHECK(heap.empty());
 
     heap.insert(7);
-    // A second insert of a live element is a no-op rather than a duplicate.
+    // A second insert of a live key is a no-op rather than a duplicate.
     heap.insert(7);
-    CHECK(drain(heap) == std::vector<int>{7});
+    CHECK(drain(heap) == Order{7});
 }
 
-TEST_CASE("MaxHeap: increase_key reorders live elements") {
-    MaxHeap<int> heap;
-    for (int id : {1, 2, 3}) {
-        heap.set_activity(id, static_cast<double>(id));
-        heap.insert(id);
+TEST_CASE("MaxHeap: increase_key reorders live keys") {
+    MaxHeap heap;
+    for (Key key : {1, 2, 3}) {
+        heap.set_activity(key, static_cast<double>(key));
+        heap.insert(key);
     }
     CHECK(heap.peek_max() == 3);
 
@@ -75,11 +76,11 @@ TEST_CASE("MaxHeap: increase_key reorders live elements") {
     heap.increase_key(1, -100.0);
     CHECK(heap.get_priority(1) == 11.0);
 
-    CHECK(drain(heap) == std::vector<int>{1, 3, 2});
+    CHECK(drain(heap) == Order{1, 3, 2});
 }
 
-TEST_CASE("MaxHeap: increase_key on an extracted element still records the score") {
-    MaxHeap<int> heap;
+TEST_CASE("MaxHeap: increase_key on an extracted key still records the score") {
+    MaxHeap heap;
     heap.set_activity(1, 1.0);
     heap.set_activity(2, 2.0);
     heap.insert(1);
@@ -93,11 +94,11 @@ TEST_CASE("MaxHeap: increase_key on an extracted element still records the score
     CHECK(heap.peek_max() == 2);
 }
 
-TEST_CASE("MaxHeap: rebuild restores every popped element exactly once") {
-    MaxHeap<int> heap;
-    for (int id = 0; id < 8; ++id) {
-        heap.set_activity(id, static_cast<double>(id));
-        heap.insert(id);
+TEST_CASE("MaxHeap: rebuild restores every popped key exactly once") {
+    MaxHeap heap;
+    for (Key key = 0; key < 8; ++key) {
+        heap.set_activity(key, static_cast<double>(key));
+        heap.insert(key);
     }
     for (int i = 0; i < 5; ++i) {
         CHECK(heap.extract_max().has_value());
@@ -105,23 +106,37 @@ TEST_CASE("MaxHeap: rebuild restores every popped element exactly once") {
 
     heap.rebuild();
     heap.rebuild();
-    CHECK(drain(heap) == std::vector<int>{7, 6, 5, 4, 3, 2, 1, 0});
+    CHECK(drain(heap) == Order{7, 6, 5, 4, 3, 2, 1, 0});
+}
+
+TEST_CASE("MaxHeap: a discarded key stays out and keeps its activity") {
+    MaxHeap heap;
+    for (Key key : {1, 2, 3}) {
+        heap.set_activity(key, static_cast<double>(key));
+        heap.insert(key);
+    }
+    CHECK(heap.extract_max() == 3);
+    heap.discard_max();
+
+    heap.rebuild();
+    CHECK(heap.get_priority(2) == 2.0);
+    CHECK(drain(heap) == Order{3, 1});
 }
 
 TEST_CASE("MaxHeap: rescale preserves the order") {
-    MaxHeap<int> heap;
-    for (int id : {1, 2, 3}) {
-        heap.set_activity(id, static_cast<double>(id) * 1e100);
-        heap.insert(id);
+    MaxHeap heap;
+    for (Key key : {1, 2, 3}) {
+        heap.set_activity(key, static_cast<double>(key) * 1e100);
+        heap.insert(key);
     }
     heap.rescale(1e-100);
     CHECK(heap.get_priority(1) == doctest::Approx(1.0));
     CHECK(heap.get_priority(3) == doctest::Approx(3.0));
-    CHECK(drain(heap) == std::vector<int>{3, 2, 1});
+    CHECK(drain(heap) == Order{3, 2, 1});
 }
 
 TEST_CASE("MaxHeap: reset clears activities as well as the heap") {
-    MaxHeap<int> heap;
+    MaxHeap heap;
     heap.set_activity(1, 1.0);
     heap.insert(1);
     CHECK(heap.extract_max() == 1);
@@ -133,52 +148,30 @@ TEST_CASE("MaxHeap: reset clears activities as well as the heap") {
     CHECK(heap.empty());
 }
 
-TEST_CASE("MaxHeap: snapshot round-trips") {
-    MaxHeap<int> heap;
-    for (int id : {1, 2, 3, 4}) {
-        heap.set_activity(id, static_cast<double>(id));
-        heap.insert(id);
+TEST_CASE("MaxHeap: equal activities come back by ascending key") {
+    const std::vector<Order> insertion_orders = {
+        {1, 2, 3, 4, 5, 6}, {6, 5, 4, 3, 2, 1}, {4, 1, 6, 3, 5, 2}};
+    for (const Order& insertions : insertion_orders) {
+        MaxHeap heap;
+        for (Key key : insertions) {
+            heap.set_activity(key, key % 2 == 0 ? 2.0 : 1.0);
+            heap.insert(key);
+        }
+        CHECK(heap.peek_max() == 2);
+        CHECK(drain(heap) == Order{2, 4, 6, 1, 3, 5});
     }
-    CHECK(heap.extract_max() == 4);
-
-    auto state = heap.snapshot();
-    CHECK(state.heap.size() == 3);
-    CHECK(state.popped == std::vector<int>{4});
-    CHECK(state.activity.size() == 4);
-
-    MaxHeap<int> restored;
-    restored.load_snapshot(state);
-    CHECK(restored.peek_max() == 3);
-    restored.rebuild();
-    CHECK(drain(restored) == std::vector<int>{4, 3, 2, 1});
 }
 
-TEST_CASE("MaxHeap: load_snapshot drops keys a remap collapsed or orphaned") {
-    // Compaction rewrites every key, which can map two distinct keys onto one
-    // and can drop a key entirely. `load_snapshot` is where that is absorbed.
-    MaxHeap<int>::StateSnapshot state;
-    state.heap = {1, 1, 2, 3};       // 1 duplicated by the remap
-    state.activity = {{1, 5.0}, {2, 7.0}}; // 3 has no activity entry
-
-    MaxHeap<int> heap;
-    heap.load_snapshot(state);
-    CHECK(heap.peek_max() == 2);
-    CHECK(drain(heap) == std::vector<int>{2, 1});
-}
-
-TEST_CASE("MaxHeap: works with a custom hash") {
-    struct LengthHash {
-        std::size_t operator()(const std::string& s) const noexcept { return s.size(); }
-    };
-
-    MaxHeap<std::string, LengthHash> heap;
-    heap.set_activity("a", 1.0);
-    heap.set_activity("bb", 3.0);
-    heap.set_activity("cc", 2.0);
-    for (const char* key : {"a", "bb", "cc"}) {
+TEST_CASE("MaxHeap: a rescale that brings activities together reranks them") {
+    MaxHeap heap;
+    for (Key key : {1, 2, 3, 4}) {
+        heap.set_activity(key, static_cast<double>(key));
         heap.insert(key);
     }
-    CHECK(heap.peek_max() == "bb");
+    CHECK(heap.peek_max() == 4);
+
+    heap.rescale(0.0);
+    CHECK(drain(heap) == Order{1, 2, 3, 4});
 }
 
 } // namespace xorcle

@@ -43,7 +43,7 @@ inline constexpr CsidsConfig csids_cmtf_config{
     .initial_activity = 1.0, .decay = 0.25, .bump = 1.0};
 
 struct CsidsActivity {
-    MaxHeap<ClauseId> activity_heap;
+    MaxHeap activity_heap;
     double inc_amt = 1.0; ///< What one bump adds. Grows by `1 / decay` per conflict.
     double initial_activity = 1.0;
     double decay = 0.98;

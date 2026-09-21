@@ -8,8 +8,8 @@
 
 namespace xorcle {
 
-/// @note `FixedLiterals` and `VariableVsids` decide from a literal basis that carries no
-/// clause polarity, and ignore the phase entirely.
+/// @note `FixedLiterals` decides from a literal basis that carries no clause polarity,
+/// and ignores the phase entirely.
 enum class DecisionPhase {
     satisfy, ///< Decide the linear negation of the sampled row.
     falsify, ///< Decide the sampled row as it is stored.
