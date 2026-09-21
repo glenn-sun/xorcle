@@ -304,7 +304,7 @@ TEST_CASE_TEMPLATE("deletion: a deleted clause is compaction's placeholder", Tag
     const std::vector<Clause> clauses{make_clause(repr, 5, {{0}, {1}})};
     const std::vector<std::uint8_t> active{1};
     const std::vector<std::size_t> var_map{0, 1, 2, 3, 4};
-    const CompactionState state{trail,  clauses, active, var_map, 5, false, 0, 0, 16};
+    const CompactionState state{trail,  clauses, active, var_map, 5, true};
     const CompactionTransform transform = build_compaction_transform(trail, 5);
     const CompactionPlan compacted = build_compaction_plan(state, transform);
 

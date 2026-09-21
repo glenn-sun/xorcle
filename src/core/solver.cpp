@@ -23,7 +23,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
                std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer,
                const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize,
                const DeletionConfig& deletion, bool bump_responsible_clauses, bool subsume,
-               const PropagationConfig& propagation)
+               const PropagationConfig& propagation,
+               const ImplicationGraphConfig& implication_graph)
     : repr_(repr),
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
@@ -45,7 +46,9 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       progress_(progress),
       minimize_(minimize),
       bump_responsible_clauses_(bump_responsible_clauses),
-      subsume_(subsume) {
+      subsume_(subsume),
+      implication_graph_config_(implication_graph),
+      implication_graph_(repr, num_vars, implication_graph) {
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
@@ -60,8 +63,9 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
     // Debug checks the attribution whether or not a budget is on.
     tracked_used_row_idxs_ = &used_row_idxs_;
 #endif
-    // The run's seed lives on the decision procedure, so this waits for its null check.
+    // The run's seed lives on the decision procedure, so these wait for its null check.
     representative_rng_ = make_rng(decisions_->base_seed(), RngComponent::minimize_representative);
+    implication_graph_.set_base_seed(decisions_->base_seed());
     std::iota(active_var_to_original_.begin(), active_var_to_original_.end(), std::size_t{0});
     if (proof_writer_ != nullptr) {
         proof_col_idx_to_unit_idx_.resize(num_vars);
@@ -336,6 +340,8 @@ void Solver::handle_non_root_conflict() {
     }
 
     const AssertingClauseInfo learned_info{.lbd = learned.lbd, .removed_levels = removed_levels};
+    counters_.num_learned_width_1 += learned.clause.rows() == 1 ? 1 : 0;
+    counters_.num_learned_width_2 += learned.clause.rows() == 2 ? 1 : 0;
     selector_->add_asserting_clause(std::move(learned.clause), trail_, learned_info);
     ++num_active_clauses_;
 
@@ -378,6 +384,8 @@ void Solver::handle_non_root_conflict() {
                                              active_var_to_original_,
                                              proof_ids(replacement_chains[i]));
             }
+            counters_.num_subsume_narrowed_to_width_2 +=
+                record.replacement->rows() <= 2 ? 1 : 0;
             selector_->add_asserting_clause(
                 std::move(*record.replacement), trail_,
                 AssertingClauseInfo{.lbd = record.lbd,
@@ -643,20 +651,26 @@ ProgressSnapshot Solver::progress_snapshot() const {
 }
 
 bool Solver::maybe_compact_before_decision() {
+    if (counters_.num_conflicts - conflicts_at_last_compaction_ >= compaction_.cadence) {
+        compaction_is_due_ = true;
+    }
     const CompactionState state{
         .trail = trail_,
         .clauses = selector_->clauses(),
         .clause_is_active = selector_->active_flags(),
         .active_var_to_original = active_var_to_original_,
         .active_num_vars = active_num_vars_,
-        .has_compacted_once = has_compacted_once_,
-        .num_conflicts = counters_.num_conflicts,
-        .conflicts_at_last_compaction = conflicts_at_last_compaction_,
-        .cadence = compaction_.cadence,
+        .is_due = compaction_is_due_,
     };
     if (!should_compact_before_decision(state)) {
         return false;
     }
+
+    implication_graph_counters_.num_forced_compactions +=
+        counters_.num_compactions != 0 &&
+                counters_.num_conflicts - conflicts_at_last_compaction_ < compaction_.cadence
+            ? 1
+            : 0;
 
     const CompactionTransform transform = build_compaction_transform(trail_, active_num_vars_);
     assert(transform.new_num_vars() < active_num_vars_ &&
@@ -678,10 +692,14 @@ void Solver::apply_compaction(CompactionPlan plan) {
 
     num_active_clauses_ = 0;
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
+        const std::size_t width_before = selector_->clause(clause_id).rows();
         selector_->clause(clause_id) = std::move(plan.rewritten_clauses[clause_id]);
         const bool active = plan.clause_is_active[clause_id] != 0;
         selector_->set_clause_active(clause_id, active);
         num_active_clauses_ += active ? 1 : 0;
+        if (active && width_before > 2 && selector_->clause(clause_id).rows() <= 2) {
+            ++counters_.num_compaction_narrowed_to_width_2;
+        }
     }
 
     // Composed through the numbering being retired, not replaced.
@@ -697,6 +715,7 @@ void Solver::apply_compaction(CompactionPlan plan) {
     compaction_history_.push_back(std::move(plan.history_entry));
 
     propagator_.reconfigure(active_num_vars_);
+    implication_graph_.reconfigure(active_num_vars_);
     false_equation_ = Equation::eq_false(repr_, active_num_vars_);
     propagated_row_eqn_.resize(active_num_vars_);
     satisfied_probe_eqn_.resize(active_num_vars_);
@@ -710,7 +729,7 @@ void Solver::apply_compaction(CompactionPlan plan) {
     selector_->update_with_compaction(plan.transform, trail_);
     decisions_->update_with_compaction(plan.transform, trail_.span(), selector_->clauses(),
                                        selector_->active_flags());
-    has_compacted_once_ = true;
+    compaction_is_due_ = false;
     conflicts_at_last_compaction_ = counters_.num_conflicts;
     ++counters_.num_compactions;
 }
@@ -796,6 +815,121 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
     counters_.num_demoted_clauses += plan.demoted.size();
 }
 
+bool Solver::maybe_run_implication_graph() {
+    if (!implication_graph_config_.enabled) {
+        return false;
+    }
+    if (!implication_graph_run_is_due_) {
+        const bool by_clauses = clauses_reaching_width_at_most_2() -
+                                    clauses_at_last_implication_graph_run_ >=
+                                implication_graph_config_.clause_cadence;
+        const bool by_conflicts = counters_.num_conflicts -
+                                      conflicts_at_last_implication_graph_run_ >=
+                                  implication_graph_config_.cadence;
+        if (by_clauses || by_conflicts) {
+            implication_graph_run_is_due_ = true;
+            run_is_due_from_ = by_clauses ? RunTrigger::clauses : RunTrigger::conflicts;
+            // The conflict interval elapsed at a conflict count this knows; the
+            // clause count is only read here, so that is the earliest it can be
+            // credited with.
+            conflicts_at_run_became_due_ =
+                by_conflicts
+                    ? conflicts_at_last_implication_graph_run_ + implication_graph_config_.cadence
+                    : counters_.num_conflicts;
+        }
+    }
+    // A run adds its units to the root trail, so like a compaction it waits for
+    // the trail to be back at the root.
+    if (!implication_graph_run_is_due_ || trail_.level() != 0) {
+        return false;
+    }
+    implication_graph_run_is_due_ = false;
+    const std::size_t conflicts_waited = counters_.num_conflicts - conflicts_at_run_became_due_;
+
+    const auto start = std::chrono::steady_clock::now();
+    std::vector<Equation> units;
+    // Every trail row is at the root level, so the trail's span is the root span.
+    const ImplicationGraphRun summary = implication_graph_.run(
+        selector_->clauses(), selector_->active_flags(), trail_.span(), units,
+        proof_writer_ != nullptr ? &implication_graph_proof_ : nullptr);
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+    implication_graph_counters_.time_s += elapsed.count();
+    implication_graph_counters_.span_intersection_time_s += summary.span_intersection_time_s;
+    implication_graph_counters_.num_runs += summary.did_work ? 1 : 0;
+    implication_graph_counters_.num_edges_visited += summary.edges_visited;
+    implication_graph_counters_.num_pairs_eligible += summary.pairs_eligible;
+    implication_graph_counters_.num_pairs_examined += summary.pairs_examined;
+    implication_graph_counters_.num_refuted_sides += summary.refuted_sides;
+    implication_graph_counters_.num_runs_at_the_pair_cap += summary.at_the_pair_cap ? 1 : 0;
+    implication_graph_counters_.num_truncated_sides += summary.truncated_sides;
+    if (summary.did_work) {
+        implication_graph_counters_.num_runs_after_a_conflict +=
+            counters_.num_conflicts != 0 ? 1 : 0;
+        implication_graph_counters_.num_conflicts_waited += conflicts_waited;
+        implication_graph_counters_.max_conflicts_waited =
+            std::max(implication_graph_counters_.max_conflicts_waited, conflicts_waited);
+        switch (run_is_due_from_) {
+            case RunTrigger::clauses:
+                ++implication_graph_counters_.num_runs_due_to_clauses;
+                break;
+            case RunTrigger::conflicts:
+                ++implication_graph_counters_.num_runs_due_to_conflicts;
+                break;
+            case RunTrigger::feed:
+                ++implication_graph_counters_.num_runs_due_to_a_feed;
+                break;
+            case RunTrigger::first_run:
+                break;
+        }
+    }
+
+    if (units.empty()) {
+        conflicts_at_last_implication_graph_run_ = counters_.num_conflicts;
+        clauses_at_last_implication_graph_run_ = clauses_reaching_width_at_most_2();
+        return false;
+    }
+
+    std::vector<ClauseId> unit_lines;
+    if (proof_writer_ != nullptr) {
+        unit_lines = write_implication_graph_lines(implication_graph_proof_);
+        assert(unit_lines.size() == units.size() && "a fed unit went without a proof line");
+    }
+    for (std::size_t i = 0; i < units.size(); ++i) {
+        feed_unit(units[i], proof_writer_ != nullptr ? unit_lines[i] : 0);
+    }
+    implication_graph_counters_.num_units_fed += units.size();
+    // Every run that adds anything grows the root rank, so looking again
+    // terminates.
+    implication_graph_run_is_due_ = true;
+    run_is_due_from_ = RunTrigger::feed;
+    conflicts_at_run_became_due_ = counters_.num_conflicts;
+    compaction_is_due_ = true;
+    return true;
+}
+
+void Solver::feed_unit(const Equation& unit, const ClauseId proof_line) {
+    assert(trail_.level() == 0 && "a unit is fed at the root");
+    assert(unit.num_bits() == active_num_vars_ + 1 &&
+           "a fed unit is not over the active variable numbering");
+
+    Clause clause(repr_, active_num_vars_);
+    Equation row = unit;
+    row.plus_assign(false_equation_);
+    clause.add_row(std::move(row));
+    assert(clause.rows() == 1 && "a fed unit did not make a width-1 clause");
+
+    const ClauseId new_clause_id = selector_->num_clauses();
+    if (proof_writer_ != nullptr) {
+        assert(proof_id_of_clause_.size() == new_clause_id && "a clause went without a proof id");
+        proof_id_of_clause_.push_back(proof_line);
+    }
+    decisions_->update_with_new_clause(clause, new_clause_id);
+    selector_->add_asserting_clause(std::move(clause), trail_,
+                                    AssertingClauseInfo{.lbd = 0, .removed_levels = 0});
+    ++num_active_clauses_;
+}
+
 Solution Solver::solve() {
 #ifndef NDEBUG
     has_solved_ = true;
@@ -836,6 +970,11 @@ Solution Solver::solve() {
 
         if (compaction_.enabled && maybe_compact_before_decision()) {
             // The active numbering changed, so re-propagate rather than decide.
+            continue;
+        }
+
+        if (maybe_run_implication_graph()) {
+            // The root trail gained units, so re-propagate rather than decide.
             continue;
         }
 

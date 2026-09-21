@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -15,6 +16,7 @@
 #include "heuristics/compaction/compaction.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/deletion/deletion.h"
+#include "heuristics/implication_graph/implication_graph.h"
 #include "heuristics/propagation/attempt_budget.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
@@ -25,6 +27,9 @@
 #include "util/stats.h"
 
 namespace xorcle {
+
+/// @brief The trail an LRUP(⊕) checker builds while it reads one proof line.
+class HintTrail;
 
 /// @brief When the solver is allowed to compact the variable numbering.
 struct CompactionConfig {
@@ -115,6 +120,55 @@ struct SolverCounters {
     std::size_t num_budgeted_runs = 0;
     /// @brief That fraction at the last such run.
     double final_budget_fraction = 0.0;
+
+    /// @brief Learned clauses of width 1 and of width 2 as they were added.
+    std::size_t num_learned_width_1 = 0;
+    std::size_t num_learned_width_2 = 0;
+
+    /// @brief Clauses that reached width at most 2 by another route: a
+    /// subsumption replacement, and a compaction narrowing a wider clause.
+    std::size_t num_subsume_narrowed_to_width_2 = 0;
+    std::size_t num_compaction_narrowed_to_width_2 = 0;
+};
+
+/// @brief What the implication graph runs of one solve did.
+struct ImplicationGraphCounters {
+    std::size_t num_runs = 0; ///< Runs that had a graph to read.
+    std::size_t num_edges_visited = 0;
+
+    /// @brief Vertex pairs with an out-arc on either side, the ones of those the
+    /// pair cap left room for, and the sides of those whose span holds `0 = 1`.
+    std::size_t num_pairs_eligible = 0;
+    std::size_t num_pairs_examined = 0;
+    std::size_t num_refuted_sides = 0;
+
+    /// @brief Runs the pair cap stopped short, and sides the descendant cap
+    /// truncated.
+    std::size_t num_runs_at_the_pair_cap = 0;
+    std::size_t num_truncated_sides = 0;
+
+    std::size_t num_units_fed = 0;
+
+    /// @brief What made each run due; the one run left over is the first of the
+    /// solve, which is due because the graph has never been read.
+    std::size_t num_runs_due_to_clauses = 0;
+    std::size_t num_runs_due_to_conflicts = 0;
+    std::size_t num_runs_due_to_a_feed = 0;
+
+    /// @brief Runs past the first conflict, which the wait for the root trail
+    /// makes rarer than the cadence alone would.
+    std::size_t num_runs_after_a_conflict = 0;
+
+    /// @brief Conflicts between a run falling due and the trail being back at
+    /// the root for it, summed over the runs and at their worst.
+    std::size_t num_conflicts_waited = 0;
+    std::size_t max_conflicts_waited = 0;
+
+    /// @brief Compactions the conflict interval would not have allowed.
+    std::size_t num_forced_compactions = 0;
+
+    double span_intersection_time_s = 0.0; ///< Of the graph's own seconds.
+    double time_s = 0.0;
 };
 
 /// @brief The CDCL(⊕) solver.
@@ -138,7 +192,8 @@ public:
            RawProofWriter* proof_writer = nullptr, const CompactionConfig& compaction = {},
            const ProgressConfig& progress = {}, bool minimize = true,
            const DeletionConfig& deletion = {}, bool bump_responsible_clauses = false,
-           bool subsume = false, const PropagationConfig& propagation = {});
+           bool subsume = false, const PropagationConfig& propagation = {},
+           const ImplicationGraphConfig& implication_graph = {});
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -171,6 +226,13 @@ public:
     std::size_t level() const noexcept { return trail_.level(); }
 
     const SolverCounters& counters() const noexcept { return counters_; }
+
+    const ImplicationGraphCounters& implication_graph_counters() const noexcept {
+        return implication_graph_counters_;
+    }
+
+    /// @brief Width-2 clauses and vertices as the graph last held them.
+    const ImplicationGraph& implication_graph() const noexcept { return implication_graph_; }
 
     DecisionProcedure::DecisionStats decision_stats() const { return decisions_->decision_stats(); }
 
@@ -235,6 +297,27 @@ private:
     /// @pre The trail still holds them, and `proof_writer_` is non-null.
     void write_compaction_units();
 
+    /// @brief Record every equation one run of the implication graph proved.
+    /// @return The line of each unit the run is to feed, in the run's order.
+    /// @pre `proof_writer_` is non-null and the trail is at the root.
+    std::vector<ClauseId> write_implication_graph_lines(
+        const ImplicationGraphProofRecord& record);
+
+    /// @brief Cite the lines of the root units @p rows needs before a hint can
+    /// name the clause holding them.
+    /// @return Whether one of those lines already falsified a clause.
+    bool cite_root_units(std::span<const Equation> rows, HintTrail& trail,
+                         std::vector<ClauseId>& hints);
+
+    /// @brief Cite the clause behind each arc in turn, stopping at the one the
+    /// trail falsifies.
+    /// @return Whether that clause was reached.
+    bool replay_arcs(std::span<const ClauseId> arcs, HintTrail& trail,
+                     std::vector<ClauseId>& hints);
+
+    /// @brief The rows of clause @p id over the original variables.
+    std::vector<Equation> lift_clause(ClauseId id) const;
+
     std::vector<ClauseId> proof_ids(const std::vector<ClauseId>& clause_ids) const;
 
     /// @brief Discard every decision level above `level`, records included.
@@ -298,6 +381,26 @@ private:
     /// @brief Delete learned clauses if the conflict interval has elapsed.
     void maybe_delete_clauses();
 
+    /// @brief Read the implication graph if a run is due and the trail is at
+    /// the root, and add the units it finds.
+    /// @return Whether the root trail gained clauses, in which case the caller
+    /// must propagate again rather than decide.
+    bool maybe_run_implication_graph();
+
+    /// @brief Add @p unit as a width-1 clause, so propagation learns it the way
+    /// it learns a unit clause conflict analysis produced.
+    /// @param proof_line The line proving the clause, read only under a proof.
+    /// @pre The trail is at the root and `unit` is not in its span.
+    void feed_unit(const Equation& unit, ClauseId proof_line);
+
+    /// @brief Clauses that have reached width at most 2 over the whole solve, by
+    /// any of the routes there.
+    std::size_t clauses_reaching_width_at_most_2() const noexcept {
+        return counters_.num_learned_width_1 + counters_.num_learned_width_2 +
+               counters_.num_subsume_narrowed_to_width_2 +
+               counters_.num_compaction_narrowed_to_width_2;
+    }
+
     /// @brief Demote, deactivate and clear the used flags a prepared plan calls for.
     void apply_deletion(const DeletionPlan& plan);
 
@@ -313,7 +416,11 @@ private:
 
     CompactionConfig compaction_;
     DeletionConfig deletion_;
-    bool has_compacted_once_ = false;
+
+    /// @brief Whether a compaction is owed: before the first one, once the
+    /// conflict interval has elapsed since the last, and once the implication
+    /// graph has fed units.
+    bool compaction_is_due_ = true;
 #ifndef NDEBUG
     bool has_solved_ = false;
 #endif
@@ -441,6 +548,24 @@ private:
 
     /// @brief Whether a learned clause deletes the reason clause it subsumes.
     bool subsume_;
+
+    ImplicationGraphConfig implication_graph_config_;
+    ImplicationGraph implication_graph_;
+
+    /// @brief What the last run proved, filled only under a proof.
+    ImplicationGraphProofRecord implication_graph_proof_;
+    ImplicationGraphCounters implication_graph_counters_;
+    /// @brief Whether a run is owed: before the first one, once the conflict
+    /// interval has elapsed since the last, and after one that fed units and so
+    /// left the fixpoint unfinished.
+    bool implication_graph_run_is_due_ = true;
+    std::size_t conflicts_at_last_implication_graph_run_ = 0;
+    std::size_t clauses_at_last_implication_graph_run_ = 0;
+    std::size_t conflicts_at_run_became_due_ = 0;
+
+    /// @brief Which of the counters below to credit the run that is due to.
+    enum class RunTrigger : std::uint8_t { first_run, clauses, conflicts, feed };
+    RunTrigger run_is_due_from_ = RunTrigger::first_run;
 
     /// @brief What the last progress line saw, so the next one can report the
     /// interval between them rather than the run so far.

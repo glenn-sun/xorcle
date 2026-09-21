@@ -34,18 +34,19 @@ struct CompactionState {
     const std::vector<std::uint8_t>& clause_is_active;
     const std::vector<std::size_t>& active_var_to_original;
     std::size_t active_num_vars;
-    bool has_compacted_once;
-    std::size_t num_conflicts;
-    std::size_t conflicts_at_last_compaction;
-    std::size_t cadence;
+
+    /// @brief Whether a compaction is owed: before the first one, once the
+    /// conflict interval has elapsed since the last, and once the root trail has
+    /// gained units the clause database has not been rewritten against.
+    bool is_due;
 };
 
 /// @brief The one-row clause an id holds once it goes inactive.
 /// @pre `false_row` is `0 = 1`.
 Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row);
 
-/// @brief True when the trail is at the root, the conflict interval has elapsed,
-/// and at least one variable can be dropped.
+/// @brief True when a compaction is due, the trail is at the root, and at least
+/// one variable can be dropped.
 /// @pre The trail span's pivot column set has size `state.active_num_vars + 1`.
 bool should_compact_before_decision(const CompactionState& state);
 

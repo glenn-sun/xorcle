@@ -37,18 +37,14 @@ Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row)
 }
 
 bool should_compact_before_decision(const CompactionState& state) {
+    if (!state.is_due) {
+        return false;
+    }
     if (state.trail.level() != 0) {
         return false; // compaction is only sound against the root trail
     }
     if (state.trail.span().rows() < 1) {
         return false;
-    }
-    if (state.has_compacted_once) {
-        const std::size_t conflicts_since =
-            state.num_conflicts - state.conflicts_at_last_compaction;
-        if (conflicts_since < state.cadence) {
-            return false;
-        }
     }
     const IndexSet& pivots = state.trail.span().pivot_col_idxs();
     assert(pivots.size() == state.active_num_vars + 1 && "trail pivot column count mismatch");

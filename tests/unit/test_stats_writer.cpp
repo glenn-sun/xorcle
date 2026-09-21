@@ -181,12 +181,15 @@ TEST_CASE("a section reports only when the configuration says it ran") {
     CHECK(stats.reports(StatsSection::minimize));
     CHECK(!stats.reports(StatsSection::deletion));
     CHECK(!stats.reports(StatsSection::restart));
+    CHECK(!stats.reports(StatsSection::implication_graph));
 
     stats.config = {ConfigEntry{"restart", "lbd", false}, ConfigEntry{"minimize", "false", false},
-                    ConfigEntry{"deletion", "true", true}};
+                    ConfigEntry{"deletion", "true", true},
+                    ConfigEntry{"implication_graph", "true", false}};
     CHECK(stats.reports(StatsSection::restart));
     CHECK(!stats.reports(StatsSection::minimize));
     CHECK(stats.reports(StatsSection::deletion));
+    CHECK(stats.reports(StatsSection::implication_graph));
 
     // The proof section waits on post-processing having actually run.
     CHECK(!stats.reports(StatsSection::proof));
@@ -215,6 +218,10 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c Clauses allocated: 47\n"
         "c Average learned LBD: 2.500\n"
         "c Learned equation bits: 630\n"
+        "c Learned width-1 clauses: 0\n"
+        "c Learned width-2 clauses: 0\n"
+        "c Subsumption replacements of width at most 2: 0\n"
+        "c Compaction narrowings to width at most 2: 0\n"
         "c Minimized clauses: 11\n"
         "c Width before minimizing: 146\n"
         "c Width after minimizing: 90\n"
@@ -286,6 +293,10 @@ TEST_CASE("ConsoleStatsWriter: zero denominators omit their ratio lines") {
         "c Clauses allocated: 0\n"
         "c Average learned LBD: 0.000\n"
         "c Learned equation bits: 0\n"
+        "c Learned width-1 clauses: 0\n"
+        "c Learned width-2 clauses: 0\n"
+        "c Subsumption replacements of width at most 2: 0\n"
+        "c Compaction narrowings to width at most 2: 0\n"
         "c Parse time (s): 0.000\n"
         "c Solve time (s): 0.000\n"
         "s UNSATISFIABLE\n";

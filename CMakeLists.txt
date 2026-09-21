@@ -37,6 +37,7 @@ add_library(xorcle_core
     src/algebra/sparse/sparse_gf2_vector.cpp
     src/algebra/sparse/sparse_repr.cpp
     src/core/analysis.cpp
+    src/core/implication_graph_proof.cpp
     src/core/propagation.cpp
     src/core/solver.cpp
     src/core/trail.cpp
@@ -50,6 +51,8 @@ add_library(xorcle_core
     src/heuristics/decisions/phase.cpp
     src/heuristics/decisions/variable_vsids.cpp
     src/heuristics/deletion/deletion.cpp
+    src/heuristics/implication_graph/implication_graph.cpp
+    src/heuristics/implication_graph/span_intersection.cpp
     src/heuristics/restarts/lbd_restarts.cpp
     src/heuristics/restarts/luby.cpp
     src/heuristics/restarts/restart_policy.cpp

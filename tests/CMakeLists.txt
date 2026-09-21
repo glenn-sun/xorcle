@@ -26,6 +26,7 @@ add_executable(xorcle_tests
     unit/test_dimacs.cpp
     unit/test_ema.cpp
     unit/test_equation.cpp
+    unit/test_implication_graph.cpp
     unit/test_index_set.cpp
     unit/test_max_heap.cpp
     unit/test_minimization.cpp
@@ -50,40 +51,55 @@ add_test(NAME unit COMMAND xorcle_tests)
 # command. `proof_roundtrip` skips rather than fails without python3.
 add_test(NAME proof_roundtrip
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle>)
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip PROPERTIES SKIP_RETURN_CODE 77)
 
 # Minimization is on by default and rewrites the learned clause, but leaves the
 # derivation a chain of resolutions, so both settings have to check.
 add_test(NAME proof_roundtrip_no_minimize
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --minimize=false)
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --minimize=false)
 set_tests_properties(proof_roundtrip_no_minimize PROPERTIES SKIP_RETURN_CODE 77)
 
 # Deletion adds deletion lines, and the checker refuses a reason it has already
 # deleted, so this is where a clause deleted too early would show up.
 add_test(NAME proof_roundtrip_deletion
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --deletion=true)
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --deletion=true)
 set_tests_properties(proof_roundtrip_deletion PROPERTIES SKIP_RETURN_CODE 77)
 
 # Compaction is on by default above, so this is the one variant that exercises
 # a raw proof with no compaction record in it at all.
 add_test(NAME proof_roundtrip_no_compact
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --compact=false)
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --compact=false)
 set_tests_properties(proof_roundtrip_no_compact PROPERTIES SKIP_RETURN_CODE 77)
 
 # Compacting at every opportunity, so most reason clauses are proved again from
 # the root units compaction threw away before a chain cites them.
 add_test(NAME proof_roundtrip_compact_often
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --compact-cadence=1)
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --compact-cadence=1)
 set_tests_properties(proof_roundtrip_compact_often PROPERTIES SKIP_RETURN_CODE 77)
 
 # The default miss rate leaves propagation short of a fixed point, so this is
 # the variant that covers the derivations a complete propagation writes.
 add_test(NAME proof_roundtrip_complete_propagation
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> --propagate-miss-rate=0)
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --propagate-miss-rate=0)
 set_tests_properties(proof_roundtrip_complete_propagation PROPERTIES SKIP_RETURN_CODE 77)
+
+# An instance on which the implication graph feeds units by all four of its
+# derivations: a refuted side, a side reaching one an earlier pair refuted, the
+# span of the side opposite a refuted one, and the two spans of a pair with
+# neither side refuted.
+add_test(NAME proof_roundtrip_implication_graph
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> rand_qp "n=15;m=30;planted=0" 1
+            --implication-graph=true)
+set_tests_properties(proof_roundtrip_implication_graph PROPERTIES SKIP_RETURN_CODE 77)

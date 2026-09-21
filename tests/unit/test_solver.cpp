@@ -146,7 +146,8 @@ Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfi
              std::unique_ptr<RestartPolicy> restarts = nullptr,
              std::unique_ptr<ClauseSelector> selector = nullptr,
              bool bump_responsible_clauses = false, const PropagationConfig& propagation = {},
-             std::unique_ptr<DecisionProcedure> decisions = nullptr) {
+             std::unique_ptr<DecisionProcedure> decisions = nullptr,
+             const ImplicationGraphConfig& implication_graph = {}) {
     ParsedDimacs parsed = parse_dimacs_string(instance, repr);
 
     Run run;
@@ -159,7 +160,7 @@ Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfi
                              : std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
         restarts != nullptr ? std::move(restarts) : std::make_unique<NoRestarts>(), nullptr,
         compaction, ProgressConfig{}, true, DeletionConfig{}, bump_responsible_clauses, false,
-        propagation);
+        propagation, implication_graph);
     for (Clause& clause : parsed.clauses) {
         run.solver->add_starting_clause(std::move(clause));
     }
@@ -774,6 +775,40 @@ TEST_CASE_TEMPLATE("solver: the learned clause's LBD reaches the selector", Tag,
         // The clause is derived from the levels of the conflicting trail.
         CHECK(lbd <= backjumps[index].level_before);
     }
+}
+
+
+// The graph is read when enough clauses have reached the width it reads, and
+// otherwise only when the conflict interval elapses, so a huge interval on both
+// leaves the one run the start of a solve always makes.
+TEST_CASE_TEMPLATE("solver: what makes an implication graph run due", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    constexpr std::size_t never = static_cast<std::size_t>(1) << 40;
+
+    const auto counters = [&](const ImplicationGraphConfig& config) {
+        Run run = make_run(repr, search_unsat_instance, CompactionConfig{}, nullptr, nullptr, false,
+                           PropagationConfig{}, nullptr, config);
+        CHECK(run.solver->solve().result == SolveResult::unsat);
+        return run.solver->implication_graph_counters();
+    };
+
+    const ImplicationGraphCounters idle =
+        counters(ImplicationGraphConfig{.enabled = true, .clause_cadence = never,
+                                        .cadence = never});
+    CHECK(idle.num_runs_due_to_clauses == 0);
+    CHECK(idle.num_runs_due_to_conflicts == 0);
+    CHECK(idle.num_runs <= 1);
+
+    const ImplicationGraphCounters eager =
+        counters(ImplicationGraphConfig{.enabled = true, .clause_cadence = 1, .cadence = never});
+    CHECK(eager.num_runs_due_to_clauses > 0);
+    CHECK(eager.num_runs_due_to_conflicts == 0);
+    CHECK(eager.num_runs > idle.num_runs);
+
+    // Off, nothing is read however many clauses narrow.
+    const ImplicationGraphCounters off =
+        counters(ImplicationGraphConfig{.clause_cadence = 1, .cadence = 1});
+    CHECK(off.num_runs == 0);
 }
 
 } // namespace xorcle

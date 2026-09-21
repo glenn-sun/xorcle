@@ -506,6 +506,26 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK_NOTHROW(parse_with_input({"--restart-reuse-trail=false"}));
     CHECK(parse_with_input({}).restart_reuse_trail == false);
 
+    // So is the implication graph, whose units only stop steering the search
+    // once a compaction rewrites the database against them.
+    CHECK(refusal({"--implication-graph=true", "--compact=false"})
+              .starts_with("--implication-graph requires --compact=true"));
+    CHECK(refusal({"--implication-graph-clause-cadence=8"})
+              .starts_with("--implication-graph-clause-cadence requires --implication-graph=true"));
+    CHECK(parse_with_input({"--implication-graph=true", "--implication-graph-clause-cadence=8"})
+              .implication_graph_clause_cadence == 8);
+    CHECK(refusal({"--implication-graph-max-pairs=8"})
+              .starts_with("--implication-graph-max-pairs requires --implication-graph=true"));
+    CHECK(refusal({"--implication-graph-max-descendants=8"})
+              .starts_with(
+                  "--implication-graph-max-descendants requires --implication-graph=true"));
+    CHECK(parse_with_input({"--implication-graph=true", "--implication-graph-max-pairs=8",
+                            "--implication-graph-max-descendants=4"})
+              .implication_graph_max_descendants == 4);
+    CHECK_NOTHROW(parse_with_input({"--implication-graph=false", "--compact=false"}));
+    CHECK_NOTHROW(parse_with_input({"--implication-graph=true", "--proof=p.lrup"}));
+    CHECK_NOTHROW(parse_with_input({"--implication-graph=true", "--proof-raw=p.raw"}));
+
     // Each of these is given where something does read it.
     CHECK(parse_with_input({"--compact-cadence=8"}).compact_cadence == 8);
     CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-min-ratio=1.2"}).restart_lbd_min_ratio ==

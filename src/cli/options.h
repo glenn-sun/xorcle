@@ -583,6 +583,12 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
         options.decisions != DecisionProcedureName::csids) {
         throw CliError("--deletion-key=activity requires --decisions=csids");
     }
+    // A switch rather than a parameter, so it is checked against its value.
+    if (options.implication_graph && !options.compact) {
+        throw CliError("--implication-graph requires --compact=true: without a compaction after "
+                       "each feed, which basis of the fed units the rule happened to pick would "
+                       "go on steering the search");
+    }
 }
 
 /// @brief Parse a whole command line.
@@ -664,6 +670,14 @@ inline CsidsConfig csids_config(const Options& options) {
 
 inline CompactionConfig compaction_config(const Options& options) {
     return CompactionConfig{.enabled = options.compact, .cadence = options.compact_cadence};
+}
+
+inline ImplicationGraphConfig implication_graph_config(const Options& options) {
+    return ImplicationGraphConfig{.enabled = options.implication_graph,
+                                  .clause_cadence = options.implication_graph_clause_cadence,
+                                  .cadence = options.implication_graph_cadence,
+                                  .max_pairs = options.implication_graph_max_pairs,
+                                  .max_descendants = options.implication_graph_max_descendants};
 }
 
 /// @brief Everything but the activity source, which only the caller holding the

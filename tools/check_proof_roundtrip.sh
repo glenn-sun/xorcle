@@ -2,14 +2,18 @@
 # Solve an UNSAT instance with --proof and verify the proof with the
 # independently written LRUP(⊕) checker.
 #
-# Usage: check_proof_roundtrip.sh <repository root> <xorcle binary> [solver option...]
+# Usage: check_proof_roundtrip.sh <repository root> <xorcle binary> <family> <params>
+#        <seed> [solver option...]
 # Exit:  0 pass, 1 fail, 77 skipped (no usable python3)
 
 set -eu
 
 root="$1"
 xorcle="$2"
-shift 2
+family="$3"
+params="$4"
+seed="$5"
+shift 5
 
 if [ -x "$root/.venv/bin/python" ]; then
     python="$root/.venv/bin/python"
@@ -27,10 +31,9 @@ trap 'rm -rf "$work"' EXIT INT TERM
 instance="$work/instance.xnf"
 proof="$work/proof.lrup"
 
-# random_kxnf needs no third-party generator dependency, and this (family,
-# seed) is UNSAT.
+# The caller names an instance the generator writes, so none is committed.
 "$python" "$root/tools/generate_xnf_tests.py" \
-    --family random_kxnf --params 'n=14;k=3' --seed 1 --out "$instance"
+    --family "$family" --params "$params" --seed "$seed" --out "$instance"
 
 # 20 is the solver's UNSAT exit code; anything else here is a real failure.
 status=0

@@ -136,6 +136,7 @@ ConsoleStatsWriter::log(const RunStats& stats) {
     append_section(StatsSection::subsume);
     append_section(StatsSection::deletion);
     append_section(StatsSection::propagate_budget);
+    append_section(StatsSection::implication_graph);
     append_section(StatsSection::timing);
     append_section(StatsSection::proof);
 

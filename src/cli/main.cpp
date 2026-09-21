@@ -212,7 +212,8 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                                  .cadence = options.report_cadence},
                   options.minimize, deletion, options.bump_responsible_clauses, options.subsume,
                   PropagationConfig{.miss_rate = options.propagate_miss_rate,
-                                    .window = options.propagate_window});
+                                    .window = options.propagate_window},
+                  implication_graph_config(options));
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
@@ -280,6 +281,10 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                   static_cast<double>(counters.num_asserting_clauses);
 
     stats.learned_equation_bits = counters.learned_equation_bits;
+    stats.learned_width_1 = counters.num_learned_width_1;
+    stats.learned_width_2 = counters.num_learned_width_2;
+    stats.subsume_narrowed_to_width_2 = counters.num_subsume_narrowed_to_width_2;
+    stats.compaction_narrowed_to_width_2 = counters.num_compaction_narrowed_to_width_2;
 
     stats.num_minimized_clauses = counters.num_minimized_clauses;
     stats.minimize_width_before = counters.minimize_width_before;
@@ -293,6 +298,27 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     stats.num_deleted_clauses = counters.num_deleted_clauses;
     stats.num_demoted_clauses = counters.num_demoted_clauses;
     stats.num_promoted_clauses = counters.num_promoted_clauses;
+
+    const ImplicationGraphCounters& graph = solver.implication_graph_counters();
+    stats.implication_graph_runs = graph.num_runs;
+    stats.implication_graph_edges_visited = graph.num_edges_visited;
+    stats.implication_graph_pairs_eligible = graph.num_pairs_eligible;
+    stats.implication_graph_pairs_examined = graph.num_pairs_examined;
+    stats.implication_graph_refuted_sides = graph.num_refuted_sides;
+    stats.implication_graph_runs_at_the_pair_cap = graph.num_runs_at_the_pair_cap;
+    stats.implication_graph_truncated_sides = graph.num_truncated_sides;
+    stats.implication_graph_units_fed = graph.num_units_fed;
+    stats.implication_graph_runs_after_a_conflict = graph.num_runs_after_a_conflict;
+    stats.implication_graph_runs_due_to_clauses = graph.num_runs_due_to_clauses;
+    stats.implication_graph_runs_due_to_conflicts = graph.num_runs_due_to_conflicts;
+    stats.implication_graph_runs_due_to_a_feed = graph.num_runs_due_to_a_feed;
+    stats.implication_graph_conflicts_waited = graph.num_conflicts_waited;
+    stats.implication_graph_max_conflicts_waited = graph.max_conflicts_waited;
+    stats.implication_graph_width_2_clauses = solver.implication_graph().num_width_2_clauses();
+    stats.implication_graph_vertex_pairs = solver.implication_graph().num_vertex_pairs();
+    stats.implication_graph_forced_compactions = graph.num_forced_compactions;
+    stats.implication_graph_span_intersection_time_s = graph.span_intersection_time_s;
+    stats.implication_graph_time_s = graph.time_s;
 
     stats.parse_time_s = parse_elapsed.count();
     stats.solve_time_s = elapsed.count();

@@ -51,6 +51,10 @@ XORCLE_STAT(clauses, Count, clauses_in_database, "clauses_in_database", "Clauses
 XORCLE_STAT(clauses, Count, clauses_allocated, "clauses_allocated", "Clauses allocated")
 XORCLE_STAT(clauses, Real, average_learned_lbd, "average_learned_lbd", "Average learned LBD")
 XORCLE_STAT(clauses, Count, learned_equation_bits, "learned_equation_bits", "Learned equation bits")
+XORCLE_STAT(clauses, Count, learned_width_1, "learned_width_1", "Learned width-1 clauses")
+XORCLE_STAT(clauses, Count, learned_width_2, "learned_width_2", "Learned width-2 clauses")
+XORCLE_STAT(clauses, Count, subsume_narrowed_to_width_2, "subsume_narrowed_to_width_2", "Subsumption replacements of width at most 2")
+XORCLE_STAT(clauses, Count, compaction_narrowed_to_width_2, "compaction_narrowed_to_width_2", "Compaction narrowings to width at most 2")
 
 // --- Clause minimization, reported only when it ran -------------------------
 
@@ -80,6 +84,28 @@ XORCLE_STAT(propagate_budget, Count, num_decision_propagations, "decision_propag
 XORCLE_STAT(propagate_budget, Count, num_decision_conflicts, "decision_conflicts", "Decision-time conflicts")
 XORCLE_STAT(propagate_budget, Real, mean_budget_fraction, "mean_budget_fraction", "Mean attempt budget (clause fraction)")
 XORCLE_STAT(propagate_budget, Real, final_budget_fraction, "final_budget_fraction", "Final attempt budget (clause fraction)")
+
+// --- The implication graph, reported only when it ran -----------------------
+
+XORCLE_STAT(implication_graph, Count, implication_graph_runs, "implication_graph_runs", "Implication graph runs")
+XORCLE_STAT(implication_graph, Count, implication_graph_edges_visited, "implication_graph_edges_visited", "Arcs the descendant searches visited")
+XORCLE_STAT(implication_graph, Count, implication_graph_pairs_eligible, "implication_graph_pairs_eligible", "Vertex pairs with an out-arc on either side")
+XORCLE_STAT(implication_graph, Count, implication_graph_pairs_examined, "implication_graph_pairs_examined", "Of those, the pairs the rule examined")
+XORCLE_STAT(implication_graph, Count, implication_graph_refuted_sides, "implication_graph_refuted_sides", "Sides of the examined pairs whose span holds 0 = 1")
+XORCLE_STAT(implication_graph, Count, implication_graph_runs_at_the_pair_cap, "implication_graph_runs_at_the_pair_cap", "Runs the pair cap stopped short")
+XORCLE_STAT(implication_graph, Count, implication_graph_truncated_sides, "implication_graph_truncated_sides", "Sides the descendant cap truncated")
+XORCLE_STAT(implication_graph, Count, implication_graph_units_fed, "implication_graph_units_fed", "Units fed to the root trail")
+XORCLE_STAT(implication_graph, Count, implication_graph_runs_after_a_conflict, "implication_graph_runs_after_a_conflict", "Runs past the first conflict")
+XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_clauses, "implication_graph_runs_due_to_clauses", "Runs the clause interval made due")
+XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_conflicts, "implication_graph_runs_due_to_conflicts", "Runs the conflict interval made due")
+XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_a_feed, "implication_graph_runs_due_to_a_feed", "Runs an earlier run's units made due")
+XORCLE_STAT(implication_graph, Count, implication_graph_conflicts_waited, "implication_graph_conflicts_waited", "Conflicts spent waiting for the root trail")
+XORCLE_STAT(implication_graph, Count, implication_graph_max_conflicts_waited, "implication_graph_max_conflicts_waited", "Longest wait for the root trail, in conflicts")
+XORCLE_STAT(implication_graph, Count, implication_graph_width_2_clauses, "implication_graph_width_2_clauses", "Width-2 clauses in the graph")
+XORCLE_STAT(implication_graph, Count, implication_graph_vertex_pairs, "implication_graph_vertex_pairs", "Vertex pairs in the graph, one per equation and its negation")
+XORCLE_STAT(implication_graph, Count, implication_graph_forced_compactions, "implication_graph_forced_compactions", "Compactions forced by feeding")
+XORCLE_STAT(implication_graph, Real, implication_graph_span_intersection_time_s, "implication_graph_span_intersection_time_s", "Span-intersection time (s), also in the graph time")
+XORCLE_STAT(implication_graph, Real, implication_graph_time_s, "implication_graph_time_s", "Implication graph time (s)")
 
 // --- Timing ----------------------------------------------------------------
 

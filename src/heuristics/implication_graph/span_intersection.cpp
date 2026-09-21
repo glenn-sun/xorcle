@@ -1,0 +1,382 @@
+/// @file span_intersection.cpp
+/// @brief The rule that reads the implication graph: the intersection of the
+/// spans of the two sides of a vertex pair.
+
+#include <algorithm>
+#include <cassert>
+#include <chrono>
+#include <cstddef>
+#include <optional>
+#include <vector>
+
+#include "algebra/equation.h"
+#include "algebra/reduce_result.h"
+#include "algebra/row_echelon_matrix.h"
+#include "heuristics/implication_graph/implication_graph.h"
+
+namespace xorcle {
+
+namespace {
+
+#ifndef NDEBUG
+/// @brief Vertices below which every descendant is also checked path by path,
+/// which costs a search of the whole graph per descendant.
+constexpr std::size_t path_check_vertices = 512;
+#endif
+
+/// @brief A basis of the intersection of two spans, by Zassenhaus over the
+/// columns of both laid side by side.
+///
+/// A row of the doubled matrix whose leading column lands in the second half
+/// has a zero first half, and its own leading column is the least of those of
+/// the rows it is a sum of, so those rows alone make up the intersection.
+std::vector<Equation> span_intersection(const RowSpace& left, const RowSpace& right) {
+    const EquationRepr repr = left.repr();
+    const std::size_t cols = left.cols();
+
+    RowEchelonMatrix doubled(repr, 2 * cols);
+    std::vector<std::size_t> wide_bits;
+    for (const Equation& row : left) {
+        wide_bits = row.bits();
+        const std::size_t half = wide_bits.size();
+        for (std::size_t i = 0; i < half; ++i) {
+            wide_bits.push_back(wide_bits[i] + cols);
+        }
+        Equation wide = Equation::with_num_bits(repr, 2 * cols);
+        wide.assign_bits(wide_bits);
+        doubled.add_row(std::move(wide));
+    }
+    for (const Equation& row : right) {
+        Equation wide = Equation::with_num_bits(repr, 2 * cols);
+        wide.assign_bits(row.bits());
+        doubled.add_row(std::move(wide));
+    }
+
+    std::vector<Equation> basis;
+    for (const Equation& row : doubled) {
+        const std::optional<std::size_t> leading = row.leading_bit();
+        if (!leading.has_value() || *leading < cols) {
+            continue;
+        }
+        wide_bits = row.bits();
+        for (std::size_t& bit : wide_bits) {
+            bit -= cols;
+        }
+        Equation eqn = Equation::with_num_bits(repr, cols);
+        eqn.assign_bits(wide_bits);
+        basis.push_back(std::move(eqn));
+    }
+    return basis;
+}
+
+} // namespace
+
+void ImplicationGraph::walk_span_intersections(
+    const RowSpace& root_span, [[maybe_unused]] const std::vector<Clause>& clauses,
+    [[maybe_unused]] const std::vector<std::uint8_t>& clause_is_active,
+    std::vector<Equation>& units, ImplicationGraphRun& summary,
+    ImplicationGraphProofRecord* const proof) {
+    using Kind = ImplicationGraphProofStep::Kind;
+    const auto start = std::chrono::steady_clock::now();
+    const std::size_t num_vertices = 2 * key_eqn_.size();
+
+    assert(all_arcs_are_clause_backed(clauses, clause_is_active, root_span) &&
+           "an arc of the implication graph is not witnessed by its clause");
+
+    sample_pairs(summary);
+
+    // Everything below is modulo the root trail span, against which the vertex
+    // equations are already reduced.
+    RowSpace accumulated = root_span;
+    for (const Equation& unit : units) {
+        accumulated.add_row(unit);
+    }
+
+    Equation scratch(repr_, num_vars_);
+    Equation candidate(repr_, num_vars_);
+    const auto side_span = [&](RowSpace& span,
+                               const std::vector<std::size_t>& reached) -> RowSpace& {
+        while (span.rows() != 0) {
+            span.pop_last_row();
+        }
+        for (const std::size_t vertex : reached) {
+            scratch.assign_from(*key_eqn_[vertex / 2]);
+            if ((vertex & 1) != 0) {
+                scratch.plus_assign(false_eqn_);
+            }
+            // `partial_reduce` is exactly what `add_row` would do before
+            // storing, so doing it here leaves the same row and costs no copy
+            // of a descendant the span already holds.
+            if (span.partial_reduce(scratch).kind != ReduceResult::Kind::eq_true) {
+                span.add_row(scratch);
+            }
+        }
+        return span;
+    };
+    const auto is_refuted = [&](const RowSpace& span) {
+        scratch.assign_from(false_eqn_);
+        span.reduce(scratch);
+        return scratch.is_eq_true();
+    };
+
+    // A vertex whose successor is refuted is refuted too, so a side reached
+    // that way needs no span of its own. Marks are filled in the order the
+    // pairs come, so this catches whatever the order has already settled.
+    std::vector<std::uint8_t> refuted_mark(num_vertices, 0);
+    const auto inherited_refutation = [&](const std::size_t v) -> const Arc* {
+        for (const Arc& arc : arcs_[v]) {
+            if (refuted_mark[arc.target] != 0) {
+                return &arc;
+            }
+        }
+        return nullptr;
+    };
+
+    std::vector<ClauseId>* const parents = proof != nullptr ? &parent_clauses_ : nullptr;
+    std::vector<ClauseId>* const other_parents =
+        proof != nullptr ? &other_parent_clauses_ : nullptr;
+    // The step proving each refuted vertex's negation, which a unit drawn from
+    // the other side and any vertex reaching this one then cite.
+    std::vector<std::size_t> refuted_step;
+    if (proof != nullptr) {
+        refuted_step.assign(num_vertices, no_proof_step);
+    }
+    const auto record_refutation = [&](const std::size_t v, const Arc* const inherited,
+                                       const std::vector<ClauseId>& replay) {
+        refuted_mark[v] = 1;
+        if (proof == nullptr) {
+            return;
+        }
+        ImplicationGraphProofStep step;
+        step.equation = equation_of(v ^ 1);
+        step.arcs_begin = proof->arcs.size();
+        if (inherited != nullptr) {
+            step.kind = Kind::reaches_refuted;
+            step.source = refuted_step[inherited->target];
+            assert(step.source != no_proof_step && "a refuted vertex went without a step");
+            proof->arcs.push_back(inherited->clause_id);
+        } else {
+            step.kind = Kind::refuted;
+            proof->arcs.insert(proof->arcs.end(), replay.begin(), replay.end());
+        }
+        step.arcs_end = proof->arcs.size();
+        refuted_step[v] = proof->steps.size();
+        proof->steps.push_back(std::move(step));
+    };
+
+    for (const std::size_t vertex : sampled_pairs_) {
+        ++summary.pairs_examined;
+
+        const bool cut_here = mark_descendants(vertex, descendant_stamp_, ++next_mark_,
+                                               descendants_, summary.edges_visited, parents);
+        const bool cut_there =
+            mark_descendants(vertex + 1, other_descendant_stamp_, ++next_mark_,
+                             other_descendants_, summary.edges_visited, other_parents);
+        summary.truncated_sides += (cut_here ? 1 : 0) + (cut_there ? 1 : 0);
+#ifndef NDEBUG
+        if (num_vertices <= path_check_vertices) {
+            for (const std::size_t reached : descendants_) {
+                assert(implication_is_clause_backed(vertex, reached, clauses, clause_is_active,
+                                                    root_span) &&
+                       "a descendant is not reached through clause-backed arcs");
+            }
+            for (const std::size_t reached : other_descendants_) {
+                assert(implication_is_clause_backed(vertex + 1, reached, clauses, clause_is_active,
+                                                    root_span) &&
+                       "a descendant is not reached through clause-backed arcs");
+            }
+        }
+#endif
+        // A side with no out-arc spans its own equation alone, which is never
+        // `0 = 1`, so the intersection is that equation exactly when the other
+        // side is refuted and is `0 = 0` otherwise.
+        const bool lone_first = arcs_[vertex].empty();
+        const bool one_sided = lone_first || arcs_[vertex + 1].empty();
+        if (one_sided) {
+            const std::size_t deep_vertex = lone_first ? vertex + 1 : vertex;
+            const Arc* const inherited = inherited_refutation(deep_vertex);
+            bool deep_refuted = inherited != nullptr;
+            if (!deep_refuted) {
+                deep_refuted =
+                    is_refuted(side_span(side_a_, lone_first ? other_descendants_ : descendants_));
+            }
+            summary.refuted_sides += deep_refuted ? 1 : 0;
+            if (deep_refuted) {
+                record_refutation(deep_vertex, inherited,
+                                  lone_first ? other_parent_clauses_ : parent_clauses_);
+                Equation unit = equation_of(lone_first ? vertex : vertex + 1);
+                candidate.assign_from(unit);
+                if (accumulated.partial_reduce(candidate).kind != ReduceResult::Kind::eq_true) {
+                    accumulated.add_row(candidate);
+                    if (proof != nullptr) {
+                        proof->steps[refuted_step[deep_vertex]].fed = true;
+                    }
+                    units.push_back(std::move(unit));
+                }
+            }
+            continue;
+        }
+
+        const Arc* const here_inherited = inherited_refutation(vertex);
+        const Arc* const there_inherited = inherited_refutation(vertex + 1);
+        bool here_refuted = here_inherited != nullptr;
+        bool there_refuted = there_inherited != nullptr;
+        const RowSpace& here = here_refuted ? side_a_ : side_span(side_a_, descendants_);
+        if (!here_refuted) {
+            here_refuted = is_refuted(here);
+        }
+        const RowSpace& there = there_refuted ? side_b_ : side_span(side_b_, other_descendants_);
+        if (!there_refuted) {
+            there_refuted = is_refuted(there);
+        }
+        summary.refuted_sides += (here_refuted ? 1 : 0) + (there_refuted ? 1 : 0);
+        if (here_refuted) {
+            record_refutation(vertex, here_inherited, parent_clauses_);
+        }
+        if (there_refuted) {
+            record_refutation(vertex + 1, there_inherited, other_parent_clauses_);
+        }
+
+        std::vector<Equation> intersection;
+        // The step already proving each equation of the intersection, where the
+        // pair's two refutations are what proves them.
+        std::vector<std::size_t> intersection_step;
+        Kind kind = Kind::both_sides;
+        std::size_t source = no_proof_step;
+        if (here_refuted && there_refuted) {
+            // Every equation holds, so the root is refuted; the two sides say so
+            // in a form the solver can add, which `0 = 1` is not.
+            intersection.push_back(equation_of(vertex));
+            intersection.push_back(equation_of(vertex + 1));
+            if (proof != nullptr) {
+                intersection_step = {refuted_step[vertex + 1], refuted_step[vertex]};
+            }
+        } else if (here_refuted || there_refuted) {
+            const RowSpace& other = here_refuted ? there : here;
+            for (const Equation& row : other) {
+                intersection.push_back(row);
+            }
+            kind = Kind::one_side;
+            if (proof != nullptr) {
+                source = here_refuted ? refuted_step[vertex] : refuted_step[vertex + 1];
+            }
+        } else {
+            // dim(U n W) = dim U + dim W - dim(U + W), over the columns of one
+            // side rather than of both laid side by side, so the basis is built
+            // only for the few pairs whose intersection is more than `0 = 0`.
+            while (both_sides_.rows() != 0) {
+                both_sides_.pop_last_row();
+            }
+            for (const Equation& row : here) {
+                both_sides_.add_row(row);
+            }
+            for (const Equation& row : there) {
+                scratch.assign_from(row);
+                if (both_sides_.partial_reduce(scratch).kind != ReduceResult::Kind::eq_true) {
+                    both_sides_.add_row(scratch);
+                }
+            }
+            const std::size_t dim = here.rows() + there.rows() - both_sides_.rows();
+            if (dim != 0) {
+                intersection = span_intersection(here, there);
+            }
+            assert(intersection.size() == dim && "the span intersection has the wrong dimension");
+        }
+
+        // The pair's replays, appended to the pool the first time a unit cites them.
+        bool replays_are_pooled = false;
+        std::size_t arcs_begin = 0;
+        std::size_t arcs_end = 0;
+        std::size_t other_arcs_begin = 0;
+        std::size_t other_arcs_end = 0;
+
+        for (std::size_t i = 0; i < intersection.size(); ++i) {
+            const Equation& eqn = intersection[i];
+            if (eqn.is_eq_false()) {
+                continue;
+            }
+            candidate.assign_from(eqn);
+            if (accumulated.partial_reduce(candidate).kind == ReduceResult::Kind::eq_true) {
+                continue;
+            }
+            // The span is what matters, so the reduced row is stored while the
+            // unit the solver is handed stays as the rule found it.
+            accumulated.add_row(candidate);
+            // A refuted side stands for the whole space, so it holds every
+            // equation and there is nothing to check against its rows.
+            assert(([&] {
+                       const auto holds = [&](const RowSpace& span) {
+                           scratch.assign_from(eqn);
+                           span.reduce(scratch);
+                           return scratch.is_eq_true();
+                       };
+                       return (here_refuted || holds(here)) && (there_refuted || holds(there));
+                   }()) &&
+                   "a span-intersection unit is not in both sides' spans");
+            if (proof != nullptr) {
+                if (!intersection_step.empty()) {
+                    proof->steps[intersection_step[i]].fed = true;
+                } else {
+                    if (!replays_are_pooled) {
+                        replays_are_pooled = true;
+                        const std::vector<ClauseId>& replay =
+                            kind == Kind::one_side && here_refuted ? other_parent_clauses_
+                                                                  : parent_clauses_;
+                        arcs_begin = proof->arcs.size();
+                        proof->arcs.insert(proof->arcs.end(), replay.begin(), replay.end());
+                        arcs_end = proof->arcs.size();
+                        if (kind == Kind::both_sides) {
+                            other_arcs_begin = proof->arcs.size();
+                            proof->arcs.insert(proof->arcs.end(), other_parent_clauses_.begin(),
+                                               other_parent_clauses_.end());
+                            other_arcs_end = proof->arcs.size();
+                        }
+                    }
+                    ImplicationGraphProofStep step;
+                    step.kind = kind;
+                    step.equation = eqn;
+                    if (kind == Kind::both_sides) {
+                        step.assumed = equation_of(vertex);
+                    }
+                    step.source = source;
+                    step.arcs_begin = arcs_begin;
+                    step.arcs_end = arcs_end;
+                    step.other_arcs_begin = other_arcs_begin;
+                    step.other_arcs_end = other_arcs_end;
+                    step.fed = true;
+                    proof->steps.push_back(std::move(step));
+                }
+            }
+            units.push_back(eqn);
+        }
+    }
+
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+    summary.span_intersection_time_s += elapsed.count();
+}
+
+#ifndef NDEBUG
+bool ImplicationGraph::all_arcs_are_clause_backed(
+    const std::vector<Clause>& clauses, const std::vector<std::uint8_t>& clause_is_active,
+    const RowSpace& root_span) {
+    const auto holds = [this](const Equation& eqn) {
+        return std::find(triple_.begin(), triple_.end(), eqn) != triple_.end();
+    };
+    for (std::size_t from = 0; from < 2 * key_eqn_.size(); ++from) {
+        for (const Arc& arc : arcs_[from]) {
+            if (clause_is_active[arc.clause_id] == 0 ||
+                !reduce_triple(clauses[arc.clause_id], root_span)) {
+                return false;
+            }
+            const Equation head = equation_of(from);
+            const Equation refuted = equation_of(arc.target ^ 1);
+            if (head == refuted || !holds(head) || !holds(refuted)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+#endif
+
+} // namespace xorcle

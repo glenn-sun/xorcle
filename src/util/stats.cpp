@@ -52,6 +52,8 @@ RunStats::reports(const StatsSection section) const {
             const std::string miss_rate = config_value(*this, "propagate_miss_rate");
             return !miss_rate.empty() && miss_rate != "0";
         }
+        case StatsSection::implication_graph:
+            return config_value(*this, "implication_graph") == "true";
         case StatsSection::proof:
             return proof_postprocess_time_s > 0.0;
     }

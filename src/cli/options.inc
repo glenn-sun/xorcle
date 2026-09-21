@@ -157,6 +157,23 @@ XORCLE_ENUM_OPTION(deletion_key, DeletionKey, DeletionKey::activity,
 XORCLE_ENUM_VALUE(deletion_key, "lbd", DeletionKey::lbd)
 XORCLE_ENUM_VALUE(deletion_key, "activity", DeletionKey::activity)
 
+// --- The implication graph --------------------------------------------------
+
+XORCLE_OPTION(implication_graph, Bool, false, false, true,
+              "add to the root trail the equations that hold on both sides of a vertex of\n"
+              "the implication graph of the width-2 clauses; needs --compact=true")
+XORCLE_OPTION(implication_graph_clause_cadence, Size, 16, 1, SIZE_MAX,
+              "clauses that became width at most 2 between implication graph runs")
+XORCLE_OPTION(implication_graph_cadence, Size, 1000, 1, SIZE_MAX,
+              "conflicts between implication graph runs, the fallback when too few\n"
+              "clauses became width at most 2")
+XORCLE_OPTION(implication_graph_max_pairs, Size, 10000, 1, SIZE_MAX,
+              "vertex pairs one implication graph run examines, sampled uniformly from\n"
+              "the pairs with an out-arc on either side")
+XORCLE_OPTION(implication_graph_max_descendants, Size, 1000, 1, SIZE_MAX,
+              "descendants one side's search keeps, whole distance levels first and a\n"
+              "uniform sample of the level that would overrun this")
+
 // --- Output ----------------------------------------------------------------
 
 XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(⊕) proof here")
@@ -212,6 +229,13 @@ XORCLE_REQUIRES(deletion_core_lbd, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_secondary_lbd, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_demote_cadence_in_passes, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_key, options.deletion, "--deletion=true")
+
+XORCLE_REQUIRES(implication_graph_clause_cadence, options.implication_graph,
+                "--implication-graph=true")
+XORCLE_REQUIRES(implication_graph_cadence, options.implication_graph, "--implication-graph=true")
+XORCLE_REQUIRES(implication_graph_max_pairs, options.implication_graph, "--implication-graph=true")
+XORCLE_REQUIRES(implication_graph_max_descendants, options.implication_graph,
+                "--implication-graph=true")
 
 XORCLE_REQUIRES(report_cadence, options.stats_file.empty(),
                 "statistics on the console, which --stats-file replaces")
