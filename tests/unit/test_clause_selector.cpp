@@ -1,6 +1,5 @@
 #include <doctest/doctest.h>
 
-#include <algorithm>
 #include <cstddef>
 #include <iterator>
 #include <optional>
@@ -15,7 +14,7 @@
 #include "core/watch.h"
 #include "heuristics/selection/clause_selector.h"
 #include "heuristics/selection/cyclic.h"
-#include "heuristics/selection/leading_term_watchlist.h"
+#include "heuristics/selection/exact_watchlist.h"
 #include "heuristics_test_support.h"
 
 namespace xorcle {
@@ -29,6 +28,24 @@ std::vector<ClauseId> drain(ClauseSelector& selector) {
         out.push_back(*id);
     }
     return out;
+}
+
+/// @brief Learn an equation the way the solver does, then report the row the trail
+/// stores for it: at a new level for a decision, at the top level otherwise.
+void learn(ExactWatchlist& selector, Trail& trail, std::initializer_list<std::size_t> bits,
+           bool decision) {
+    const Equation eqn = make_equation_with(EquationRepr::dense, trail.num_vars(), bits);
+    if (decision) {
+        trail.learn(eqn, std::nullopt, trail.level() + 1);
+    } else {
+        trail.learn(eqn, ClauseId{0}, trail.level());
+    }
+    const Equation& row = trail.span().row(trail.trail_idx_to_row_idx().back());
+    if (decision) {
+        selector.update_with_decision(row, trail);
+    } else {
+        selector.update_with_propagation(row, trail);
+    }
 }
 
 } // namespace
@@ -125,106 +142,159 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
     }
 }
 
-TEST_CASE_TEMPLATE("leading-term watchlist: bucketing and queueing", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
-    LeadingTermWatchlist selector(4);
+TEST_CASE("exact watchlist: triggers, hints and snapshots") {
+    constexpr EquationRepr repr = EquationRepr::dense;
+    ExactWatchlist selector(4);
     Trail trail(repr, 4);
 
-    SUBCASE("a unit clause is queued immediately, a non-unit one is not") {
+    SUBCASE("a row leading on a watch's column wakes it, and a dead first watch is a zero trigger") {
         selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{2}, {3}}));
         CHECK(selector.next() == std::nullopt);
 
+        learn(selector, trail, {0}, false);
+        CHECK(selector.counters().touches == 1);
+        const std::optional<ClauseSelection> selection = selector.next_with_hint();
+        REQUIRE(selection.has_value());
+        CHECK(selection->id == 0);
+        CHECK(selection->trigger_hint == std::optional<WatchType>{WatchType::zero});
+        CHECK(selector.next() == std::nullopt);
+        CHECK(selector.counters().triggers == 1);
+    }
+
+    SUBCASE("a first watch moving onto the second's column is fixed up into a one trigger") {
+        // `A` = x0 + x2 and `B` = x1 + x2. Learning x0 + x1 moves `A` to x1 + x2,
+        // which `B` then loses to: the watches became equal modulo the span.
+        selector.add_starting_clause(make_clause(repr, 4, {{0, 2}, {1, 2}}));
+        learn(selector, trail, {0, 1}, false);
+        CHECK(selector.counters().fixups == 1);
+        const std::optional<ClauseSelection> selection = selector.next_with_hint();
+        REQUIRE(selection.has_value());
+        CHECK(selection->trigger_hint == std::optional<WatchType>{WatchType::one});
+    }
+
+    SUBCASE("a clause a watch satisfies is not queued") {
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
+        learn(selector, trail, {1, 4}, false); // the second watch reduces to `0 = 1`
+        learn(selector, trail, {0}, false);    // and the first to `0 = 0`
+        CHECK(selector.next() == std::nullopt);
+        CHECK(selector.counters().triggers == 0);
+    }
+
+    SUBCASE("a unit clause waits in the queue, with no hint, until it is satisfied") {
         selector.add_starting_clause(make_clause(repr, 4, {{2}}));
-        CHECK(selector.next() == std::optional<ClauseId>{1});
+        const std::optional<ClauseSelection> selection = selector.next_with_hint();
+        REQUIRE(selection.has_value());
+        CHECK(selection->trigger_hint == std::nullopt);
+        learn(selector, trail, {2, 4}, false);
         CHECK(selector.next() == std::nullopt);
     }
 
-    SUBCASE("only the buckets a learned equation can reach are woken") {
-        selector.add_starting_clause(make_clause(repr, 4, {{0}, {3}})); // buckets 0 and 3
-        selector.add_starting_clause(make_clause(repr, 4, {{1}, {3}})); // buckets 1 and 3
-        selector.add_starting_clause(make_clause(repr, 4, {{2}, {3}})); // buckets 2 and 3
+    SUBCASE("a backjump copies a swept cell back and drops what was queued") {
+        // `A` = x0 + x1 and `B` = x2.
+        selector.add_starting_clause(make_clause(repr, 4, {{0, 1}, {2}}));
+        learn(selector, trail, {0}, true); // `A` becomes x1, saved first
+        CHECK(selector.counters().saves == 1);
+        learn(selector, trail, {1}, false); // `A` becomes `0 = 0`
+        REQUIRE(selector.counters().triggers == 1);
 
-        // Learn x0 = 1 so column 0 becomes a pivot, then learn an equation
-        // leading on column 2. Bucket 2 is the exact match; bucket 0 is a pivot
-        // below it, so row reduction could lift such a row up to column 2. Bucket 1
-        // is below but is not a pivot, so clause 1 stays asleep.
-        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level());
-        selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
+        trail.resize(1);
+        selector.update_with_backjump(0, trail);
+        CHECK(selector.counters().restores == 1);
+        CHECK(selector.next() == std::nullopt);
 
-        const std::vector<ClauseId> woken = drain(selector);
-        CHECK(woken.size() == 2);
-        CHECK(std::find(woken.begin(), woken.end(), ClauseId{1}) == woken.end());
+        // Restored to x0 + x1, so x1 alone no longer reaches it and x0 does.
+        learn(selector, trail, {1}, true);
+        CHECK(selector.next() == std::nullopt);
+        const std::size_t touches = selector.counters().touches;
+        learn(selector, trail, {0}, false);
+        CHECK(selector.counters().touches == touches + 1);
+        CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::zero});
     }
 
-    SUBCASE("the work list is a deque: exact matches on top, lower pivots underneath") {
-        selector.add_starting_clause(make_clause(repr, 4, {{0}, {3}})); // id 0, buckets 0 and 3
-        selector.add_starting_clause(make_clause(repr, 4, {{2}, {3}})); // id 1, buckets 2 and 3
-        selector.add_starting_clause(make_clause(repr, 4, {{4}}));      // id 2, a unit clause
-
-        // The unit clause is already queued. Learning an equation leading on
-        // column 2 pushes bucket 2 to the top and bucket 0 -- a pivot below --
-        // to the bottom, so the queued unit clause ends up between them.
-        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level());
-        selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
-
-        CHECK(drain(selector) == std::vector<ClauseId>{1, 2, 0});
-    }
-
-    SUBCASE("an asserting clause is queued above every unit clause") {
-        selector.add_starting_clause(make_clause(repr, 4, {{0}}));      // id 0, unit
-        selector.add_starting_clause(make_clause(repr, 4, {{1}}));      // id 1, unit
-        selector.add_starting_clause(make_clause(repr, 4, {{2}, {3}})); // id 2, non-unit
-
-        selector.add_asserting_clause(make_clause(repr, 4, {{3}, {4}}), trail,
-                                      AssertingClauseInfo{.lbd = 1, .removed_levels = 2});
-        CHECK(drain(selector) == std::vector<ClauseId>{3, 1, 0});
-    }
-
-    SUBCASE("inactive clauses are dropped as they are popped") {
-        selector.add_starting_clause(make_clause(repr, 4, {{0}}));
-        selector.add_starting_clause(make_clause(repr, 4, {{1}}));
-        selector.set_clause_active(0, false);
-        CHECK(drain(selector) == std::vector<ClauseId>{1});
-    }
-
-    SUBCASE("moving a watch moves the clause between buckets") {
+    SUBCASE("a backjump rebuilds a cell whose watch moved, and queues it if it triggers") {
         selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}, {2}}));
-        Clause& clause = selector.clause(0);
-        REQUIRE(clause.rows() == 3);
+        learn(selector, trail, {1}, true); // `B` = x1 dies
+        REQUIRE(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::one});
 
         // The propagator writes the new watch first, then reports it.
-        const ClauseRowIdx old_watch = clause.watched1;
+        Clause& clause = selector.clause(0);
         clause.watched1 = 2;
-        selector.update_with_new_watch(0, old_watch, WatchType::one, trail);
-
-        // Bucket 1 no longer holds the clause, so an equation leading there
-        // wakes nothing; bucket 2 does.
-        selector.update_with_propagation(make_equation_with(repr, 4, {1}), trail);
+        selector.update_with_new_watch(0, 1, WatchType::one, trail);
         CHECK(selector.next() == std::nullopt);
 
-        selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
-        CHECK(selector.next() == std::optional<ClauseId>{0});
+        // Back at the root the new pair x0, x2 is independent: nothing triggers.
+        trail.resize(1);
+        selector.update_with_backjump(0, trail);
+        CHECK(selector.counters().rebuilds == 2);
+        CHECK(selector.next() == std::nullopt);
+        learn(selector, trail, {2}, true);
+        CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::one});
     }
 
-    SUBCASE("compaction rebuilds every bucket from the active clauses") {
-        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}})); // id 0
-        selector.add_starting_clause(make_clause(repr, 4, {{2}}));      // id 1, unit
-        REQUIRE(drain(selector) == std::vector<ClauseId>{1});
-
-        // Rewrite clause 0 in place, the way the solver applies a plan, and
-        // deactivate the unit clause.
-        selector.clause(0) = make_clause(repr, 4, {{2}, {3}});
-        selector.set_clause_active(1, false);
-
-        const CompactionTransform transform;
-        selector.update_with_compaction(transform, trail);
-
-        // The old bucket 0 is gone; the new bucket 2 wakes the clause.
-        selector.update_with_propagation(make_equation_with(repr, 4, {0}), trail);
+    SUBCASE("a satisfied clause's second cell is left in its bucket, and swept once unsatisfied") {
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
+        learn(selector, trail, {0, 4}, true); // `A` reduces to `0 = 1` at level 1
+        learn(selector, trail, {1}, true);    // and `B`'s column becomes a pivot at level 2
+        CHECK(selector.counters().skips == 1);
+        const std::size_t touches = selector.counters().touches;
         CHECK(selector.next() == std::nullopt);
 
-        selector.update_with_propagation(make_equation_with(repr, 4, {2}), trail);
-        CHECK(selector.next() == std::optional<ClauseId>{0});
+        // Still satisfied at level 1, where `B` leads on a column again.
+        trail.resize(2);
+        selector.update_with_backjump(1, trail);
+        learn(selector, trail, {1}, true);
+        CHECK(selector.counters().skips == 2);
+
+        // At the root `A` is x0 again, and `B` is still bucketed on x1.
+        trail.resize(1);
+        selector.update_with_backjump(0, trail);
+        learn(selector, trail, {1}, true);
+        CHECK(selector.counters().touches == touches + 1);
+        CHECK(selector.counters().skips == 2);
+        CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::one});
+    }
+
+    SUBCASE("a first cell whose second is `0 = 1` is left in its bucket until a backjump") {
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
+        learn(selector, trail, {1, 4}, true); // `B` reduces to `0 = 1`
+        learn(selector, trail, {0}, true);    // and would make `A` `0 = 0`
+        CHECK(selector.counters().skips == 1);
+        CHECK(selector.next() == std::nullopt);
+
+        trail.resize(1);
+        selector.update_with_backjump(0, trail);
+        learn(selector, trail, {0}, true);
+        CHECK(selector.counters().skips == 1);
+        CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::zero});
+    }
+
+    SUBCASE("stale bucket entries are cleaned up, and the live ones still wake") {
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}, {2}, {3}}));
+        Clause& clause = selector.clause(0);
+        // Each move rebuilds `B` into another bucket and leaves the old entry stale.
+        for (std::size_t move = 0; move < 20; ++move) {
+            const ClauseRowIdx old_watch = clause.watched1;
+            clause.watched1 = 1 + (clause.watched1 % 3);
+            selector.update_with_new_watch(0, old_watch, WatchType::one, trail);
+        }
+        CHECK(selector.counters().cleanups >= 1);
+        CHECK(selector.counters().cleanup_dropped >= 1);
+        // Two live cells over five columns: never more than 2 * 2 + 5, plus the push.
+        CHECK(selector.counters().peak_bucket_entries <= 10);
+
+        learn(selector, trail, {static_cast<std::size_t>(clause.watched1)}, true);
+        CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::one});
+    }
+
+    SUBCASE("an asserting clause unit after its backjump is queued at once") {
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {3}}));
+        learn(selector, trail, {1}, false);
+        selector.add_asserting_clause(make_clause(repr, 4, {{1, 2}, {1}}), trail,
+                                      AssertingClauseInfo{.lbd = 1, .removed_levels = 1});
+        const std::optional<ClauseSelection> selection = selector.next_with_hint();
+        REQUIRE(selection.has_value());
+        CHECK(selection->id == 1);
     }
 }
 

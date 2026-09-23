@@ -202,6 +202,27 @@ TEST_CASE_TEMPLATE("propagation: a dead watch moves to a live row", Tag, DenseTa
     CHECK(handler.records[0].watched1 == 1);
 }
 
+TEST_CASE_TEMPLATE("propagation: a one hint moves the second watch when the watches became equal",
+                   Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Propagator propagator(repr, default_num_vars);
+    Trail trail(repr, default_num_vars);
+    Clause clause = make_clause(repr, default_num_vars, {{0}, {1}, {2}});
+    RecordingHandler handler(clause);
+    std::size_t num_watch_updates = 0;
+
+    // Neither watch is in the span, but their sum is: the second watch is in the
+    // span plus the first, which is all a one hint promises.
+    trail.learn(make_equation_with(repr, default_num_vars, {0, 1}), ClauseId{0}, trail.level());
+
+    CHECK(propagator.unit_propagate_one_clause(3, clause, trail, WatchType::one, num_watch_updates,
+                                               handler) == nullptr);
+    CHECK(clause.watched0 == 0);
+    CHECK(clause.watched1 == 2);
+    REQUIRE(handler.records.size() == 1);
+    CHECK(handler.records[0].type == WatchType::one);
+}
+
 TEST_CASE_TEMPLATE("propagation: two tasks run against the already-updated watch", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;

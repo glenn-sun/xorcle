@@ -94,6 +94,14 @@ add_test(NAME proof_roundtrip_complete_propagation
             --propagate-miss-rate=0)
 set_tests_properties(proof_roundtrip_complete_propagation PROPERTIES SKIP_RETURN_CODE 77)
 
+# The exact watchlist hands the propagator a trigger hint, which no other selector
+# does, so its attempts reach their reasons by a path of their own.
+add_test(NAME proof_roundtrip_exact_watchlist
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --selection=exact_watchlist)
+set_tests_properties(proof_roundtrip_exact_watchlist PROPERTIES SKIP_RETURN_CODE 77)
+
 # An instance on which the implication graph feeds units by all four of its
 # derivations: a refuted side, a side reaching one an earlier pair refuted, the
 # span of the side opposite a refuted one, and the two spans of a pair with

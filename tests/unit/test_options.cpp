@@ -76,8 +76,6 @@ TEST_CASE("options: the documented defaults") {
 }
 
 TEST_CASE("options: --name=value sets each kind") {
-    // `--deletion=false` and `--subsume=false` because the selector can do
-    // neither; both are refusals rather than quiet demotions.
     const Options options = parse_with_input({"--equation-repr=sparse",
                                               "--seed=42",
                                               "--compact=false",
@@ -85,7 +83,6 @@ TEST_CASE("options: --name=value sets each kind") {
                                               "--csids-decay=0.5",
                                               "--csids-bump=0",
                                               "--phase=satisfy",
-                                              "--selection=leading_term_watchlist",
                                               "--deletion=false",
                                               "--subsume=false",
                                               "--restart=luby",
@@ -99,7 +96,8 @@ TEST_CASE("options: --name=value sets each kind") {
     CHECK(options.csids_decay == doctest::Approx(0.5));
     CHECK(options.csids_bump == doctest::Approx(0.0));
     CHECK(options.phase == DecisionPhase::satisfy);
-    CHECK(options.selection == ClauseSelectorName::leading_term_watchlist);
+    CHECK(options.deletion == false);
+    CHECK(options.subsume == false);
     CHECK(options.restart == RestartMethod::luby);
     CHECK(options.restart_luby_unit == 7);
     CHECK(options.proof == "out.lrup");
@@ -154,7 +152,7 @@ TEST_CASE("options: an unknown enum value lists the accepted spellings") {
     CHECK(contains(message, "--phase='unsat' is not one of"));
     CHECK(contains(message, "falsify|satisfy|random"));
     CHECK(contains(rejection_message<CliError>({"--phase=sat"}), "is not one of"));
-    CHECK(contains(rejection_message<CliError>({"--selection=exact_watchlist"}), "is not one of"));
+    CHECK(contains(rejection_message<CliError>({"--selection=exact"}), "is not one of"));
 }
 
 TEST_CASE("options: malformed command lines are rejected") {
@@ -280,14 +278,13 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "[default: 0.98; range 0..1]"));
     CHECK(contains(text, "--decisions=csids|fixed_literals|berkmin|cmtf"));
     CHECK(contains(text, "--phase=falsify|satisfy|random"));
-    CHECK(contains(text, "--selection=cyclic|leading_term_watchlist"));
+    CHECK(contains(text, "--selection=cyclic|exact_watchlist"));
     CHECK(contains(text, "--proof=PATH"));
     CHECK(contains(text, "--stats-file=PATH"));
     CHECK(contains(text, "--help"));
 
     CHECK(contains(text, "--deletion=true|false"));
-    CHECK(contains(text, "periodically delete some learned clauses (only with cyclic selector) "
-                       "[default: true]"));
+    CHECK(contains(text, "periodically delete some learned clauses [default: true]"));
     CHECK(contains(text, "--deletion-cadence=N"));
     CHECK(contains(text, "--deletion-demote-cadence-in-passes=N"));
     CHECK(contains(text, "--deletion-key=lbd|activity"));
@@ -310,9 +307,6 @@ TEST_CASE("options: the luby budget is a positive count") {
 }
 
 TEST_CASE("options: deletion needs the heuristics it reads") {
-    CHECK(contains(
-        rejection_message<CliError>({"--deletion=true", "--selection=leading_term_watchlist"}),
-        "--deletion requires --selection=cyclic"));
     CHECK(contains(rejection_message<CliError>({"--deletion=true", "--deletion-key=activity",
                                                 "--decisions=fixed_literals"}),
                    "--deletion-key=activity requires --decisions=csids"));
@@ -331,18 +325,22 @@ TEST_CASE("options: deletion needs the heuristics it reads") {
     CHECK_NOTHROW(parse_with_input({"--deletion-core-lbd=7", "--deletion-secondary-lbd=9"}));
 }
 
+TEST_CASE("options: the exact watchlist takes deletion and subsumption, but not sparse rows") {
+    const Options options = parse_with_input({"--selection=exact_watchlist"});
+    CHECK(options.deletion);
+    CHECK(options.subsume);
+    CHECK(options.propagate_miss_rate == 0.0);
+    CHECK(rejection_message<CliError>({"--selection=exact_watchlist", "--equation-repr=sparse"})
+              .starts_with("--selection requires --equation-repr=dense for exact_watchlist"));
+}
+
 TEST_CASE("options: deletion refuses an incompatible choice rather than yielding") {
-    // It used to switch itself off, which made a bare --selection a quietly
-    // different experiment. Nothing in the option layer resolves silently now.
     const auto refusal = [](std::vector<std::string> arguments) {
         return rejection_message<CliError>(std::move(arguments));
     };
-    CHECK(refusal({"--selection=leading_term_watchlist"}).find("--deletion requires") == 0);
     CHECK(refusal({"--decisions=fixed_literals"}).find("--deletion-key=activity") == 0);
 
     // Saying what you want is always accepted.
-    CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false",
-                            "--subsume=false"}).deletion == false);
     CHECK(parse_with_input({"--decisions=fixed_literals", "--deletion=false"}).deletion == false);
     CHECK(parse_with_input({"--decisions=fixed_literals", "--deletion-key=lbd"}).deletion == true);
 
@@ -473,7 +471,6 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
           "--compact-cadence requires --compact=true; nothing would read it here");
     CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--csids-decay=0.5"})
               .starts_with("--csids-decay requires --decisions=csids"));
-    CHECK(refusal({"--wait-for-queue=4"}).starts_with("--wait-for-queue requires"));
     CHECK(refusal({"--restart-lbd-min-ratio=1.2"}).starts_with("--restart-lbd-min-ratio requires"));
     CHECK(refusal({"--restart-luby-unit=50"}).starts_with("--restart-luby-unit requires"));
     CHECK(refusal({"--deletion=false", "--deletion-cadence=25"})
@@ -529,10 +526,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(parse_with_input({"--compact-cadence=8"}).compact_cadence == 8);
     CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-min-ratio=1.2"}).restart_lbd_min_ratio ==
           doctest::Approx(1.2));
-    CHECK(parse_with_input({"--selection=leading_term_watchlist", "--deletion=false",
-                            "--subsume=false", "--wait-for-queue=4"}).wait_for_queue == 4);
-    CHECK(refusal({"--selection=leading_term_watchlist", "--deletion=false", "--subsume=false",
-                   "--propagate-miss-rate=1"})
+    CHECK(refusal({"--selection=exact_watchlist", "--propagate-miss-rate=1"})
               .starts_with("--propagate-miss-rate requires --selection=cyclic"));
     CHECK(parse_with_input({"--propagate-miss-rate=0.5"}).propagate_miss_rate ==
           doctest::Approx(0.5));
@@ -544,8 +538,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
 }
 
 TEST_CASE("options: the default miss rate follows the selector") {
-    const auto watchlist = std::vector<std::string>{"--selection=leading_term_watchlist",
-                                                    "--deletion=false", "--subsume=false"};
+    const auto watchlist = std::vector<std::string>{"--selection=exact_watchlist"};
     CHECK(parse_with_input({}).propagate_miss_rate == doctest::Approx(0.04));
     CHECK(parse_with_input(watchlist).propagate_miss_rate == 0.0);
 

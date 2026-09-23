@@ -69,12 +69,11 @@ void Propagator::debug_assert_watch_hint_holds(const Clause& clause, const Trail
             assert(!watch1_is_one && "hinted zero trigger has companion 0 = 1");
             break;
         case WatchType::one:
-            assert(watch1_is_zero && "hinted one trigger is not 0 = 0");
-            assert(!watch0_is_one && "hinted one trigger has companion 0 = 1");
-            break;
         case WatchType::sum:
-            assert(sum_is_zero && "hinted sum trigger is not 0 = 0");
-            assert(!watch1_is_one && "hinted sum trigger has companion 0 = 1");
+            // Both move the second watch, so either holds for both.
+            assert((watch1_is_zero || sum_is_zero) &&
+                   "hinted one or sum trigger: the second watch is not in the span plus the first");
+            assert(!watch0_is_one && "hinted one or sum trigger has companion 0 = 1");
             break;
     }
 }

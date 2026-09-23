@@ -101,6 +101,8 @@ bool Solver::propagate_until_conflict() {
         const std::optional<ClauseSelection> selection = selector_->next_with_hint();
         if (!selection.has_value()) {
             counters_.num_deferred_runs += selector_->last_stop_was_budget() ? 1 : 0;
+            assert((budget_.has_value() || debug_nothing_left_to_propagate()) &&
+                   "propagation stopped short of a fixed point with no budget");
             return false;
         }
         assert(selection->id < selector_->num_clauses() && "selector returned an unknown clause");
@@ -529,6 +531,7 @@ bool Solver::falsified_only_at_top_level(const Clause& clause) const {
 void Solver::backjump_to(std::size_t level) {
     assert(level <= trail_.level() && "backjump target is above the current level");
     trail_.resize(level + 1);
+    selector_->update_with_backjump(level, trail_);
     decision_clause_of_level_.resize(level);
     decisions_->update_with_backjump(level);
     did_complete_sweep_ = false;
@@ -583,6 +586,43 @@ bool Solver::every_active_clause_is_satisfied(const RowSpace& model) const {
             }
         }
         if (!satisfied) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Solver::debug_nothing_left_to_propagate() {
+    const std::size_t words = active_num_vars_ / 64 + 1;
+    const std::size_t stride = 1 + num_active_clauses_ * words * words / 2048;
+    if (++debug_quiescences_ % stride != 0) {
+        return true;
+    }
+    Equation first(repr_, active_num_vars_);
+    Equation reduced(repr_, active_num_vars_);
+    for (ClauseId id = 0; id < selector_->num_clauses(); ++id) {
+        if (!selector_->is_clause_active(id)) {
+            continue;
+        }
+        // Fully reduced rows are canonical, so two distinct nonzero ones span two
+        // dimensions, and one alone propagates unless it is `0 = 1`.
+        bool have_first = false;
+        bool two_dimensions = false;
+        for (const Equation& row : selector_->clause(id)) {
+            reduced.assign_from(row);
+            trail_.span().reduce(reduced);
+            if (reduced.is_eq_true()) {
+                continue;
+            }
+            if (!have_first) {
+                first.assign_from(reduced);
+                have_first = true;
+            } else if (!(reduced == first)) {
+                two_dimensions = true;
+                break;
+            }
+        }
+        if (!two_dimensions && !(have_first && first.is_eq_false())) {
             return false;
         }
     }

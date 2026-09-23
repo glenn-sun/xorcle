@@ -227,6 +227,8 @@ public:
 
     std::size_t level() const noexcept { return trail_.level(); }
 
+    const ClauseSelector& selector() const noexcept { return *selector_; }
+
     const SolverCounters& counters() const noexcept { return counters_; }
 
     const ImplicationGraphCounters& implication_graph_counters() const noexcept {
@@ -378,6 +380,11 @@ private:
     /// @brief Whether the tracked live-clause count still matches the flags it
     /// summarises. Recounting is linear, so this is a debug check only.
     bool active_clause_count_is_consistent() const;
+
+    /// @brief Whether no active clause is unit or falsified modulo the trail, which
+    /// propagation to a fixed point leaves; on a large database only every so
+    /// many calls check, and the rest return true.
+    bool debug_nothing_left_to_propagate();
 #endif
 
     /// @brief Delete learned clauses if the conflict interval has elapsed.
@@ -425,6 +432,7 @@ private:
     bool compaction_is_due_ = true;
 #ifndef NDEBUG
     bool has_solved_ = false;
+    std::size_t debug_quiescences_ = 0;
 #endif
     std::size_t conflicts_at_last_compaction_ = 0;
     std::size_t conflicts_at_last_deletion_ = 0;

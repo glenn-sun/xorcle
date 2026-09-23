@@ -58,6 +58,8 @@ RunStats::reports(const StatsSection section) const {
         }
         case StatsSection::implication_graph:
             return config_value(*this, "implication_graph") == "true";
+        case StatsSection::exact_watchlist:
+            return config_value(*this, "selection") == "exact_watchlist";
         case StatsSection::proof:
             return proof_postprocess_time_s > 0.0;
     }

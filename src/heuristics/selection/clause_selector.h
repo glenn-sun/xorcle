@@ -14,6 +14,7 @@
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "core/watch.h"
+#include "util/stats.h"
 
 namespace xorcle {
 
@@ -25,7 +26,7 @@ struct ClauseSelection {
 
 enum class ClauseSelectorName {
     cyclic, ///< Round-robin over the clause database.
-    leading_term_watchlist ///< Work queue driven by the leading terms of watched rows.
+    exact_watchlist ///< Work queue of the clauses whose watch pair became dependent.
 };
 
 /// @brief How long a clause survives a deletion pass.
@@ -130,11 +131,8 @@ public:
     /// than quiescence.
     virtual bool last_stop_was_budget() const noexcept;
 
-    /// @brief `next()`, plus why the clause stopped being a legal watch pair.
-    ///
-    /// @warning No selector overrides this, so the hint is always empty and the
-    /// propagator's path for a non-empty one never runs. A watchlist selector
-    /// knows the trigger it queued a clause under and could pass it here.
+    /// @brief `next()`, plus why the clause stopped being a legal watch pair, when
+    /// the selector knows; the default knows nothing.
     virtual std::optional<ClauseSelection> next_with_hint();
 
     virtual void add_starting_clause(Clause clause); ///< Takes the next id.
@@ -156,8 +154,15 @@ public:
     void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch, WatchType type,
                                const Trail& trail) override;
 
+    /// @brief Note that the trail dropped every level above `level`, which the
+    /// default ignores; `trail` already reflects it.
+    virtual void update_with_backjump(std::size_t level, const Trail& trail);
+
     /// @brief Note that every clause was rewritten into a compacted variable numbering.
     virtual void update_with_compaction(const CompactionTransform& transform, const Trail& trail);
+
+    /// @brief Add this selector's own counters to `stats`; the default has none.
+    virtual void add_to_stats(RunStats& stats) const;
 
 protected:
     /// @brief Store a clause under the next id, with no other side effects.

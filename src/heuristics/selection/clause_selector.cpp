@@ -171,7 +171,11 @@ void ClauseSelector::update_with_decision_clause(std::optional<ClauseId>) {}
 
 void ClauseSelector::update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&) {}
 
+void ClauseSelector::update_with_backjump(std::size_t, const Trail&) {}
+
 void ClauseSelector::update_with_compaction(const CompactionTransform&, const Trail&) {}
+
+void ClauseSelector::add_to_stats(RunStats&) const {}
 
 void ClauseSelector::add_clause(Clause clause) {
     clauses_.push_back(std::move(clause));

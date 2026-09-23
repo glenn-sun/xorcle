@@ -27,7 +27,7 @@
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
 #include "heuristics/selection/cyclic.h"
-#include "heuristics/selection/leading_term_watchlist.h"
+#include "heuristics/selection/exact_watchlist.h"
 #include "io/dimacs.h"
 #include "io/proof_postprocess.h"
 #include "io/proof_raw.h"
@@ -68,8 +68,8 @@ std::unique_ptr<ClauseSelector> make_clause_selector(const Options& options,
     switch (options.selection) {
         case ClauseSelectorName::cyclic:
             return std::make_unique<Cyclic>(num_vars);
-        case ClauseSelectorName::leading_term_watchlist:
-            return std::make_unique<LeadingTermWatchlist>(num_vars, options.wait_for_queue);
+        case ClauseSelectorName::exact_watchlist:
+            return std::make_unique<ExactWatchlist>(num_vars);
     }
     assert(false && "make_clause_selector: unknown clause selector name");
     return std::make_unique<Cyclic>(num_vars);
@@ -322,6 +322,8 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     stats.implication_graph_forced_compactions = graph.num_forced_compactions;
     stats.implication_graph_span_intersection_time_s = graph.span_intersection_time_s;
     stats.implication_graph_time_s = graph.time_s;
+
+    solver.selector().add_to_stats(stats);
 
     stats.parse_time_s = parse_elapsed.count();
     stats.solve_time_s = elapsed.count();

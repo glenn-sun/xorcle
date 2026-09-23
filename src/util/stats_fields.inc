@@ -117,6 +117,21 @@ XORCLE_STAT(implication_graph, Count, implication_graph_forced_compactions, "imp
 XORCLE_STAT(implication_graph, Real, implication_graph_span_intersection_time_s, "implication_graph_span_intersection_time_s", "Span-intersection time (s), also in the graph time")
 XORCLE_STAT(implication_graph, Real, implication_graph_time_s, "implication_graph_time_s", "Implication graph time (s)")
 
+// --- The exact watchlist, reported only when it selects ----------------------
+
+XORCLE_STAT(exact_watchlist, Count, exact_touches, "exact_touches", "Cells swept")
+XORCLE_STAT(exact_watchlist, Count, exact_skips, "exact_skips", "Cells left unswept, their pair unable to trigger")
+XORCLE_STAT(exact_watchlist, Count, exact_fixups, "exact_fixups", "Second cells reduced by their first")
+XORCLE_STAT(exact_watchlist, Count, exact_xors, "exact_xors", "Row additions in sweeps")
+XORCLE_STAT(exact_watchlist, Count, exact_triggers, "exact_triggers", "Clauses queued")
+XORCLE_STAT(exact_watchlist, Count, exact_saves, "exact_saves", "Cells saved")
+XORCLE_STAT(exact_watchlist, Count, exact_restores, "exact_restores", "Cells restored")
+XORCLE_STAT(exact_watchlist, Count, exact_rebuilds, "exact_rebuilds", "Cells rebuilt")
+XORCLE_STAT(exact_watchlist, Count, exact_cleanups, "exact_cleanups", "Bucket cleanups")
+XORCLE_STAT(exact_watchlist, Count, exact_cleanup_entries, "exact_cleanup_entries", "Bucket entries cleanups read")
+XORCLE_STAT(exact_watchlist, Count, exact_cleanup_dropped, "exact_cleanup_dropped", "Stale bucket entries dropped")
+XORCLE_STAT(exact_watchlist, Count, exact_peak_bucket_entries, "exact_peak_bucket_entries", "Peak bucket entries")
+
 // --- Timing ----------------------------------------------------------------
 
 XORCLE_STAT(timing, Real, parse_time_s, "parse_time_s", "Parse time (s)")

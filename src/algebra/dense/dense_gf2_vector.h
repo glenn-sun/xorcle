@@ -25,6 +25,12 @@ public:
 
     std::size_t num_bits() const noexcept { return bits_.size(); }
 
+    /// @brief The words bit `i` is packed into, `i / 64` first; bits past
+    /// `num_bits()` are zero.
+    const Word* words() const noexcept { return bits_.store(); }
+
+    std::size_t num_words() const noexcept { return bits_.words(); }
+
     /// @brief Resize to `num_bits` bits, zeroing any new ones.
     void resize(std::size_t num_bits) { bits_.resize(num_bits); }
 

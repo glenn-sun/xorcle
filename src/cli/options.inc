@@ -91,10 +91,7 @@ XORCLE_ENUM_VALUE(phase, "random", DecisionPhase::random)
 XORCLE_ENUM_OPTION(selection, ClauseSelectorName, ClauseSelectorName::cyclic,
                    "which clause to try propagating from next")
 XORCLE_ENUM_VALUE(selection, "cyclic", ClauseSelectorName::cyclic)
-XORCLE_ENUM_VALUE(selection, "leading_term_watchlist", ClauseSelectorName::leading_term_watchlist)
-
-XORCLE_OPTION(wait_for_queue, Size, 1, 1, SIZE_MAX,
-              "for watchlists of earlier variables, do not queue until requested N times")
+XORCLE_ENUM_VALUE(selection, "exact_watchlist", ClauseSelectorName::exact_watchlist)
 
 // --- Propagation -----------------------------------------------------------
 
@@ -139,13 +136,12 @@ XORCLE_OPTION(minimize, Bool, true, false, true,
 // --- On-the-fly subsumption -------------------------------------------------
 
 XORCLE_OPTION(subsume, Bool, true, false, true,
-              "replace the clauses the resolvents of conflict analysis subsume "
-              "(only with cyclic selector)")
+              "replace the clauses the resolvents of conflict analysis subsume")
 
 // --- Deletion --------------------------------------------------------------
 
 XORCLE_OPTION(deletion, Bool, true, false, true,
-              "periodically delete some learned clauses (only with cyclic selector)")
+              "periodically delete some learned clauses")
 XORCLE_OPTION(deletion_cadence, Size, 100, 1, SIZE_MAX, "conflicts between deletion passes")
 XORCLE_OPTION(deletion_core_lbd, Size, 2, 0, SIZE_MAX,
               "a learned clause of at most this LBD is never deleted")
@@ -210,8 +206,11 @@ XORCLE_REQUIRES(bump_responsible_clauses, options.decisions == DecisionProcedure
 XORCLE_REQUIRES(phase, options.decisions == DecisionProcedureName::csids,
                 "--decisions=csids, the only procedure that decides a sampled equation")
 
-XORCLE_REQUIRES(wait_for_queue, options.selection == ClauseSelectorName::leading_term_watchlist,
-                "--selection=leading_term_watchlist")
+// Its cells are packed words.
+XORCLE_REQUIRES(selection,
+                options.selection != ClauseSelectorName::exact_watchlist ||
+                    options.equation_repr == EquationRepr::dense,
+                "--equation-repr=dense for exact_watchlist")
 
 // A rate of 0 is complete propagation, which every selector does, so only a
 // nonzero one needs the selector that runs an attempt budget; the default has

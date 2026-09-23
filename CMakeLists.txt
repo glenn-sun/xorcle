@@ -57,7 +57,7 @@ add_library(xorcle_core
     src/heuristics/restarts/restart_policy.cpp
     src/heuristics/selection/clause_selector.cpp
     src/heuristics/selection/cyclic.cpp
-    src/heuristics/selection/leading_term_watchlist.cpp
+    src/heuristics/selection/exact_watchlist.cpp
     src/io/dimacs.cpp
     src/io/proof_postprocess.cpp
     src/io/proof_raw_file.cpp
