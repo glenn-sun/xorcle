@@ -131,6 +131,11 @@ XORCLE_STAT(exact_watchlist, Count, exact_cleanups, "exact_cleanups", "Bucket cl
 XORCLE_STAT(exact_watchlist, Count, exact_cleanup_entries, "exact_cleanup_entries", "Bucket entries cleanups read")
 XORCLE_STAT(exact_watchlist, Count, exact_cleanup_dropped, "exact_cleanup_dropped", "Stale bucket entries dropped")
 XORCLE_STAT(exact_watchlist, Count, exact_peak_bucket_entries, "exact_peak_bucket_entries", "Peak bucket entries")
+XORCLE_STAT(exact_watchlist, Count, exact_touches_ahead, "exact_touches_ahead", "Cells swept ahead of their sweep, as a trigger's partner")
+XORCLE_STAT(exact_watchlist, Count, exact_sweeps_started, "exact_sweeps_started", "Sweeps started")
+XORCLE_STAT(exact_watchlist, Count, exact_sweeps_finished, "exact_sweeps_finished", "Sweeps finished")
+XORCLE_STAT(exact_watchlist, Count, exact_sweeps_dropped, "exact_sweeps_dropped", "Paused sweeps dropped at backjumps")
+XORCLE_STAT(exact_watchlist, Count, exact_sweeps_dropped_unreached, "exact_sweeps_dropped_unreached", "Cells the dropped sweeps never reached")
 
 // --- Timing ----------------------------------------------------------------
 

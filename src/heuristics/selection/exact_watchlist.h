@@ -22,10 +22,11 @@ namespace xorcle {
 
 struct ExactWatchlistCounters {
     std::size_t touches = 0; ///< Cells a sweep added its trail row to.
+    std::size_t touches_ahead = 0; ///< Touches of a triggered pair's partner ahead of its sweep.
     std::size_t skips = 0; ///< Cells a sweep left alone because their pair cannot trigger.
     std::size_t fixups = 0; ///< Second cells reduced by their first after its key moved onto theirs.
     std::size_t xors = 0; ///< Row additions made by sweeps and fix-ups.
-    std::size_t triggers = 0; ///< Clauses queued.
+    std::size_t triggers = 0; ///< Clauses a sweep found triggered, or queued on the side.
     std::size_t saves = 0; ///< Cells copied onto a level's save stack.
     std::size_t restores = 0; ///< Saved cells a backjump copied back.
     std::size_t rebuilds = 0; ///< Cells rebuilt from their watches, on a watch move or a backjump.
@@ -33,6 +34,10 @@ struct ExactWatchlistCounters {
     std::size_t cleanup_entries = 0; ///< Bucket entries those sweeps read.
     std::size_t cleanup_dropped = 0; ///< Stale bucket entries those sweeps dropped.
     std::size_t peak_bucket_entries = 0;
+    std::size_t sweeps_started = 0;
+    std::size_t sweeps_finished = 0;
+    std::size_t sweeps_dropped = 0; ///< Paused sweeps a backjump dropped.
+    std::size_t sweeps_dropped_unreached = 0; ///< Cells the dropped sweeps never reached.
 };
 
 /// @brief Queues a clause exactly when its watch pair becomes dependent modulo the
@@ -41,10 +46,12 @@ struct ExactWatchlistCounters {
 /// Each active clause keeps two cells: `A`, its first watch partially reduced by the
 /// span, and `B`, its second watch partially reduced by the span and `A`. The pair is
 /// independent exactly when neither is `0 = 0`. Each cell is bucketed on its leading
-/// column; a new trail row sweeps the bucket of its own leading column, and a backjump
-/// copies back the cells the dropped levels changed, as each stood before its first
-/// change there. While either cell is `0 = 1` the pair cannot trigger, and the other
-/// may lag the span.
+/// column. A new trail row becomes a pivot at once and starts a paused sweep of the
+/// bucket of its column; the oldest paused sweep resumes when a trigger is wanted and
+/// pauses again at the first. A backjump drops the paused sweeps and copies back the
+/// cells the dropped levels changed, as each stood before its first change there. A
+/// cell may lead on a pivot while a paused sweep of that column has yet to reach it, or
+/// while its partner is `0 = 1` and the pair cannot trigger.
 ///
 /// @pre Dense equations, and complete propagation: every learned equation is the last
 /// row of the trail, at its top level.
@@ -60,12 +67,12 @@ public:
 
     std::optional<ClauseId> next() override;
 
-    /// @brief The next queued clause still triggered and not known satisfied, or
-    /// `std::nullopt` at quiescence.
+    /// @brief The next triggered clause: first from the side queue, else from the
+    /// oldest paused sweep; `std::nullopt` once both are empty.
     std::optional<ClauseSelection> next_with_hint() override;
 
     /// @pre `reduced_eqn` is the row `trail` stores for its last equation, and every
-    /// earlier one was reported here too.
+    /// earlier one was reported here too; a new level opens only at quiescence.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
     /// @pre `id` names an active clause of at least two rows.
@@ -83,7 +90,7 @@ public:
 
 protected:
     /// @brief Store a clause, build its cells against the trail as last reported, and
-    /// queue it if it is already triggered.
+    /// queue it on the side if it is already triggered.
     void add_clause(Clause clause) override;
 
 private:
@@ -94,6 +101,13 @@ private:
         unit, ///< A unit clause not yet satisfied.
         zero, ///< `A` is `0 = 0`.
         one ///< `B` is `0 = 0`: the second watch is in the span plus the first.
+    };
+
+    /// @brief The swept-out bucket of a pivot column, touched up to `cursor`.
+    struct PausedSweep {
+        std::uint32_t col_idx = 0;
+        std::size_t cursor = 0;
+        std::vector<std::uint32_t> cells;
     };
 
     /// @brief A cell's words and key as they stood before its first change at a level,
@@ -143,11 +157,23 @@ private:
     void save(std::uint32_t cell, std::size_t level);
     void push_rebuild_entry(std::uint32_t cell, std::size_t level);
 
-    void sweep(std::size_t col_idx, const Word* row, std::size_t level);
+    /// @brief Reduce a cell leading on a pivot until it does not, fixing up `B` after
+    /// `A`; whether its pair may have become triggered.
+    bool advance(std::uint32_t cell, std::size_t level);
+
+    /// @brief Resume the oldest paused sweeps until one touches a pair into a trigger.
+    std::optional<ClauseSelection> resume_sweeps();
+
+    /// @brief Put back what each paused sweep has yet to reach, and forget them.
+    void drop_paused_sweeps();
+
+    /// @brief Advance a triggered pair's cell that a paused sweep has yet to reach.
+    void bring_current(std::uint32_t pair);
 
     Trigger trigger(std::uint32_t pair) const;
+    static std::optional<ClauseSelection> selection_of(ClauseId id, Trigger trigger);
     void maybe_queue(std::uint32_t pair);
-    void clear_queue();
+    void clear_side_queue();
 
     /// @brief Copy back every cell the levels above `level` saved, and rebuild the
     /// ones they cannot restore.
@@ -175,11 +201,15 @@ private:
     std::size_t bucket_entries_ = 0;
     std::size_t cleanup_threshold_ = 0;
     std::vector<std::uint8_t> cleanup_kept_; ///< Per cell, whether this cleanup kept an entry.
-    std::vector<std::uint32_t> sweep_scratch_;
 
     std::vector<const Word*> pivot_row_; ///< Per column, the trail row pivoting on it.
     std::vector<std::uint32_t> pivot_col_idxs_; ///< In trail order, with the constant's omitted.
     std::vector<std::size_t> level_pivot_mark_;
+    /// @brief A queue, oldest first, over `[paused_head_, paused_end_)`; the other
+    /// slots keep their storage.
+    std::vector<PausedSweep> paused_sweeps_;
+    std::size_t paused_head_ = 0;
+    std::size_t paused_end_ = 0;
 
     std::vector<SaveEntry> saves_;
     std::vector<Word> save_words_;
@@ -193,9 +223,10 @@ private:
     std::uint32_t restore_epoch_ = 0;
     std::vector<std::uint32_t> restored_cells_;
 
-    std::vector<ClauseId> queue_;
-    std::size_t queue_head_ = 0;
-    std::vector<std::uint8_t> in_queue_;
+    /// @brief Triggers found by building a pair rather than by a sweep.
+    std::vector<ClauseId> side_queue_;
+    std::size_t side_queue_head_ = 0;
+    std::vector<std::uint8_t> in_side_queue_;
 
     ExactWatchlistCounters counters_;
 

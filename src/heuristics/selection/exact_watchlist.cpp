@@ -77,6 +77,8 @@ void ExactWatchlist::reset(std::size_t num_cols) {
     pivot_row_.assign(num_cols, nullptr);
     pivot_col_idxs_.clear();
     level_pivot_mark_.assign(1, 0);
+    paused_head_ = 0;
+    paused_end_ = 0;
     saves_.clear();
     save_words_.clear();
     level_save_mark_.assign(1, 0);
@@ -86,7 +88,7 @@ void ExactWatchlist::reset(std::size_t num_cols) {
     restore_stamp_.clear();
     restore_rebuild_.clear();
     restored_cells_.clear();
-    clear_queue();
+    clear_side_queue();
 }
 
 void ExactWatchlist::open_level() {
@@ -241,75 +243,120 @@ void ExactWatchlist::push_rebuild_entry(std::uint32_t cell, std::size_t level) {
     save_stamp_[cell] = level_stamp_[level];
 }
 
-void ExactWatchlist::sweep(std::size_t col_idx, const Word* row, std::size_t level) {
-    sweep_scratch_.swap(buckets_[col_idx]);
-    bucket_entries_ -= sweep_scratch_.size();
-    for (const std::uint32_t cell : sweep_scratch_) {
-        if (key_[cell] != col_idx) {
-            continue;
-        }
-        const std::uint32_t pair = cell >> 1;
-        if (clause_active_[pair_clause_[pair]] == 0) {
-            continue;
-        }
-        // A pair with a `0 = 1` cell cannot trigger: an `A` of `0 = 1` satisfies the
-        // clause, and a `B` of `0 = 1` means the second watch or the sum of both is
-        // `0 = 1`, so either watch entering the span satisfies it by the other. So the
-        // partner stays in this bucket
-        // unreduced. Watches move only on a clause that can trigger, so only a backjump
-        // changes the `0 = 1` cell, and one below this row leaves the partner a partial
-        // reduction in its bucket again.
-        if (key_[cell ^ 1] == constant_key()) {
-            buckets_[col_idx].push_back(cell);
-            ++bucket_entries_;
-            ++counters_.skips;
-            continue;
-        }
-        ++counters_.touches;
-        save(cell, level);
-        Word* words = cell_words(cell);
-        const std::size_t lead = add_and_next(words, row, num_words_, col_idx);
-        ++counters_.xors;
+bool ExactWatchlist::advance(std::uint32_t cell, std::size_t level) {
+    ++counters_.touches;
+    save(cell, level);
+    Word* words = cell_words(cell);
+    const std::uint32_t pair = cell >> 1;
 
-        if ((cell & 1) != 0) {
-            const std::uint32_t key = reduce_by_span_and_first(
-                words, lead, cell_words(cell - 1), key_[cell - 1], counters_.xors);
-            key_[cell] = key;
-            place(cell);
-            if (key == zero_key) {
-                maybe_queue(pair);
-            }
-            continue;
-        }
-
-        const std::uint32_t key = reduce_by_span(words, lead, counters_.xors);
+    if ((cell & 1) != 0) {
+        const std::uint32_t key = reduce_by_span_and_first(
+            words, key_[cell], cell_words(cell - 1), key_[cell - 1], counters_.xors);
         key_[cell] = key;
         place(cell);
-        if (pair_is_unit_[pair] != 0) {
-            if (key != constant_key()) {
-                maybe_queue(pair);
+        return key == zero_key;
+    }
+
+    const std::uint32_t key = reduce_by_span(words, key_[cell], counters_.xors);
+    key_[cell] = key;
+    place(cell);
+    if (pair_is_unit_[pair] != 0) {
+        return key != constant_key();
+    }
+    // `B` may now lead where `A` does, which `B`'s reduction by `A` forbids.
+    const std::uint32_t second = cell + 1;
+    bool second_is_zero = false;
+    if (key != zero_key && key_[second] == key) {
+        ++counters_.fixups;
+        save(second, level);
+        Word* second_words = cell_words(second);
+        const std::size_t second_lead = add_and_next(second_words, words, num_words_, key);
+        ++counters_.xors;
+        key_[second] =
+            reduce_by_span_and_first(second_words, second_lead, words, key, counters_.xors);
+        place(second);
+        second_is_zero = key_[second] == zero_key;
+    }
+    return key == zero_key || second_is_zero;
+}
+
+std::optional<ClauseSelection> ExactWatchlist::resume_sweeps() {
+    const std::size_t level = top_level();
+    while (paused_head_ < paused_end_) {
+        PausedSweep& sweep = paused_sweeps_[paused_head_];
+        assert(pivot_row_[sweep.col_idx] != nullptr && "a paused sweep's column is not a pivot");
+        const std::uint32_t col_idx = sweep.col_idx;
+        while (sweep.cursor < sweep.cells.size()) {
+            const std::uint32_t cell = sweep.cells[sweep.cursor++];
+            if (key_[cell] != col_idx) {
+                continue;
             }
-            continue;
+            const std::uint32_t pair = cell >> 1;
+            const ClauseId id = pair_clause_[pair];
+            if (clause_active_[id] == 0) {
+                continue;
+            }
+            // A pair with a `0 = 1` cell cannot trigger: an `A` of `0 = 1` satisfies the
+            // clause, and a `B` of `0 = 1` means the second watch or the sum of both is
+            // `0 = 1`, so either watch entering the span satisfies it by the other. So the
+            // partner stays in this column's bucket unreduced. Watches move only on a
+            // clause that can trigger, so only a backjump changes the `0 = 1` cell, and
+            // one below this row leaves the partner a partial reduction in its bucket
+            // again.
+            if (key_[cell ^ 1] == constant_key()) {
+                buckets_[col_idx].push_back(cell);
+                ++bucket_entries_;
+                ++counters_.skips;
+                continue;
+            }
+            if (!advance(cell, level)) {
+                continue;
+            }
+            bring_current(pair);
+            if (const std::optional<ClauseSelection> selection = selection_of(id, trigger(pair))) {
+                ++counters_.triggers;
+                maybe_clean_buckets();
+                return selection;
+            }
         }
-        // `B` may now lead where `A` does, which `B`'s reduction by `A` forbids.
-        const std::uint32_t second = cell + 1;
-        bool second_is_zero = false;
-        if (key != zero_key && key_[second] == key) {
-            ++counters_.fixups;
-            save(second, level);
-            Word* second_words = cell_words(second);
-            const std::size_t second_lead = add_and_next(second_words, words, num_words_, key);
-            ++counters_.xors;
-            key_[second] =
-                reduce_by_span_and_first(second_words, second_lead, words, key, counters_.xors);
-            place(second);
-            second_is_zero = key_[second] == zero_key;
+        sweep.cells.clear();
+        if (++paused_head_ == paused_end_) {
+            paused_head_ = 0;
+            paused_end_ = 0;
         }
-        if (key == zero_key || second_is_zero) {
-            maybe_queue(pair);
+        ++counters_.sweeps_finished;
+        maybe_clean_buckets();
+    }
+    return std::nullopt;
+}
+
+void ExactWatchlist::drop_paused_sweeps() {
+    for (std::size_t i = paused_head_; i < paused_end_; ++i) {
+        PausedSweep& sweep = paused_sweeps_[i];
+        std::vector<std::uint32_t>& bucket = buckets_[sweep.col_idx];
+        for (std::size_t j = sweep.cursor; j < sweep.cells.size(); ++j) {
+            const std::uint32_t cell = sweep.cells[j];
+            counters_.sweeps_dropped_unreached += key_[cell] == sweep.col_idx ? 1 : 0;
+            bucket.push_back(cell);
+        }
+        bucket_entries_ += sweep.cells.size() - sweep.cursor;
+        sweep.cells.clear();
+    }
+    counters_.sweeps_dropped += paused_end_ - paused_head_;
+    paused_head_ = 0;
+    paused_end_ = 0;
+}
+
+void ExactWatchlist::bring_current(std::uint32_t pair) {
+    const std::uint32_t first = 2 * pair;
+    const std::uint32_t end = pair_is_unit_[pair] != 0 ? first + 1 : first + 2;
+    for (std::uint32_t cell = first; cell < end; ++cell) {
+        const std::uint32_t key = key_[cell];
+        if (key != zero_key && key != constant_key() && pivot_row_[key] != nullptr) {
+            ++counters_.touches_ahead;
+            (void)advance(cell, top_level());
         }
     }
-    sweep_scratch_.clear();
 }
 
 ExactWatchlist::Trigger ExactWatchlist::trigger(std::uint32_t pair) const {
@@ -328,22 +375,36 @@ ExactWatchlist::Trigger ExactWatchlist::trigger(std::uint32_t pair) const {
     return second_key == zero_key ? Trigger::one : Trigger::none;
 }
 
+std::optional<ClauseSelection> ExactWatchlist::selection_of(ClauseId id, Trigger trigger) {
+    switch (trigger) {
+        case Trigger::none:
+            return std::nullopt;
+        case Trigger::unit:
+            return ClauseSelection{id, std::nullopt};
+        case Trigger::zero:
+            return ClauseSelection{id, WatchType::zero};
+        case Trigger::one:
+            return ClauseSelection{id, WatchType::one};
+    }
+    return std::nullopt;
+}
+
 void ExactWatchlist::maybe_queue(std::uint32_t pair) {
     const ClauseId id = pair_clause_[pair];
-    if (in_queue_[id] != 0 || trigger(pair) == Trigger::none) {
+    if (in_side_queue_[id] != 0 || trigger(pair) == Trigger::none) {
         return;
     }
-    in_queue_[id] = 1;
-    queue_.push_back(id);
+    in_side_queue_[id] = 1;
+    side_queue_.push_back(id);
     ++counters_.triggers;
 }
 
-void ExactWatchlist::clear_queue() {
-    for (std::size_t i = queue_head_; i < queue_.size(); ++i) {
-        in_queue_[queue_[i]] = 0;
+void ExactWatchlist::clear_side_queue() {
+    for (std::size_t i = side_queue_head_; i < side_queue_.size(); ++i) {
+        in_side_queue_[side_queue_[i]] = 0;
     }
-    queue_.clear();
-    queue_head_ = 0;
+    side_queue_.clear();
+    side_queue_head_ = 0;
 }
 
 std::optional<ClauseId> ExactWatchlist::next() {
@@ -355,33 +416,39 @@ std::optional<ClauseId> ExactWatchlist::next() {
 }
 
 std::optional<ClauseSelection> ExactWatchlist::next_with_hint() {
-    while (queue_head_ < queue_.size()) {
-        const ClauseId id = queue_[queue_head_++];
-        in_queue_[id] = 0;
+    while (side_queue_head_ < side_queue_.size()) {
+        const ClauseId id = side_queue_[side_queue_head_++];
+        in_side_queue_[id] = 0;
         if (clause_active_[id] == 0) {
             continue;
         }
-        assert(clause_pair_[id] != no_pair && "an active clause has no cells");
-        switch (trigger(clause_pair_[id])) {
-            case Trigger::none:
-                continue;
-            case Trigger::unit:
-                return ClauseSelection{id, std::nullopt};
-            case Trigger::zero:
-                return ClauseSelection{id, WatchType::zero};
-            case Trigger::one:
-                return ClauseSelection{id, WatchType::one};
+        const std::uint32_t pair = clause_pair_[id];
+        assert(pair != no_pair && "an active clause has no cells");
+        if (trigger(pair) == Trigger::none) {
+            continue;
+        }
+        // A partner a paused sweep has yet to reach may be `0 = 1`, which the hint forbids.
+        bring_current(pair);
+        if (const std::optional<ClauseSelection> selection = selection_of(id, trigger(pair))) {
+            return selection;
         }
     }
-    queue_.clear();
-    queue_head_ = 0;
-    return std::nullopt;
+    side_queue_.clear();
+    side_queue_head_ = 0;
+#ifdef XORCLE_EXACT_WATCHLIST_TIMING
+    const auto start = std::chrono::steady_clock::now();
+    const std::optional<ClauseSelection> selection = resume_sweeps();
+    sweep_time_ += std::chrono::steady_clock::now() - start;
+    return selection;
+#else
+    return resume_sweeps();
+#endif
 }
 
 void ExactWatchlist::add_clause(Clause clause) {
     const ClauseId id = clauses_.size();
     ClauseSelector::add_clause(std::move(clause));
-    in_queue_.push_back(0);
+    in_side_queue_.push_back(0);
     clause_pair_.push_back(no_pair);
     build_pair(id);
 }
@@ -399,6 +466,8 @@ void ExactWatchlist::update_with_new_equation(const Equation& reduced_eqn, const
     assert(trail.level_of(trail_idx) == level && "an equation was learned below the top level");
     assert((level == top_level() || level == top_level() + 1) && "a decision level was skipped");
     if (level > top_level()) {
+        assert(paused_head_ == paused_end_ && side_queue_head_ == side_queue_.size() &&
+               "a decision was taken before propagation was quiescent");
         open_level();
     }
     const Equation& row = span.row(trail.trail_idx_to_row_idx()[trail_idx]);
@@ -415,13 +484,26 @@ void ExactWatchlist::update_with_new_equation(const Equation& reduced_eqn, const
     assert(pivot_row_[lead] == nullptr && "a new trail row leads on a pivot");
     pivot_row_[lead] = words;
     pivot_col_idxs_.push_back(static_cast<std::uint32_t>(lead));
-#ifdef XORCLE_EXACT_WATCHLIST_TIMING
-    const auto start = std::chrono::steady_clock::now();
-    sweep(lead, words, level);
-    sweep_time_ += std::chrono::steady_clock::now() - start;
-#else
-    sweep(lead, words, level);
-#endif
+
+    if (paused_end_ == paused_sweeps_.size()) {
+        // Finished slots move behind the queue, for reuse.
+        std::rotate(paused_sweeps_.begin(),
+                    paused_sweeps_.begin() + static_cast<std::ptrdiff_t>(paused_head_),
+                    paused_sweeps_.begin() + static_cast<std::ptrdiff_t>(paused_end_));
+        paused_end_ -= paused_head_;
+        paused_head_ = 0;
+        if (paused_end_ == paused_sweeps_.size()) {
+            paused_sweeps_.emplace_back();
+        }
+    }
+    PausedSweep& sweep = paused_sweeps_[paused_end_++];
+    sweep.col_idx = static_cast<std::uint32_t>(lead);
+    sweep.cursor = 0;
+    // The bucket takes the cleared storage, and no build can place into it while the
+    // column is a pivot.
+    sweep.cells.swap(buckets_[lead]);
+    bucket_entries_ -= sweep.cells.size();
+    ++counters_.sweeps_started;
     maybe_clean_buckets();
 #ifndef NDEBUG
     if (debug_check_due(16)) {
@@ -539,8 +621,18 @@ void ExactWatchlist::update_with_backjump(std::size_t level, const Trail& trail)
         return;
     }
     // Propagation was quiescent before each dropped level's decision, so nothing
-    // queued since holds any more.
-    clear_queue();
+    // queued since holds any more, and every paused sweep is the top level's.
+#ifndef NDEBUG
+    const std::size_t top_pivot_mark = level_pivot_mark_[top_level()];
+    for (std::size_t i = paused_head_; i < paused_end_; ++i) {
+        assert(std::find(pivot_col_idxs_.begin() + static_cast<std::ptrdiff_t>(top_pivot_mark),
+                         pivot_col_idxs_.end(),
+                         paused_sweeps_[i].col_idx) != pivot_col_idxs_.end() &&
+               "a sweep is paused below the top level");
+    }
+#endif
+    drop_paused_sweeps();
+    clear_side_queue();
     restore(level);
     maybe_clean_buckets();
     assert(pivot_col_idxs_.size() == trail.span().rows() &&
@@ -555,6 +647,7 @@ void ExactWatchlist::update_with_backjump(std::size_t level, const Trail& trail)
 void ExactWatchlist::update_with_compaction(const CompactionTransform&, const Trail& trail) {
     assert(trail.span().rows() == 0 && "compaction leaves an empty trail");
     assert(top_level() == 0 && saves_.empty() && "compaction runs at the root");
+    assert(paused_head_ == paused_end_ && "compaction runs at quiescence");
     reset(trail.span().cols());
     for (ClauseId id = 0; id < clauses_.size(); ++id) {
         if (clause_active_[id] != 0) {
@@ -580,6 +673,11 @@ void ExactWatchlist::add_to_stats(RunStats& stats) const {
     stats.exact_cleanup_entries = counters_.cleanup_entries;
     stats.exact_cleanup_dropped = counters_.cleanup_dropped;
     stats.exact_peak_bucket_entries = counters_.peak_bucket_entries;
+    stats.exact_touches_ahead = counters_.touches_ahead;
+    stats.exact_sweeps_started = counters_.sweeps_started;
+    stats.exact_sweeps_finished = counters_.sweeps_finished;
+    stats.exact_sweeps_dropped = counters_.sweeps_dropped;
+    stats.exact_sweeps_dropped_unreached = counters_.sweeps_dropped_unreached;
 }
 
 #ifndef NDEBUG
@@ -608,6 +706,20 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
     assert(num_entries == bucket_entries_ && "the bucket entry count is off");
     assert(bucket_entries_ <= cleanup_threshold_ && "the buckets outgrew their cleanup");
     (void)num_entries;
+    // Cells a paused sweep has yet to reach, still keyed on its column.
+    std::vector<std::uint8_t> awaiting(key_.size(), 0);
+    for (std::size_t i = paused_head_; i < paused_end_; ++i) {
+        const PausedSweep& sweep = paused_sweeps_[i];
+        assert(pivot_row_[sweep.col_idx] != nullptr && "a paused sweep's column is not a pivot");
+        assert(sweep.cursor <= sweep.cells.size() && "a paused sweep ran past its bucket");
+        for (std::size_t j = i + 1; j < paused_end_; ++j) {
+            assert(paused_sweeps_[j].col_idx != sweep.col_idx && "a column is swept twice at once");
+        }
+        for (std::size_t j = sweep.cursor; j < sweep.cells.size(); ++j) {
+            const std::uint32_t cell = sweep.cells[j];
+            awaiting[cell] |= key_[cell] == sweep.col_idx ? 1 : 0;
+        }
+    }
     const auto cell_equation = [&](std::uint32_t cell) {
         std::vector<std::size_t> bits;
         const Word* words = cell_words(cell);
@@ -622,14 +734,19 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
         span.reduce(v);
         return v.is_eq_true();
     };
+    const auto keyed_on_pivot = [&](std::uint32_t cell) {
+        const std::uint32_t key = key_[cell];
+        return key != zero_key && key != constant_key() && span.pivot_col_idxs().test(key);
+    };
     // The key a cell's partial reduction must end on, bucketed where it is a column.
-    // A cell that `may_lag` may instead still lead on the pivot a sweep left it at.
+    // A cell may instead still lead on a pivot while a paused sweep has yet to reach
+    // it, or, if it `may_lag`, where a sweep left it.
     const auto check_key = [&](std::uint32_t cell, ReduceResult canonical, bool may_lag) {
         const std::uint32_t key = key_[cell];
-        const bool lags = may_lag && key != zero_key && key != constant_key() &&
-                          span.pivot_col_idxs().test(key);
+        const bool lags = (may_lag || awaiting[cell] != 0) && keyed_on_pivot(cell);
         if (lags) {
-            assert(in_bucket[cell] != 0 && "a lagging cell is missing from its bucket");
+            assert((in_bucket[cell] != 0 || awaiting[cell] != 0) &&
+                   "a lagging cell is missing from its bucket");
         } else if (canonical.kind == ReduceResult::Kind::eq_true) {
             assert(key == zero_key && "a `0 = 0` cell carries a key");
         } else if (canonical.kind == ReduceResult::Kind::eq_false) {
@@ -679,15 +796,30 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
         assert((key_[second] == zero_key || key_[second] != key_[first]) &&
                "`B` shares `A`'s key");
         reduced = base1;
-        // Either cell may lag while the other is `0 = 1`; see `sweep`. A lagging `A`
-        // may itself be `0 = 1` modulo the span, so beside it `B` is checked only for
-        // leading on the constant.
+        // Either cell may lag while the other is `0 = 1`; see `resume_sweeps`. A
+        // lagging `A` may itself be `0 = 1` modulo the span, so beside it `B` is checked
+        // only for leading on the constant.
         const std::uint32_t first_key = key_[first];
-        if (first_key != zero_key && first_key != constant_key() &&
-            span.pivot_col_idxs().test(first_key)) {
+        if (keyed_on_pivot(first) && awaiting[first] == 0) {
             assert(key_[second] == constant_key() && "`A` lags while `B` is not `0 = 1`");
             assert(cell_equation(second).leading_bit() == std::optional<std::size_t>(num_vars) &&
                    "`B` does not lead on its key");
+            continue;
+        }
+        // `B` was reduced by an `A` that has yet to be, and may lead where `A` will.
+        if (keyed_on_pivot(first)) {
+            const std::uint32_t second_key = key_[second];
+            if (keyed_on_pivot(second)) {
+                assert(awaiting[second] != 0 && "`B` leads on a pivot no sweep will reach it at");
+            } else if (second_key != zero_key && second_key != constant_key()) {
+                assert(in_bucket[second] != 0 && "a keyed cell is missing from its bucket");
+            }
+            const std::optional<std::size_t> lead = cell_equation(second).leading_bit();
+            assert((second_key == zero_key ? !lead.has_value()
+                                           : lead == std::optional<std::size_t>(second_key)) &&
+                   "a cell does not lead on its key");
+            (void)second_key;
+            (void)lead;
             continue;
         }
         check_key(second, span.partial_reduce_with_extra(reduced, first_eqn),

@@ -153,11 +153,12 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
         CHECK(selector.next() == std::nullopt);
 
         learn(selector, trail, {0}, false);
-        CHECK(selector.counters().touches == 1);
+        CHECK(selector.counters().touches == 0);
         const std::optional<ClauseSelection> selection = selector.next_with_hint();
         REQUIRE(selection.has_value());
         CHECK(selection->id == 0);
         CHECK(selection->trigger_hint == std::optional<WatchType>{WatchType::zero});
+        CHECK(selector.counters().touches == 1);
         CHECK(selector.next() == std::nullopt);
         CHECK(selector.counters().triggers == 1);
     }
@@ -167,17 +168,18 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
         // which `B` then loses to: the watches became equal modulo the span.
         selector.add_starting_clause(make_clause(repr, 4, {{0, 2}, {1, 2}}));
         learn(selector, trail, {0, 1}, false);
-        CHECK(selector.counters().fixups == 1);
         const std::optional<ClauseSelection> selection = selector.next_with_hint();
         REQUIRE(selection.has_value());
         CHECK(selection->trigger_hint == std::optional<WatchType>{WatchType::one});
+        CHECK(selector.counters().fixups == 1);
     }
 
-    SUBCASE("a clause a watch satisfies is not queued") {
+    SUBCASE("a trigger's partner a sweep has yet to reach is swept ahead, and may satisfy it") {
         selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
-        learn(selector, trail, {1, 4}, false); // the second watch reduces to `0 = 1`
-        learn(selector, trail, {0}, false);    // and the first to `0 = 0`
+        learn(selector, trail, {0}, false);    // the first watch, swept first, reduces to `0 = 0`
+        learn(selector, trail, {1, 4}, false); // and the second to `0 = 1`
         CHECK(selector.next() == std::nullopt);
+        CHECK(selector.counters().touches_ahead == 1);
         CHECK(selector.counters().triggers == 0);
     }
 
@@ -190,13 +192,54 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
         CHECK(selector.next() == std::nullopt);
     }
 
+    SUBCASE("the side queue goes first, then the oldest sweep, which pauses at each trigger") {
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {2}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{3}, {1}}));
+        learn(selector, trail, {0}, false);
+        learn(selector, trail, {3}, false);
+        selector.add_starting_clause(make_clause(repr, 4, {{1, 2}}));
+        CHECK(selector.counters().sweeps_started == 2);
+
+        CHECK(selector.next_with_hint()->id == 3);
+        CHECK(selector.counters().touches == 0);
+        CHECK(selector.next_with_hint()->id == 0);
+        CHECK(selector.counters().touches == 1);
+        CHECK(selector.counters().sweeps_finished == 0);
+        CHECK(selector.next_with_hint()->id == 1);
+        CHECK(selector.counters().touches == 2);
+        CHECK(selector.counters().sweeps_finished == 0);
+        CHECK(selector.next_with_hint()->id == 2);
+        CHECK(selector.counters().touches == 3);
+        CHECK(selector.counters().sweeps_finished == 1);
+        CHECK(selector.next() == std::nullopt);
+        CHECK(selector.counters().sweeps_finished == 2);
+    }
+
+    SUBCASE("a backjump drops a paused sweep, and the cells it never reached wake again") {
+        selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
+        learn(selector, trail, {0}, true);
+        trail.resize(1);
+        selector.update_with_backjump(0, trail);
+        CHECK(selector.counters().sweeps_dropped == 1);
+        CHECK(selector.counters().sweeps_dropped_unreached == 1);
+        CHECK(selector.counters().touches == 0);
+        CHECK(selector.next() == std::nullopt);
+
+        learn(selector, trail, {0}, true);
+        CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::zero});
+        CHECK(selector.counters().touches == 1);
+    }
+
     SUBCASE("a backjump copies a swept cell back and drops what was queued") {
         // `A` = x0 + x1 and `B` = x2.
         selector.add_starting_clause(make_clause(repr, 4, {{0, 1}, {2}}));
         learn(selector, trail, {0}, true); // `A` becomes x1, saved first
+        CHECK(selector.next() == std::nullopt);
         CHECK(selector.counters().saves == 1);
         learn(selector, trail, {1}, false); // `A` becomes `0 = 0`
-        REQUIRE(selector.counters().triggers == 1);
+        REQUIRE(selector.next_with_hint()->trigger_hint ==
+                std::optional<WatchType>{WatchType::zero});
 
         trail.resize(1);
         selector.update_with_backjump(0, trail);
@@ -208,8 +251,8 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
         CHECK(selector.next() == std::nullopt);
         const std::size_t touches = selector.counters().touches;
         learn(selector, trail, {0}, false);
-        CHECK(selector.counters().touches == touches + 1);
         CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::zero});
+        CHECK(selector.counters().touches == touches + 1);
     }
 
     SUBCASE("a backjump rebuilds a cell whose watch moved, and queues it if it triggers") {
@@ -235,38 +278,41 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
     SUBCASE("a satisfied clause's second cell is left in its bucket, and swept once unsatisfied") {
         selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
         learn(selector, trail, {0, 4}, true); // `A` reduces to `0 = 1` at level 1
-        learn(selector, trail, {1}, true);    // and `B`'s column becomes a pivot at level 2
+        CHECK(selector.next() == std::nullopt);
+        learn(selector, trail, {1}, true); // and `B`'s column becomes a pivot at level 2
+        CHECK(selector.next() == std::nullopt);
         CHECK(selector.counters().skips == 1);
         const std::size_t touches = selector.counters().touches;
-        CHECK(selector.next() == std::nullopt);
 
         // Still satisfied at level 1, where `B` leads on a column again.
         trail.resize(2);
         selector.update_with_backjump(1, trail);
         learn(selector, trail, {1}, true);
+        CHECK(selector.next() == std::nullopt);
         CHECK(selector.counters().skips == 2);
 
         // At the root `A` is x0 again, and `B` is still bucketed on x1.
         trail.resize(1);
         selector.update_with_backjump(0, trail);
         learn(selector, trail, {1}, true);
+        CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::one});
         CHECK(selector.counters().touches == touches + 1);
         CHECK(selector.counters().skips == 2);
-        CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::one});
     }
 
     SUBCASE("a first cell whose second is `0 = 1` is left in its bucket until a backjump") {
         selector.add_starting_clause(make_clause(repr, 4, {{0}, {1}}));
         learn(selector, trail, {1, 4}, true); // `B` reduces to `0 = 1`
-        learn(selector, trail, {0}, true);    // and would make `A` `0 = 0`
-        CHECK(selector.counters().skips == 1);
         CHECK(selector.next() == std::nullopt);
+        learn(selector, trail, {0}, true); // and would make `A` `0 = 0`
+        CHECK(selector.next() == std::nullopt);
+        CHECK(selector.counters().skips == 1);
 
         trail.resize(1);
         selector.update_with_backjump(0, trail);
         learn(selector, trail, {0}, true);
-        CHECK(selector.counters().skips == 1);
         CHECK(selector.next_with_hint()->trigger_hint == std::optional<WatchType>{WatchType::zero});
+        CHECK(selector.counters().skips == 1);
     }
 
     SUBCASE("stale bucket entries are cleaned up, and the live ones still wake") {
