@@ -38,6 +38,8 @@ public:
 
     virtual const IndexSet& pivot_col_idxs() const noexcept = 0;
 
+    virtual std::size_t pivot_col_idx(std::size_t row_idx) const noexcept = 0;
+
     virtual std::optional<std::size_t> add_row_get_row_idx(Equation v) = 0;
 
     virtual void reduce(Equation& v) const = 0;
@@ -52,9 +54,18 @@ public:
     /// reading the last column as the constant.
     virtual ReduceResult partial_reduce(Equation& v) const = 0;
 
+    /// @brief `partial_reduce(v)` for a `v` known to lead in `leading_col_idx`.
+    virtual ReduceResult partial_reduce(Equation& v, std::size_t leading_col_idx) const = 0;
+
     /// @brief Partially reduce `v` against this matrix augmented with `extra`,
     /// reading the last column as the constant.
     virtual ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const = 0;
+
+    /// @brief `partial_reduce_with_extra(v, extra)` for a `v` known to lead in
+    /// `leading_col_idx` and an `extra` known to lead in `extra_leading_col_idx`.
+    virtual ReduceResult partial_reduce_with_extra(
+        Equation& v, std::size_t leading_col_idx, const Equation& extra,
+        std::optional<std::size_t> extra_leading_col_idx) const = 0;
 
     /// @brief Partially reduce `v` by the rows whose `row_idx_to_order` entry is
     /// below `bound`, reading the last column as the constant.
@@ -121,9 +132,13 @@ public:
 
     std::size_t cols() const noexcept override { return cols_; }
 
-    const Equation& row(std::size_t row_idx) const override { return rows_[row_idx]; }
+    const Equation& row(std::size_t row_idx) const override { return rows_[row_idx].row; }
 
     const IndexSet& pivot_col_idxs() const noexcept override { return pivot_col_idxs_; }
+
+    std::size_t pivot_col_idx(std::size_t row_idx) const noexcept override {
+        return rows_[row_idx].pivot_col_idx;
+    }
 
     std::optional<std::size_t> add_row_get_row_idx(Equation v) override {
         // `v` is the caller's own copy, so it is reduced in place and stored.
@@ -131,7 +146,8 @@ public:
         std::optional<std::size_t> leading_col_idx = reduced_row.leading_bit();
         while (leading_col_idx && pivot_col_idxs_.test(*leading_col_idx)) {
             leading_col_idx = reduced_row.plus_assign_and_next_bit(
-                gf2_vector_of<V>(rows_[row_idx_for_col_idx(*leading_col_idx)]), *leading_col_idx);
+                gf2_vector_of<V>(rows_[row_idx_for_col_idx(*leading_col_idx)].row),
+                *leading_col_idx);
         }
         if (!leading_col_idx) {
             return std::nullopt; // `v` already belongs to the span
@@ -142,12 +158,13 @@ public:
         const std::size_t new_pivot_col_idx = *leading_col_idx;
         const std::size_t insert_row_idx = pivot_col_idxs_.count_below(new_pivot_col_idx);
 
-        rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_row_idx), std::move(v));
+        rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_row_idx),
+                     StoredRow{std::move(v), new_pivot_col_idx});
         pivot_col_idxs_.set(new_pivot_col_idx);
         // Inserting moves handles, never the equations they own, so the entries
         // for the other pivot columns stay valid.
         if (!col_idx_to_row_.empty()) {
-            col_idx_to_row_[new_pivot_col_idx] = &gf2_vector_of<V>(rows_[insert_row_idx]);
+            col_idx_to_row_[new_pivot_col_idx] = &gf2_vector_of<V>(rows_[insert_row_idx].row);
         } else if (rows_.size() * col_idx_to_row_divisor >= cols_) {
             build_col_idx_to_row();
         }
@@ -162,7 +179,7 @@ public:
         // must be re-evaluated against the live row each time.
         for (auto col_idx = row.leading_bit(); col_idx; col_idx = row.next_bit(*col_idx)) {
             if (pivot_col_idxs_.test(*col_idx)) {
-                row.plus_assign(gf2_vector_of<V>(rows_[row_idx_for_col_idx(*col_idx)]));
+                row.plus_assign(gf2_vector_of<V>(rows_[row_idx_for_col_idx(*col_idx)].row));
             }
         }
     }
@@ -179,19 +196,42 @@ public:
         for (auto col_idx = row.leading_bit(); col_idx; col_idx = row.next_bit(*col_idx)) {
             if (pivot_col_idxs_.test(*col_idx)) {
                 const std::size_t row_idx = row_idx_for_col_idx(*col_idx);
-                row.plus_assign(gf2_vector_of<V>(rows_[row_idx]));
+                row.plus_assign(gf2_vector_of<V>(rows_[row_idx].row));
                 coefficients.set(row_idx);
             }
         }
     }
 
     ReduceResult partial_reduce(Equation& v) const override {
-        return col_idx_to_row_.empty() ? partial_reduce_impl<false>(v) : partial_reduce_impl<true>(v);
+        const std::optional<std::size_t> leading_col_idx = gf2_vector_of<V>(v).leading_bit();
+        return col_idx_to_row_.empty() ? partial_reduce_impl<false>(v, leading_col_idx)
+                                       : partial_reduce_impl<true>(v, leading_col_idx);
+    }
+
+    ReduceResult partial_reduce(Equation& v, std::size_t leading_col_idx) const override {
+        return col_idx_to_row_.empty() ? partial_reduce_impl<false>(v, leading_col_idx)
+                                       : partial_reduce_impl<true>(v, leading_col_idx);
     }
 
     ReduceResult partial_reduce_with_extra(Equation& v, const Equation& extra) const override {
-        return col_idx_to_row_.empty() ? partial_reduce_with_extra_impl<false>(v, extra)
-                                  : partial_reduce_with_extra_impl<true>(v, extra);
+        const std::optional<std::size_t> leading_col_idx = gf2_vector_of<V>(v).leading_bit();
+        const std::optional<std::size_t> extra_leading_col_idx =
+            gf2_vector_of<V>(extra).leading_bit();
+        return col_idx_to_row_.empty()
+                   ? partial_reduce_with_extra_impl<false>(v, leading_col_idx, extra,
+                                                           extra_leading_col_idx)
+                   : partial_reduce_with_extra_impl<true>(v, leading_col_idx, extra,
+                                                          extra_leading_col_idx);
+    }
+
+    ReduceResult partial_reduce_with_extra(
+        Equation& v, std::size_t leading_col_idx, const Equation& extra,
+        std::optional<std::size_t> extra_leading_col_idx) const override {
+        return col_idx_to_row_.empty()
+                   ? partial_reduce_with_extra_impl<false>(v, leading_col_idx, extra,
+                                                           extra_leading_col_idx)
+                   : partial_reduce_with_extra_impl<true>(v, leading_col_idx, extra,
+                                                          extra_leading_col_idx);
     }
 
     ReduceResult partial_reduce_below(Equation& v, std::span<const std::size_t> row_idx_to_order,
@@ -210,22 +250,22 @@ public:
             if (row_idx_to_order[row_idx] >= bound) {
                 return classify_col_idx(*col_idx);
             }
-            col_idx = row.plus_assign_and_next_bit(gf2_vector_of<V>(rows_[row_idx]), *col_idx);
+            col_idx = row.plus_assign_and_next_bit(gf2_vector_of<V>(rows_[row_idx].row), *col_idx);
         }
     }
 
     void add_to_row(std::size_t row_idx, const Equation& eqn) override {
         // Leading strictly later leaves every pivot, and so both tables, alone.
         assert(gf2_vector_of<V>(eqn).leading_bit() >
-                   gf2_vector_of<V>(rows_[row_idx]).leading_bit() &&
+                   gf2_vector_of<V>(rows_[row_idx].row).leading_bit() &&
                "add_to_row: the addend must lead strictly after the row");
-        gf2_vector_of<V>(rows_[row_idx]).plus_assign(gf2_vector_of<V>(eqn));
+        gf2_vector_of<V>(rows_[row_idx].row).plus_assign(gf2_vector_of<V>(eqn));
 
         debug_assert_valid_representation();
     }
 
     Equation pop_row(std::size_t row_idx) override {
-        Equation popped_row = std::move(rows_[row_idx]);
+        Equation popped_row = std::move(rows_[row_idx].row);
         const std::optional<std::size_t> leading_col_idx =
             gf2_vector_of<V>(popped_row).leading_bit();
         // Stronger than the caller's `rows() > 0`: a structural invariant of a
@@ -243,7 +283,8 @@ public:
     }
 
     void pop_last_row() override {
-        const std::optional<std::size_t> leading_col_idx = gf2_vector_of<V>(rows_.back()).leading_bit();
+        const std::optional<std::size_t> leading_col_idx =
+            gf2_vector_of<V>(rows_.back().row).leading_bit();
         // Stronger than the caller's `rows() > 0`; see `pop_row()`.
         assert(leading_col_idx && "stored row has no pivot");
 
@@ -260,7 +301,7 @@ public:
         const std::size_t constant_col_idx = cols_ - 1;
         IndexSet out(constant_col_idx);
         for (std::size_t i = constant_col_idx; i-- > 0;) {
-            const V& row = gf2_vector_of<V>(rows_[i]);
+            const V& row = gf2_vector_of<V>(rows_[i].row);
             // Stronger than `RowSpace::unique_solution()`'s full-rank check:
             // full rank forces one pivot per variable column, and this pins each
             // one to its own row.
@@ -284,14 +325,13 @@ private:
         if constexpr (FromColIdxToRow) {
             return *col_idx_to_row_[col_idx];
         } else {
-            return gf2_vector_of<V>(rows_[row_idx_for_col_idx(col_idx)]);
+            return gf2_vector_of<V>(rows_[row_idx_for_col_idx(col_idx)].row);
         }
     }
 
     template <bool FromColIdxToRow>
-    ReduceResult partial_reduce_impl(Equation& v) const {
+    ReduceResult partial_reduce_impl(Equation& v, std::optional<std::size_t> col_idx) const {
         V& row = gf2_vector_of<V>(v);
-        std::optional<std::size_t> col_idx = row.leading_bit();
         while (true) {
             if (!col_idx) {
                 return ReduceResult::eq_true();
@@ -305,11 +345,11 @@ private:
     }
 
     template <bool FromColIdxToRow>
-    ReduceResult partial_reduce_with_extra_impl(Equation& v, const Equation& extra) const {
+    ReduceResult partial_reduce_with_extra_impl(
+        Equation& v, std::optional<std::size_t> col_idx, const Equation& extra,
+        std::optional<std::size_t> extra_leading_col_idx) const {
         const V& extra_row = gf2_vector_of<V>(extra);
-        const std::optional<std::size_t> extra_leading_col_idx = extra_row.leading_bit();
         V& row = gf2_vector_of<V>(v);
-        std::optional<std::size_t> col_idx = row.leading_bit();
         while (true) {
             if (!col_idx) {
                 return ReduceResult::eq_true();
@@ -336,7 +376,7 @@ private:
         // `for_each_set` walks ascending, which is row-echelon order.
         std::size_t row_idx = 0;
         pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
-            col_idx_to_row_[pivot_col_idx] = &gf2_vector_of<V>(rows_[row_idx++]);
+            col_idx_to_row_[pivot_col_idx] = &gf2_vector_of<V>(rows_[row_idx++].row);
         });
     }
 
@@ -352,7 +392,7 @@ private:
 
         std::optional<std::size_t> previous_pivot;
         for (std::size_t row_idx = 0; row_idx < rows_.size(); ++row_idx) {
-            const V& current = gf2_vector_of<V>(rows_[row_idx]);
+            const V& current = gf2_vector_of<V>(rows_[row_idx].row);
             assert(current.num_bits() == cols());
 
             const std::optional<std::size_t> leading_col_idx = current.leading_bit();
@@ -362,22 +402,28 @@ private:
             }
             assert(pivot_col_idxs_.test(*leading_col_idx));
             assert(row_idx_for_col_idx(*leading_col_idx) == row_idx);
+            assert(rows_[row_idx].pivot_col_idx == *leading_col_idx);
             previous_pivot = leading_col_idx;
         }
 
         pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
             assert(row_idx_for_col_idx(pivot_col_idx) < rows_.size());
             assert(row_idx_for_col_idx(pivot_col_idx) == pivot_col_idxs_.count_below(pivot_col_idx));
-            assert(gf2_vector_of<V>(rows_[row_idx_for_col_idx(pivot_col_idx)]).leading_bit() ==
-                   std::optional<std::size_t>(pivot_col_idx));
+            assert(gf2_vector_of<V>(rows_[row_idx_for_col_idx(pivot_col_idx)].row)
+                       .leading_bit() == std::optional<std::size_t>(pivot_col_idx));
             assert(col_idx_to_row_.empty() ||
                    col_idx_to_row_[pivot_col_idx] ==
-                       &gf2_vector_of<V>(rows_[row_idx_for_col_idx(pivot_col_idx)]));
+                       &gf2_vector_of<V>(rows_[row_idx_for_col_idx(pivot_col_idx)].row));
         });
 #endif
     }
 
-    std::vector<Equation> rows_;
+    struct StoredRow {
+        Equation row;
+        std::size_t pivot_col_idx;
+    };
+
+    std::vector<StoredRow> rows_;
     IndexSet pivot_col_idxs_;
 
     /// @brief Empty until the rows are a large enough fraction of the columns,

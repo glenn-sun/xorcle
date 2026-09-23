@@ -311,6 +311,13 @@ TEST_CASE_TEMPLATE("row echelon: partial_reduce_with_extra matches an augmented 
         const ReduceResult b = augmented.partial_reduce(partial_via_augmented);
         CHECK(a == b);
         CHECK(partial_with_extra == partial_via_augmented);
+
+        if (v.leading_bit()) {
+            Equation partial_from_leading = v;
+            CHECK(matrix.partial_reduce_with_extra(partial_from_leading, *v.leading_bit(), extra,
+                                                   extra.leading_bit()) == a);
+            CHECK(partial_from_leading == partial_with_extra);
+        }
     }
 }
 
@@ -387,6 +394,12 @@ TEST_CASE_TEMPLATE("row echelon: matches the reference matrix", Tag, DenseTag, S
                 reference.partial_reduce(reference_partial);
             CHECK(result == expected_result(reference_leading, num_vars));
             CHECK(to_bits(partial) == reference_partial);
+
+            Equation partial_from_leading = to_equation(repr, probe);
+            if (const std::optional<std::size_t> leading = partial_from_leading.leading_bit()) {
+                CHECK(matrix.partial_reduce(partial_from_leading, *leading) == result);
+                CHECK(partial_from_leading == partial);
+            }
         }
 
         while (matrix.rows() > 0) {

@@ -47,6 +47,13 @@ public:
     /// @brief The pivot columns, indexed by column, over `cols()` indices.
     const IndexSet& pivot_col_idxs() const noexcept { return interface_->pivot_col_idxs(); }
 
+    /// @brief The pivot column of the row at `row_idx`, i.e. its leading column.
+    /// @pre `row_idx < rows()`.
+    std::size_t pivot_col_idx(std::size_t row_idx) const noexcept {
+        assert(row_idx < rows() && "row index is out of range");
+        return interface_->pivot_col_idx(row_idx);
+    }
+
     /// @brief Does nothing if `v` is already in the span.
     /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`, here and in
     /// `add_row_get_row_idx()`.
@@ -167,6 +174,17 @@ public:
         return interface().partial_reduce(v);
     }
 
+    /// @brief `partial_reduce(v)` without scanning for `v`'s leading bit.
+    /// @pre As `partial_reduce(v)`, and `v`'s leading bit is `leading_col_idx`.
+    ReduceResult partial_reduce(Equation& v, std::size_t leading_col_idx) const {
+        assert(v.num_bits() == cols() && "partial_reduce: bit count does not match the matrix");
+        assert(v.repr() == repr() &&
+               "partial_reduce: representation does not match the matrix");
+        assert(v.leading_bit() == std::optional<std::size_t>(leading_col_idx) &&
+               "partial_reduce: v does not lead in the given column");
+        return interface().partial_reduce(v, leading_col_idx);
+    }
+
     /// @brief Partially reduce `v` against this matrix augmented with `extra`.
     /// @pre `v` and `extra` each have `cols()` bits and this matrix's representation.
     /// @pre `extra`'s leading column is not a pivot of this matrix, or `extra` is `0 = 0`.
@@ -178,6 +196,27 @@ public:
         assert((!extra.leading_bit() || !pivot_col_idxs().test(*extra.leading_bit())) &&
                "extra must already be partially reduced by this matrix");
         return interface().partial_reduce_with_extra(v, extra);
+    }
+
+    /// @brief `partial_reduce_with_extra(v, extra)` without scanning for either
+    /// leading bit.
+    /// @pre As `partial_reduce_with_extra(v, extra)`, `v`'s leading bit is
+    /// `leading_col_idx`, and `extra`'s is `extra_leading_col_idx`, empty for `0 = 0`.
+    ReduceResult partial_reduce_with_extra(Equation& v, std::size_t leading_col_idx,
+                                           const Equation& extra,
+                                           std::optional<std::size_t> extra_leading_col_idx) const {
+        assert(v.num_bits() == cols() && extra.num_bits() == cols() &&
+               "partial_reduce_with_extra: bit count does not match the matrix");
+        assert(v.repr() == repr() && extra.repr() == repr() &&
+               "partial_reduce_with_extra: representation does not match the matrix");
+        assert((!extra_leading_col_idx || !pivot_col_idxs().test(*extra_leading_col_idx)) &&
+               "extra must already be partially reduced by this matrix");
+        assert(v.leading_bit() == std::optional<std::size_t>(leading_col_idx) &&
+               "partial_reduce_with_extra: v does not lead in the given column");
+        assert(extra.leading_bit() == extra_leading_col_idx &&
+               "partial_reduce_with_extra: extra does not lead in the given column");
+        return interface().partial_reduce_with_extra(v, leading_col_idx, extra,
+                                                     extra_leading_col_idx);
     }
 
     /// @brief Reduce `v` in place by the stored rows whose `row_idx_to_order`

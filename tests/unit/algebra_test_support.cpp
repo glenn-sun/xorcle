@@ -44,6 +44,7 @@ void check_echelon_invariant(const RowEchelonMatrix& matrix) {
             REQUIRE(*previous_pivot < *leading);
         }
         REQUIRE(pivots.test(*leading));
+        REQUIRE(matrix.pivot_col_idx(index) == *leading);
         previous_pivot = leading;
     }
 
