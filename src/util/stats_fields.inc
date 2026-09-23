@@ -56,6 +56,16 @@ XORCLE_STAT(clauses, Count, learned_width_2, "learned_width_2", "Learned width-2
 XORCLE_STAT(clauses, Count, subsume_narrowed_to_width_2, "subsume_narrowed_to_width_2", "Subsumption replacements of width at most 2")
 XORCLE_STAT(clauses, Count, compaction_narrowed_to_width_2, "compaction_narrowed_to_width_2", "Compaction narrowings to width at most 2")
 
+// --- Decisions from clause intersections, reported only at a depth above 1 --
+
+XORCLE_STAT(intersection, Count, intersection_decisions, "intersection_decisions", "Decisions from an intersection")
+XORCLE_STAT(intersection, Count, intersected_clauses, "intersected_clauses", "Clauses intersected below the top")
+XORCLE_STAT(intersection, Count, intersection_dimension_before, "intersection_dimension_before", "Dimension before intersecting")
+XORCLE_STAT(intersection, Count, intersection_dimension_after, "intersection_dimension_after", "Dimension after intersecting")
+XORCLE_STAT(intersection, Count, intersection_passed_satisfied_clauses, "intersection_passed_satisfied_clauses", "Satisfied clauses passed while intersecting")
+XORCLE_STAT(intersection, Count, intersection_propagating_clauses, "intersection_propagating_clauses", "Propagating clauses found while intersecting")
+XORCLE_STAT(intersection, Real, intersection_time_s, "intersection_time_s", "Intersection time (s), also in the decision time")
+
 // --- Clause minimization, reported only when it ran -------------------------
 
 XORCLE_STAT(minimize, Count, num_minimized_clauses, "minimized_clauses", "Minimized clauses")
@@ -111,6 +121,7 @@ XORCLE_STAT(implication_graph, Real, implication_graph_time_s, "implication_grap
 
 XORCLE_STAT(timing, Real, parse_time_s, "parse_time_s", "Parse time (s)")
 XORCLE_STAT(timing, Real, solve_time_s, "solve_time_s", "Solve time (s)")
+XORCLE_STAT(timing, Real, decision_time_s, "decision_time_s", "Decision time (s), also in the solve time")
 
 // --- The proof, reported only once post-processing has run ------------------
 //

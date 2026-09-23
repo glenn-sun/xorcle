@@ -256,6 +256,14 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     const DecisionProcedure::DecisionStats decisions = solver.decision_stats();
     stats.decisions = decisions.decisions;
     stats.fallback_decisions = decisions.fallback_decisions;
+    stats.intersection_decisions = decisions.intersections.decisions;
+    stats.intersected_clauses = decisions.intersections.intersected_clauses;
+    stats.intersection_dimension_before = decisions.intersections.dimension_before;
+    stats.intersection_dimension_after = decisions.intersections.dimension_after;
+    stats.intersection_passed_satisfied_clauses =
+        decisions.intersections.passed_satisfied_clauses;
+    stats.intersection_propagating_clauses = decisions.intersections.propagating_clauses;
+    stats.intersection_time_s = decisions.intersections.time_s;
 
     const RestartStats restarts = solver.restart_stats();
     stats.num_restarts = counters.num_restarts;
@@ -317,6 +325,7 @@ RunStats run_once(const Options& options, PendingProof& pending) {
 
     stats.parse_time_s = parse_elapsed.count();
     stats.solve_time_s = elapsed.count();
+    stats.decision_time_s = counters.decision_time_s;
     return stats;
 }
 

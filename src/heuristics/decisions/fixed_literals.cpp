@@ -22,7 +22,8 @@ void FixedLiterals::reinitialize() {
 }
 
 DecisionResult FixedLiterals::make_decision(const RowSpace& trail_span, const std::vector<Clause>&,
-                                            const std::vector<std::uint8_t>&) {
+                                            const std::vector<std::uint8_t>&,
+                                            const SatisfactionRecord&) {
     assert(trail_span.cols() == num_vars() + 1 &&
            "the trail span does not match the procedure's variable count");
     assert(trail_span.repr() == repr() &&

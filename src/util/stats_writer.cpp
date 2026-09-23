@@ -132,6 +132,7 @@ ConsoleStatsWriter::log(const RunStats& stats) {
     append_section(StatsSection::search);
     append_section(StatsSection::restart);
     append_section(StatsSection::clauses);
+    append_section(StatsSection::intersection);
     append_section(StatsSection::minimize);
     append_section(StatsSection::subsume);
     append_section(StatsSection::deletion);

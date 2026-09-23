@@ -671,7 +671,8 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
 inline CsidsConfig csids_config(const Options& options) {
     return CsidsConfig{.initial_activity = options.csids_initial,
                        .decay = options.csids_decay,
-                       .bump = options.csids_bump};
+                       .bump = options.csids_bump,
+                       .intersection_depth = options.csids_intersection_depth};
 }
 
 inline CompactionConfig compaction_config(const Options& options) {

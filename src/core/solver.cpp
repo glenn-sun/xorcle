@@ -167,7 +167,6 @@ Solver::PropagationOutcome Solver::propagate_from_clause(ClauseId id,
     if (conflicting && level > 0 && budget_.has_value() && falsified_only_at_top_level(clause)) {
         ++counters_.num_undone_decisions;
         backjump_to(level - 1);
-        decisions_->update_with_undone_decision();
         return propagate_from_clause(id, std::nullopt, true);
     }
 
@@ -296,7 +295,8 @@ void Solver::handle_non_root_conflict() {
         if (restarts_->reuses_trail()) {
             kept_levels = decisions_->reusable_levels(trail_.span(), selector_->clauses(),
                                                       selector_->active_flags(),
-                                                      decision_clause_of_level_);
+                                                      decision_clause_of_level_,
+                                                      satisfaction_record());
             assert(kept_levels <= learned.asserting_level && "reuse kept a discarded level");
         }
         counters_.num_reused_levels += kept_levels;
@@ -530,12 +530,17 @@ void Solver::backjump_to(std::size_t level) {
     assert(level <= trail_.level() && "backjump target is above the current level");
     trail_.resize(level + 1);
     decision_clause_of_level_.resize(level);
+    decisions_->update_with_backjump(level);
     did_complete_sweep_ = false;
 }
 
 Solver::DecisionStep Solver::make_decision_step() {
+    const auto start = std::chrono::steady_clock::now();
     DecisionResult decision =
-        decisions_->make_decision(trail_.span(), selector_->clauses(), selector_->active_flags());
+        decisions_->make_decision(trail_.span(), selector_->clauses(), selector_->active_flags(),
+                                  satisfaction_record());
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+    counters_.decision_time_s += elapsed.count();
     if (decision.propagating_clause.has_value()) {
         propagating_clause_id_ = *decision.propagating_clause;
         return DecisionStep::propagating;

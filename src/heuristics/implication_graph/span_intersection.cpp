@@ -24,51 +24,6 @@ namespace {
 constexpr std::size_t path_check_vertices = 512;
 #endif
 
-/// @brief A basis of the intersection of two spans, by Zassenhaus over the
-/// columns of both laid side by side.
-///
-/// A row of the doubled matrix whose leading column lands in the second half
-/// has a zero first half, and its own leading column is the least of those of
-/// the rows it is a sum of, so those rows alone make up the intersection.
-std::vector<Equation> span_intersection(const RowSpace& left, const RowSpace& right) {
-    const EquationRepr repr = left.repr();
-    const std::size_t cols = left.cols();
-
-    RowEchelonMatrix doubled(repr, 2 * cols);
-    std::vector<std::size_t> wide_bits;
-    for (const Equation& row : left) {
-        wide_bits = row.bits();
-        const std::size_t half = wide_bits.size();
-        for (std::size_t i = 0; i < half; ++i) {
-            wide_bits.push_back(wide_bits[i] + cols);
-        }
-        Equation wide = Equation::with_num_bits(repr, 2 * cols);
-        wide.assign_bits(wide_bits);
-        doubled.add_row(std::move(wide));
-    }
-    for (const Equation& row : right) {
-        Equation wide = Equation::with_num_bits(repr, 2 * cols);
-        wide.assign_bits(row.bits());
-        doubled.add_row(std::move(wide));
-    }
-
-    std::vector<Equation> basis;
-    for (const Equation& row : doubled) {
-        const std::optional<std::size_t> leading = row.leading_bit();
-        if (!leading.has_value() || *leading < cols) {
-            continue;
-        }
-        wide_bits = row.bits();
-        for (std::size_t& bit : wide_bits) {
-            bit -= cols;
-        }
-        Equation eqn = Equation::with_num_bits(repr, cols);
-        eqn.assign_bits(wide_bits);
-        basis.push_back(std::move(eqn));
-    }
-    return basis;
-}
-
 } // namespace
 
 void ImplicationGraph::walk_span_intersections(

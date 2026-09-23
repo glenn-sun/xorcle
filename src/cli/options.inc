@@ -71,6 +71,10 @@ XORCLE_PRESET(cmtf, csids_cmtf_config)
 XORCLE_OPTION(csids_initial, Real, 1.0, 0.0, INFINITY, "initial activity of asserting clauses")
 XORCLE_OPTION(csids_bump, Real, 1.0, 0.0, INFINITY, "activity bump per resolution step")
 XORCLE_OPTION(csids_decay, Real, 0.98, 0.0, 1.0, "activity decay per conflict")
+XORCLE_OPTION(csids_intersection_depth, Size, 8, 1, SIZE_MAX,
+              "decide from the intersection, modulo the trail, of the top clause's linear\n"
+              "negation with those of the open clauses below it, trying this many clauses\n"
+              "in all (1: the top clause alone)")
 
 XORCLE_OPTION(bump_responsible_clauses, Bool, false, false, true,
               "also bump the reason clauses of the learned clause's responsible trail\n"
@@ -199,6 +203,8 @@ XORCLE_REQUIRES(compact_cadence, options.compact, "--compact=true")
 XORCLE_REQUIRES(csids_initial, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
 XORCLE_REQUIRES(csids_bump, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
 XORCLE_REQUIRES(csids_decay, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
+XORCLE_REQUIRES(csids_intersection_depth, options.decisions == DecisionProcedureName::csids,
+                "--decisions=csids")
 XORCLE_REQUIRES(bump_responsible_clauses, options.decisions == DecisionProcedureName::csids,
                 "--decisions=csids, the only procedure with an activity to bump")
 XORCLE_REQUIRES(phase, options.decisions == DecisionProcedureName::csids,

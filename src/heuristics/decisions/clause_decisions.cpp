@@ -41,7 +41,6 @@ ClauseSatisfactionWorkspace::ClauseSatisfactionWorkspace(EquationRepr repr, std:
       num_vars_(num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)),
       scratch_false_(repr, num_vars),
-      scratch_row_(repr, num_vars),
       local_basis_(repr, num_vars) {}
 
 void ClauseSatisfactionWorkspace::reconfigure(std::size_t num_vars) {
@@ -52,15 +51,14 @@ void ClauseSatisfactionWorkspace::reconfigure(std::size_t num_vars) {
 
     scratch_false_.resize(num_vars);
     scratch_false_.set_eq_true();
-    scratch_row_.resize(num_vars);
-    scratch_row_.set_eq_true();
 
     local_basis_ = RowSpace(repr_, num_vars);
+    spare_rows_.clear();
 }
 
 void ClauseSatisfactionWorkspace::clear_local_basis() {
     while (local_basis_.rows() != 0) {
-        local_basis_.pop_last_row();
+        spare_rows_.push_back(local_basis_.pop_row(local_basis_.rows() - 1));
     }
 }
 
@@ -95,22 +93,29 @@ ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& cl
         reduced_rows->clear();
     }
 
-    // Reduced once by the trail span here, then incrementally by each clause row
-    // as the local basis grows; recomputing per row costs quadratic for nothing.
-    workspace.scratch_false_.assign_from(workspace.false_equation_);
-    trail_span.reduce(workspace.scratch_false_);
-    if (workspace.scratch_false_.is_eq_true()) {
+    if (trail_span.pivot_col_idxs().test(trail_span.cols() - 1)) {
         // 1 is already in the trail span, so every clause is vacuously satisfied.
         return ClauseStatus::satisfied;
     }
+    // Otherwise the trail span leaves `0 = 1` alone, having no pivot in the
+    // constant column; the local basis then reduces it incrementally as it grows,
+    // since recomputing per row costs quadratic for nothing.
+    workspace.scratch_false_.assign_from(workspace.false_equation_);
 
     for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
-        workspace.scratch_row_.assign_from(clause.row(row_idx));
-        trail_span.reduce(workspace.scratch_row_);
-        if (reduced_rows != nullptr) {
-            reduced_rows->push_back(workspace.scratch_row_);
+        Equation row;
+        if (workspace.spare_rows_.empty()) {
+            row = Equation(trail_span.repr(), trail_span.num_vars());
+        } else {
+            row = std::move(workspace.spare_rows_.back());
+            workspace.spare_rows_.pop_back();
         }
-        if (!workspace.local_basis_.add_row_get_row_idx(workspace.scratch_row_).has_value()) {
+        row.assign_from(clause.row(row_idx));
+        trail_span.reduce(row);
+        if (reduced_rows != nullptr) {
+            reduced_rows->push_back(row);
+        }
+        if (!workspace.local_basis_.add_row_get_row_idx(std::move(row)).has_value()) {
             // Dependent on the rows already in the local basis; it adds nothing.
             continue;
         }

@@ -6,6 +6,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "algebra/equation.h"
 #include "algebra/equation_repr.h"
@@ -264,6 +265,12 @@ public:
 
     std::string to_string(const PrintMode& mode = {}) const;
 };
+
+/// @brief A basis of the intersection of two spans, by Zassenhaus over the
+/// columns of both laid side by side.
+/// @pre `left.cols() == right.cols()` and `left.repr() == right.repr()`.
+std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
+                                        const RowEchelonMatrix& right);
 
 std::unique_ptr<RowEchelonMatrixInterface> make_row_echelon_matrix_interface(
     EquationRepr repr, std::size_t cols);

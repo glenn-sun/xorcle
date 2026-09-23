@@ -25,6 +25,10 @@ public:
 
     void reconfigure(std::size_t num_vars);
 
+    /// @brief After a check that found its clause open or propagating, that
+    /// clause's linear negation reduced by the trail span.
+    const RowSpace& reduced_clause() const noexcept { return local_basis_; }
+
 private:
     friend ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& clause,
                                                ClauseSatisfactionWorkspace& workspace,
@@ -37,11 +41,13 @@ private:
 
     Equation false_equation_;
 
-    /// @brief `0 = 1` reduced by the trail span, then by each row added to the local basis.
+    /// @brief `0 = 1` reduced by each row added to the local basis.
     Equation scratch_false_;
 
-    Equation scratch_row_;
     RowSpace local_basis_;
+
+    /// @brief Rows popped from the local basis, reused so a check allocates nothing.
+    std::vector<Equation> spare_rows_;
 };
 
 /// @brief Choose the first basis equation, in order, the trail has not already decided.

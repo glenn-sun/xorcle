@@ -42,6 +42,10 @@ RunStats::reports(const StatsSection section) const {
             const std::string restart = config_value(*this, "restart");
             return !restart.empty() && restart != "none";
         }
+        case StatsSection::intersection: {
+            const std::string depth = config_value(*this, "csids_intersection_depth");
+            return !depth.empty() && depth != "1";
+        }
         case StatsSection::minimize:
             return config_value(*this, "minimize") == "true";
         case StatsSection::subsume:

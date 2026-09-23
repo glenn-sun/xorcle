@@ -227,6 +227,7 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c Width after minimizing: 90\n"
         "c Parse time (s): 0.002\n"
         "c Solve time (s): 0.013\n"
+        "c Decision time (s), also in the solve time: 0.000\n"
         "c Propagations per conflict: 11.765\n"
         "c Attempts per propagation, watch update or conflict: 3.000\n"
         "c Fallback decision rate: 7.50%\n"
@@ -299,6 +300,7 @@ TEST_CASE("ConsoleStatsWriter: zero denominators omit their ratio lines") {
         "c Compaction narrowings to width at most 2: 0\n"
         "c Parse time (s): 0.000\n"
         "c Solve time (s): 0.000\n"
+        "c Decision time (s), also in the solve time: 0.000\n"
         "s UNSATISFIABLE\n";
     CHECK(console_output(stats) == expected);
 }

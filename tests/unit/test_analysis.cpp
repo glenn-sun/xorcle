@@ -48,7 +48,8 @@ public:
 
     /// @brief Unused; conflict analysis never decides.
     DecisionResult make_decision(const RowSpace&, const std::vector<Clause>&,
-                                 const std::vector<std::uint8_t>&) override {
+                                 const std::vector<std::uint8_t>&,
+                                 const SatisfactionRecord& = {}) override {
         CHECK_MESSAGE(false, "conflict analysis must not make decisions");
         return DecisionResult{Equation(repr(), num_vars()), std::nullopt};
     }

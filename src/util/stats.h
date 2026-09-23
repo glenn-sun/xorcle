@@ -30,6 +30,7 @@ enum class StatsSection {
     search,
     restart,
     clauses,
+    intersection,
     minimize,
     subsume,
     deletion,

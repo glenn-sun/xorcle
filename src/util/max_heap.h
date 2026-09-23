@@ -15,8 +15,7 @@ namespace xorcle {
 /// a key never named has activity `0`. The order is total, so the maximum of a
 /// set is one key whatever the order of insertions that built the heap. An
 /// activity outlives the heap: a key removed by `extract_max()` keeps its score
-/// and comes back on `rebuild()`, and one removed by `discard_max()` keeps its
-/// score without coming back.
+/// for when it is inserted again.
 class MaxHeap {
 public:
     using Key = std::size_t;
@@ -45,20 +44,10 @@ public:
         return key < activity_.size() ? activity_[key] : 0.0;
     }
 
-    /// @brief `std::nullopt` if empty; the key is remembered as popped and comes
-    /// back on `rebuild()`.
+    /// @brief `std::nullopt` if empty.
     std::optional<Key> extract_max() {
         if (heap_.empty()) return std::nullopt;
-        const Key top_key = take_max();
-        popped_.push_back(top_key);
-        return top_key;
-    }
-
-    /// @brief Remove the highest-ranked key without remembering it as popped.
-    /// @pre `!empty()`.
-    void discard_max() {
-        assert(!heap_.empty() && "discard_max on empty heap");
-        take_max();
+        return take_max();
     }
 
     /// @brief Multiply all activities by `k`.
@@ -75,7 +64,6 @@ public:
         heap_.clear();
         key_to_heap_idx_.clear();
         activity_.clear();
-        popped_.clear();
     }
 
     /// @brief The highest-ranked key still in the heap.
@@ -115,11 +103,6 @@ public:
         sift_up(heap_idx);
     }
 
-    void rebuild() {
-        for (const Key key : popped_) insert(key);
-        popped_.clear();
-    }
-
 private:
     struct Entry {
         Key key;
@@ -131,7 +114,6 @@ private:
     std::vector<Entry> heap_;                  ///< Binary heap (0-based).
     std::vector<std::size_t> key_to_heap_idx_;
     std::vector<double> activity_;
-    std::vector<Key> popped_;                  ///< Extracted since the last rebuild.
 
     void grow_for(Key key) {
         if (key < activity_.size()) return;

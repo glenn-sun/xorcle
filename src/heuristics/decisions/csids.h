@@ -28,10 +28,15 @@ struct CsidsConfig {
 
     double decay = 0.98; ///< `1` never decays, `0` keeps only the newest activity.
     double bump = 1.0; ///< The initial activity increment.
+
+    /// @brief The open clauses, from the top of the heap down, whose linear
+    /// negations a decision is drawn from the intersection of; `1` is the top
+    /// clause alone.
+    std::size_t intersection_depth = 8;
 };
 
 inline constexpr CsidsConfig csids_default_config{
-    .initial_activity = 1.0, .decay = 0.98, .bump = 1.0};
+    .initial_activity = 1.0, .decay = 0.98, .bump = 1.0, .intersection_depth = 8};
 
 /// @brief `bump = 0` leaves every clause at activity zero, never bumped.
 inline constexpr CsidsConfig csids_berkmin_config{
@@ -87,7 +92,8 @@ public:
     void reinitialize() override;
 
     DecisionResult make_decision(const RowSpace& trail_span, const std::vector<Clause>& clauses,
-                                 const std::vector<std::uint8_t>& clause_active) override;
+                                 const std::vector<std::uint8_t>& clause_active,
+                                 const SatisfactionRecord& known = {}) override;
 
     /// @brief Record the activity the next new clause will enter at, then decay.
     void update_with_asserting_clause(const Clause& clause) override;
@@ -97,8 +103,9 @@ public:
 
     void update_with_resolved_clause(ClauseId id) override;
 
-    /// @brief Put the clauses the discarded level satisfied back in the heap.
-    void update_with_undone_decision() override;
+    /// @brief Put the clauses found satisfied above `level` back in the heap.
+    /// @pre `level` is at most the level of the trail's last decision.
+    void update_with_backjump(std::size_t level) override;
 
     /// @brief The replacement inherits the subsumed clause's activity when larger.
     void update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id) override;
@@ -112,15 +119,46 @@ public:
     std::size_t reusable_levels(
         const RowSpace& trail_span, const std::vector<Clause>& clauses,
         const std::vector<std::uint8_t>& clause_active,
-        const std::vector<std::optional<ClauseId>>& decision_clauses) override;
+        const std::vector<std::optional<ClauseId>>& decision_clauses,
+        const SatisfactionRecord& known = {}) override;
 
     void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
                                 const std::vector<Clause>& clauses,
                                 const std::vector<std::uint8_t>& clause_active) override;
 
+    DecisionStats decision_stats() const override;
+
 private:
+    /// @brief Intersect the open top clause's linear negation, modulo the trail,
+    /// greedily with those of the open clauses below it, keeping each
+    /// intersection that stays outside the trail span.
+    /// @return A decision from the intersection, a clause below the top that the
+    /// trail leaves propagating, or nothing when no intersection was kept.
+    /// @pre `top_id` is the heap's maximum, the trail leaves it open, and it
+    /// was the last clause checked.
+    std::optional<DecisionResult> decide_from_intersection(
+        ClauseId top_id, const RowSpace& trail_span, const std::vector<Clause>& clauses,
+        const std::vector<std::uint8_t>& clause_active, const SatisfactionRecord& known);
+
+    /// @brief What the trail leaves of the heap's top clause; a satisfied one
+    /// comes off the heap until a backjump discards the level found to satisfy it.
+    /// @pre `id` is the heap's maximum and names `clause`.
+    ClauseStatus candidate_status(ClauseId id, const Clause& clause, const RowSpace& trail_span,
+                                  const SatisfactionRecord& known);
+
     CsidsState state_;
     ClauseSatisfactionWorkspace clause_sat_workspace_;
+    std::size_t intersection_depth_;
+
+    /// @brief Off the heap, by a level found to satisfy them; spans nest, so
+    /// they stay satisfied until a backjump below it.
+    std::vector<std::vector<ClauseId>> satisfied_by_level_;
+
+    /// @brief The trail's decision level: each equation returned is decided one
+    /// level up, and backjumps come through `update_with_backjump()`.
+    std::size_t level_ = 0;
+    IntersectionStats intersection_stats_;
+    std::vector<ClauseId> set_aside_ids_;
 
     Rng clause_equation_rng_; ///< Stream for sampling a combination of a clause's rows.
 };

@@ -90,35 +90,20 @@ TEST_CASE("MaxHeap: increase_key on an extracted key still records the score") {
     heap.increase_key(2, 100.0);
     CHECK(heap.get_priority(2) == 102.0);
 
-    heap.rebuild();
+    heap.insert(2);
     CHECK(heap.peek_max() == 2);
 }
 
-TEST_CASE("MaxHeap: rebuild restores every popped key exactly once") {
-    MaxHeap heap;
-    for (Key key = 0; key < 8; ++key) {
-        heap.set_activity(key, static_cast<double>(key));
-        heap.insert(key);
-    }
-    for (int i = 0; i < 5; ++i) {
-        CHECK(heap.extract_max().has_value());
-    }
-
-    heap.rebuild();
-    heap.rebuild();
-    CHECK(drain(heap) == Order{7, 6, 5, 4, 3, 2, 1, 0});
-}
-
-TEST_CASE("MaxHeap: a discarded key stays out and keeps its activity") {
+TEST_CASE("MaxHeap: an extracted key stays out and keeps its activity") {
     MaxHeap heap;
     for (Key key : {1, 2, 3}) {
         heap.set_activity(key, static_cast<double>(key));
         heap.insert(key);
     }
     CHECK(heap.extract_max() == 3);
-    heap.discard_max();
+    CHECK(heap.extract_max() == 2);
 
-    heap.rebuild();
+    heap.insert(3);
     CHECK(heap.get_priority(2) == 2.0);
     CHECK(drain(heap) == Order{3, 1});
 }
@@ -144,8 +129,6 @@ TEST_CASE("MaxHeap: reset clears activities as well as the heap") {
     heap.reset();
     CHECK(heap.empty());
     CHECK(heap.get_priority(1) == 0.0);
-    heap.rebuild();
-    CHECK(heap.empty());
 }
 
 TEST_CASE("MaxHeap: equal activities come back by ascending key") {

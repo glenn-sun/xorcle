@@ -108,6 +108,8 @@ struct SolverCounters {
     /// @brief Decisions taken off the trail because a clause a missed
     /// propagation had left unit turned out to forbid them.
     std::size_t num_undone_decisions = 0;
+
+    double decision_time_s = 0.0; ///< Spent choosing decisions, in the decision procedure.
     /// @brief Clauses the decision procedure handed back to propagation rather
     /// than deciding on.
     std::size_t num_decision_propagations = 0;
@@ -483,11 +485,14 @@ private:
     /// @pre The trail falsifies `clause` and stands at the level that does.
     bool falsified_only_at_top_level(const Clause& clause) const;
 
+    SatisfactionRecord satisfaction_record() const {
+        return SatisfactionRecord(level_stamp_, trail_.level());
+    }
+
     /// @brief Whether `clause` is known to be satisfied by a level at or below
     /// the current one, so that no attempt on it can find anything.
-    bool clause_is_known_satisfied(const Clause& clause) const noexcept {
-        return clause.satisfied_stamp != 0 && clause.satisfied_level <= trail_.level() &&
-               level_stamp_[clause.satisfied_level] == clause.satisfied_stamp;
+    bool clause_is_known_satisfied(const Clause& clause) const {
+        return satisfaction_record().satisfying_level(clause).has_value();
     }
 
     /// @brief The clause whose propagation made the trail conflicting, valid

@@ -24,6 +24,7 @@ TEST_CASE("csids: the presets carry their documented values") {
     CHECK(csids_default_config.initial_activity == doctest::Approx(1.0));
     CHECK(csids_default_config.bump == doctest::Approx(1.0));
     CHECK(csids_default_config.decay == doctest::Approx(0.98));
+    CHECK(csids_default_config.intersection_depth == 8);
 
     CHECK(csids_berkmin_config.initial_activity == doctest::Approx(1.0));
     CHECK(csids_berkmin_config.bump == doctest::Approx(0.0));
@@ -164,17 +165,56 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
     }
 
-    SUBCASE("an undone decision offers the clauses that level satisfied again") {
+    SUBCASE("a backjump offers the clauses the discarded levels satisfied again") {
         procedure.update_with_resolved_clause(0);
-        // x0 = 1 satisfies clause 0, which leaves the heap on the way past it.
+        // The first decision takes the trail to level 1, where x0 = 1 satisfies
+        // clause 0, which leaves the heap on the way past it.
+        CHECK(procedure.make_decision(empty, clauses, active).equation.has_value());
         const RowSpace span = make_row_space(repr, 4, {{0, 4}});
         CHECK(procedure.make_decision(span, clauses, active).equation.has_value());
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
 
-        // With the level that satisfied it gone, clause 0 outranks clause 1
-        // again -- but only because it is back in the heap.
-        procedure.update_with_undone_decision();
-        CHECK(procedure.make_decision(empty, clauses, active).equation.has_value());
+        SUBCASE("keeping the level that satisfied it keeps it off the heap") {
+            procedure.update_with_backjump(1);
+            CHECK(procedure.make_decision(empty, clauses, active).equation.has_value());
+            CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
+        }
+
+        SUBCASE("discarding that level puts it back") {
+            // Clause 0 outranks clause 1 again -- but only because it is back
+            // in the heap.
+            procedure.update_with_backjump(0);
+            CHECK(procedure.make_decision(empty, clauses, active).equation.has_value());
+            CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
+        }
+    }
+
+    SUBCASE("a clause propagation found satisfied is set aside at the level that did") {
+        procedure.update_with_resolved_clause(0);
+        // The record says level 0 satisfies clause 0, which the procedure takes
+        // on trust rather than checking against the trail.
+        const std::vector<std::size_t> stamps{1};
+        clauses[0].satisfied_level = 0;
+        clauses[0].satisfied_stamp = 1;
+        CHECK(procedure.make_decision(empty, clauses, active, SatisfactionRecord(stamps, 0))
+                  .equation.has_value());
+        CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
+
+        SUBCASE("it stays off the heap while that level stands") {
+            procedure.update_with_backjump(0);
+            CHECK(procedure.make_decision(empty, clauses, active, SatisfactionRecord(stamps, 0))
+                      .equation.has_value());
+            CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
+        }
+    }
+
+    SUBCASE("a record whose level has since been replaced is not trusted") {
+        procedure.update_with_resolved_clause(0);
+        const std::vector<std::size_t> stamps{7};
+        clauses[0].satisfied_level = 0;
+        clauses[0].satisfied_stamp = 1;
+        CHECK(procedure.make_decision(empty, clauses, active, SatisfactionRecord(stamps, 0))
+                  .equation.has_value());
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
     }
 
@@ -209,7 +249,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         // Deactivation is permanent, so the heap drops the clause outright, and
         // its activity stays readable for deletion and subsumption.
         CHECK(procedure.clause_activity(1) > procedure.clause_activity(0));
-        procedure.update_with_undone_decision();
+        procedure.update_with_backjump(0);
         CHECK(procedure.make_decision(empty, clauses, active).equation.has_value());
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
     }
@@ -281,6 +321,72 @@ TEST_CASE_TEMPLATE("csids: decay makes later bumps worth more", Tag, DenseTag, S
     CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
 }
 
+TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decision", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    CsidsConfig config = csids_default_config;
+    config.intersection_depth = 2;
+    Csids procedure(repr, 4, default_seed, config);
+    const RowSpace empty(repr, 4);
+
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, 4, {{0}, {1}}));
+    clauses.push_back(make_clause(repr, 4, {{1}, {2}}));
+    clauses.push_back(make_clause(repr, 4, {{2}, {3}}));
+    const std::vector<std::uint8_t> active(clauses.size(), 1);
+    for (ClauseId id = 0; id < clauses.size(); ++id) {
+        procedure.update_with_new_clause(clauses[id], id);
+    }
+
+    SUBCASE("the intersection with the next clause is kept") {
+        procedure.update_with_resolved_clause(0);
+        const DecisionResult result = procedure.make_decision(empty, clauses, active);
+        REQUIRE(result.equation.has_value());
+        CHECK(bits_of(*result.equation) == std::vector<std::size_t>{1});
+        CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
+
+        const IntersectionStats stats = procedure.decision_stats().intersections;
+        CHECK(stats.decisions == 1);
+        CHECK(stats.intersected_clauses == 1);
+        CHECK(stats.dimension_before == 2);
+        CHECK(stats.dimension_after == 1);
+    }
+
+    SUBCASE("with nothing kept the draw is the top clause's alone") {
+        CsidsConfig top_alone = csids_default_config;
+        top_alone.intersection_depth = 1;
+        Csids plain(repr, 4, default_seed, top_alone);
+        for (ClauseId id = 0; id < clauses.size(); ++id) {
+            plain.update_with_new_clause(clauses[id], id);
+        }
+        // Clause 0 then clause 2, whose spans meet only in `0 = 0`.
+        const std::vector<std::uint8_t> without_middle{1, 0, 1};
+        procedure.update_with_resolved_clause(0);
+        plain.update_with_resolved_clause(0);
+        const DecisionResult deep = procedure.make_decision(empty, clauses, without_middle);
+        const DecisionResult top = plain.make_decision(empty, clauses, without_middle);
+        REQUIRE(deep.equation.has_value());
+        REQUIRE(top.equation.has_value());
+        CHECK(*deep.equation == *top.equation);
+        CHECK(procedure.decision_stats().intersections.decisions == 0);
+    }
+
+    SUBCASE("a propagating clause below the top is handed back") {
+        procedure.update_with_resolved_clause(0);
+        const RowSpace span = make_row_space(repr, 4, {{2}});
+        const DecisionResult result = procedure.make_decision(span, clauses, active);
+        CHECK(!result.equation.has_value());
+        CHECK(result.propagating_clause == std::optional<ClauseId>{1});
+        CHECK(procedure.decision_stats().intersections.propagating_clauses == 1);
+
+        // Nothing it set aside is lost: off that trail, both clauses are back.
+        const DecisionResult next = procedure.make_decision(empty, clauses, active);
+        REQUIRE(next.equation.has_value());
+        CHECK(bits_of(*next.equation) == std::vector<std::size_t>{1});
+        CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
+    }
+}
+
 TEST_CASE_TEMPLATE("decision procedure: the default keeps no levels on a restart", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
@@ -317,8 +423,10 @@ TEST_CASE_TEMPLATE("csids: trail reuse keeps the levels outranking the next deci
     decisions.update_with_resolved_clause(1);
     decisions.update_with_resolved_clause(1);
 
-    // The trail satisfies clause 0, so clause 1 is what the next decision comes
-    // from and only a level decided from clause 0 outranks it.
+    // The trail satisfies clause 0 at level 1, so clause 1 is what the next
+    // decision comes from and only a level decided from clause 0 outranks it.
+    const RowSpace empty = make_row_space(repr, num_vars, {});
+    (void)decisions.make_decision(empty, clauses, active);
     const RowSpace span = make_row_space(repr, num_vars, {{0, num_vars}});
 
     CHECK(decisions.reusable_levels(span, clauses, active, {ClauseId{0}}) == 1);
@@ -337,10 +445,10 @@ TEST_CASE_TEMPLATE("csids: trail reuse keeps the levels outranking the next deci
         CHECK(decisions.reusable_levels(span, clauses, active, {ClauseId{0}, std::nullopt}) == 1);
     }
 
-    SUBCASE("asking leaves the choice of clause where it was") {
-        // Clause 0 was walked past on the satisfying trail; on the empty trail
-        // it must still be the clause with the most activity.
-        const RowSpace empty = make_row_space(repr, num_vars, {});
+    SUBCASE("the restart's backjump leaves the choice of clause where it was") {
+        // Clause 0 was walked past on the satisfying trail; once the restart
+        // discards level 1, it must again be the clause with the most activity.
+        decisions.update_with_backjump(0);
         (void)decisions.make_decision(empty, clauses, active);
         CHECK(decisions.decision_clause_hint() == std::optional<ClauseId>{0});
     }
