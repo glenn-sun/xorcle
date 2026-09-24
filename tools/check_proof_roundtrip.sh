@@ -2,11 +2,25 @@
 # Solve an UNSAT instance with --proof and verify the proof with the
 # independently written LRUP(⊕) checker.
 #
-# Usage: check_proof_roundtrip.sh <repository root> <xorcle binary> <family> <params>
-#        <seed> [solver option...]
+# Usage: check_proof_roundtrip.sh [--cnf-xor] [--insert <clause line>] <repository root>
+#        <xorcle binary> <family> <params> <seed> [solver option...]
 # Exit:  0 pass, 1 fail, 77 skipped (no usable python3)
+#
+# --cnf-xor solves and checks the instance as `tools/xnf_convert.py cnf-xor` writes it.
+# --insert puts the clause line after the instance's first clause and rewrites the
+# header to count every clause line, as `p xnf` unless --cnf-xor is given.
 
 set -eu
+
+cnf_xor=false
+insert=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --cnf-xor) cnf_xor=true; shift ;;
+        --insert) insert="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
 
 root="$1"
 xorcle="$2"
@@ -34,6 +48,27 @@ proof="$work/proof.lrup"
 # The caller names an instance the generator writes, so none is committed.
 "$python" "$root/tools/generate_xnf_tests.py" \
     --family "$family" --params "$params" --seed "$seed" --out "$instance"
+
+if [ "$cnf_xor" = true ]; then
+    "$python" "$root/tools/xnf_convert.py" cnf-xor "$instance" "$work/instance.cnf"
+    instance="$work/instance.cnf"
+fi
+
+if [ -n "$insert" ]; then
+    format=xnf
+    if [ "$cnf_xor" = true ]; then
+        format=cnf
+    fi
+    awk -v line="$insert" -v format="$format" '
+        /^[ \t]*(c|$)/ { next }
+        /^[ \t]*p/ { num_vars = $3; next }
+        { clauses[++n] = $0; if (n == 1) clauses[++n] = line }
+        END {
+            print "p", format, num_vars, n
+            for (i = 1; i <= n; ++i) print clauses[i]
+        }' "$instance" > "$work/inserted"
+    instance="$work/inserted"
+fi
 
 # 20 is the solver's UNSAT exit code; anything else here is a real failure.
 status=0

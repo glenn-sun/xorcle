@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -427,6 +428,23 @@ TEST_CASE_TEMPLATE("solver: a root conflict, proved with no decisions", Tag, Den
     CHECK(run.solver->counters().num_restarts == 0);
     // Nothing was learned: a root conflict ends the run before analysis.
     CHECK(run.solver->num_clauses() == run.clauses.size());
+}
+
+TEST_CASE_TEMPLATE("solver: an empty input clause is UNSAT before any search", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+
+    for (const std::string_view empty : {"0", "1+2+1+2 0", "x 0"}) {
+        CAPTURE(empty);
+        Run run = make_run(repr, "p cnf 2 3\n1 2 0\n" + std::string{empty} + "\n-1 0\n");
+
+        const Solution solution = run.solver->solve();
+        CHECK(solution.result == SolveResult::unsat);
+        CHECK(run.solver->counters().num_conflicts == 0);
+        CHECK(run.solver->counters().num_propagations == 0);
+        // The empty clause never reaches the database.
+        CHECK(run.solver->num_clauses() == 2);
+    }
 }
 
 TEST_CASE_TEMPLATE("solver: SAT decided entirely by root propagation", Tag, DenseTag, SparseTag) {

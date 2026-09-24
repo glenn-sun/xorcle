@@ -28,8 +28,12 @@ struct ParsedDimacs {
     std::vector<Clause> clauses;
 };
 
-/// @brief Parse the extended DIMACS/XNF format, as `README.md` documents it,
-/// from an input stream.
+/// @brief Parse the extended DIMACS/XNF format, CryptoMiniSat's CNF-XOR lines
+/// included, as `README.md` documents it, from an input stream.
+///
+/// A clause line whose first non-blank character is `x` is a CNF-XOR XOR, parsed
+/// into a clause of one equation; nothing else tells the formats apart, so they mix
+/// freely. The header's clause count may either include or exclude the XOR lines.
 ///
 /// Rows are echelonized on insertion, so a line with duplicate or linearly
 /// dependent equations yields fewer rows than tokens, in row-echelon order rather

@@ -123,6 +123,35 @@ void push_variable(std::string_view term, std::string_view token, std::size_t nu
     bits.push_back(*variable - 1);
 }
 
+/// @brief Keep each bit named an odd number of times, once, as addition does.
+void cancel_repeated_bits(std::vector<std::size_t>& bits) {
+    std::sort(bits.begin(), bits.end());
+    auto out = bits.begin();
+    for (auto it = bits.begin(); it != bits.end();) {
+        auto next = std::find_if(it, bits.end(), [&](std::size_t bit) { return bit != *it; });
+        if ((next - it) % 2 != 0) {
+            *out++ = *it;
+        }
+        it = next;
+    }
+    bits.erase(out, bits.end());
+}
+
+/// @brief The bit of a DIMACS literal's variable.
+std::size_t literal_bit(long long literal, std::string_view token, std::size_t num_vars,
+                        std::string_view origin, std::size_t line_number) {
+    if (literal == 0) {
+        fail(origin, line_number, "the clause terminator 0 is not a literal");
+    }
+    const unsigned long long magnitude = literal < 0
+                                             ? 0ull - static_cast<unsigned long long>(literal)
+                                             : static_cast<unsigned long long>(literal);
+    if (magnitude > num_vars) {
+        fail(origin, line_number, "variable out of range in token: " + std::string{token});
+    }
+    return static_cast<std::size_t>(magnitude) - 1;
+}
+
 /// @brief Decode one equation token into the set bits of its stored row.
 ///
 /// The stored row is the equation's linear negation, which is why a leading `-`
@@ -136,16 +165,7 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
         if (!literal) {
             fail(origin, line_number, "not an equation token: " + std::string{token});
         }
-        if (*literal == 0) {
-            fail(origin, line_number, "the clause terminator 0 is not an equation");
-        }
-        const unsigned long long magnitude =
-            *literal < 0 ? 0ull - static_cast<unsigned long long>(*literal)
-                         : static_cast<unsigned long long>(*literal);
-        if (magnitude > num_vars) {
-            fail(origin, line_number, "variable out of range in token: " + std::string{token});
-        }
-        bits.push_back(static_cast<std::size_t>(magnitude) - 1);
+        bits.push_back(literal_bit(*literal, token, num_vars, origin, line_number));
         if (*literal < 0) {
             bits.push_back(num_vars);
         }
@@ -178,18 +198,7 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
         }
     }
 
-    // `+` is XOR, so a variable named an even number of times cancels out.
-    std::sort(bits.begin(), bits.end());
-    auto out = bits.begin();
-    for (auto it = bits.begin(); it != bits.end();) {
-        auto next = std::find_if(it, bits.end(), [&](std::size_t bit) { return bit != *it; });
-        if ((next - it) % 2 != 0) {
-            *out++ = *it;
-        }
-        it = next;
-    }
-    bits.erase(out, bits.end());
-
+    cancel_repeated_bits(bits);
     if (rhs_is_zero) {
         bits.push_back(num_vars);
     }
@@ -219,6 +228,48 @@ Clause parse_clause_line(const std::string& line, std::size_t num_vars, Equation
     if (stream >> token) {
         fail(origin, line_number, "unexpected token after the clause terminator: " + token);
     }
+    return clause;
+}
+
+/// @brief Parse a CNF-XOR line, its leading `x` removed, into a clause of one equation.
+///
+/// The literals XOR to 1, so each negated literal flips the constant, and `x 0` is
+/// `0 = 1`. The stored row is the linear negation, whose constant bit is the parity
+/// of the negated literals.
+Clause parse_xor_line(std::string_view body, const std::string& line, std::size_t num_vars,
+                      EquationRepr repr, std::string_view origin, std::size_t line_number) {
+    std::istringstream stream{std::string{body}};
+    std::string token;
+    std::vector<std::size_t> bits;
+    bool odd_negations = false;
+    bool terminated = false;
+
+    while (stream >> token) {
+        if (token == "0") {
+            terminated = true;
+            break;
+        }
+        const std::optional<long long> literal = parse_signed(token);
+        if (!literal) {
+            fail(origin, line_number, "not a literal in an XOR line: " + token);
+        }
+        bits.push_back(literal_bit(*literal, token, num_vars, origin, line_number));
+        odd_negations ^= *literal < 0;
+    }
+
+    if (!terminated) {
+        fail(origin, line_number, "XOR line is missing its terminating 0: " + line);
+    }
+    if (stream >> token) {
+        fail(origin, line_number, "unexpected token after the XOR line's terminator: " + token);
+    }
+
+    cancel_repeated_bits(bits);
+    if (odd_negations) {
+        bits.push_back(num_vars);
+    }
+    Clause clause(repr, num_vars);
+    clause.add_row(Equation::from_bits(repr, num_vars, bits));
     return clause;
 }
 
@@ -254,20 +305,33 @@ ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_vi
     parsed.num_vars = header.num_vars;
     parsed.clauses.reserve(std::min<std::size_t>(header.num_clauses, 1u << 16));
 
+    std::size_t num_xor_lines = 0;
     while (std::getline(input, line)) {
         ++line_number;
         trim_trailing_cr(line);
         if (is_blank_or_comment(line)) {
             continue;
         }
-        parsed.clauses.push_back(
-            parse_clause_line(line, header.num_vars, repr, origin, line_number));
+        const std::size_t start = line.find_first_not_of(" \t");
+        if (line[start] == 'x') {
+            parsed.clauses.push_back(parse_xor_line(std::string_view{line}.substr(start + 1), line,
+                                                    header.num_vars, repr, origin, line_number));
+            ++num_xor_lines;
+        } else {
+            parsed.clauses.push_back(
+                parse_clause_line(line, header.num_vars, repr, origin, line_number));
+        }
     }
 
-    if (parsed.clauses.size() != header.num_clauses) {
-        fail(origin, 0, "clause count mismatch: header declares " +
-                            std::to_string(header.num_clauses) + ", found " +
-                            std::to_string(parsed.clauses.size()));
+    const std::size_t num_clauses = parsed.clauses.size();
+    if (header.num_clauses != num_clauses && header.num_clauses != num_clauses - num_xor_lines) {
+        std::string message = "clause count mismatch: header declares " +
+                              std::to_string(header.num_clauses) + ", found " +
+                              std::to_string(num_clauses);
+        if (num_xor_lines != 0) {
+            message += ", of which " + std::to_string(num_xor_lines) + " are XOR lines";
+        }
+        fail(origin, 0, message);
     }
     return parsed;
 }

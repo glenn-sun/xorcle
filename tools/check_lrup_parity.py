@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LRUP(⊕) proof checker for the extended DIMACS/XNF format.
+LRUP(⊕) proof checker for the extended DIMACS/XNF format, CNF-XOR lines included.
 
 Usage:
   python3 tools/check_lrup_parity.py <input.xnf> <proof.lrup>
@@ -89,10 +89,33 @@ def parse_clause_token(token: str, nvars: int) -> int:
             raise ValueError(f"Invalid integer in token: '{token}'") from exc
         if var <= 0 or var > nvars:
             raise ValueError(f"Variable out of range in token: '{token}'")
-        row |= 1 << (var - 1)
+        row ^= 1 << (var - 1)  # addition, so a repeated variable cancels
 
     if rhs_zero:
         row |= 1 << nvars
+    return row
+
+
+def parse_xor_line(body: str, nvars: int) -> int:
+    """The stored row of a CNF-XOR line `x<lit> ... 0`, its leading `x` removed.
+
+    The literals XOR to 1, so the stored linear negation has the constant bit
+    set when an odd number of literals are negated.
+    """
+    tokens = body.split()
+    if not tokens or tokens[-1] != "0" or "0" in tokens[:-1]:
+        raise ValueError(f"XOR line must end with its only 0: 'x{body}'")
+    row = 0
+    for tok in tokens[:-1]:
+        try:
+            lit = int(tok)
+        except Exception as exc:
+            raise ValueError(f"Invalid literal in XOR line: '{tok}'") from exc
+        if lit == 0 or abs(lit) > nvars:
+            raise ValueError(f"Variable out of range in XOR line: '{tok}'")
+        row ^= 1 << (abs(lit) - 1)
+        if lit < 0:
+            row ^= 1 << nvars
     return row
 
 
@@ -101,24 +124,23 @@ def parse_xnf_file(path: str) -> Tuple[int, Dict[int, List[int]]]:
         lines = f.readlines()
 
     header_idx, nvars, _ = parse_header(lines)
-    tokens: List[str] = []
+    clauses: Dict[int, List[int]] = {}
+    current: List[str] = []
     for line in lines[header_idx + 1 :]:
         stripped = line.strip()
         if not stripped or stripped.startswith("c"):
             continue
-        tokens.extend(stripped.split())
-
-    clauses: Dict[int, List[int]] = {}
-    current: List[str] = []
-    clause_id = 1
-    for tok in tokens:
-        if tok == "0":
-            rows = [parse_clause_token(t, nvars) for t in current]
-            clauses[clause_id] = rows
-            clause_id += 1
-            current = []
-        else:
-            current.append(tok)
+        if stripped.startswith("x"):
+            if current:
+                raise ValueError("Clause missing trailing 0 before an XOR line")
+            clauses[len(clauses) + 1] = [parse_xor_line(stripped[1:], nvars)]
+            continue
+        for tok in stripped.split():
+            if tok == "0":
+                clauses[len(clauses) + 1] = [parse_clause_token(t, nvars) for t in current]
+                current = []
+            else:
+                current.append(tok)
     if current:
         raise ValueError("Last clause missing trailing 0")
     return nvars, clauses

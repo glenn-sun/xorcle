@@ -119,3 +119,25 @@ add_test(NAME proof_roundtrip_no_implication_graph
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> rand_qp "n=15;m=30;planted=0" 1
             --implication-graph=false)
 set_tests_properties(proof_roundtrip_no_implication_graph PROPERTIES SKIP_RETURN_CODE 77)
+
+# CNF-XOR input numbers its XOR lines among the clauses in file order, which the
+# proof's reasons cite.
+add_test(NAME proof_roundtrip_cnf_xor
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --cnf-xor
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
+set_tests_properties(proof_roundtrip_cnf_xor PROPERTIES SKIP_RETURN_CODE 77)
+
+# An empty input clause ends the run at once, and the proof cites it by its
+# position; `1+2+1+2` is empty only once its variables cancel.
+add_test(NAME proof_roundtrip_empty_clause
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --insert "0"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
+set_tests_properties(proof_roundtrip_empty_clause PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME proof_roundtrip_empty_clause_cancelled
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --insert "1+2+1+2 0"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
+set_tests_properties(proof_roundtrip_empty_clause_cancelled PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME proof_roundtrip_empty_clause_cnf_xor
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --cnf-xor --insert "x 0"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
+set_tests_properties(proof_roundtrip_empty_clause_cnf_xor PROPERTIES SKIP_RETURN_CODE 77)

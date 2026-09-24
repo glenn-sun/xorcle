@@ -167,6 +167,113 @@ TEST_CASE_TEMPLATE("dimacs: junk tokens are errors", Tag, DenseTag, SparseTag) {
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-+1 0\n", repr), DimacsError);
 }
 
+TEST_CASE_TEMPLATE("dimacs: CNF-XOR lines", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    using Rows = std::vector<std::vector<std::size_t>>;
+
+    SUBCASE("the literals XOR to 1") {
+        // `x1 2 3 0` is [x1 + x2 + x3 = 1], stored as [x1 + x2 + x3 = 0].
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 1\nx1 2 3 0\n", repr);
+        REQUIRE(parsed.clauses.size() == 1);
+        CHECK(rows_of(parsed.clauses[0]) == Rows{{0, 1, 2}});
+    }
+
+    SUBCASE("each negated literal flips the constant") {
+        const ParsedDimacs one = parse_dimacs_string("p cnf 3 1\nx1 -2 3 0\n", repr);
+        REQUIRE(one.clauses.size() == 1);
+        CHECK(rows_of(one.clauses[0]) == Rows{{0, 1, 2, 3}});
+
+        const ParsedDimacs two = parse_dimacs_string("p cnf 3 1\nx-1 -2 3 0\n", repr);
+        REQUIRE(two.clauses.size() == 1);
+        CHECK(rows_of(two.clauses[0]) == Rows{{0, 1, 2}});
+    }
+
+    SUBCASE("an XOR line is the single-equation clause XNF writes with '+'") {
+        const ParsedDimacs xor_line = parse_dimacs_string("p cnf 3 1\nx1 -2 3 0\n", repr);
+        const ParsedDimacs xnf_line = parse_dimacs_string("p cnf 3 1\n-1+2+3 0\n", repr);
+        REQUIRE(xor_line.clauses.size() == 1);
+        REQUIRE(xnf_line.clauses.size() == 1);
+        CHECK(rows_of(xor_line.clauses[0]) == rows_of(xnf_line.clauses[0]));
+    }
+
+    SUBCASE("a single literal is a unit") {
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 2\nx2 0\nx-2 0\n", repr);
+        REQUIRE(parsed.clauses.size() == 2);
+        CHECK(rows_of(parsed.clauses[0]) == Rows{{1}});
+        CHECK(rows_of(parsed.clauses[1]) == Rows{{1, 2}});
+    }
+
+    SUBCASE("whitespace after and before the x is allowed") {
+        const ParsedDimacs parsed =
+            parse_dimacs_string("p cnf 3 2\nx -1 2 0\n  x-1 2 0\n", repr);
+        REQUIRE(parsed.clauses.size() == 2);
+        CHECK(rows_of(parsed.clauses[0]) == Rows{{0, 1, 3}});
+        CHECK(rows_of(parsed.clauses[1]) == Rows{{0, 1, 3}});
+    }
+
+    SUBCASE("a repeated variable cancels, and its negations still count") {
+        const ParsedDimacs parsed =
+            parse_dimacs_string("p cnf 3 2\nx1 2 1 0\nx1 2 -1 0\n", repr);
+        REQUIRE(parsed.clauses.size() == 2);
+        CHECK(rows_of(parsed.clauses[0]) == Rows{{1}});
+        CHECK(rows_of(parsed.clauses[1]) == Rows{{1, 3}});
+    }
+
+    SUBCASE("x1 -1 is 0 = 0, stored as 0 = 1") {
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\nx1 -1 0\n", repr);
+        REQUIRE(parsed.clauses.size() == 1);
+        CHECK(rows_of(parsed.clauses[0]) == Rows{{2}});
+    }
+
+    SUBCASE("an empty XOR is 0 = 1, the empty clause") {
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 2\nx 0\nx0\n", repr);
+        REQUIRE(parsed.clauses.size() == 2);
+        CHECK(rows_of(parsed.clauses[0]).empty());
+        CHECK(rows_of(parsed.clauses[1]).empty());
+    }
+
+    SUBCASE("XOR lines and clause lines keep file order") {
+        const ParsedDimacs parsed =
+            parse_dimacs_string("p cnf 3 3\n1 2 0\nx1 3 0\n1+2 -3 0\n", repr);
+        REQUIRE(parsed.clauses.size() == 3);
+        CHECK(rows_of(parsed.clauses[0]) == Rows{{0}, {1}});
+        CHECK(rows_of(parsed.clauses[1]) == Rows{{0, 2}});
+        CHECK(rows_of(parsed.clauses[2]) == Rows{{0, 1}, {2, 3}});
+    }
+}
+
+TEST_CASE_TEMPLATE("dimacs: the header count may include or exclude XOR lines", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const std::string body = "x1 2 0\n3 0\nx-2 3 0\n";
+
+    CHECK(parse_dimacs_string("p cnf 3 3\n" + body, repr).clauses.size() == 3);
+    CHECK(parse_dimacs_string("p cnf 3 1\n" + body, repr).clauses.size() == 3);
+    CHECK(parse_dimacs_string("p cnf 3 0\nx1 2 0\n", repr).clauses.size() == 1);
+
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 0\n" + body, repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n" + body, repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 4\n" + body, repr), DimacsError);
+}
+
+TEST_CASE_TEMPLATE("dimacs: malformed XOR lines are errors", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx1 2\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx1 2 0 3\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx1 2 0 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx4 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx1 -4 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx1 -0 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx1+2 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx+1 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nxx1 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nxor 1 2 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx1.5 0\n", repr), DimacsError);
+    CHECK_THROWS_AS(parse_dimacs_string("x1 2 0\np cnf 3 1\n", repr), DimacsError);
+}
+
 TEST_CASE_TEMPLATE("dimacs: errors name the input and the line", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 

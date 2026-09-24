@@ -80,6 +80,16 @@ void Solver::add_starting_clause(Clause clause) {
     assert(clause.repr() == repr_ &&
            "a starting clause must use the solver's representation");
 
+    if (clause.rows() == 0) {
+        if (!empty_starting_clause_proof_id_) {
+            empty_starting_clause_proof_id_ = next_proof_clause_id_;
+        }
+        if (proof_writer_ != nullptr) {
+            ++next_proof_clause_id_;
+        }
+        return;
+    }
+
     const ClauseId new_clause_id = selector_->num_clauses();
     decisions_->update_with_new_clause(clause, new_clause_id);
     selector_->add_starting_clause(std::move(clause));
@@ -988,6 +998,13 @@ Solution Solver::solve() {
 #endif
     assert(active_clause_count_is_consistent() &&
            "the starting clauses left the live-clause count wrong");
+
+    if (empty_starting_clause_proof_id_) {
+        if (proof_writer_ != nullptr) {
+            proof_writer_->write_empty(next_proof_clause_id_++, {*empty_starting_clause_proof_id_});
+        }
+        return Solution{SolveResult::unsat, std::nullopt};
+    }
 
     if (propagate_miss_rate_ != 0.0) {
         budget_.emplace(propagate_miss_rate_, propagate_window_,

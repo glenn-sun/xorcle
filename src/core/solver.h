@@ -201,6 +201,9 @@ public:
     Solver& operator=(const Solver&) = delete;
 
     /// @brief Add a clause from the input instance, in its linear negation.
+    ///
+    /// A clause with no rows is the empty clause: it stays out of the database,
+    /// and `solve()` answers UNSAT citing it.
     /// @pre No solving has happened yet and no compaction has run.
     /// @pre `clause.cols() == num_vars() + 1` and `clause` uses the solver's
     /// representation.
@@ -457,6 +460,10 @@ private:
 
     /// @brief Each clause's proof id, indexed by clause id; empty for no proof.
     std::vector<ClauseId> proof_id_of_clause_;
+
+    /// @brief The proof id of the first input clause with no rows, which the
+    /// database never holds.
+    std::optional<ClauseId> empty_starting_clause_proof_id_;
 
     /// @brief The next proof id when the last compaction ran: the clauses below
     /// it may since have been rewritten.
