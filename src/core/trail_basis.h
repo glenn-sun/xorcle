@@ -29,6 +29,23 @@ public:
     /// @pre `rs.cols() == trail.span().cols()` and `rs.repr() == trail.repr()`.
     static TrailBasisSpace from_RowSpace(const RowSpace& rs, const Trail& trail);
 
+    /// @brief The reason clause of the row at `trail_idx` written as sums of trail
+    /// rows, stored on the trail by the first conflict that asks.
+    /// @pre `reason` is that row's reason clause, and the trail conflicts.
+    static const TrailCoordinates& reason_coordinates(const RowSpace& reason, const Trail& trail,
+                                                      std::size_t trail_idx);
+
+    /// @brief `from_RowSpace()` of the reason clause of the row at `trail_idx`.
+    /// @pre As `reason_coordinates()`.
+    static TrailBasisSpace from_reason(const RowSpace& reason, const Trail& trail,
+                                       std::size_t trail_idx);
+
+    /// @brief Row `row_idx` of `coordinates` in these columns, reading any index
+    /// past `last_trail_idx` as the conflict's `0 = 1` in column 0.
+    /// @pre `row_idx < coordinates.rows()`.
+    Equation coordinates_row(const TrailCoordinates& coordinates, std::size_t row_idx,
+                             std::size_t last_trail_idx) const;
+
     /// @brief Convert back out of trail-basis coordinates.
     ///
     /// Round-trips through `from_RowSpace()` preserve the *span*, not the rows.
@@ -71,6 +88,13 @@ private:
 
     /// @brief The levels above the root holding a pivot column or `extra_col_idx`.
     std::size_t levels_reached(std::optional<std::size_t> extra_col_idx) const;
+
+    /// @brief Each row of `rs` as the trail indices of the span rows summing to it.
+    static TrailCoordinates coordinates_of(const RowSpace& rs, const Trail& trail);
+
+    /// @brief The trail-basis space of `coordinates`, read as `coordinates_row()` does.
+    static TrailBasisSpace from_coordinates(const TrailCoordinates& coordinates,
+                                            const Trail& trail, std::size_t last_trail_idx);
 
     /// @brief Held by pointer, not by reference, so the class stays assignable.
     const Trail* trail_;

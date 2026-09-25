@@ -10,6 +10,7 @@
 #include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
 #include "algebra/row_echelon_matrix.h"
+#include "core/clause_id.h"
 #include "core/trail.h"
 
 namespace xorcle {
@@ -23,7 +24,10 @@ struct CompactionHistoryEntry {
 struct CompactionPlan {
     CompactionTransform transform;
 
-    /// @brief One clause per id active before the compaction, in clause-id order.
+    /// @brief The active clauses rewritten, in ascending id order: those a dropped
+    /// variable occurs in or that span `0 = 1`. Every other active clause is left to
+    /// `renumber_clause()`.
+    std::vector<ClauseId> rewritten_clause_ids;
     std::vector<Clause> rewritten_clauses;
 
     std::vector<std::uint8_t> clause_is_active;
@@ -58,7 +62,7 @@ bool should_compact_before_decision(const CompactionState& state);
 /// `active_num_vars + 1` and does not include the constant column.
 CompactionTransform build_compaction_transform(const Trail& trail, std::size_t active_num_vars);
 
-/// @brief Rewrite the active problem into the compacted numbering, in clause-id order.
+/// @brief Rewrite into the compacted numbering the active clauses a dropped variable occurs in.
 ///
 /// A clause the trail satisfies becomes a single inactive `0 = 1` row, so clause ids stay
 /// stable; an id already inactive is left to whatever it holds. Applying the plan replaces
@@ -70,5 +74,9 @@ CompactionTransform build_compaction_transform(const Trail& trail, std::size_t a
 /// `transform.old_num_vars() == state.active_num_vars`.
 CompactionPlan build_compaction_plan(const CompactionState& state,
                                      const CompactionTransform& transform);
+
+/// @brief Renumber in place an active clause the plan does not rewrite.
+/// @pre No dropped variable occurs in `clause`, and it does not span `0 = 1`.
+void renumber_clause(Clause& clause, const CompactionTransform& transform);
 
 } // namespace xorcle

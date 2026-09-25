@@ -66,6 +66,10 @@ void ExactWatchlist::reset(std::size_t num_cols) {
     num_cols_ = num_cols;
     num_words_ = (num_cols + 63) / 64;
     words_.clear();
+    watch_words_.clear();
+#ifndef NDEBUG
+    debug_watch_loaded_.clear();
+#endif
     key_.clear();
     gen_.clear();
     pair_clause_.clear();
@@ -128,20 +132,31 @@ std::uint32_t ExactWatchlist::reduce_by_span_and_first(Word* words, std::size_t 
     return lead == npos ? zero_key : static_cast<std::uint32_t>(lead);
 }
 
-void ExactWatchlist::build_first(std::uint32_t cell) {
+const ExactWatchlist::Word* ExactWatchlist::watch_row(std::uint32_t cell) const {
     const std::uint32_t pair = cell >> 1;
     const Clause& clause = clauses_[pair_clause_[pair]];
+    const std::size_t row_idx =
+        (cell & 1) != 0 ? clause.watched1 : (pair_is_unit_[pair] != 0 ? 0 : clause.watched0);
+    return words_of(clause.row(row_idx));
+}
+
+void ExactWatchlist::load_watch(std::uint32_t cell) {
+    std::memcpy(watch_words_.data() + cell * num_words_, watch_row(cell), num_words_ * sizeof(Word));
+#ifndef NDEBUG
+    debug_watch_loaded_[cell] = 1;
+#endif
+}
+
+void ExactWatchlist::build_first(std::uint32_t cell, const Word* watch) {
     Word* words = cell_words(cell);
-    std::memcpy(words, words_of(clause.row(pair_is_unit_[pair] != 0 ? 0 : clause.watched0)),
-                num_words_ * sizeof(Word));
+    std::memcpy(words, watch, num_words_ * sizeof(Word));
     std::size_t xors = 0;
     key_[cell] = reduce_by_span(words, leading_bit(words, num_words_), xors);
 }
 
-void ExactWatchlist::build_second(std::uint32_t cell) {
-    const Clause& clause = clauses_[pair_clause_[cell >> 1]];
+void ExactWatchlist::build_second(std::uint32_t cell, const Word* watch) {
     Word* words = cell_words(cell);
-    std::memcpy(words, words_of(clause.row(clause.watched1)), num_words_ * sizeof(Word));
+    std::memcpy(words, watch, num_words_ * sizeof(Word));
     std::size_t xors = 0;
     key_[cell] = reduce_by_span_and_first(words, leading_bit(words, num_words_),
                                           cell_words(cell - 1), key_[cell - 1], xors);
@@ -161,20 +176,31 @@ void ExactWatchlist::build_pair(ClauseId id) {
     const bool unit = clause.rows() == 1;
     pair_is_unit_.push_back(unit ? 1 : 0);
     words_.resize(words_.size() + 2 * num_words_);
+    watch_words_.resize(words_.size());
     for (int k = 0; k < 2; ++k) {
         key_.push_back(zero_key);
         gen_.push_back(0);
+#ifndef NDEBUG
+        debug_watch_loaded_.push_back(0);
+#endif
         save_stamp_.push_back(0);
         restore_stamp_.push_back(0);
         restore_rebuild_.push_back(0);
     }
 
     // Nothing to return to below the current level, so a backjump rebuilds.
-    build_first(first);
+    const bool rebuildable = top_level() != 0;
+    if (rebuildable) {
+        load_watch(first);
+    }
+    build_first(first, watch_row(first));
     place(first);
     push_rebuild_entry(first, top_level());
     if (!unit) {
-        build_second(first + 1);
+        if (rebuildable) {
+            load_watch(first + 1);
+        }
+        build_second(first + 1, watch_row(first + 1));
         place(first + 1);
         push_rebuild_entry(first + 1, top_level());
     }
@@ -334,11 +360,11 @@ void ExactWatchlist::drop_paused_sweeps() {
     for (std::size_t i = paused_head_; i < paused_end_; ++i) {
         PausedSweep& sweep = paused_sweeps_[i];
         std::vector<std::uint32_t>& bucket = buckets_[sweep.col_idx];
-        for (std::size_t j = sweep.cursor; j < sweep.cells.size(); ++j) {
-            const std::uint32_t cell = sweep.cells[j];
-            counters_.sweeps_dropped_unreached += key_[cell] == sweep.col_idx ? 1 : 0;
-            bucket.push_back(cell);
+        const auto unreached = sweep.cells.begin() + static_cast<std::ptrdiff_t>(sweep.cursor);
+        for (auto it = unreached; it != sweep.cells.end(); ++it) {
+            counters_.sweeps_dropped_unreached += key_[*it] == sweep.col_idx ? 1 : 0;
         }
+        bucket.insert(bucket.end(), unreached, sweep.cells.end());
         bucket_entries_ += sweep.cells.size() - sweep.cursor;
         sweep.cells.clear();
     }
@@ -532,13 +558,15 @@ void ExactWatchlist::update_with_new_watch(ClauseId id, ClauseRowIdx, WatchType 
     // `B` is reduced by `A`, so a new first watch rebuilds both.
     if (type == WatchType::zero) {
         ++gen_[first];
-        build_first(first);
+        load_watch(first);
+        build_first(first, watch_words(first));
         place(first);
         push_rebuild_entry(first, level);
         ++counters_.rebuilds;
     }
     ++gen_[first + 1];
-    build_second(first + 1);
+    load_watch(first + 1);
+    build_second(first + 1, watch_words(first + 1));
     place(first + 1);
     push_rebuild_entry(first + 1, level);
     ++counters_.rebuilds;
@@ -547,28 +575,60 @@ void ExactWatchlist::update_with_new_watch(ClauseId id, ClauseRowIdx, WatchType 
 }
 
 void ExactWatchlist::restore(std::size_t level) {
-    ++restore_epoch_;
-    restored_cells_.clear();
-    const std::size_t mark = level_save_mark_[level + 1];
-    // Top level down, so a cell ends at its lowest popped save: its state when
-    // level `level + 1` opened.
-    for (std::size_t i = saves_.size(); i-- > mark;) {
-        const SaveEntry& entry = saves_[i];
-        const std::uint32_t cell = entry.cell;
-        save_stamp_[cell] = entry.prev_stamp;
-        if (restore_stamp_[cell] != restore_epoch_) {
-            restore_stamp_[cell] = restore_epoch_;
-            restore_rebuild_[cell] = 0;
-            restored_cells_.push_back(cell);
+    for (std::uint32_t kind = 0; kind < 2; ++kind) {
+        restored_by_kind_[kind].clear();
+        rebuild_by_kind_[kind].clear();
+    }
+    rebuilt_cells_.clear();
+    const auto note = [&](std::uint32_t cell, bool rebuild) {
+        restored_by_kind_[cell & 1].push_back(cell);
+        rebuild_by_kind_[cell & 1].push_back(rebuild ? 1 : 0);
+        if (rebuild) {
+            rebuilt_cells_.push_back(cell);
         }
-        // A saved state from before a watch move is of another watch.
-        if (entry.word_offset == rebuild_entry || entry.gen != gen_[cell]) {
-            restore_rebuild_[cell] = 1;
-        } else if (restore_rebuild_[cell] == 0) {
-            std::memcpy(cell_words(cell), save_words_.data() + entry.word_offset,
-                        num_words_ * sizeof(Word));
-            key_[cell] = entry.key;
-            ++counters_.restores;
+    };
+    const std::size_t mark = level_save_mark_[level + 1];
+    if (level + 1 == top_level()) {
+        // A level saves a cell at most once.
+        for (std::size_t i = saves_.size(); i-- > mark;) {
+            const SaveEntry& entry = saves_[i];
+            const std::uint32_t cell = entry.cell;
+            save_stamp_[cell] = entry.prev_stamp;
+            // A saved state from before a watch move is of another watch.
+            const bool rebuild = entry.word_offset == rebuild_entry || entry.gen != gen_[cell];
+            if (!rebuild) {
+                std::memcpy(cell_words(cell), save_words_.data() + entry.word_offset,
+                            num_words_ * sizeof(Word));
+                key_[cell] = entry.key;
+                ++counters_.restores;
+            }
+            note(cell, rebuild);
+        }
+    } else {
+        ++restore_epoch_;
+        restored_cells_.clear();
+        // Top level down, so a cell ends at its lowest popped save: its state when
+        // level `level + 1` opened.
+        for (std::size_t i = saves_.size(); i-- > mark;) {
+            const SaveEntry& entry = saves_[i];
+            const std::uint32_t cell = entry.cell;
+            save_stamp_[cell] = entry.prev_stamp;
+            if (restore_stamp_[cell] != restore_epoch_) {
+                restore_stamp_[cell] = restore_epoch_;
+                restore_rebuild_[cell] = 0;
+                restored_cells_.push_back(cell);
+            }
+            if (entry.word_offset == rebuild_entry || entry.gen != gen_[cell]) {
+                restore_rebuild_[cell] = 1;
+            } else if (restore_rebuild_[cell] == 0) {
+                std::memcpy(cell_words(cell), save_words_.data() + entry.word_offset,
+                            num_words_ * sizeof(Word));
+                key_[cell] = entry.key;
+                ++counters_.restores;
+            }
+        }
+        for (const std::uint32_t cell : restored_cells_) {
+            note(cell, restore_rebuild_[cell] != 0);
         }
     }
     saves_.resize(mark);
@@ -587,15 +647,18 @@ void ExactWatchlist::restore(std::size_t level) {
 
     // Every `A` first, since a rebuilt `B` is reduced by its `A`.
     for (std::uint32_t kind = 0; kind < 2; ++kind) {
-        for (const std::uint32_t cell : restored_cells_) {
-            if ((cell & 1) != kind || clause_active_[pair_clause_[cell >> 1]] == 0) {
+        const std::vector<std::uint32_t>& cells = restored_by_kind_[kind];
+        for (std::size_t j = 0; j < cells.size(); ++j) {
+            const std::uint32_t cell = cells[j];
+            if (clause_active_[pair_clause_[cell >> 1]] == 0) {
                 continue;
             }
-            if (restore_rebuild_[cell] != 0) {
+            if (rebuild_by_kind_[kind][j] != 0) {
+                assert(debug_watch_loaded_[cell] != 0 && "a rebuilt cell has no watch copy");
                 if (kind == 0) {
-                    build_first(cell);
+                    build_first(cell, watch_words(cell));
                 } else {
-                    build_second(cell);
+                    build_second(cell, watch_words(cell));
                 }
                 // Built against this level's rows too, so a backjump below it
                 // rebuilds again.
@@ -606,8 +669,8 @@ void ExactWatchlist::restore(std::size_t level) {
         }
     }
     // A copied cell is as it stood at quiescence; only a rebuilt one can trigger.
-    for (const std::uint32_t cell : restored_cells_) {
-        if (restore_rebuild_[cell] != 0 && clause_active_[pair_clause_[cell >> 1]] != 0) {
+    for (const std::uint32_t cell : rebuilt_cells_) {
+        if (clause_active_[pair_clause_[cell >> 1]] != 0) {
             maybe_queue(cell >> 1);
         }
     }
@@ -774,6 +837,9 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
         assert(unit == (clause.rows() == 1) && "a clause's width changed under its cells");
 
         const Equation& base0 = clause.row(unit ? 0 : clause.watched0);
+        assert((debug_watch_loaded_[first] == 0 ||
+                std::memcmp(watch_words(first), words_of(base0), num_words_ * sizeof(Word)) == 0) &&
+               "`A`'s watch copy is stale");
         const Equation first_eqn = cell_equation(first);
         Equation diff = first_eqn;
         diff.plus_assign(base0);
@@ -787,6 +853,9 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
 
         const std::uint32_t second = first + 1;
         const Equation& base1 = clause.row(clause.watched1);
+        assert((debug_watch_loaded_[second] == 0 ||
+                std::memcmp(watch_words(second), words_of(base1), num_words_ * sizeof(Word)) == 0) &&
+               "`B`'s watch copy is stale");
         diff = cell_equation(second);
         diff.plus_assign(base1);
         Equation diff_with_first = diff;

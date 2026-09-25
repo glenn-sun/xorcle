@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "algebra/equation_repr.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -42,6 +43,9 @@ public:
     /// @pre `i < num_bits()`.
     void set_bit(std::size_t i);
 
+    /// @pre `i < num_bits()`.
+    void reset_bit(std::size_t i);
+
     /// @brief Get index of the first set bit, or `std::nullopt` if none is set.
     std::optional<std::size_t> leading_bit() const noexcept {
         if (bits_.empty()) {
@@ -59,6 +63,21 @@ public:
             return std::nullopt;
         }
         return *it;
+    }
+
+    /// @brief Get index of the first set bit at or after `i` that `indices` also
+    /// holds, or `std::nullopt`.
+    /// @pre `indices.size() == num_bits()`.
+    std::optional<std::size_t> first_bit_in(const IndexSet& indices,
+                                            std::size_t i) const noexcept {
+        assert(indices.size() == num_bits_ && "first_bit_in size mismatch");
+        for (auto it = std::lower_bound(bits_.begin(), bits_.end(), static_cast<Bit>(i));
+             it != bits_.end(); ++it) {
+            if (indices.test(*it)) {
+                return *it;
+            }
+        }
+        return std::nullopt;
     }
 
     /// @brief Add another vector into this one over GF(2).

@@ -42,6 +42,39 @@ bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
 }
 #endif
 
+/// @brief Whether resolving `basis` on the row at `pivot_row_idx` with the
+/// reason of the trail row at `reason_trail_idx` leaves a narrower clause.
+///
+/// The rows before the pivot keep their leading columns and everything the step
+/// brings in leads later, so the resolvent is narrower exactly when all it brings
+/// in already lies in `basis`, and then it is narrower by the pivot row alone.
+bool resolution_narrows(const TrailBasisSpace& basis, std::size_t pivot_row_idx,
+                        const TrailCoordinates& reason, std::size_t reason_trail_idx,
+                        const Equation& trail_basis_one) {
+    // The step brings in the reason's rows without `0 = 1`, and the pivot row plus
+    // `0 = 1` plus one reason row with it. Once the others lie in `basis`, any
+    // reason row with `0 = 1` stands for the one echelonization would pick.
+    std::optional<Equation> with_one;
+    for (std::size_t reason_row_idx = 0; reason_row_idx < reason.rows(); ++reason_row_idx) {
+        Equation brought_in = basis.coordinates_row(reason, reason_row_idx, reason_trail_idx);
+        if (brought_in.leading_bit() == std::optional<std::size_t>{0}) {
+            if (with_one.has_value()) {
+                brought_in.plus_assign(*with_one);
+            } else {
+                with_one = brought_in;
+                brought_in.plus_assign(basis.row(pivot_row_idx));
+                brought_in.plus_assign(trail_basis_one);
+            }
+        }
+        basis.reduce(brought_in);
+        if (brought_in.leading_bit().has_value()) {
+            return false;
+        }
+    }
+    assert(with_one.has_value() && "the reason does not reach the conflict's 0 = 1");
+    return true;
+}
+
 } // namespace
 
 ResolvedReason resolve_asserting_basis(
@@ -78,7 +111,7 @@ ResolvedReason resolve_asserting_basis(
     assert(*reason_clause_id < clauses.size() && "resolution reason id is out of range");
 
     TrailBasisSpace reason_basis =
-        TrailBasisSpace::from_RowSpace(clauses[*reason_clause_id], trail);
+        TrailBasisSpace::from_reason(clauses[*reason_clause_id], trail, trail_idx);
     assert(reason_basis.rows() > 0 && "reason clause has no rows in the trail basis");
     Equation reason_row = reason_basis.pop_first_row();
     // The popped row leads at column 0, in the conflict's level; the equation
@@ -269,30 +302,53 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         const std::size_t trail_idx = asserting_basis.cols() - 1 - *pivot_col_idx;
         assert(trail_idx < trail.reasons().size() && "trail reason index is out of range");
         if (trail.reasons()[trail_idx].has_value()) {
-            TrailBasisSpace resolved = asserting_basis;
-            const ResolvedReason reason = resolve_asserting_basis(
-                resolved, frozen, *pivot_col_idx, trail, clauses, trail_basis_one,
-                representative_rng, measure_reason_lbds);
-            // Resolution keeps every row before the pivot and drops only the
-            // pivot row, so the resolvent is empty only from a one-row clause.
-            // Learn that unit rather than the empty clause: it asserts at the
-            // root, where whatever made the resolvent empty contradicts it on the
-            // next propagation and the run ends UNSAT through the usual path.
-            if (resolved.rows() == 0) {
-                assert(asserting_basis.rows() == 1 && "an empty resolvent from a wider clause");
-                break;
+            const ClauseId reason_clause_id = *trail.reasons()[trail_idx];
+            const TrailCoordinates& reason_coordinates =
+                TrailBasisSpace::reason_coordinates(clauses[reason_clause_id], trail, trail_idx);
+            const bool narrows = resolution_narrows(asserting_basis, frozen, reason_coordinates,
+                                                    trail_idx, trail_basis_one);
+#ifndef NDEBUG
+            {
+                Rng rng_copy = representative_rng;
+                TrailBasisSpace resolved = asserting_basis;
+                resolve_asserting_basis(resolved, frozen, *pivot_col_idx, trail, clauses,
+                                        trail_basis_one, rng_copy, false);
+                assert(narrows == (resolved.rows() < asserting_basis.rows()) &&
+                       "the narrowing test disagrees with the resolution");
             }
-            if (resolved.rows() < asserting_basis.rows()) {
-                asserting_basis = std::move(resolved);
+#endif
+            if (narrows) {
+                // Resolution keeps every row before the pivot and drops only the
+                // pivot row, so the resolvent is empty only from a one-row clause.
+                // Learn that unit rather than the empty clause: it asserts at the
+                // root, where whatever made the resolvent empty contradicts it on
+                // the next propagation and the run ends UNSAT through the usual path.
+                if (asserting_basis.rows() == 1) {
+                    break;
+                }
+                const ResolvedReason reason = resolve_asserting_basis(
+                    asserting_basis, frozen, *pivot_col_idx, trail, clauses, trail_basis_one,
+                    representative_rng, measure_reason_lbds);
                 accept_resolution(reason, trail_idx);
                 continue;
             }
-            // The discarded resolvent still subsumes its reason, so harvest the
-            // replacement anyway; the walk keeps the wider clause. Its chain is
-            // one longer than `reason_ids`, which never received this reason.
-            if (collect_subsumed && reason.subsumes_reason) {
-                record_replacement(resolved, reason.clause_id, trail_idx,
-                                   reason_ids.size() + 1, to_clause(resolved), false);
+            // The discarded resolvent keeps every row of the clause but the pivot
+            // row and gains one, so it can subsume its reason only if the reason is
+            // wider than the clause. Then it still does, so harvest the replacement
+            // anyway; the walk keeps the wider clause. Its chain is one longer than
+            // `reason_ids`, which never received this reason.
+            if (collect_subsumed && reason_coordinates.rows() > asserting_basis.rows()) {
+                TrailBasisSpace resolved = asserting_basis;
+                const ResolvedReason reason = resolve_asserting_basis(
+                    resolved, frozen, *pivot_col_idx, trail, clauses, trail_basis_one,
+                    representative_rng, measure_reason_lbds);
+                if (reason.subsumes_reason) {
+                    record_replacement(resolved, reason.clause_id, trail_idx,
+                                       reason_ids.size() + 1, to_clause(resolved), false);
+                }
+            } else {
+                // The coins the discarded resolution would have drawn.
+                representative_rng.discard((frozen + 63) / 64);
             }
         }
         ++frozen;

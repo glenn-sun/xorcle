@@ -93,7 +93,8 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
     REQUIRE(transform.new_num_vars() == 3);
 
     const CompactionPlan plan = build_compaction_plan(state, transform);
-    REQUIRE(plan.rewritten_clauses.size() == 3);
+    REQUIRE(plan.rewritten_clause_ids == std::vector<ClauseId>{0, 2});
+    REQUIRE(plan.rewritten_clauses.size() == 2);
     REQUIRE(plan.clause_is_active.size() == 3);
 
     SUBCASE("a satisfied clause becomes an inactive placeholder") {
@@ -107,20 +108,32 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
         CHECK(rewritten.next_watch_search_start == 0);
     }
 
-    SUBCASE("an open clause is reindexed and keeps a legal watch pair") {
+    SUBCASE("a clause without the dropped variable is renumbered in place") {
         CHECK(plan.clause_is_active[1] == 1);
-        const Clause& rewritten = plan.rewritten_clauses[1];
-        REQUIRE(rewritten.rows() == 2);
-        CHECK(bits_of(rewritten.row(0)) == std::vector<std::size_t>{0});
-        CHECK(bits_of(rewritten.row(1)) == std::vector<std::size_t>{1});
-        CHECK(rewritten.watched0 == 0);
-        CHECK(rewritten.watched1 == 1);
+        Clause renumbered = clauses[1];
+        renumbered.watched0 = 1;
+        renumbered.watched1 = 0;
+        renumbered.next_watch_search_start = 1;
+        renumbered.satisfied_level = 1;
+        renumbered.satisfied_stamp = 1;
+        renumber_clause(renumbered, transform);
+        REQUIRE(renumbered.rows() == 2);
+        CHECK(renumbered.cols() == 4);
+        CHECK(bits_of(renumbered.row(0)) == std::vector<std::size_t>{0});
+        CHECK(bits_of(renumbered.row(1)) == std::vector<std::size_t>{1});
+        CHECK(renumbered.pivot_col_idx(0) == 0);
+        CHECK(renumbered.pivot_col_idx(1) == 1);
+        CHECK(renumbered.watched0 == 0);
+        CHECK(renumbered.watched1 == 1);
+        CHECK(renumbered.next_watch_search_start == 0);
+        CHECK(renumbered.satisfied_level == 0);
+        CHECK(renumbered.satisfied_stamp == 0);
     }
 
     SUBCASE("rows are reduced by the trail before being compacted") {
         // x0 + x1 reduces to x1 + 1 against x0 = 1, and x0 is then eliminated.
         CHECK(plan.clause_is_active[2] == 1);
-        const Clause& rewritten = plan.rewritten_clauses[2];
+        const Clause& rewritten = plan.rewritten_clauses[1];
         REQUIRE(rewritten.rows() == 2);
         CHECK(bits_of(rewritten.row(0)) == std::vector<std::size_t>{0, 3});
         CHECK(bits_of(rewritten.row(1)) == std::vector<std::size_t>{2});
@@ -141,8 +154,8 @@ TEST_CASE_TEMPLATE("compaction: an inactive clause is left out of the plan", Tag
     trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
 
     std::vector<Clause> clauses;
-    clauses.push_back(make_clause(repr, 4, {{1}, {2}}));
-    clauses.push_back(make_clause(repr, 4, {{2}, {3}}));
+    clauses.push_back(make_clause(repr, 4, {{0, 1}, {2}}));
+    clauses.push_back(make_clause(repr, 4, {{0, 2}, {3}}));
     clauses.push_back(make_clause(repr, 4, {{1}, {3}}));
     const std::vector<std::uint8_t> active{1, 0, 1};
     const std::vector<std::size_t> var_map{0, 1, 2, 3};
@@ -151,13 +164,14 @@ TEST_CASE_TEMPLATE("compaction: an inactive clause is left out of the plan", Tag
     const CompactionTransform transform = build_compaction_transform(trail, 4);
     const CompactionPlan plan = build_compaction_plan(state, transform);
 
-    REQUIRE(plan.rewritten_clauses.size() == 2);
+    // Only the first clause is both active and mentions x0.
+    REQUIRE(plan.rewritten_clause_ids == std::vector<ClauseId>{0});
+    REQUIRE(plan.rewritten_clauses.size() == 1);
+    CHECK(bits_of(plan.rewritten_clauses[0].row(0)) == std::vector<std::size_t>{0, 3});
     REQUIRE(plan.clause_is_active.size() == 3);
     CHECK(plan.clause_is_active[0] == 1);
     CHECK(plan.clause_is_active[1] == 0);
     CHECK(plan.clause_is_active[2] == 1);
-    CHECK(bits_of(plan.rewritten_clauses[0].row(0)) == std::vector<std::size_t>{0});
-    CHECK(bits_of(plan.rewritten_clauses[1].row(1)) == std::vector<std::size_t>{2});
 }
 
 TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, DenseTag,

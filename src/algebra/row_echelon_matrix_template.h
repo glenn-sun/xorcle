@@ -76,10 +76,20 @@ public:
     /// @brief Add `eqn` into the row at `row_idx`, which must keep its pivot.
     virtual void add_to_row(std::size_t row_idx, const Equation& eqn) = 0;
 
+    /// @brief Clear every pivot column in every row but the one it leads.
+    virtual void reduce_rows() = 0;
+
     /// @brief Remove the row at `row_idx`, returning it.
     virtual Equation pop_row(std::size_t row_idx) = 0;
 
     virtual void pop_last_row() = 0;
+
+    /// @brief Whether some row carries one of `col_idxs`.
+    virtual bool carries_any_col(std::span<const std::size_t> col_idxs) const = 0;
+    virtual bool carries_any_col(const IndexSet& col_idxs) const = 0;
+
+    /// @brief Renumber every row in place, reading the last column as the constant.
+    virtual void compact(const CompactionTransform& transform) = 0;
 
     /// @brief The unique solution of the stored system, one bit per column but
     /// the last, which is read as the constant.
@@ -175,12 +185,11 @@ public:
 
     void reduce(Equation& v) const override {
         V& row = gf2_vector_of<V>(v);
-        // `v` is mutated while its set columns are being walked, so `next_bit`
-        // must be re-evaluated against the live row each time.
-        for (auto col_idx = row.leading_bit(); col_idx; col_idx = row.next_bit(*col_idx)) {
-            if (pivot_col_idxs_.test(*col_idx)) {
-                row.plus_assign(gf2_vector_of<V>(rows_[row_idx_for_col_idx(*col_idx)].row));
-            }
+        // `v` is mutated while its set pivot columns are being walked, so each
+        // step reads the live row.
+        for (auto col_idx = row.first_bit_in(pivot_col_idxs_, 0); col_idx;
+             col_idx = row.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
+            row.plus_assign(gf2_vector_of<V>(rows_[row_idx_for_col_idx(*col_idx)].row));
         }
     }
 
@@ -193,12 +202,11 @@ public:
     void reduce_get_coefficients(Equation& v, IndexSet& coefficients) const override {
         coefficients.resize(rows_.size());
         V& row = gf2_vector_of<V>(v);
-        for (auto col_idx = row.leading_bit(); col_idx; col_idx = row.next_bit(*col_idx)) {
-            if (pivot_col_idxs_.test(*col_idx)) {
-                const std::size_t row_idx = row_idx_for_col_idx(*col_idx);
-                row.plus_assign(gf2_vector_of<V>(rows_[row_idx].row));
-                coefficients.set(row_idx);
-            }
+        for (auto col_idx = row.first_bit_in(pivot_col_idxs_, 0); col_idx;
+             col_idx = row.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
+            const std::size_t row_idx = row_idx_for_col_idx(*col_idx);
+            row.plus_assign(gf2_vector_of<V>(rows_[row_idx].row));
+            coefficients.set(row_idx);
         }
     }
 
@@ -264,6 +272,22 @@ public:
         debug_assert_valid_representation();
     }
 
+    void reduce_rows() override {
+        // From the last row up, so the rows added in are already reduced and
+        // each pivot column costs one addition.
+        for (std::size_t row_idx = rows_.size(); row_idx-- > 0;) {
+            V& row = gf2_vector_of<V>(rows_[row_idx].row);
+            for (auto col_idx = row.next_bit(rows_[row_idx].pivot_col_idx); col_idx;
+                 col_idx = row.next_bit(*col_idx)) {
+                if (pivot_col_idxs_.test(*col_idx)) {
+                    row.plus_assign(col_idx_to_row_.empty() ? row_for_col_idx<false>(*col_idx)
+                                                            : row_for_col_idx<true>(*col_idx));
+                }
+            }
+        }
+        debug_assert_valid_representation();
+    }
+
     Equation pop_row(std::size_t row_idx) override {
         Equation popped_row = std::move(rows_[row_idx].row);
         const std::optional<std::size_t> leading_col_idx =
@@ -292,6 +316,63 @@ public:
         pivot_col_idxs_.reset(*leading_col_idx);
         if (!col_idx_to_row_.empty()) {
             col_idx_to_row_[*leading_col_idx] = nullptr;
+        }
+
+        debug_assert_valid_representation();
+    }
+
+    bool carries_any_col(std::span<const std::size_t> col_idxs) const override {
+        for (const StoredRow& stored : rows_) {
+            const V& row = gf2_vector_of<V>(stored.row);
+            for (const std::size_t col_idx : col_idxs) {
+                if (row.get_bit(col_idx)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    bool carries_any_col(const IndexSet& col_idxs) const override {
+        for (const StoredRow& stored : rows_) {
+            if (gf2_vector_of<V>(stored.row).first_bit_in(col_idxs, 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void compact(const CompactionTransform& transform) override {
+        const std::size_t old_constant_col_idx = transform.old_num_vars();
+        const std::size_t new_constant_col_idx = transform.new_num_vars();
+        const auto to_new = [&](std::size_t col_idx) {
+            return col_idx == old_constant_col_idx ? new_constant_col_idx
+                                                   : transform.to_new(col_idx);
+        };
+        cols_ = new_constant_col_idx + 1;
+        pivot_col_idxs_.clear();
+        pivot_col_idxs_.resize(cols_);
+        for (StoredRow& stored : rows_) {
+            V& row = gf2_vector_of<V>(stored.row);
+            // No column moves up and the survivors keep their order, so moving the
+            // set bits in ascending order never lands on one still to be moved.
+            for (auto col_idx = row.leading_bit(); col_idx; col_idx = row.next_bit(*col_idx)) {
+                const std::size_t new_col_idx = to_new(*col_idx);
+                if (new_col_idx == *col_idx) {
+                    continue;
+                }
+                row.reset_bit(*col_idx);
+                if (new_col_idx != CompactionTransform::npos) {
+                    row.set_bit(new_col_idx);
+                }
+            }
+            row.resize(cols_);
+            stored.pivot_col_idx = to_new(stored.pivot_col_idx);
+            pivot_col_idxs_.set(stored.pivot_col_idx);
+        }
+        col_idx_to_row_.clear();
+        if (rows_.size() * col_idx_to_row_divisor >= cols_) {
+            build_col_idx_to_row();
         }
 
         debug_assert_valid_representation();

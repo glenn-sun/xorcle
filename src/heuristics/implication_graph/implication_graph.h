@@ -149,6 +149,13 @@ private:
 
     Equation equation_of(std::size_t vertex) const;
 
+    /// @brief An equation over @p num_vars variables with any contents, taken
+    /// from `spare_rows_` when it has one.
+    Equation spare_row(std::size_t num_vars);
+
+    /// @brief Empty @p span, keeping its rows in `spare_rows_`.
+    void clear_span(RowSpace& span);
+
     /// @brief The three vertices of `triple_`, with its six arcs added.
     void add_clause(ClauseId clause_id);
 
@@ -238,13 +245,9 @@ private:
     std::vector<ClauseId> parent_clauses_;
     std::vector<ClauseId> other_parent_clauses_;
 
-    /// @brief The two sides of the pair the walk is on, reused across pairs.
-    RowSpace side_a_;
-    RowSpace side_b_;
-
-    /// @brief The sum of the two sides, whose rank gives the dimension of their
-    /// intersection.
-    RowSpace both_sides_;
+    /// @brief Rows the walk's spans gave back, of any width, reused so building
+    /// a span allocates no rows.
+    std::vector<Equation> spare_rows_;
 };
 
 } // namespace xorcle

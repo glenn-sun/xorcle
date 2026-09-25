@@ -25,10 +25,7 @@ ImplicationGraph::ImplicationGraph(const EquationRepr repr, const std::size_t nu
       lookup_scratch_(repr, num_vars),
       reduced_(repr, num_vars),
       row_scratch_(repr, num_vars),
-      triple_{Equation(repr, num_vars), Equation(repr, num_vars), Equation(repr, num_vars)},
-      side_a_(repr, num_vars),
-      side_b_(repr, num_vars),
-      both_sides_(repr, num_vars) {
+      triple_{Equation(repr, num_vars), Equation(repr, num_vars), Equation(repr, num_vars)} {
     assert(max_pairs_ != 0 && max_descendants_ != 0 && "a run must be allowed one of each");
 }
 
@@ -41,19 +38,35 @@ void ImplicationGraph::reconfigure(const std::size_t num_vars) {
     false_eqn_ = Equation::eq_false(repr_, num_vars);
     lookup_scratch_.resize(num_vars);
     reduced_ = RowSpace(repr_, num_vars);
-    side_a_ = RowSpace(repr_, num_vars);
-    side_b_ = RowSpace(repr_, num_vars);
-    both_sides_ = RowSpace(repr_, num_vars);
     row_scratch_.resize(num_vars);
     for (Equation& row : triple_) {
         row.resize(num_vars);
     }
+    spare_rows_.clear();
     key_of_.clear();
     key_eqn_.clear();
     for (std::vector<Arc>& arcs : arcs_) {
         arcs.clear();
     }
     num_width_2_clauses_ = 0;
+}
+
+Equation ImplicationGraph::spare_row(const std::size_t num_vars) {
+    if (spare_rows_.empty()) {
+        return Equation(repr_, num_vars);
+    }
+    Equation row = std::move(spare_rows_.back());
+    spare_rows_.pop_back();
+    if (row.num_vars() != num_vars) {
+        row.resize(num_vars);
+    }
+    return row;
+}
+
+void ImplicationGraph::clear_span(RowSpace& span) {
+    while (span.rows() != 0) {
+        spare_rows_.push_back(span.pop_row(span.rows() - 1));
+    }
 }
 
 bool ImplicationGraph::reduce_triple(const Clause& clause, const RowSpace& root_span) {

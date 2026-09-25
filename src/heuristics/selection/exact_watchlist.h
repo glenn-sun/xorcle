@@ -127,6 +127,9 @@ private:
 
     Word* cell_words(std::uint32_t cell) { return words_.data() + cell * num_words_; }
     const Word* cell_words(std::uint32_t cell) const { return words_.data() + cell * num_words_; }
+    const Word* watch_words(std::uint32_t cell) const {
+        return watch_words_.data() + cell * num_words_;
+    }
 
     std::uint32_t constant_key() const { return static_cast<std::uint32_t>(num_cols_ - 1); }
     std::size_t top_level() const { return level_stamp_.size() - 1; }
@@ -137,8 +140,10 @@ private:
     void open_level();
 
     void build_pair(ClauseId id);
-    void build_first(std::uint32_t cell);
-    void build_second(std::uint32_t cell);
+    const Word* watch_row(std::uint32_t cell) const;
+    void load_watch(std::uint32_t cell);
+    void build_first(std::uint32_t cell, const Word* watch);
+    void build_second(std::uint32_t cell, const Word* watch);
 
     /// @brief Reduce `words`, leading on `lead`, by the span until its lead is not a
     /// pivot; the key it ends on.
@@ -191,6 +196,9 @@ private:
 
     /// @brief Two cells per pair, `A` then `B`; a unit clause uses only `A`.
     std::vector<Word> words_;
+    /// @brief Per cell, a copy of its watch, so a rebuild reads no clause; kept only once
+    /// a backjump could rebuild the cell: built above the root, or its watch moved.
+    std::vector<Word> watch_words_;
     std::vector<std::uint32_t> key_;
     std::vector<std::uint32_t> gen_; ///< Bumped whenever a cell's watch changes.
     std::vector<std::uint32_t> pair_clause_;
@@ -222,6 +230,10 @@ private:
     std::vector<std::uint8_t> restore_rebuild_;
     std::uint32_t restore_epoch_ = 0;
     std::vector<std::uint32_t> restored_cells_;
+    /// @brief The cells a backjump restores, `A`s then `B`s, each in the order restored.
+    std::vector<std::uint32_t> restored_by_kind_[2];
+    std::vector<std::uint8_t> rebuild_by_kind_[2];
+    std::vector<std::uint32_t> rebuilt_cells_;
 
     /// @brief Triggers found by building a pair rather than by a sweep.
     std::vector<ClauseId> side_queue_;
@@ -236,6 +248,7 @@ private:
 
 #ifndef NDEBUG
     std::size_t debug_events_ = 0;
+    std::vector<std::uint8_t> debug_watch_loaded_;
 #endif
 };
 

@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstddef>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -11,6 +12,15 @@
 #include "core/clause_id.h"
 
 namespace xorcle {
+
+/// @brief Rows written as sums of trail rows, each the trail indices of its
+/// summands.
+struct TrailCoordinates {
+    std::size_t rows() const noexcept { return row_ends.size(); }
+
+    std::vector<std::size_t> trail_idxs;
+    std::vector<std::size_t> row_ends; ///< Where each row's indices end in `trail_idxs`.
+};
 
 /// @brief The solver trail: every equation assumed or derived, ordered by
 /// `(level, derivation order within the level)`, plus its span and the
@@ -77,6 +87,21 @@ public:
 
     const std::vector<std::optional<ClauseId>>& reasons() const noexcept { return reasons_; }
 
+    /// @brief The coordinates stored for the reason of the row at `trail_idx`,
+    /// or null; they stay until a row at or below `trail_idx` changes.
+    /// @pre `trail_idx < span().rows()`.
+    const TrailCoordinates* reason_coordinates(std::size_t trail_idx) const {
+        assert(trail_idx < reason_coordinates_.size() && "trail order index is out of range");
+        const std::optional<TrailCoordinates>& coordinates = reason_coordinates_[trail_idx];
+        return coordinates.has_value() ? &*coordinates : nullptr;
+    }
+
+    /// @pre `trail_idx < span().rows()`, and `coordinates` are the reason's.
+    void store_reason_coordinates(std::size_t trail_idx, TrailCoordinates coordinates) const {
+        assert(trail_idx < reason_coordinates_.size() && "trail order index is out of range");
+        reason_coordinates_[trail_idx] = std::move(coordinates);
+    }
+
 private:
     /// @brief Learn at the level the trail is already at, where the equation's
     /// row goes straight in.
@@ -106,6 +131,9 @@ private:
     std::vector<std::size_t> row_idx_to_trail_idx_;
     std::vector<std::optional<ClauseId>> reasons_;
     std::vector<std::size_t> levels_;
+
+    /// @brief A cache for conflict analysis, which reads it through a const trail.
+    mutable std::vector<std::optional<TrailCoordinates>> reason_coordinates_;
 
     /// @brief How many equations lie at each level or below, indexed by level.
     std::vector<std::size_t> level_end_;

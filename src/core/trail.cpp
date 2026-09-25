@@ -118,6 +118,7 @@ std::size_t Trail::learn_in_order(const Equation& eqn, std::optional<ClauseId> r
 
     const std::size_t inserted_row_idx = *maybe_inserted_row_idx;
     reasons_.push_back(std::move(reason));
+    reason_coordinates_.emplace_back();
     levels_.push_back(level);
 
     // Inserting a row shifts every row at or after it one place up.
@@ -184,6 +185,9 @@ std::size_t Trail::learn_out_of_order(const Equation& eqn, std::optional<ClauseI
     }
 
     reasons_.insert(reasons_.begin() + static_cast<std::ptrdiff_t>(trail_idx), std::move(reason));
+    // The rows from `trail_idx` on moved or changed, so their coordinates go.
+    reason_coordinates_.resize(trail_idx);
+    reason_coordinates_.resize(reasons_.size());
     levels_.insert(levels_.begin() + static_cast<std::ptrdiff_t>(trail_idx), level);
     rebuild_trail_idx_to_row_idx();
 
@@ -218,6 +222,7 @@ void Trail::resize(std::size_t num_levels) {
 
     trail_idx_to_row_idx_.resize(kept);
     reasons_.resize(kept);
+    reason_coordinates_.resize(kept);
     levels_.resize(kept);
 
     const std::vector<std::size_t> after_popping = row_idxs_after_dropping(is_dropped);
@@ -266,6 +271,7 @@ void Trail::debug_assert_valid() const {
     assert(trail_idx_to_row_idx_.size() == trail_rows);
     assert(row_idx_to_trail_idx_.size() == trail_rows);
     assert(reasons_.size() == trail_rows);
+    assert(reason_coordinates_.size() == trail_rows);
     assert(levels_.size() == trail_rows);
 
     for (std::size_t trail_idx = 0; trail_idx < trail_rows; ++trail_idx) {

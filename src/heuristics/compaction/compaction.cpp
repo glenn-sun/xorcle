@@ -1,8 +1,10 @@
 #include "heuristics/compaction/compaction.h"
 
 #include <cassert>
+#include <cstddef>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "core/clause_id.h"
 #include "heuristics/decisions/clause_decisions.h"
@@ -10,8 +12,6 @@
 namespace xorcle {
 
 namespace {
-
-
 
 /// @brief Re-establish a rewritten clause's watches and cyclic search cursor.
 ///
@@ -72,20 +72,41 @@ CompactionPlan build_compaction_plan(const CompactionState& state,
 
     CompactionPlan plan;
     plan.transform = transform;
-    plan.rewritten_clauses.reserve(num_clauses);
     plan.clause_is_active = state.clause_is_active;
 
     const EquationRepr repr = state.trail.repr();
+    // Reduced rows are the same whatever basis reduces them, and a reduced
+    // basis reduces each pivot column with one addition.
+    RowSpace root_span = state.trail.span();
+    root_span.reduce_rows();
     ClauseSatisfactionWorkspace satisfaction_workspace(repr, state.active_num_vars);
     std::vector<Equation> reduced_rows;
     const Equation false_clause_row = Equation::eq_false(repr, transform.new_num_vars());
+    // The dropped variables are the trail span's pivot columns. Testing each in a
+    // row beats a word-wise test while there are fewer of them than words in a row.
+    const IndexSet& dropped_var_set = state.trail.span().pivot_col_idxs();
+    const bool tests_each_dropped_var =
+        state.trail.span().rows() < (state.active_num_vars + 1 + 63) / 64;
+    std::vector<std::size_t> dropped_vars;
+    if (tests_each_dropped_var) {
+        dropped_var_set.for_each_set([&](std::size_t var) { dropped_vars.push_back(var); });
+    }
+    const std::size_t constant_col_idx = state.active_num_vars;
 
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
         if (state.clause_is_active[clause_id] == 0) {
             continue;
         }
         const Clause& active_clause = state.clauses[clause_id];
-        if (clause_status_by_trail(state.trail.span(), active_clause, satisfaction_workspace,
+        // A clause no dropped variable occurs in is its own reduction by the trail,
+        // which then satisfies it only if it already spans `0 = 1`.
+        if (!active_clause.pivot_col_idxs().test(constant_col_idx) &&
+            !(tests_each_dropped_var ? active_clause.carries_any_col(dropped_vars)
+                                     : active_clause.carries_any_col(dropped_var_set))) {
+            continue;
+        }
+        plan.rewritten_clause_ids.push_back(clause_id);
+        if (clause_status_by_trail(root_span, active_clause, satisfaction_workspace,
                                    &reduced_rows) == ClauseStatus::satisfied) {
             // Kept as a placeholder so clause ids stay stable; never selected.
             plan.clause_is_active[clause_id] = 0;
@@ -111,6 +132,23 @@ CompactionPlan build_compaction_plan(const CompactionState& state,
         plan.history_entry.trail_rows_before.push_back(row);
     }
     return plan;
+}
+
+void renumber_clause(Clause& clause, const CompactionTransform& transform) {
+    assert(!clause.pivot_col_idxs().test(clause.num_vars()) && "the clause spans 0 = 1");
+#ifndef NDEBUG
+    for (const Equation& row : clause) {
+        for (const std::size_t bit : row.bits()) {
+            assert((bit == clause.num_vars() ||
+                    transform.to_new(bit) != CompactionTransform::npos) &&
+                   "a dropped variable occurs in the clause");
+        }
+    }
+#endif
+    clause.compact(transform);
+    rebuild_clause_watch_metadata(clause);
+    clause.satisfied_level = 0;
+    clause.satisfied_stamp = 0;
 }
 
 } // namespace xorcle

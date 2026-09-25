@@ -61,6 +61,14 @@ public:
 
     std::size_t count() const noexcept;
 
+    /// @brief The word holding indices `[64 w, 64 w + 64)`, lowest index in the
+    /// lowest bit; indices past `size()` are zero.
+    /// @pre `w < (size() + 63) / 64`.
+    std::uint64_t word(std::size_t w) const noexcept {
+        assert(w < words_.size() && "IndexSet::word index is out of range");
+        return words_[w];
+    }
+
     bool none() const noexcept;
 
     /// @brief Call `f(index)` for each set index, in ascending order.

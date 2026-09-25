@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <memory>
@@ -111,6 +112,10 @@ public:
         interface_->add_to_row(row_idx, eqn);
     }
 
+    /// @brief Bring the rows to reduced row-echelon form, leaving the span and
+    /// every pivot as they are.
+    void reduce_rows() { interface_->reduce_rows(); }
+
     /// @brief Remove the row at `row_idx`, returning it.
     /// @pre `row_idx < rows()`.
     Equation pop_row(std::size_t row_idx) {
@@ -125,6 +130,22 @@ public:
     void pop_last_row() {
         assert(rows() > 0 && "pop_last_row on an empty matrix");
         interface_->pop_last_row();
+    }
+
+    /// @brief Whether some row carries one of `col_idxs`, testing each in each row.
+    /// @pre Every entry of `col_idxs` is below `cols()`.
+    bool carries_any_col(std::span<const std::size_t> col_idxs) const {
+        assert(std::ranges::all_of(col_idxs,
+                                   [&](std::size_t col_idx) { return col_idx < cols(); }) &&
+               "carries_any_col: a column is out of range");
+        return interface_->carries_any_col(col_idxs);
+    }
+
+    /// @brief Whether some row carries one of `col_idxs`, a word at a time.
+    /// @pre `col_idxs.size() == cols()`.
+    bool carries_any_col(const IndexSet& col_idxs) const {
+        assert(col_idxs.size() == cols() && "carries_any_col: the column set has the wrong size");
+        return interface_->carries_any_col(col_idxs);
     }
 
     class iterator {
@@ -235,6 +256,11 @@ public:
                "partial_reduce_below: the order table does not match the matrix");
         return interface().partial_reduce_below(v, row_idx_to_order, bound);
     }
+
+    /// @brief Renumber every row in place from the old active variable numbering
+    /// to the compacted one.
+    /// @pre `num_vars() == transform.old_num_vars()`, and no pivot column is dropped.
+    void compact(const CompactionTransform& transform);
 
     /// @brief The unique satisfying assignment, indexed by variable.
     /// @pre `rows() + 1 == cols()` and the false equation is not in the matrix.

@@ -549,9 +549,12 @@ void Solver::backjump_to(std::size_t level) {
 
 Solver::DecisionStep Solver::make_decision_step() {
     const auto start = std::chrono::steady_clock::now();
-    DecisionResult decision =
-        decisions_->make_decision(trail_.span(), selector_->clauses(), selector_->active_flags(),
-                                  satisfaction_record());
+    // The last propagation run ended without a conflict, so how it stopped says
+    // whether it reached quiescence.
+    const SatisfactionRecord known(level_stamp_, trail_.level(),
+                                   !selector_->last_stop_was_budget());
+    DecisionResult decision = decisions_->make_decision(trail_.span(), selector_->clauses(),
+                                                        selector_->active_flags(), known);
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
     counters_.decision_time_s += elapsed.count();
     if (decision.propagating_clause.has_value()) {
@@ -752,6 +755,12 @@ void Solver::apply_compaction(CompactionPlan plan) {
                    "the plan activated a clause the compaction never rewrote");
             continue;
         }
+        if (rewritten_idx == plan.rewritten_clause_ids.size() ||
+            plan.rewritten_clause_ids[rewritten_idx] != clause_id) {
+            renumber_clause(selector_->clause(clause_id), plan.transform);
+            ++num_active_clauses_;
+            continue;
+        }
         const std::size_t width_before = selector_->clause(clause_id).rows();
         selector_->clause(clause_id) = std::move(plan.rewritten_clauses[rewritten_idx++]);
         const bool active = plan.clause_is_active[clause_id] != 0;
@@ -762,7 +771,7 @@ void Solver::apply_compaction(CompactionPlan plan) {
         }
     }
     assert(rewritten_idx == plan.rewritten_clauses.size() &&
-           "the plan does not cover every clause active before the compaction");
+           "the plan rewrote a clause that was not active");
 
     // Composed through the numbering being retired, not replaced.
     const std::size_t new_num_vars = plan.transform.new_num_vars();

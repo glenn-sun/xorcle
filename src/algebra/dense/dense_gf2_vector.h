@@ -9,6 +9,7 @@
 #include <gf2/gf2.h>
 
 #include "algebra/equation_repr.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -57,6 +58,12 @@ public:
         gf2::set(bits_, i, true);
     }
 
+    /// @pre `i < num_bits()`.
+    void reset_bit(std::size_t i) noexcept {
+        assert(i < bits_.size() && "reset_bit index is out of range");
+        gf2::set(bits_, i, false);
+    }
+
     /// @brief Get index of the first set bit, or `std::nullopt` if none are set.
     /// Custom reimplementation of `gf2::first_set()` for efficiency.
     std::optional<std::size_t> leading_bit() const noexcept {
@@ -88,6 +95,28 @@ public:
                 return std::nullopt;
             }
             word = words[w];
+        }
+        return (w << word_shift) + static_cast<std::size_t>(std::countr_zero(word));
+    }
+
+    /// @brief Get index of the first set bit at or after `i` that `indices` also
+    /// holds, or `std::nullopt`.
+    /// @pre `indices.size() == num_bits()`.
+    std::optional<std::size_t> first_bit_in(const IndexSet& indices,
+                                            std::size_t i) const noexcept {
+        assert(indices.size() == bits_.size() && "first_bit_in size mismatch");
+        if (i >= bits_.size()) {
+            return std::nullopt;
+        }
+        const Word* words = bits_.store();
+        const std::size_t num_words = bits_.words();
+        std::size_t w = i >> word_shift;
+        Word word = words[w] & indices.word(w) & (~Word{0} << (i & word_mask));
+        while (word == 0) {
+            if (++w >= num_words) {
+                return std::nullopt;
+            }
+            word = words[w] & indices.word(w);
         }
         return (w << word_shift) + static_cast<std::size_t>(std::countr_zero(word));
     }

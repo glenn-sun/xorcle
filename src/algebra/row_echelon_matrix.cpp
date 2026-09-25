@@ -26,6 +26,19 @@ IndexSet RowSpace::unique_solution() const {
     return interface().solution();
 }
 
+void RowSpace::compact(const CompactionTransform& transform) {
+    assert(num_vars() == transform.old_num_vars() &&
+           "compact: the transform was built for a different variable count");
+#ifndef NDEBUG
+    for (std::size_t row_idx = 0; row_idx < rows(); ++row_idx) {
+        const std::size_t pivot = pivot_col_idx(row_idx);
+        assert((pivot == num_vars() || transform.to_new(pivot) != CompactionTransform::npos) &&
+               "compact: a pivot column is dropped");
+    }
+#endif
+    interface().compact(transform);
+}
+
 std::string Clause::to_string(const PrintMode& mode) const {
     std::ostringstream oss;
     for (const Equation& equation : *this) {

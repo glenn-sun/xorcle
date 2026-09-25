@@ -36,8 +36,9 @@ public:
     SatisfactionRecord() = default;
 
     /// @pre `level < level_stamps.size()`.
-    SatisfactionRecord(std::span<const std::size_t> level_stamps, std::size_t level)
-        : level_stamps_(level_stamps), level_(level) {
+    SatisfactionRecord(std::span<const std::size_t> level_stamps, std::size_t level,
+                       bool quiescent = false)
+        : level_stamps_(level_stamps), level_(level), quiescent_(quiescent) {
         assert(level < level_stamps.size() && "the trail's level has no stamp");
     }
 
@@ -57,9 +58,13 @@ public:
         return level_stamps_.empty() ? std::nullopt : std::optional<std::size_t>(level_);
     }
 
+    /// @brief Whether propagation last ran to quiescence, leaving no clause propagating.
+    bool quiescent() const noexcept { return quiescent_; }
+
 private:
     std::span<const std::size_t> level_stamps_;
     std::size_t level_ = 0;
+    bool quiescent_ = false;
 };
 
 /// @brief What drawing decisions from clause intersections did, summed over the run.

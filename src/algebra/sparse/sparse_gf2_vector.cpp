@@ -31,6 +31,15 @@ void SparseGF2Vector::set_bit(std::size_t i) {
     }
 }
 
+void SparseGF2Vector::reset_bit(std::size_t i) {
+    assert(i < num_bits_ && "reset_bit index is out of range");
+    const Bit bit = static_cast<Bit>(i);
+    const auto it = std::lower_bound(bits_.begin(), bits_.end(), bit);
+    if (it != bits_.end() && *it == bit) {
+        bits_.erase(it);
+    }
+}
+
 void SparseGF2Vector::plus_assign(const SparseGF2Vector& other) {
     assert(num_bits_ == other.num_bits_ && "bit count mismatch in plus_assign");
     // Symmetric difference of two ascending bit lists

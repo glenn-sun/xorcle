@@ -151,6 +151,11 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
     std::optional<ClauseId> propagating_id;
     std::size_t intersected_clauses = 0;
     while (set_aside_ids_.size() < intersection_depth_ && !heap.empty()) {
+        // One dimension left is the decision, and after quiescence no clause
+        // below is propagating either, so the rest of the walk finds nothing.
+        if (space.rows() == 1 && known.quiescent()) {
+            break;
+        }
         const ClauseId id = heap.peek_max();
         if (id >= clauses.size() || clause_active[id] == 0) {
             heap.extract_max();
@@ -167,6 +172,10 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
         }
         set_aside_ids_.push_back(id);
         heap.extract_max();
+        if (space.rows() == 1) {
+            // Its intersection with any clause is itself or nothing.
+            continue;
+        }
 
         std::vector<Equation> intersection =
             span_intersection(space, clause_sat_workspace_.reduced_clause());

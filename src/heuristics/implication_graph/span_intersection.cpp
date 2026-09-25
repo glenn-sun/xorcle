@@ -18,6 +18,8 @@ namespace xorcle {
 
 namespace {
 
+constexpr std::size_t no_index = static_cast<std::size_t>(-1);
+
 #ifndef NDEBUG
 /// @brief Vertices below which every descendant is also checked path by path,
 /// which costs a search of the whole graph per descendant.
@@ -46,32 +48,122 @@ void ImplicationGraph::walk_span_intersections(
     for (const Equation& unit : units) {
         accumulated.add_row(unit);
     }
-
-    Equation scratch(repr_, num_vars_);
     Equation candidate(repr_, num_vars_);
+
+    // Where the vertices have fewer set bits than words, a pair's spans are
+    // over only the columns its descendants use, kept in order, which leaves
+    // every echelon form and intersection as it is over all of them.
+    std::size_t num_key_bits = 0;
+    for (const Equation* key_eqn : key_eqn_) {
+        num_key_bits += key_eqn->num_set_bits();
+    }
+    const bool local_columns = num_key_bits < key_eqn_.size() * ((num_vars_ + 64) / 64);
+    std::vector<std::size_t> key_bits;
+    std::vector<std::size_t> key_bits_begin;
+    if (local_columns) {
+        key_bits.reserve(num_key_bits);
+        key_bits_begin.assign(key_eqn_.size() + 1, 0);
+        for (std::size_t key = 0; key < key_eqn_.size(); ++key) {
+            const std::vector<std::size_t> key_eqn_bits = key_eqn_[key]->bits();
+            key_bits.insert(key_bits.end(), key_eqn_bits.begin(), key_eqn_bits.end());
+            key_bits_begin[key + 1] = key_bits.size();
+        }
+    }
+    std::vector<std::size_t> col_idx_to_local_col_idx(local_columns ? num_vars_ + 1 : 0, no_index);
+    std::vector<std::size_t> local_col_idx_to_col_idx;
+    std::vector<std::size_t> bits;
+    std::size_t num_span_vars = num_vars_;
+    // The two sides of the pair the walk is on, and their sum, whose rank gives
+    // the dimension of their intersection.
+    RowSpace side_a(repr_, num_span_vars);
+    RowSpace side_b(repr_, num_span_vars);
+    RowSpace both_sides(repr_, num_span_vars);
+    const auto use_columns_of = [&](const std::vector<std::size_t>& first,
+                                    const std::vector<std::size_t>* const second) {
+        for (RowSpace* const span : {&side_a, &side_b, &both_sides}) {
+            clear_span(*span);
+        }
+        if (!local_columns) {
+            return;
+        }
+        for (const std::size_t col_idx : local_col_idx_to_col_idx) {
+            col_idx_to_local_col_idx[col_idx] = no_index;
+        }
+        local_col_idx_to_col_idx.clear();
+        const auto collect = [&](const std::vector<std::size_t>& reached) {
+            for (const std::size_t vertex : reached) {
+                for (std::size_t i = key_bits_begin[vertex / 2]; i < key_bits_begin[vertex / 2 + 1];
+                     ++i) {
+                    const std::size_t col_idx = key_bits[i];
+                    if (col_idx != num_vars_ && col_idx_to_local_col_idx[col_idx] == no_index) {
+                        col_idx_to_local_col_idx[col_idx] = 0;
+                        local_col_idx_to_col_idx.push_back(col_idx);
+                    }
+                }
+            }
+        };
+        collect(first);
+        if (second != nullptr) {
+            collect(*second);
+        }
+        std::sort(local_col_idx_to_col_idx.begin(), local_col_idx_to_col_idx.end());
+        for (std::size_t local = 0; local < local_col_idx_to_col_idx.size(); ++local) {
+            col_idx_to_local_col_idx[local_col_idx_to_col_idx[local]] = local;
+        }
+        num_span_vars = local_col_idx_to_col_idx.size();
+        col_idx_to_local_col_idx[num_vars_] = num_span_vars;
+        side_a = RowSpace(repr_, num_span_vars);
+        side_b = RowSpace(repr_, num_span_vars);
+        both_sides = RowSpace(repr_, num_span_vars);
+    };
+    const auto to_global = [&](const Equation& row) {
+        if (!local_columns) {
+            return row;
+        }
+        bits = row.bits();
+        for (std::size_t& bit : bits) {
+            bit = bit == num_span_vars ? num_vars_ : local_col_idx_to_col_idx[bit];
+        }
+        Equation eqn(repr_, num_vars_);
+        eqn.assign_bits(bits);
+        return eqn;
+    };
     const auto side_span = [&](RowSpace& span,
                                const std::vector<std::size_t>& reached) -> RowSpace& {
-        while (span.rows() != 0) {
-            span.pop_last_row();
-        }
         for (const std::size_t vertex : reached) {
-            scratch.assign_from(*key_eqn_[vertex / 2]);
-            if ((vertex & 1) != 0) {
-                scratch.plus_assign(false_eqn_);
+            Equation row = spare_row(num_span_vars);
+            if (local_columns) {
+                bits.clear();
+                for (std::size_t i = key_bits_begin[vertex / 2];
+                     i < key_bits_begin[vertex / 2 + 1]; ++i) {
+                    bits.push_back(col_idx_to_local_col_idx[key_bits[i]]);
+                }
+                if ((vertex & 1) != 0) {
+                    if (!bits.empty() && bits.back() == num_span_vars) {
+                        bits.pop_back();
+                    } else {
+                        bits.push_back(num_span_vars);
+                    }
+                }
+                row.assign_bits(bits);
+            } else {
+                row.assign_from(*key_eqn_[vertex / 2]);
+                if ((vertex & 1) != 0) {
+                    row.plus_assign(false_eqn_);
+                }
             }
             // `partial_reduce` is exactly what `add_row` would do before
-            // storing, so doing it here leaves the same row and costs no copy
-            // of a descendant the span already holds.
-            if (span.partial_reduce(scratch).kind != ReduceResult::Kind::eq_true) {
-                span.add_row(scratch);
+            // storing, so doing it here leaves the same row.
+            if (span.partial_reduce(row).kind != ReduceResult::Kind::eq_true) {
+                span.add_row(std::move(row));
+            } else {
+                spare_rows_.push_back(std::move(row));
             }
         }
         return span;
     };
-    const auto is_refuted = [&](const RowSpace& span) {
-        scratch.assign_from(false_eqn_);
-        span.reduce(scratch);
-        return scratch.is_eq_true();
+    const auto is_refuted = [](const RowSpace& span) {
+        return span.pivot_col_idxs().test(span.cols() - 1);
     };
 
     // A vertex whose successor is refuted is refuted too, so a side reached
@@ -152,8 +244,9 @@ void ImplicationGraph::walk_span_intersections(
             const Arc* const inherited = inherited_refutation(deep_vertex);
             bool deep_refuted = inherited != nullptr;
             if (!deep_refuted) {
-                deep_refuted =
-                    is_refuted(side_span(side_a_, lone_first ? other_descendants_ : descendants_));
+                const std::vector<std::size_t>& deep = lone_first ? other_descendants_ : descendants_;
+                use_columns_of(deep, nullptr);
+                deep_refuted = is_refuted(side_span(side_a, deep));
             }
             summary.refuted_sides += deep_refuted ? 1 : 0;
             if (deep_refuted) {
@@ -176,11 +269,12 @@ void ImplicationGraph::walk_span_intersections(
         const Arc* const there_inherited = inherited_refutation(vertex + 1);
         bool here_refuted = here_inherited != nullptr;
         bool there_refuted = there_inherited != nullptr;
-        const RowSpace& here = here_refuted ? side_a_ : side_span(side_a_, descendants_);
+        use_columns_of(descendants_, &other_descendants_);
+        const RowSpace& here = here_refuted ? side_a : side_span(side_a, descendants_);
         if (!here_refuted) {
             here_refuted = is_refuted(here);
         }
-        const RowSpace& there = there_refuted ? side_b_ : side_span(side_b_, other_descendants_);
+        const RowSpace& there = there_refuted ? side_b : side_span(side_b, other_descendants_);
         if (!there_refuted) {
             there_refuted = is_refuted(there);
         }
@@ -209,7 +303,7 @@ void ImplicationGraph::walk_span_intersections(
         } else if (here_refuted || there_refuted) {
             const RowSpace& other = here_refuted ? there : here;
             for (const Equation& row : other) {
-                intersection.push_back(row);
+                intersection.push_back(to_global(row));
             }
             kind = Kind::one_side;
             if (proof != nullptr) {
@@ -219,21 +313,25 @@ void ImplicationGraph::walk_span_intersections(
             // dim(U n W) = dim U + dim W - dim(U + W), over the columns of one
             // side rather than of both laid side by side, so the basis is built
             // only for the few pairs whose intersection is more than `0 = 0`.
-            while (both_sides_.rows() != 0) {
-                both_sides_.pop_last_row();
-            }
             for (const Equation& row : here) {
-                both_sides_.add_row(row);
+                Equation copy = spare_row(num_span_vars);
+                copy.assign_from(row);
+                both_sides.add_row(std::move(copy));
             }
             for (const Equation& row : there) {
-                scratch.assign_from(row);
-                if (both_sides_.partial_reduce(scratch).kind != ReduceResult::Kind::eq_true) {
-                    both_sides_.add_row(scratch);
+                Equation copy = spare_row(num_span_vars);
+                copy.assign_from(row);
+                if (both_sides.partial_reduce(copy).kind != ReduceResult::Kind::eq_true) {
+                    both_sides.add_row(std::move(copy));
+                } else {
+                    spare_rows_.push_back(std::move(copy));
                 }
             }
-            const std::size_t dim = here.rows() + there.rows() - both_sides_.rows();
+            const std::size_t dim = here.rows() + there.rows() - both_sides.rows();
             if (dim != 0) {
-                intersection = span_intersection(here, there);
+                for (const Equation& row : span_intersection(here, there)) {
+                    intersection.push_back(to_global(row));
+                }
             }
             assert(intersection.size() == dim && "the span intersection has the wrong dimension");
         }
@@ -261,9 +359,18 @@ void ImplicationGraph::walk_span_intersections(
             // equation and there is nothing to check against its rows.
             assert(([&] {
                        const auto holds = [&](const RowSpace& span) {
-                           scratch.assign_from(eqn);
-                           span.reduce(scratch);
-                           return scratch.is_eq_true();
+                           Equation reduced(repr_, num_span_vars);
+                           if (local_columns) {
+                               bits = eqn.bits();
+                               for (std::size_t& bit : bits) {
+                                   bit = col_idx_to_local_col_idx[bit];
+                               }
+                               reduced.assign_bits(bits);
+                           } else {
+                               reduced.assign_from(eqn);
+                           }
+                           span.reduce(reduced);
+                           return reduced.is_eq_true();
                        };
                        return (here_refuted || holds(here)) && (there_refuted || holds(there));
                    }()) &&

@@ -22,11 +22,16 @@ void DenseGF2Vector::assign_from(const DenseGF2Vector& other) noexcept {
 }
 
 std::size_t DenseGF2Vector::hash() const noexcept {
+    // Only nonzero words enter the chain, each with its index, so a vector with
+    // few set bits hashes at the cost of scanning its words.
+    const Word* words = bits_.store();
     std::uint64_t value = 0;
     for (std::size_t i = 0; i < bits_.words(); ++i) {
-        value ^= bits_.word(i);
-        // Fibonacci hash
-        value *= 11400714819323198485ull;
+        if (words[i] != 0) {
+            // Fibonacci hash
+            value = (value ^ i) * 11400714819323198485ull;
+            value = (value ^ words[i]) * 11400714819323198485ull;
+        }
     }
     return static_cast<std::size_t>(value);
 }
