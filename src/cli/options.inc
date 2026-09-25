@@ -53,7 +53,7 @@ XORCLE_OPTION(seed, U64, 0, 0, UINT64_MAX, "RNG seed")
 
 XORCLE_OPTION(compact, Bool, true, false, true, "compaction: drop the leading variables of all known units and remove the\n"
               "clauses they satisfy")
-XORCLE_OPTION(compact_cadence, Size, 16, 1, SIZE_MAX, "number of conflicts between compactions")
+XORCLE_OPTION(compact_cadence, Size, 256, 1, SIZE_MAX, "number of conflicts between compactions")
 
 // --- Decisions -------------------------------------------------------------
 
@@ -162,7 +162,7 @@ XORCLE_OPTION(implication_graph, Bool, true, false, true,
               "add to the root trail the equations that hold on both sides of a vertex of\n"
               "the implication graph of the width-2 clauses; needs --compact=true, and the\n"
               "default is off without it")
-XORCLE_OPTION(implication_graph_clause_cadence, Size, 16, 1, SIZE_MAX,
+XORCLE_OPTION(implication_graph_clause_cadence, Size, 32, 1, SIZE_MAX,
               "clauses that became width at most 2 between implication graph runs")
 XORCLE_OPTION(implication_graph_cadence, Size, 1000, 1, SIZE_MAX,
               "conflicts between implication graph runs, the fallback when too few\n"
@@ -170,7 +170,7 @@ XORCLE_OPTION(implication_graph_cadence, Size, 1000, 1, SIZE_MAX,
 XORCLE_OPTION(implication_graph_max_pairs, Size, 10000, 1, SIZE_MAX,
               "vertex pairs one implication graph run examines, sampled uniformly from\n"
               "the pairs with an out-arc on either side")
-XORCLE_OPTION(implication_graph_max_descendants, Size, 1000, 1, SIZE_MAX,
+XORCLE_OPTION(implication_graph_max_descendants, Size, 100, 1, SIZE_MAX,
               "descendants one side's search keeps, whole distance levels first and a\n"
               "uniform sample of the level that would overrun this")
 

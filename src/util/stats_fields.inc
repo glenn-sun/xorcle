@@ -109,6 +109,7 @@ XORCLE_STAT(implication_graph, Count, implication_graph_runs_after_a_conflict, "
 XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_clauses, "implication_graph_runs_due_to_clauses", "Runs the clause interval made due")
 XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_conflicts, "implication_graph_runs_due_to_conflicts", "Runs the conflict interval made due")
 XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_a_feed, "implication_graph_runs_due_to_a_feed", "Runs an earlier run's units made due")
+XORCLE_STAT(implication_graph, Count, implication_graph_follow_ups_suppressed, "implication_graph_follow_ups_suppressed", "Follow-up runs too few clauses reaching width at most 2 withheld")
 XORCLE_STAT(implication_graph, Count, implication_graph_conflicts_waited, "implication_graph_conflicts_waited", "Conflicts spent waiting for the root trail")
 XORCLE_STAT(implication_graph, Count, implication_graph_max_conflicts_waited, "implication_graph_max_conflicts_waited", "Longest wait for the root trail, in conflicts")
 XORCLE_STAT(implication_graph, Count, implication_graph_width_2_clauses, "implication_graph_width_2_clauses", "Width-2 clauses in the graph")

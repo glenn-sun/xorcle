@@ -35,7 +35,7 @@ class HintTrail;
 struct CompactionConfig {
     bool enabled = true;
 
-    std::size_t cadence = 16; ///< Conflicts between two successful compactions.
+    std::size_t cadence = 256; ///< Conflicts between two successful compactions.
 };
 
 /// @brief How far a propagation run may go before deferring to a decision.
@@ -156,6 +156,10 @@ struct ImplicationGraphCounters {
     std::size_t num_runs_due_to_clauses = 0;
     std::size_t num_runs_due_to_conflicts = 0;
     std::size_t num_runs_due_to_a_feed = 0;
+
+    /// @brief Follow-up runs withheld because too few clauses reached width at
+    /// most 2 since the run that fed units.
+    std::size_t num_follow_ups_suppressed = 0;
 
     /// @brief Runs past the first conflict, which the wait for the root trail
     /// makes rarer than the cadence alone would.
@@ -576,12 +580,14 @@ private:
     ImplicationGraphProofRecord implication_graph_proof_;
     ImplicationGraphCounters implication_graph_counters_;
     /// @brief Whether a run is owed: before the first one, once the conflict
-    /// interval has elapsed since the last, and after one that fed units and so
-    /// left the fixpoint unfinished.
+    /// interval has elapsed since the last, and after one that fed units if
+    /// the clause cadence has been met since it.
     bool implication_graph_run_is_due_ = true;
     std::size_t conflicts_at_last_implication_graph_run_ = 0;
     std::size_t clauses_at_last_implication_graph_run_ = 0;
     std::size_t conflicts_at_run_became_due_ = 0;
+    /// @brief Whether a run fed units and the follow-up clause test is still owed.
+    bool follow_up_is_pending_ = false;
 
     /// @brief Which of the counters below to credit the run that is due to.
     enum class RunTrigger : std::uint8_t { first_run, clauses, conflicts, feed };

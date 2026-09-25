@@ -897,7 +897,20 @@ bool Solver::maybe_run_implication_graph() {
         const bool by_conflicts = counters_.num_conflicts -
                                       conflicts_at_last_implication_graph_run_ >=
                                   implication_graph_config_.cadence;
-        if (by_clauses || by_conflicts) {
+        if (follow_up_is_pending_) {
+            // The first call after the feeding run: its units have propagated and
+            // its forced compaction is done, and nothing has been decided since.
+            assert(trail_.level() == 0 && !compaction_is_due_ && !by_conflicts &&
+                   "the follow-up test ran after a decision or before the forced compaction");
+            follow_up_is_pending_ = false;
+            if (by_clauses) {
+                implication_graph_run_is_due_ = true;
+                run_is_due_from_ = RunTrigger::feed;
+                conflicts_at_run_became_due_ = counters_.num_conflicts;
+            } else {
+                ++implication_graph_counters_.num_follow_ups_suppressed;
+            }
+        } else if (by_clauses || by_conflicts) {
             implication_graph_run_is_due_ = true;
             run_is_due_from_ = by_clauses ? RunTrigger::clauses : RunTrigger::conflicts;
             // The conflict interval elapsed at a conflict count this knows; the
@@ -970,12 +983,10 @@ bool Solver::maybe_run_implication_graph() {
         feed_unit(units[i], proof_writer_ != nullptr ? unit_lines[i] : 0);
     }
     implication_graph_counters_.num_units_fed += units.size();
-    // Every run that adds anything grows the root rank, so looking again
-    // terminates.
-    implication_graph_run_is_due_ = true;
-    run_is_due_from_ = RunTrigger::feed;
-    conflicts_at_run_became_due_ = counters_.num_conflicts;
     compaction_is_due_ = true;
+    conflicts_at_last_implication_graph_run_ = counters_.num_conflicts;
+    clauses_at_last_implication_graph_run_ = clauses_reaching_width_at_most_2();
+    follow_up_is_pending_ = true;
     return true;
 }
 

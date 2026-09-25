@@ -52,7 +52,7 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.equation_repr == EquationRepr::dense);
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
-    CHECK(options.compact_cadence == 16);
+    CHECK(options.compact_cadence == 256);
     CHECK(options.decisions == DecisionProcedureName::csids);
     CHECK(options.csids_initial == doctest::Approx(1.0));
     CHECK(options.csids_decay == doctest::Approx(0.98));
@@ -273,7 +273,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "[default: 0; minimum 0]"));
     CHECK(contains(text, "--compact=true|false"));
     CHECK(contains(text, "--compact-cadence=N"));
-    CHECK(contains(text, "[default: 16; minimum 1]"));
+    CHECK(contains(text, "[default: 256; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
     CHECK(contains(text, "[default: 0.98; range 0..1]"));
     CHECK(contains(text, "--decisions=csids|fixed_literals|berkmin|cmtf"));
@@ -414,7 +414,7 @@ TEST_CASE("options: the recorded configuration is the whole table") {
         return std::string("<absent>");
     };
     CHECK(value_of("compact") == "true");
-    CHECK(value_of("compact_cadence") == "16");
+    CHECK(value_of("compact_cadence") == "256");
     CHECK(value_of("csids_decay") == "0.98");
     CHECK(value_of("decisions") == "csids");
     // An unset path records as empty, not as the help text's "unset".

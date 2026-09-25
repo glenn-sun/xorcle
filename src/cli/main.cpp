@@ -315,6 +315,7 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     stats.implication_graph_runs_due_to_clauses = graph.num_runs_due_to_clauses;
     stats.implication_graph_runs_due_to_conflicts = graph.num_runs_due_to_conflicts;
     stats.implication_graph_runs_due_to_a_feed = graph.num_runs_due_to_a_feed;
+    stats.implication_graph_follow_ups_suppressed = graph.num_follow_ups_suppressed;
     stats.implication_graph_conflicts_waited = graph.num_conflicts_waited;
     stats.implication_graph_max_conflicts_waited = graph.max_conflicts_waited;
     stats.implication_graph_width_2_clauses = solver.implication_graph().num_width_2_clauses();
