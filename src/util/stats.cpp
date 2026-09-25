@@ -54,7 +54,8 @@ RunStats::reports(const StatsSection section) const {
             return config_value(*this, "deletion") == "true";
         case StatsSection::propagate_budget: {
             const std::string miss_rate = config_value(*this, "propagate_miss_rate");
-            return !miss_rate.empty() && miss_rate != "0";
+            return config_value(*this, "selection") == "cyclic" && !miss_rate.empty() &&
+                   miss_rate != "0";
         }
         case StatsSection::implication_graph:
             return config_value(*this, "implication_graph") == "true";

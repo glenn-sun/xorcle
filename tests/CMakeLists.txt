@@ -86,21 +86,21 @@ add_test(NAME proof_roundtrip_compact_often
             --compact-cadence=1)
 set_tests_properties(proof_roundtrip_compact_often PROPERTIES SKIP_RETURN_CODE 77)
 
-# The default miss rate leaves propagation short of a fixed point, so this is
-# the variant that covers the derivations a complete propagation writes.
+# The default exact watchlist hands the propagator a trigger hint; the cyclic
+# selector does not, so its attempts reach their reasons by a path of their own,
+# and its default miss rate leaves propagation short of a fixed point.
+add_test(NAME proof_roundtrip_cyclic
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --selection=cyclic)
+set_tests_properties(proof_roundtrip_cyclic PROPERTIES SKIP_RETURN_CODE 77)
+
+# The cyclic selector propagating to a fixed point, with no trigger hint.
 add_test(NAME proof_roundtrip_complete_propagation
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
-            --propagate-miss-rate=0)
+            --selection=cyclic --propagate-miss-rate=0)
 set_tests_properties(proof_roundtrip_complete_propagation PROPERTIES SKIP_RETURN_CODE 77)
-
-# The exact watchlist hands the propagator a trigger hint, which no other selector
-# does, so its attempts reach their reasons by a path of their own.
-add_test(NAME proof_roundtrip_exact_watchlist
-    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
-            --selection=exact_watchlist)
-set_tests_properties(proof_roundtrip_exact_watchlist PROPERTIES SKIP_RETURN_CODE 77)
 
 # An instance on which the implication graph feeds units by all four of its
 # derivations: a refuted side, a side reaching one an earlier pair refuted, the

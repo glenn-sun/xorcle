@@ -58,7 +58,7 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.csids_decay == doctest::Approx(0.98));
     CHECK(options.csids_bump == doctest::Approx(1.0));
     CHECK(options.phase == DecisionPhase::falsify);
-    CHECK(options.selection == ClauseSelectorName::cyclic);
+    CHECK(options.selection == ClauseSelectorName::exact_watchlist);
     CHECK(options.restart == RestartMethod::none);
     CHECK(options.deletion == true);
     CHECK(options.deletion_cadence == 100);
@@ -77,6 +77,7 @@ TEST_CASE("options: the documented defaults") {
 
 TEST_CASE("options: --name=value sets each kind") {
     const Options options = parse_with_input({"--equation-repr=sparse",
+                                              "--selection=cyclic",
                                               "--seed=42",
                                               "--compact=false",
                                               "--csids-initial=2.5",
@@ -329,9 +330,13 @@ TEST_CASE("options: the exact watchlist takes deletion and subsumption, but not 
     const Options options = parse_with_input({"--selection=exact_watchlist"});
     CHECK(options.deletion);
     CHECK(options.subsume);
-    CHECK(options.propagate_miss_rate == 0.0);
+    CHECK(propagation_config(options).miss_rate == 0.0);
     CHECK(rejection_message<CliError>({"--selection=exact_watchlist", "--equation-repr=sparse"})
-              .starts_with("--selection requires --equation-repr=dense for exact_watchlist"));
+              .starts_with("--selection=exact_watchlist requires --equation-repr=dense"));
+    CHECK(rejection_message<CliError>({"--equation-repr=sparse"})
+              .starts_with("--selection=exact_watchlist requires --equation-repr=dense"));
+    CHECK(parse_with_input({"--selection=cyclic", "--equation-repr=sparse"}).equation_repr ==
+          EquationRepr::sparse);
 }
 
 TEST_CASE("options: deletion refuses an incompatible choice rather than yielding") {
@@ -528,26 +533,33 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
           doctest::Approx(1.2));
     CHECK(refusal({"--selection=exact_watchlist", "--propagate-miss-rate=1"})
               .starts_with("--propagate-miss-rate requires --selection=cyclic"));
-    CHECK(parse_with_input({"--propagate-miss-rate=0.5"}).propagate_miss_rate ==
-          doctest::Approx(0.5));
-    CHECK(refusal({"--propagate-miss-rate=0", "--propagate-window=500"})
-              .starts_with("--propagate-window requires a nonzero --propagate-miss-rate"));
-    CHECK(parse_with_input({"--propagate-miss-rate=0.02", "--propagate-window=500"})
+    CHECK(parse_with_input({"--selection=cyclic", "--propagate-miss-rate=0.5"})
+              .propagate_miss_rate == doctest::Approx(0.5));
+    CHECK(refusal({"--selection=cyclic", "--propagate-miss-rate=0", "--propagate-window=500"})
+              .starts_with("--propagate-window requires --selection=cyclic and a nonzero "
+                           "--propagate-miss-rate"));
+    CHECK(refusal({"--propagate-window=500"})
+              .starts_with("--propagate-window requires --selection=cyclic and a nonzero "
+                           "--propagate-miss-rate"));
+    CHECK(parse_with_input({"--selection=cyclic", "--propagate-miss-rate=0.02",
+                            "--propagate-window=500"})
               .propagate_window == 500);
     CHECK(parse_with_input({"--report=all"}).report == "all");
 }
 
-TEST_CASE("options: the default miss rate follows the selector") {
-    const auto watchlist = std::vector<std::string>{"--selection=exact_watchlist"};
-    CHECK(parse_with_input({}).propagate_miss_rate == doctest::Approx(0.04));
-    CHECK(parse_with_input(watchlist).propagate_miss_rate == 0.0);
+TEST_CASE("options: only the cyclic selector reads the miss rate") {
+    const auto cyclic = std::vector<std::string>{"--selection=cyclic"};
+    CHECK(propagation_config(parse_with_input(cyclic)).miss_rate == doctest::Approx(0.04));
+    CHECK(propagation_config(parse_with_input({})).miss_rate == 0.0);
 
-    std::vector<std::string> asked = watchlist;
-    asked.emplace_back("--propagate-miss-rate=0.04");
-    CHECK(rejection_message<CliError>(std::move(asked))
+    CHECK(rejection_message<CliError>({"--propagate-miss-rate=0.04"})
+              .starts_with("--propagate-miss-rate requires --selection=cyclic"));
+    CHECK(rejection_message<CliError>({"--propagate-miss-rate=0"})
               .starts_with("--propagate-miss-rate requires --selection=cyclic"));
 
-    CHECK(parse_with_input({"--propagate-miss-rate=0"}).propagate_miss_rate == 0.0);
+    std::vector<std::string> complete = cyclic;
+    complete.emplace_back("--propagate-miss-rate=0");
+    CHECK(propagation_config(parse_with_input(std::move(complete))).miss_rate == 0.0);
 }
 
 TEST_CASE("options: the default implication graph follows compaction") {

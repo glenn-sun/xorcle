@@ -88,7 +88,7 @@ XORCLE_ENUM_VALUE(phase, "random", DecisionPhase::random)
 
 // --- Selection -------------------------------------------------------------
 
-XORCLE_ENUM_OPTION(selection, ClauseSelectorName, ClauseSelectorName::cyclic,
+XORCLE_ENUM_OPTION(selection, ClauseSelectorName, ClauseSelectorName::exact_watchlist,
                    "which clause to try propagating from next")
 XORCLE_ENUM_VALUE(selection, "cyclic", ClauseSelectorName::cyclic)
 XORCLE_ENUM_VALUE(selection, "exact_watchlist", ClauseSelectorName::exact_watchlist)
@@ -97,7 +97,7 @@ XORCLE_ENUM_VALUE(selection, "exact_watchlist", ClauseSelectorName::exact_watchl
 
 XORCLE_OPTION(propagate_miss_rate, Real, 0.04, 0.0, 1.0,
               "target fraction of propagated equations learned out of order; 0 propagates\n"
-              "to a fixed point, and so does the default under any other selector")
+              "to a fixed point")
 
 XORCLE_OPTION(propagate_window, Size, 2000, 1, SIZE_MAX,
               "learned equations over which the attempt budget decays by a factor of e\n"
@@ -206,21 +206,12 @@ XORCLE_REQUIRES(bump_responsible_clauses, options.decisions == DecisionProcedure
 XORCLE_REQUIRES(phase, options.decisions == DecisionProcedureName::csids,
                 "--decisions=csids, the only procedure that decides a sampled equation")
 
-// Its cells are packed words.
-XORCLE_REQUIRES(selection,
-                options.selection != ClauseSelectorName::exact_watchlist ||
-                    options.equation_repr == EquationRepr::dense,
-                "--equation-repr=dense for exact_watchlist")
-
-// A rate of 0 is complete propagation, which every selector does, so only a
-// nonzero one needs the selector that runs an attempt budget; the default has
-// already resolved to 0 under any other.
-XORCLE_REQUIRES(propagate_miss_rate,
-                options.propagate_miss_rate == 0.0 ||
-                    options.selection == ClauseSelectorName::cyclic,
+XORCLE_REQUIRES(propagate_miss_rate, options.selection == ClauseSelectorName::cyclic,
                 "--selection=cyclic")
-XORCLE_REQUIRES(propagate_window, options.propagate_miss_rate != 0.0,
-                "a nonzero --propagate-miss-rate")
+XORCLE_REQUIRES(propagate_window,
+                options.selection == ClauseSelectorName::cyclic &&
+                    options.propagate_miss_rate != 0.0,
+                "--selection=cyclic and a nonzero --propagate-miss-rate")
 
 XORCLE_REQUIRES(restart_luby_unit, options.restart == RestartMethod::luby, "--restart=luby")
 XORCLE_REQUIRES(restart_lbd_fast, options.restart == RestartMethod::lbd, "--restart=lbd")

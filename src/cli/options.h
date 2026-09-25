@@ -509,8 +509,7 @@ inline std::string format_option_value(OptionKind::Name, std::string_view value)
 ///
 /// This is what makes a statistics row a reproduction recipe, so it is taken
 /// from the resolved `Options`: a `--decisions=` preset has already become the
-/// CSIDS triple it stands for, and a miss rate no selector would read has
-/// already become 0.
+/// CSIDS triple it stands for.
 inline std::vector<ConfigEntry> option_settings(const Options& options) {
     std::vector<ConfigEntry> settings;
 
@@ -575,6 +574,11 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (options.deletion && options.deletion_key == DeletionKey::activity &&
         options.decisions != DecisionProcedureName::csids) {
         throw CliError("--deletion-key=activity requires --decisions=csids");
+    }
+    // The exact watchlist's cells are packed words.
+    if (options.selection == ClauseSelectorName::exact_watchlist &&
+        options.equation_repr != EquationRepr::dense) {
+        throw CliError("--selection=exact_watchlist requires --equation-repr=dense");
     }
     // A switch rather than a parameter, so it is checked against its value,
     // which the default has already resolved to false under --compact=false.
@@ -643,11 +647,6 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
         options.csids_decay = preset->config.decay;
         options.csids_bump = preset->config.bump;
     }
-    // Only the cyclic selector runs an attempt budget, so under any other one
-    // the miss rate resolves to complete propagation unless it was given.
-    if (!seen.propagate_miss_rate && options.selection != ClauseSelectorName::cyclic) {
-        options.propagate_miss_rate = 0.0;
-    }
     // The rule needs a compaction after each feed, so without compaction the
     // implication graph resolves to off unless it was given.
     if (!seen.implication_graph && !options.compact) {
@@ -690,6 +689,15 @@ inline DeletionConfig deletion_config(const Options& options) {
                                                     .secondary_lbd = options.deletion_secondary_lbd},
                           .key = options.deletion_key,
                           .activity = nullptr};
+}
+
+/// @brief Only the cyclic selector runs an attempt budget; under any other,
+/// propagation runs to a fixed point.
+inline PropagationConfig propagation_config(const Options& options) {
+    return PropagationConfig{.miss_rate = options.selection == ClauseSelectorName::cyclic
+                                              ? options.propagate_miss_rate
+                                              : 0.0,
+                             .window = options.propagate_window};
 }
 
 inline RestartConfig restart_config(const Options& options) {

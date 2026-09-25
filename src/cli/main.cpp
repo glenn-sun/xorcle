@@ -206,8 +206,7 @@ RunStats run_once(const Options& options, PendingProof& pending) {
                   ProgressConfig{.reporter = progress_reporter.get(),
                                  .cadence = options.report_cadence},
                   options.minimize, deletion, options.bump_responsible_clauses, options.subsume,
-                  PropagationConfig{.miss_rate = options.propagate_miss_rate,
-                                    .window = options.propagate_window},
+                  propagation_config(options),
                   implication_graph_config(options));
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
