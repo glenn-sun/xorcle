@@ -245,6 +245,12 @@ ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
     if (!key_eqn_.empty()) {
         walk_span_intersections(root_span, clauses, clause_is_active, summary, proof);
     }
+    assert((proof == nullptr ||
+            std::ranges::equal(summary.units, proof->unit_idx_to_step_idx,
+                               [proof](const Equation& unit, const std::size_t step_idx) {
+                                   return unit == proof->steps[step_idx].equation;
+                               })) &&
+           "a unit is not the equation of the step recorded as proving it");
     return summary;
 }
 

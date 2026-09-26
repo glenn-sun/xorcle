@@ -254,7 +254,7 @@ void ImplicationGraph::walk_span_intersections(
                 if (accumulated.partial_reduce(candidate).kind != ReduceResult::Kind::eq_true) {
                     accumulated.add_row(candidate);
                     if (proof != nullptr) {
-                        proof->steps[refuted_step[deep_vertex]].fed = true;
+                        proof->unit_idx_to_step_idx.push_back(refuted_step[deep_vertex]);
                     }
                     summary.units.push_back(std::move(unit));
                 }
@@ -374,7 +374,7 @@ void ImplicationGraph::walk_span_intersections(
 #endif
             if (proof != nullptr) {
                 if (!intersection_step.empty()) {
-                    proof->steps[intersection_step[i]].fed = true;
+                    proof->unit_idx_to_step_idx.push_back(intersection_step[i]);
                 } else {
                     if (!replays_are_pooled) {
                         replays_are_pooled = true;
@@ -402,7 +402,7 @@ void ImplicationGraph::walk_span_intersections(
                     step.arcs_end = arcs_end;
                     step.other_arcs_begin = other_arcs_begin;
                     step.other_arcs_end = other_arcs_end;
-                    step.fed = true;
+                    proof->unit_idx_to_step_idx.push_back(proof->steps.size());
                     proof->steps.push_back(std::move(step));
                 }
             }

@@ -10,6 +10,7 @@
 #include <string>
 #include <set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -20,6 +21,7 @@
 #include "heuristics/implication_graph/implication_graph.h"
 #include "algebra_test_support.h"
 #include "heuristics_test_support.h"
+#include "io/dimacs.h"
 #include "io/proof_raw.h"
 #include "io/proof_raw_file.h"
 #include "io_test_support.h"
@@ -51,14 +53,12 @@ bool holds(const RowSpace& span, std::size_t num_vars, const std::vector<std::si
     return eqn.is_eq_true();
 }
 
-/// @brief The steps of @p record that carry a unit, in the order they do.
+/// @brief The step proving each unit of @p record's run, in the run's order.
 std::vector<const ImplicationGraphProofStep*> fed_steps(
     const ImplicationGraphProofRecord& record) {
     std::vector<const ImplicationGraphProofStep*> fed;
-    for (const ImplicationGraphProofStep& step : record.steps) {
-        if (step.fed) {
-            fed.push_back(&step);
-        }
+    for (const std::size_t step_idx : record.unit_idx_to_step_idx) {
+        fed.push_back(&record.steps[step_idx]);
     }
     return fed;
 }
@@ -440,10 +440,11 @@ TEST_CASE("implication graph: every unit holds in every model of the active clau
                 CHECK(holds_in_every_model(unit, clauses, active, num_vars));
             }
             num_units += run.units.size();
-            for (const ImplicationGraphProofStep& step : record.steps) {
-                if (step.fed) {
-                    kinds.insert(step.kind);
-                }
+            const std::vector<const ImplicationGraphProofStep*> fed = fed_steps(record);
+            REQUIRE(fed.size() == run.units.size());
+            for (std::size_t i = 0; i < fed.size(); ++i) {
+                CHECK(fed[i]->equation == run.units[i]);
+                kinds.insert(fed[i]->kind);
             }
         }
     }
@@ -465,21 +466,84 @@ std::string proof_token(const RawRow& row, std::size_t num_vars) {
     return token;
 }
 
+std::string proof_ids(const std::vector<ClauseId>& ids) {
+    std::string text;
+    for (const ClauseId id : ids) {
+        text += " " + std::to_string(id + 1);
+    }
+    return text;
+}
+
+/// @brief The raw proof at @p path as LRUP(⊕) lines, up to the first
+/// compaction that eliminates units: before it, raw ids are proof ids less one.
+std::vector<std::string> raw_lines_before_compaction(const std::filesystem::path& path,
+                                                     std::size_t num_vars) {
+    std::vector<std::string> lines;
+    RawProofFileSource source(path);
+    while (const std::optional<RawRecord> next = source.next()) {
+        if (const auto* compaction = std::get_if<RawCompaction>(&*next)) {
+            if (!compaction->units.empty()) {
+                break;
+            }
+        } else if (const auto* learned = std::get_if<RawLearned>(&*next)) {
+            std::string line = std::to_string(learned->id + 1);
+            for (const RawRow& row : learned->rows) {
+                line += " " + proof_token(row, num_vars);
+            }
+            lines.push_back(line + " 0" + proof_ids(learned->reasons) + " 0\n");
+        } else if (const auto* empty = std::get_if<RawEmpty>(&*next)) {
+            lines.push_back(std::to_string(empty->id + 1) + " 0" + proof_ids(empty->reasons) +
+                            " 0\n");
+        } else {
+            const auto& deleted = std::get<RawDeleted>(*next);
+            lines.push_back(proof_ids(deleted.ids).substr(1) + " 0\n");
+        }
+    }
+    return lines;
+}
+
+/// @brief The solver's raw proof of @p clauses, under the default options.
+std::vector<std::string> solver_raw_lines(const std::vector<Clause>& clauses,
+                                          std::size_t num_vars,
+                                          std::size_t& num_units_fed) {
+    std::ostringstream help;
+    const std::optional<Options> options = parse_options({"instance.xnf"}, help);
+    REQUIRE(options.has_value());
+    const std::filesystem::path path = scratch_path("implication_graph.raw");
+    {
+        RawProofWriter writer(path, num_vars, clauses.size());
+        const std::unique_ptr<Solver> solver = make_solver(*options, num_vars, &writer);
+        for (const Clause& clause : clauses) {
+            solver->add_starting_clause(clause);
+        }
+        solver->solve();
+        num_units_fed = solver->implication_graph_counters().num_units_fed;
+        writer.finalize(true);
+    }
+    std::vector<std::string> lines = raw_lines_before_compaction(path, num_vars);
+    std::filesystem::remove(path);
+    return lines;
+}
+
+std::string joined(const std::vector<std::string>& lines) {
+    std::string text;
+    for (const std::string& line : lines) {
+        text += line;
+    }
+    return text;
+}
+
 } // namespace
 
 // The solver's first run reads the input clauses over an empty root trail, as
 // the standalone run beside it does, so that run's derivations are the ones
 // the solver writes lines for: one per step, and two more per two-sided step,
-// before any other line. Until a compaction eliminates units, raw ids are
-// proof ids less one, so those lines check as written.
-TEST_CASE("implication graph: the solver's lines for every derivation check") {
+// before any other line. Every line up to the first compaction that eliminates
+// units checks as written, the root units the fed ones propagate included.
+TEST_CASE("implication graph: the solver's raw lines check up to the first compaction") {
     TestRandom random(4242);
     std::set<ImplicationGraphProofStep::Kind> kinds;
     std::size_t num_lines_checked = 0;
-    std::ostringstream help;
-    const std::optional<Options> options = parse_options({"instance.xnf"}, help);
-    REQUIRE(options.has_value());
-    const std::filesystem::path path = scratch_path("implication_graph.raw");
 
     for (std::size_t trial = 0; trial < 60; ++trial) {
         const std::size_t num_vars = 3 + random.next(6);
@@ -501,61 +565,50 @@ TEST_CASE("implication graph: the solver's lines for every derivation check") {
             continue;
         }
 
-        {
-            RawProofWriter writer(path, num_vars, clauses.size());
-            const std::unique_ptr<Solver> solver = make_solver(*options, num_vars, &writer);
-            for (const Clause& clause : clauses) {
-                solver->add_starting_clause(clause);
-            }
-            solver->solve();
-            CHECK(solver->implication_graph_counters().num_units_fed >= first.units.size());
-            writer.finalize(true);
-        }
-
+        std::size_t num_units_fed = 0;
+        const std::vector<std::string> lines = solver_raw_lines(clauses, num_vars, num_units_fed);
+        CHECK(num_units_fed >= first.units.size());
         std::size_t num_graph_lines = record.steps.size();
         for (const ImplicationGraphProofStep& step : record.steps) {
             num_graph_lines += step.kind == ImplicationGraphProofStep::Kind::both_sides ? 2 : 0;
         }
-        std::string text;
-        std::size_t num_lines = 0;
-        RawProofFileSource source(path);
-        while (const std::optional<RawRecord> next = source.next()) {
-            if (num_lines == num_graph_lines) {
-                break;
-            }
-            if (const auto* compaction = std::get_if<RawCompaction>(&*next)) {
-                REQUIRE(compaction->units.empty());
-            } else if (const auto* learned = std::get_if<RawLearned>(&*next)) {
-                text += std::to_string(learned->id + 1);
-                for (const RawRow& row : learned->rows) {
-                    text += " " + proof_token(row, num_vars);
-                }
-                text += " 0";
-                for (const ClauseId reason : learned->reasons) {
-                    text += " " + std::to_string(reason + 1);
-                }
-                text += " 0\n";
-                ++num_lines;
-            } else {
-                FAIL("the graph's lines are interrupted");
-            }
-        }
-        REQUIRE(num_lines == num_graph_lines);
+        REQUIRE(lines.size() >= num_graph_lines);
+        const std::string text = joined(lines);
         LrupChecker checker(repr, num_vars, clause_rows(clauses));
         const std::string error = checker.check(text);
         CAPTURE(text);
         CHECK((error.empty() || error == "no line derives the empty clause"));
-        num_lines_checked += num_lines;
+        num_lines_checked += lines.size();
 
-        for (const ImplicationGraphProofStep& step : record.steps) {
-            if (step.fed) {
-                kinds.insert(step.kind);
-            }
+        for (const ImplicationGraphProofStep* step : fed_steps(record)) {
+            kinds.insert(step->kind);
         }
     }
-    std::filesystem::remove(path);
     CHECK(num_lines_checked > 0);
     CHECK(kinds.size() == 4);
+}
+
+// Both sides of the pair for x2 + x4 are refuted, so the run feeds x2 + x4 and
+// its negation, each with the line proving it; the root unit x2 = 0, which the
+// first propagates before the second conflicts, cites the first's line.
+TEST_CASE("implication graph: the solver's raw lines check when a run feeds a refuted pair") {
+    const std::size_t num_vars = 8;
+    const ParsedDimacs parsed = parse_dimacs_string(
+        "p xnf 8 22\n"
+        "4+6 8 0\n2+4 3 0\n-3+4 -5+6 0\n-2 5 0\n1+8 4 -5+8 0\n-2 -3 0\n7 -8 0\n"
+        "-1+5 7+8 0\n-3+4 6 0\n1 3+5 5 0\n-2 -5 0\n-3+7 5 0\n-1+2 2+6 -8 0\n-4 8 0\n"
+        "2+5 -6 0\n5 -7 0\n2 -6 0\n-1+6 8 0\n-3+4 4+5 0\n-1+2 -5 0\n-2+4 -4 0\n5 6 0\n",
+        repr);
+    REQUIRE(parsed.num_vars == num_vars);
+
+    std::size_t num_units_fed = 0;
+    const std::vector<std::string> lines =
+        solver_raw_lines(parsed.clauses, num_vars, num_units_fed);
+    CHECK(num_units_fed > 0);
+    const std::string text = joined(lines);
+    CAPTURE(text);
+    LrupChecker checker(repr, num_vars, clause_rows(parsed.clauses));
+    CHECK(checker.check(text).empty());
 }
 
 } // namespace xorcle

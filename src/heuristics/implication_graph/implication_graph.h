@@ -65,17 +65,19 @@ struct ImplicationGraphProofStep {
     std::size_t arcs_end = 0;
     std::size_t other_arcs_begin = 0; ///< `both_sides` only: the negation's replay.
     std::size_t other_arcs_end = 0;
-    bool fed = false; ///< Whether `equation` is one of the run's units.
 };
 
 /// @brief Every step of a run, with the arcs they replay in one pool.
 struct ImplicationGraphProofRecord {
     std::vector<ImplicationGraphProofStep> steps;
     std::vector<ClauseId> arcs;
+    /// @brief The step proving each of the run's units, in the order of its `units`.
+    std::vector<std::size_t> unit_idx_to_step_idx;
 
     void clear() {
         steps.clear();
         arcs.clear();
+        unit_idx_to_step_idx.clear();
     }
 };
 
@@ -121,7 +123,7 @@ public:
     /// @brief Look for units the root trail does not already have.
     ///
     /// A non-null `proof` is cleared and filled with a step per equation the run
-    /// proved, the units among them in the order the run's `units` takes them.
+    /// proved, and the step proving each of the run's `units`.
     ///
     /// @pre `clause_is_active` is sized by clause id, and every clause shares
     /// `root_span`'s representation and column count.

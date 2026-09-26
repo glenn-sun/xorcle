@@ -180,7 +180,6 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
     const Equation original_false = Equation::eq_false(repr_, original_num_vars_);
     HintTrail trail(repr_, original_num_vars_);
     std::vector<ClauseId> step_line(record.steps.size(), 0);
-    std::vector<ClauseId> unit_lines;
     std::vector<Equation> rows;
     std::vector<ClauseId> hints;
 
@@ -280,9 +279,11 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
         }
         assert(conflicted && "a unit the implication graph found has no replay that conflicts");
         step_line[index] = write();
-        if (step.fed) {
-            unit_lines.push_back(step_line[index]);
-        }
+    }
+    std::vector<ClauseId> unit_lines;
+    unit_lines.reserve(record.unit_idx_to_step_idx.size());
+    for (const std::size_t step_idx : record.unit_idx_to_step_idx) {
+        unit_lines.push_back(step_line[step_idx]);
     }
     return unit_lines;
 }
