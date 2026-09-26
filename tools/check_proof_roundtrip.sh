@@ -2,22 +2,26 @@
 # Solve an UNSAT instance with --proof and verify the proof with the
 # independently written LRUP(⊕) checker.
 #
-# Usage: check_proof_roundtrip.sh [--cnf-xor] [--insert <clause line>] <repository root>
-#        <xorcle binary> <family> <params> <seed> [solver option...]
+# Usage: check_proof_roundtrip.sh [--cnf-xor] [--insert <clause line>] [--expect <regex>]
+#        <repository root> <xorcle binary> <family> <params> <seed> [solver option...]
 # Exit:  0 pass, 1 fail, 77 skipped (no usable python3)
 #
 # --cnf-xor solves and checks the instance as `tools/xnf_convert.py cnf-xor` writes it.
 # --insert puts the clause line after the instance's first clause and rewrites the
 # header to count every clause line, as `p xnf` unless --cnf-xor is given.
+# --expect fails the run unless some line of the solver's output matches the
+# extended regex, so a test can require the path it is there for.
 
 set -eu
 
 cnf_xor=false
 insert=""
+expect=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --cnf-xor) cnf_xor=true; shift ;;
         --insert) insert="$2"; shift 2 ;;
+        --expect) expect="$2"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -81,6 +85,12 @@ fi
 
 if ! grep -q '^s UNSATISFIABLE' "$work/solve.out"; then
     echo "check_proof_roundtrip: expected UNSAT, got:" >&2
+    cat "$work/solve.out" >&2
+    exit 1
+fi
+
+if [ -n "$expect" ] && ! grep -Eq "$expect" "$work/solve.out"; then
+    echo "check_proof_roundtrip: no output line matches '$expect':" >&2
     cat "$work/solve.out" >&2
     exit 1
 fi

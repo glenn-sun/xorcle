@@ -9,7 +9,6 @@
 #include <cassert>
 #include <cstddef>
 #include <span>
-#include <utility>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -107,17 +106,16 @@ std::vector<Equation> Solver::lift_clause(const ClauseId id) const {
     return rows;
 }
 
-bool Solver::cite_root_units(std::span<const Equation> rows, HintTrail& trail,
-                             std::vector<ClauseId>& hints) {
+Solver::Citations Solver::cite_root_units(std::span<const Equation> rows, HintTrail& trail) {
     const Equation original_false = Equation::eq_false(repr_, original_num_vars_);
     Equation probe(repr_, original_num_vars_);
     Equation negated(repr_, original_num_vars_);
-    bool conflicted = false;
+    Citations cited;
     for (const Equation& row : rows) {
         probe.assign_from(row);
         proof_root_span_.reduce_get_coefficients(probe).for_each_set([&](const std::size_t
                                                                             row_idx) {
-            if (conflicted) {
+            if (cited.conflicted) {
                 return;
             }
             const Equation& unit = proof_root_span_.row(row_idx);
@@ -129,31 +127,35 @@ bool Solver::cite_root_units(std::span<const Equation> rows, HintTrail& trail,
             const Hint hint = trail.cite(std::span<const Equation>(&negated, 1));
             assert((hint == Hint::propagated || hint == Hint::conflicting) &&
                    "a root unit the trail does not hold neither propagates nor conflicts");
-            hints.push_back(proof_col_idx_to_unit_idx_[*unit.leading_bit()]);
-            conflicted = hint == Hint::conflicting;
+            cited.hints.push_back(proof_col_idx_to_unit_id_[*unit.leading_bit()]);
+            cited.conflicted = hint == Hint::conflicting;
         });
-        if (conflicted) {
-            return true;
+        if (cited.conflicted) {
+            return cited;
         }
     }
-    return false;
+    return cited;
 }
 
-bool Solver::replay_arcs(std::span<const ClauseId> arcs, HintTrail& trail,
-                         std::vector<ClauseId>& hints) {
+Solver::Citations Solver::replay_arcs(std::span<const ClauseId> arcs, HintTrail& trail) {
+    Citations cited;
     for (const ClauseId arc : arcs) {
         const std::vector<Equation> rows = lift_clause(arc);
-        if (cite_root_units(rows, trail, hints)) {
-            return true;
+        const Citations units = cite_root_units(rows, trail);
+        cited.hints.insert(cited.hints.end(), units.hints.begin(), units.hints.end());
+        if (units.conflicted) {
+            cited.conflicted = true;
+            return cited;
         }
         const Hint hint = trail.cite(rows);
         assert(hint != Hint::not_unit && "an arc's clause does not propagate on the replay");
         if (hint == Hint::known) {
             continue;
         }
-        hints.push_back(proof_id_of_clause_[arc]);
+        cited.hints.push_back(proof_id_of_clause_[arc]);
         if (hint == Hint::conflicting) {
-            return true;
+            cited.conflicted = true;
+            return cited;
         }
         if (trail.is_refuted()) {
             // The trail spans `0 = 1` now, so it holds the negation of what it
@@ -162,11 +164,12 @@ bool Solver::replay_arcs(std::span<const ClauseId> arcs, HintTrail& trail,
             [[maybe_unused]] const Hint again = trail.cite(rows);
             assert(again == Hint::conflicting &&
                    "a refuted trail does not falsify the clause that refuted it");
-            hints.push_back(proof_id_of_clause_[arc]);
-            return true;
+            cited.hints.push_back(proof_id_of_clause_[arc]);
+            cited.conflicted = true;
+            return cited;
         }
     }
-    return false;
+    return cited;
 }
 
 std::vector<ClauseId> Solver::write_implication_graph_lines(
@@ -206,6 +209,11 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
         hints.push_back(step_line[index]);
         return hint == Hint::conflicting;
     };
+    const auto replay = [&](std::span<const ClauseId> arcs) {
+        const Citations cited = replay_arcs(arcs, trail);
+        hints.insert(hints.end(), cited.hints.begin(), cited.hints.end());
+        return cited.conflicted;
+    };
 
     for (std::size_t index = 0; index < record.steps.size(); ++index) {
         const ImplicationGraphProofStep& step = record.steps[index];
@@ -216,27 +224,27 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
 
         rows.clear();
         hints.clear();
-        bool conflicted = false;
+        [[maybe_unused]] bool conflicted = false;
         switch (step.kind) {
             case Kind::refuted:
                 // Assume what the run refuted, and follow it to `0 = 1`.
                 rows.push_back(negated);
                 trail.restart(rows);
-                conflicted = replay_arcs(arcs, trail, hints);
+                conflicted = replay(arcs);
                 break;
             case Kind::reaches_refuted:
                 rows.push_back(negated);
                 trail.restart(rows);
-                conflicted = replay_arcs(arcs, trail, hints) || cite_step(step.source);
+                conflicted = replay(arcs) || cite_step(step.source);
                 break;
             case Kind::one_side:
                 rows.push_back(negated);
                 trail.restart(rows);
-                conflicted = cite_step(step.source) || replay_arcs(arcs, trail, hints);
+                conflicted = cite_step(step.source) || replay(arcs);
                 break;
             case Kind::both_sides: {
                 // Neither side is refuted, so the two halves of the case split
-                // are clauses of their own, cited once and then deleted.
+                // are clauses of their own, each cited once.
                 const Equation assumed = lifted(step.assumed);
                 Equation negated_assumed = assumed;
                 negated_assumed.plus_assign(original_false);
@@ -249,14 +257,14 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
 
                 rows = first_rows;
                 trail.restart(rows);
-                [[maybe_unused]] const bool first = replay_arcs(arcs, trail, hints);
+                [[maybe_unused]] const bool first = replay(arcs);
                 assert(first && "one half of a two-sided unit reaches no conflict");
                 const ClauseId first_line = write();
 
                 rows = second_rows;
                 hints.clear();
                 trail.restart(rows);
-                [[maybe_unused]] const bool second = replay_arcs(other_arcs, trail, hints);
+                [[maybe_unused]] const bool second = replay(other_arcs);
                 assert(second && "the other half of a two-sided unit reaches no conflict");
                 const ClauseId second_line = write();
 

@@ -2,7 +2,6 @@
 
 #include <optional>
 #include <span>
-#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -12,17 +11,9 @@
 #include "algebra/reduce_result.h"
 #include "algebra_test_support.h"
 #include "allocation_counter.h"
+#include "death_test.h"
 #include "util/index_set.h"
 #include "util/print_mode.h"
-
-#if !defined(NDEBUG) && (defined(__APPLE__) || defined(__unix__))
-#define XORCLE_HAS_DEATH_TESTS 1
-#include <csignal>
-#include <cstdio>
-
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 namespace xorcle {
 
@@ -160,22 +151,12 @@ TEST_CASE_TEMPLATE("equation: assign_from refills without allocating", Tag, Dens
 TEST_CASE_TEMPLATE("equation: assign_from rejects a bit-count mismatch", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    // A same-bit-count copy is an internal invariant, so a mismatch asserts. That
-    // can only be observed by watching a child process die. The child inherits
-    // doctest's crash handler, which would report the expected abort as a failure.
-    const pid_t child = ::fork();
-    REQUIRE(child >= 0);
-    if (child == 0) {
-        std::signal(SIGABRT, SIG_DFL);
-        std::freopen("/dev/null", "w", stderr);
+    // A same-bit-count copy is an internal invariant, so a mismatch asserts.
+    CHECK(dies_in_child([] {
         Equation narrow(repr, 10);
         const Equation wide(repr, 20);
         narrow.assign_from(wide);
-        ::_exit(0);
-    }
-    int status = 0;
-    REQUIRE(::waitpid(child, &status, 0) == child);
-    CHECK(WIFSIGNALED(status));
+    }));
 }
 #endif
 

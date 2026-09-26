@@ -23,14 +23,14 @@ Options parse(const std::vector<std::string>& arguments) {
 
 /// @brief Parse a command line with the input path already appended.
 Options parse_with_input(std::vector<std::string> arguments) {
-    arguments.push_back("instance.xnf");
+    arguments.emplace_back("instance.xnf");
     return parse(arguments);
 }
 
 /// @brief The message a rejected command line reports.
 template <class Error>
 std::string rejection_message(std::vector<std::string> arguments) {
-    arguments.push_back("instance.xnf");
+    arguments.emplace_back("instance.xnf");
     std::ostringstream help;
     try {
         parse_options(arguments, help);
@@ -41,38 +41,31 @@ std::string rejection_message(std::vector<std::string> arguments) {
 }
 
 bool contains(const std::string& haystack, const std::string& needle) {
-    return haystack.find(needle) != std::string::npos;
+    return haystack.contains(needle);
 }
 
 } // namespace
 
+// The choices, not the tuned numbers: every numeric default is read from the
+// table below, and "a recorded value knows whether it is the default" checks
+// that an empty command line lands on each of them.
 TEST_CASE("options: the documented defaults") {
     const Options options = parse_with_input({});
     CHECK(options.input_path == "instance.xnf");
     CHECK(options.equation_repr == EquationRepr::dense);
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
-    CHECK(options.compact_cadence == 256);
     CHECK(options.decisions == DecisionProcedureName::csids);
-    CHECK(options.csids_initial == doctest::Approx(1.0));
-    CHECK(options.csids_decay == doctest::Approx(0.98));
-    CHECK(options.csids_bump == doctest::Approx(1.0));
     CHECK(options.phase == DecisionPhase::falsify);
     CHECK(options.selection == ClauseSelectorName::exact_watchlist);
     CHECK(options.restart == RestartMethod::none);
     CHECK(options.deletion == true);
-    CHECK(options.deletion_cadence == 100);
-    CHECK(options.deletion_core_lbd == 2);
-    CHECK(options.deletion_secondary_lbd == 6);
-    CHECK(options.deletion_demote_cadence_in_passes == 2);
     CHECK(options.deletion_key == DeletionKey::activity);
     CHECK(options.bump_responsible_clauses == false);
     CHECK(options.implication_graph == true);
     CHECK(options.proof.empty());
     CHECK(options.stats_file.empty());
-    CHECK(options.report_cadence == 100);
     CHECK(options.report == "default");
-    CHECK(options.csids_preset.empty());
 }
 
 TEST_CASE("options: --name=value sets each kind") {
@@ -169,89 +162,16 @@ TEST_CASE("options: malformed command lines are rejected") {
     CHECK_THROWS_AS(parse_options({"a.xnf", "b.xnf"}, help), CliError);
 }
 
-TEST_CASE("options: the CSIDS presets set the whole triple") {
-    // The triple is conventionally written (A0, delta, alpha) while
-    // `CsidsConfig` declares it as (A0, alpha, delta), so these check the
-    // members by name.
-    SUBCASE("berkmin: A0 = 1, delta = 0, alpha = 0.5") {
-        const Options options = parse_with_input({"--decisions=berkmin"});
-        CHECK(options.decisions == DecisionProcedureName::csids);
-        CHECK(options.csids_preset == "berkmin");
-        CHECK(options.csids_initial == doctest::Approx(1.0));
-        CHECK(options.csids_bump == doctest::Approx(0.0));
-        CHECK(options.csids_decay == doctest::Approx(0.5));
-        CHECK(csids_config(options).bump == doctest::Approx(0.0));
-        CHECK(csids_config(options).decay == doctest::Approx(0.5));
-    }
-    SUBCASE("cmtf: A0 = 1, delta = 1, alpha = 0.25") {
-        const Options options = parse_with_input({"--decisions=cmtf"});
-        CHECK(options.csids_preset == "cmtf");
-        CHECK(options.csids_initial == doctest::Approx(1.0));
-        CHECK(options.csids_bump == doctest::Approx(1.0));
-        CHECK(options.csids_decay == doctest::Approx(0.25));
-    }
-}
-
-TEST_CASE("options: with --decisions repeated, the last preset named wins") {
-    // Presets are recorded during the argument loop and applied once afterwards,
-    // so an earlier preset leaves nothing of its triple behind.
-    SUBCASE("a plain procedure after a preset restores the defaults") {
-        const Options options = parse_with_input({"--decisions=berkmin", "--decisions=csids"});
-        CHECK(options.decisions == DecisionProcedureName::csids);
-        CHECK(options.csids_preset.empty());
-        CHECK(options.csids_decay == doctest::Approx(0.98));
-        CHECK(options.csids_bump == doctest::Approx(1.0));
-    }
-    SUBCASE("a preset after a plain procedure takes effect") {
-        const Options options = parse_with_input({"--decisions=csids", "--decisions=berkmin"});
-        CHECK(options.csids_preset == "berkmin");
-        CHECK(options.csids_decay == doctest::Approx(0.5));
-        CHECK(options.csids_bump == doctest::Approx(0.0));
-    }
-    SUBCASE("a preset after another preset replaces the whole triple") {
-        const Options options = parse_with_input({"--decisions=berkmin", "--decisions=cmtf"});
-        CHECK(options.csids_preset == "cmtf");
-        CHECK(options.csids_decay == doctest::Approx(0.25));
-        CHECK(options.csids_bump == doctest::Approx(1.0));
-    }
-    SUBCASE("a manual override is refused or accepted by the preset finally in force") {
-        CHECK(contains(rejection_message<CliError>({"--decisions=berkmin", "--csids-decay=0.7"}),
-                       "is a preset"));
-        const Options options = parse_with_input(
-            {"--decisions=berkmin", "--decisions=csids", "--csids-decay=0.7"});
-        CHECK(options.csids_preset.empty());
-        CHECK(options.csids_decay == doctest::Approx(0.7));
-    }
-}
-
-TEST_CASE("options: a preset rejects an accompanying manual override") {
-    for (const std::string preset : {"berkmin", "cmtf"}) {
-        for (const std::string override_option :
-             {"--csids-initial=2", "--csids-decay=0.9", "--csids-bump=3"}) {
-            const std::string message =
-                rejection_message<CliError>({"--decisions=" + preset, override_option});
-            CHECK(contains(message, "--decisions=" + preset));
-            CHECK(contains(message, "is a preset"));
-        }
-    }
-    // Order does not matter: the check runs once, after the whole line.
-    CHECK(contains(rejection_message<CliError>({"--csids-decay=0.9", "--decisions=cmtf"}),
-                   "is a preset"));
-    // Without a preset the same override is fine.
-    CHECK(parse_with_input({"--decisions=csids", "--csids-decay=0.9"}).csids_decay ==
-          doctest::Approx(0.9));
-}
-
-TEST_CASE("options: --proof goes with compaction, and --proof-raw with either") {
-    // Post-processing cites the units compaction ate, so the two go together.
+TEST_CASE("options: --proof and --proof-raw go with compaction on or off") {
     const Options options = parse_with_input({"--proof=out.lrup"});
-    CHECK(options.compact);
     CHECK(options.proof == "out.lrup");
     CHECK(options.proof_raw.empty());
+    CHECK(parse_with_input({"--proof=out.lrup", "--compact=false"}).proof == "out.lrup");
 
     const Options raw = parse_with_input({"--proof-raw=out.raw"});
     CHECK(raw.proof.empty());
     CHECK(raw.proof_raw == "out.raw");
+    CHECK(parse_with_input({"--proof-raw=out.raw", "--compact=false"}).proof_raw == "out.raw");
 }
 
 TEST_CASE("options: enum labels are the first spelling naming an enumerator") {
@@ -274,15 +194,17 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "[default: 0; minimum 0]"));
     CHECK(contains(text, "--compact=true|false"));
     CHECK(contains(text, "--compact-cadence=N"));
-    CHECK(contains(text, "[default: 256; minimum 1]"));
+    CHECK(contains(text, "[default: " + std::to_string(Options{}.compact_cadence) +
+                             "; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
-    CHECK(contains(text, "[default: 0.98; range 0..1]"));
-    CHECK(contains(text, "--decisions=csids|fixed_literals|berkmin|cmtf"));
+    CHECK(contains(text, "[default: " + format_real(Options{}.csids_decay) + "; range 0..1]"));
+    CHECK(contains(text, "--decisions=csids|fixed_literals"));
     CHECK(contains(text, "--phase=falsify|satisfy|random"));
     CHECK(contains(text, "--selection=cyclic|exact_watchlist"));
     CHECK(contains(text, "--proof=PATH"));
     CHECK(contains(text, "--stats-file=PATH"));
-    CHECK(contains(text, "--help"));
+    CHECK(contains(text, "--help, -h"));
+    CHECK(contains(text, "--version"));
 
     CHECK(contains(text, "--deletion=true|false"));
     CHECK(contains(text, "periodically delete some learned clauses [default: true]"));
@@ -307,24 +229,6 @@ TEST_CASE("options: the luby budget is a positive count") {
     CHECK_NOTHROW(parse_with_input({"--restart=luby", "--restart-luby-unit=4000"}));
 }
 
-TEST_CASE("options: deletion needs the heuristics it reads") {
-    CHECK(contains(rejection_message<CliError>({"--deletion=true", "--deletion-key=activity",
-                                                "--decisions=fixed_literals"}),
-                   "--deletion-key=activity requires --decisions=csids"));
-    CHECK(contains(rejection_message<CliError>({"--deletion-core-lbd=7"}),
-                   "--deletion-core-lbd must not exceed --deletion-secondary-lbd"));
-
-    // The key defaults to activity, so --deletion alone carries the requirement.
-    const std::string defaulted =
-        rejection_message<CliError>({"--deletion=true", "--decisions=fixed_literals"});
-    CHECK(contains(defaulted, "requires --decisions=csids"));
-
-    // Each constraint binds only where deletion actually reads the heuristic.
-    CHECK_NOTHROW(parse_with_input({"--deletion=true", "--deletion-key=activity"}));
-    CHECK_NOTHROW(
-        parse_with_input({"--deletion=true", "--decisions=fixed_literals", "--deletion-key=lbd"}));
-    CHECK_NOTHROW(parse_with_input({"--deletion-core-lbd=7", "--deletion-secondary-lbd=9"}));
-}
 
 TEST_CASE("options: the exact watchlist takes deletion and subsumption, but not sparse rows") {
     const Options options = parse_with_input({"--selection=exact_watchlist"});
@@ -340,19 +244,37 @@ TEST_CASE("options: the exact watchlist takes deletion and subsumption, but not 
 }
 
 TEST_CASE("options: deletion refuses an incompatible choice rather than yielding") {
-    const auto refusal = [](std::vector<std::string> arguments) {
-        return rejection_message<CliError>(std::move(arguments));
-    };
-    CHECK(refusal({"--decisions=fixed_literals"}).find("--deletion-key=activity") == 0);
+    CHECK(contains(rejection_message<CliError>({"--deletion-core-lbd=7"}),
+                   "--deletion-core-lbd must not exceed --deletion-secondary-lbd"));
+    CHECK_NOTHROW(parse_with_input({"--deletion-core-lbd=7", "--deletion-secondary-lbd=9"}));
+
+    // The key defaults to activity, so the default deletion alone carries the
+    // requirement, whether or not --deletion is given.
+    CHECK(rejection_message<CliError>({"--decisions=fixed_literals"})
+              .starts_with("--deletion-key=activity requires --decisions=csids"));
+    CHECK(contains(rejection_message<CliError>({"--deletion=true", "--decisions=fixed_literals"}),
+                   "requires --decisions=csids"));
 
     // Saying what you want is always accepted.
     CHECK(parse_with_input({"--decisions=fixed_literals", "--deletion=false"}).deletion == false);
     CHECK(parse_with_input({"--decisions=fixed_literals", "--deletion-key=lbd"}).deletion == true);
+    CHECK_NOTHROW(parse_with_input({"--deletion=true", "--deletion-key=activity"}));
 
     // A compatible choice needs nothing said.
     CHECK(parse_with_input({}).deletion == true);
     CHECK(parse_with_input({"--selection=cyclic"}).deletion == true);
-    CHECK(parse_with_input({"--decisions=berkmin"}).deletion == true);
+}
+
+TEST_CASE("options: each configuration struct defaults to what an empty command line gives") {
+    const Options defaults = parse_with_input({});
+    CHECK(csids_config(defaults) == CsidsConfig{});
+    CHECK(compaction_config(defaults) == CompactionConfig{});
+    CHECK(deletion_config(defaults) == DeletionConfig{});
+    CHECK(implication_graph_config(defaults) == ImplicationGraphConfig{});
+    // `--propagate-miss-rate` is read only under `--selection=cyclic`, so the
+    // default selector resolves it to 0.
+    CHECK(propagation_config(defaults) == PropagationConfig{});
+    CHECK(restart_config(defaults) == RestartConfig{});
 }
 
 TEST_CASE("options: the configuration projections carry the values across") {
@@ -371,8 +293,6 @@ TEST_CASE("options: the configuration projections carry the values across") {
     CHECK(deletion.tiers.core_lbd == 2);
     CHECK(deletion.tiers.secondary_lbd == 8);
     CHECK(deletion.key == DeletionKey::activity);
-    // Only the caller holding the decision procedure can fill this in.
-    CHECK(deletion.activity == nullptr);
 
     const CompactionConfig compaction = compaction_config(options);
     CHECK(compaction.enabled == false);
@@ -419,8 +339,8 @@ TEST_CASE("options: the recorded configuration is the whole table") {
         return std::string("<absent>");
     };
     CHECK(value_of("compact") == "true");
-    CHECK(value_of("compact_cadence") == "256");
-    CHECK(value_of("csids_decay") == "0.98");
+    CHECK(value_of("compact_cadence") == std::to_string(Options{}.compact_cadence));
+    CHECK(value_of("csids_decay") == format_real(Options{}.csids_decay));
     CHECK(value_of("decisions") == "csids");
     // An unset path records as empty, not as the help text's "unset".
     CHECK(value_of("proof") == "");
@@ -449,23 +369,6 @@ TEST_CASE("options: a recorded value knows whether it is the default") {
     CHECK(entry_for(changed, "compact_cadence").is_default);
 }
 
-TEST_CASE("options: a preset records as the triple it stands for") {
-    // Replaying the record must reproduce the run, so the preset resolves rather
-    // than being recorded under its own name.
-    const std::vector<ConfigEntry> settings = option_settings(parse_with_input({"--decisions=cmtf"}));
-    const auto value_of = [&settings](const std::string& name) {
-        for (const ConfigEntry& entry : settings) {
-            if (entry.name == name) {
-                return entry.value;
-            }
-        }
-        return std::string("<absent>");
-    };
-    CHECK(value_of("decisions") == "csids");
-    CHECK(value_of("csids_initial") != "<absent>");
-    CHECK(value_of("csids_decay") != "<absent>");
-}
-
 TEST_CASE("options: an option nothing would read is refused, not ignored") {
     // One case per shape in the requirement table, so a row that stops firing
     // shows up here rather than as a silently ignored flag.
@@ -489,8 +392,8 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(refusal({"--stats-file=s.csv", "--report=all"}).starts_with("--report requires"));
     CHECK(refusal({"--report-cadence=0", "--report=all"}).starts_with("--report requires"));
 
-    // The two that were inert while claiming to be on: --phase and --seed reach
-    // only CSIDS, and trail reuse needs the procedure that ranks levels.
+    // --phase reaches only CSIDS, and trail reuse needs the procedure that
+    // ranks levels; --seed is read either way.
     CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--phase=satisfy"})
               .starts_with("--phase requires --decisions=csids"));
     CHECK_NOTHROW(
@@ -551,11 +454,6 @@ TEST_CASE("options: only the cyclic selector reads the miss rate") {
     const auto cyclic = std::vector<std::string>{"--selection=cyclic"};
     CHECK(propagation_config(parse_with_input(cyclic)).miss_rate == doctest::Approx(0.04));
     CHECK(propagation_config(parse_with_input({})).miss_rate == 0.0);
-
-    CHECK(rejection_message<CliError>({"--propagate-miss-rate=0.04"})
-              .starts_with("--propagate-miss-rate requires --selection=cyclic"));
-    CHECK(rejection_message<CliError>({"--propagate-miss-rate=0"})
-              .starts_with("--propagate-miss-rate requires --selection=cyclic"));
 
     std::vector<std::string> complete = cyclic;
     complete.emplace_back("--propagate-miss-rate=0");

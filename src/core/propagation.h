@@ -28,9 +28,7 @@ public:
     /// and with its watches possibly updated.
     ///
     /// @param trigger_hint A trigger the selector already computed, or empty.
-    /// @param num_watch_updates Incremented once per watch moved. An accumulator
-    /// rather than a returned count: this runs on the propagation path, roughly
-    /// 1,000x more often than conflict- or decision-scale work.
+    /// @param num_watch_updates Incremented once per watch moved.
     /// @param handler Notified once per watch moved.
     /// @param used_row_idxs When non-null and the clause propagates, receives the
     /// trail-span rows the propagated equation's derivation uses, indexed by span
@@ -46,8 +44,7 @@ public:
     /// range and `next_watch_search_start < clause.rows()`.
     /// @pre A non-empty `trigger_hint` names a trigger that holds, its companion
     /// watch is not `0 = 1` modulo the span, and it is empty when the clause is
-    /// unit. `WatchType::one` and `WatchType::sum` both move `watched1`, so either
-    /// may name a second watch in the span plus the first.
+    /// unit. A `WatchType::one` hint may name a second watch in the span plus the first.
     Equation* unit_propagate_one_clause(ClauseId id, Clause& clause, const Trail& trail,
                                         std::optional<WatchType> trigger_hint,
                                         std::size_t& num_watch_updates,

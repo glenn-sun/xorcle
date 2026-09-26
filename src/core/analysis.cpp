@@ -87,7 +87,7 @@ ResolvedReason resolve_asserting_basis(
            "the pivot column does not lead the pivot row");
     assert(is_trail_basis_one(trail_basis_one, asserting_basis) &&
            "trail_basis_one is not the unit vector at column 0");
-    assert(trail_is_conflicting(trail) && "resolution step on a trail that does not contain 1");
+    assert(trail_is_conflicting(trail) && "resolution step on a trail that does not contain 0 = 1");
 
     Equation asserting_row = asserting_basis.pop_row(pivot_row_idx);
 
@@ -149,7 +149,7 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
                                                  Rng& representative_rng) {
     assert(trail.level() == 0 && "the root conflict chain is only defined at the root");
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
-    assert(trail_is_conflicting(trail) && "the root conflict trail does not contain 1");
+    assert(trail_is_conflicting(trail) && "the root conflict trail does not contain 0 = 1");
     assert(conflict_clause_id < clauses.size() && "conflicting reason id is out of range");
     assert(trail.reasons().back() == std::optional<ClauseId>{conflict_clause_id} &&
            "the conflicting clause did not propagate the last trail row");
@@ -181,7 +181,8 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                                       bool report_responsible_trail_idxs, bool collect_subsumed) {
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail.level() > 0 && "a root conflict is UNSAT and is not analysed");
-    assert(trail_is_conflicting(trail) && "conflict analysis on a trail that does not contain 1");
+    assert(trail_is_conflicting(trail) &&
+           "conflict analysis on a trail that does not contain 0 = 1");
     assert(conflict_clause_id < clauses.size() && "conflicting reason id is out of range");
     assert(trail.reasons().back() == std::optional<ClauseId>{conflict_clause_id} &&
            "the conflicting clause did not propagate the last trail row");
@@ -245,14 +246,6 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
             reason_lbds.push_back(*reason.lbd);
         }
         decisions.update_with_resolved_clause(reason.clause_id);
-        assert(trail_idx < trail.trail_idx_to_row_idx().size() &&
-               "trail order index is out of range");
-        assert(trail.trail_idx_to_row_idx()[trail_idx] < trail.span().rows() &&
-               "trail order map points outside the span");
-        // The row-echelon row, not the raw equation handed to `Trail::learn()`;
-        // the two differ by earlier rows.
-        decisions.update_with_critical_equation(
-            trail.span().row(trail.trail_idx_to_row_idx()[trail_idx]));
         if (collect_subsumed) {
             last_resolution_records_begin = subsumed_reasons.size();
             maybe_record_subsumed_conflicting();

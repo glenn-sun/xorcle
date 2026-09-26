@@ -64,7 +64,21 @@ public:
     /// @pre `rows() > 0`.
     void pop_last_row();
 
+    /// @pre `row_idx < rows()`.
+    Bits pop_row(std::size_t row_idx);
+
+    /// @pre `row_idx < rows()`, and `v` leads strictly after the row.
+    void add_to_row(std::size_t row_idx, const Bits& v);
+
+    /// @brief Bring the rows to reduced row-echelon form.
+    void reduce_rows();
+
+    bool carries_any_col(const std::vector<std::size_t>& col_idxs) const;
+
 private:
+    /// @brief Rebuild the pivot tables from the rows' leading bits.
+    void index_pivots();
+
     std::size_t num_vars_;
     std::vector<Bits> rows_;
     std::vector<bool> pivot_;

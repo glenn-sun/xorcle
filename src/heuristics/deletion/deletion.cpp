@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <optional>
 
 namespace xorcle {
@@ -76,7 +77,8 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
     const std::size_t delete_count = candidates.size() / 2;
     std::sort(candidates.begin(), candidates.end(),
               [&](ClauseId left, ClauseId right) { return deleted_first(state, left, right); });
-    plan.deleted.assign(candidates.begin(), candidates.begin() + delete_count);
+    plan.deleted.assign(candidates.begin(),
+                        candidates.begin() + static_cast<std::ptrdiff_t>(delete_count));
     std::sort(plan.deleted.begin(), plan.deleted.end());
     return plan;
 }

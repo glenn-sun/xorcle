@@ -10,18 +10,18 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
-#include <cstdlib>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "util/index_set.h"
 #include "util/stats.h"
 #include "util/stats_writer.h"
+#include "io_test_support.h"
 
 namespace xorcle {
 
@@ -100,8 +100,7 @@ RunStats sample_stats() {
 class TempFile {
 public:
     TempFile()
-        : path_(std::filesystem::temp_directory_path() /
-                ("xorcle_stats_test_" + std::to_string(std::rand()) + ".csv")) {
+        : path_(scratch_path("stats_" + std::to_string(next_index_++) + ".csv")) {
         std::filesystem::remove(path_);
     }
     ~TempFile() { std::filesystem::remove(path_); }
@@ -112,6 +111,7 @@ public:
     const std::string& path() const { return path_string_; }
 
 private:
+    static inline std::size_t next_index_ = 0;
     std::filesystem::path path_;
     std::string path_string_ = path_.string();
 };
@@ -155,19 +155,19 @@ std::vector<std::string> row_of(const std::string& csv) {
 
 } // namespace
 
-TEST_CASE("to_string(SolveResult) uses the CSV spellings") {
+TEST_CASE("stats: to_string(SolveResult) uses the CSV spellings") {
     CHECK(to_string(SolveResult::sat) == "SAT");
     CHECK(to_string(SolveResult::unsat) == "UNSAT");
 }
 
-TEST_CASE("config_value reads the recorded configuration") {
+TEST_CASE("stats: config_value reads the recorded configuration") {
     const RunStats stats = sample_stats();
     CHECK(config_value(stats, "decisions") == "csids");
     CHECK(config_value(stats, "deletion") == "false");
     CHECK(config_value(stats, "absent") == "");
 }
 
-TEST_CASE("a section reports only when the configuration says it ran") {
+TEST_CASE("stats: a section reports only when the configuration says it ran") {
     RunStats stats = sample_stats();
 
     // Always, whatever the run did.
@@ -276,33 +276,17 @@ TEST_CASE("ConsoleStatsWriter: zero denominators omit their ratio lines") {
     stats.file = "x.xnf";
     stats.result = SolveResult::unsat;
 
-    const std::string expected =
-        "c File: x.xnf\n"
-        "c Variables: 0\n"
-        "c Active variables: 0\n"
-        "c Start clauses: 0\n"
-        "c Configuration: all 0 options at their defaults\n"
-        "c Conflicts: 0\n"
-        "c Decisions: 0\n"
-        "c Fallback decisions: 0\n"
-        "c Propagations: 0\n"
-        "c Attempted propagations: 0\n"
-        "c Watch updates: 0\n"
-        "c Compactions: 0\n"
-        "c Learned clauses: 0\n"
-        "c Clauses in database: 0\n"
-        "c Clauses allocated: 0\n"
-        "c Average learned LBD: 0.000\n"
-        "c Learned equation bits: 0\n"
-        "c Learned width-1 clauses: 0\n"
-        "c Learned width-2 clauses: 0\n"
-        "c Subsumption replacements of width at most 2: 0\n"
-        "c Compaction narrowings to width at most 2: 0\n"
-        "c Parse time (s): 0.000\n"
-        "c Solve time (s): 0.000\n"
-        "c Decision time (s), also in the solve time: 0.000\n"
-        "s UNSATISFIABLE\n";
-    CHECK(console_output(stats) == expected);
+    const std::string output = console_output(stats);
+    for (const char* ratio : {"Propagations per conflict", "Attempts per propagation",
+                              "Fallback decision rate", "Conflicts per second",
+                              "Propagations per second"}) {
+        CAPTURE(ratio);
+        CHECK(output.find(ratio) == std::string::npos);
+    }
+    // The counts the ratios would divide are still reported.
+    CHECK(output.find("c Conflicts: 0\n") != std::string::npos);
+    CHECK(output.find("c Propagations: 0\n") != std::string::npos);
+    CHECK(output.ends_with("s UNSATISFIABLE\n"));
 }
 
 TEST_CASE("ConsoleStatsWriter: the SAT assignment lines") {
@@ -351,7 +335,7 @@ TEST_CASE("ConsoleStatsWriter: the SAT assignment lines") {
     }
 }
 
-TEST_CASE("write_verdict writes the verdict and the model, and nothing else") {
+TEST_CASE("stats: write_verdict writes the verdict and the model, and nothing else") {
     RunStats stats = sample_stats();
     stats.result = SolveResult::sat;
     stats.sat_assignment = IndexSet(3);

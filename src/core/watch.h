@@ -13,8 +13,7 @@ class Trail;
 /// and the second is independent of it.
 enum class WatchType {
     zero, ///< The first watch reduced to `0 = 0`.
-    one, ///< The second watch reduced to `0 = 0`.
-    sum ///< The two watches became equal. Normalized to a `one` trigger.
+    one ///< The second watch reduced to `0 = 0`.
 };
 
 /// @brief Receives the watch movements a propagation step performs.
@@ -24,13 +23,8 @@ public:
 
     /// @brief Report that a watch of clause `id` moved, called *after*
     /// `watched0` / `watched1` are updated.
-    virtual void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch, WatchType type,
+    virtual void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch_row_idx, WatchType type,
                                        const Trail& trail) = 0;
-};
-
-class IgnoreWatchUpdates final : public WatchUpdateHandler {
-public:
-    void update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&) override {}
 };
 
 } // namespace xorcle

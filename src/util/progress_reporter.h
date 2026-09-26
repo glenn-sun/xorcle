@@ -1,9 +1,8 @@
 #pragma once
 
 /// @file progress_reporter.h
-/// @warning The line shape is columnar, not `Key: value`. A human reading a console run
-/// tells the two apart by shape, so a progress line must not carry a
-/// `c Key: value` shape.
+/// @warning The line shape is columnar, not `Key: value`, which is the end-of-run
+/// statistics' shape.
 
 #include <cstddef>
 #include <iosfwd>
@@ -47,11 +46,10 @@ struct ProgressSnapshot {
     double conflicts_per_second = 0.0;
     std::size_t num_propagations = 0;
     std::size_t num_clauses = 0; ///< Live: deletion has already been subtracted.
-    /// @brief Decision level and trail length averaged over the conflicts in the
-    /// interval, each sampled *at* its conflict. The instantaneous values are in
-    /// the `search` group; these are the ones that trend.
+    /// @brief Decision level averaged over the conflicts in the interval, sampled
+    /// *at* each conflict.
     double average_decision_level = 0.0;
-    double average_trail_length = 0.0;
+    double average_trail_length = 0.0; ///< As `average_decision_level`, of the trail length.
     /// @brief Active variables less the root trail's rank: the dimension of the
     /// space still to be searched.
     std::size_t remaining_vars = 0;
@@ -80,7 +78,7 @@ public:
 
 /// @brief Write progress as aligned DIMACS `c` comment lines, under a
 /// column-name line repeated often enough to stay on screen.
-class ConsoleProgressReporter : public ProgressReporter {
+class ConsoleProgressReporter final : public ProgressReporter {
 public:
     /// @param out Not owned, so it must outlive the reporter.
     /// @param groups Which columns to write; see `progress_group`.

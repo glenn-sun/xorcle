@@ -4,9 +4,7 @@
 /// @brief The statistics table: one row per numeric field of a run record.
 ///
 /// `src/util/stats.h` includes it to declare `RunStats`'s members, and
-/// `src/util/stats_writer.cpp` includes it to write both output formats, so a
-/// row added here reaches the console block and the CSV together and the two
-/// can no longer drift.
+/// `src/util/stats_writer.cpp` includes it to write both output formats.
 ///
 /// - `XORCLE_STAT(section, kind, name, csv_name, label)` — one field. `kind` is
 ///   `Count` (a `std::size_t`, printed as digits) or `Real` (a `double`,
@@ -123,7 +121,7 @@ XORCLE_STAT(implication_graph, Real, implication_graph_time_s, "implication_grap
 XORCLE_STAT(exact_watchlist, Count, exact_touches, "exact_touches", "Cells swept")
 XORCLE_STAT(exact_watchlist, Count, exact_skips, "exact_skips", "Cells left unswept, their pair unable to trigger")
 XORCLE_STAT(exact_watchlist, Count, exact_fixups, "exact_fixups", "Second cells reduced by their first")
-XORCLE_STAT(exact_watchlist, Count, exact_xors, "exact_xors", "Row additions in sweeps")
+XORCLE_STAT(exact_watchlist, Count, exact_row_additions, "exact_row_additions", "Row additions in sweeps")
 XORCLE_STAT(exact_watchlist, Count, exact_triggers, "exact_triggers", "Clauses queued")
 XORCLE_STAT(exact_watchlist, Count, exact_saves, "exact_saves", "Cells saved")
 XORCLE_STAT(exact_watchlist, Count, exact_restores, "exact_restores", "Cells restored")

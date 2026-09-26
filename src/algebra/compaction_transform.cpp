@@ -5,10 +5,10 @@
 namespace xorcle {
 
 CompactionTransform CompactionTransform::from_dropped_columns(std::size_t old_num_vars,
-                                                              const IndexSet& dropped_columns) {
-    assert(dropped_columns.size() == old_num_vars + 1 &&
-           "dropped_columns must be indexed by column, over old_num_vars + 1 columns");
-    assert(!dropped_columns.test(old_num_vars) && "the constant column is never dropped");
+                                                              const IndexSet& dropped_col_idxs) {
+    assert(dropped_col_idxs.size() == old_num_vars + 1 &&
+           "dropped_col_idxs must be indexed by column, over old_num_vars + 1 columns");
+    assert(!dropped_col_idxs.test(old_num_vars) && "the constant column is never dropped");
 
     CompactionTransform out;
     out.old_num_vars_ = old_num_vars;
@@ -16,7 +16,7 @@ CompactionTransform CompactionTransform::from_dropped_columns(std::size_t old_nu
     out.new_col_idx_to_old_col_idx_.reserve(old_num_vars);
 
     for (std::size_t old_col_idx = 0; old_col_idx < old_num_vars; ++old_col_idx) {
-        if (dropped_columns.test(old_col_idx)) {
+        if (dropped_col_idxs.test(old_col_idx)) {
             continue;
         }
         out.old_col_idx_to_new_col_idx_[old_col_idx] = out.new_col_idx_to_old_col_idx_.size();

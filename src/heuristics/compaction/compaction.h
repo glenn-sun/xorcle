@@ -25,8 +25,9 @@ struct CompactionPlan {
     CompactionTransform transform;
 
     /// @brief The active clauses rewritten, in ascending id order: those a dropped
-    /// variable occurs in or that span `0 = 1`. Every other active clause is left to
-    /// `renumber_clause()`.
+    /// variable occurs in or that span `0 = 1`.
+    ///
+    /// Every other active clause is left to `renumber_clause()`.
     std::vector<ClauseId> rewritten_clause_ids;
     std::vector<Clause> rewritten_clauses;
 

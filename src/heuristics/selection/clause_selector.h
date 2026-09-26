@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -44,6 +45,8 @@ inline constexpr std::size_t unset_clause_lbd = static_cast<std::size_t>(-1);
 struct ClauseTierConfig {
     std::size_t core_lbd = 2; ///< At most this enters `core`.
     std::size_t secondary_lbd = 6; ///< At most this, and above `core_lbd`, enters `secondary`.
+
+    bool operator==(const ClauseTierConfig&) const = default;
 };
 
 /// @brief What conflict analysis knows about a learned clause beyond its rows.
@@ -55,8 +58,7 @@ struct AssertingClauseInfo {
     std::size_t removed_levels;
 
     /// @brief Whether this replaces a clause on-the-fly subsumption removed,
-    /// rather than closing the conflict. Only an asserting clause is guaranteed
-    /// to propagate, so only it is worth trying first.
+    /// rather than closing the conflict.
     bool is_replacement = false;
 };
 
@@ -81,7 +83,6 @@ public:
 
     Clause& clause(ClauseId id);
 
-    const Clause& clause(ClauseId id) const;
     bool is_clause_active(ClauseId id) const;
     void set_clause_active(ClauseId id, bool active);
 
@@ -116,24 +117,9 @@ public:
     /// @brief The tier a learned clause of this LBD enters.
     ClauseTier tier_for_lbd(std::size_t lbd) const;
 
-    /// @brief The next clause to try, or `std::nullopt` once propagation is
-    /// quiescent or the attempt budget is spent.
-    virtual std::optional<ClauseId> next() = 0;
-
-    /// @brief Open a propagation run, capping the attempts it may make; `0` is
-    /// uncapped.
-    ///
-    /// The default ignores the cap, so a selector that does not implement one
-    /// always runs to quiescence.
-    virtual void set_attempt_budget(std::size_t budget);
-
-    /// @brief Whether the last `std::nullopt` from `next()` was the budget rather
-    /// than quiescence.
-    virtual bool last_stop_was_budget() const noexcept;
-
-    /// @brief `next()`, plus why the clause stopped being a legal watch pair, when
-    /// the selector knows; the default knows nothing.
-    virtual std::optional<ClauseSelection> next_with_hint();
+    /// @brief The next clause to try, with the trigger when the selector knows it;
+    /// `std::nullopt` once the propagation run is over.
+    virtual std::optional<ClauseSelection> next() = 0;
 
     virtual void add_starting_clause(Clause clause); ///< Takes the next id.
 
@@ -148,10 +134,8 @@ public:
 
     virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail);
 
-    virtual void update_with_decision_clause(std::optional<ClauseId> clause_id);
-
     /// @brief Note a watch move, which the default ignores.
-    void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch, WatchType type,
+    void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch_row_idx, WatchType type,
                                const Trail& trail) override;
 
     /// @brief Note that the trail dropped every level above `level`, which the
@@ -186,5 +170,9 @@ protected:
     std::vector<std::size_t> clause_lbd_;
     std::vector<std::size_t> clause_unused_passes_;
 };
+
+/// @brief Build the selector named by @p name over @p num_vars variables.
+std::unique_ptr<ClauseSelector> make_clause_selector(ClauseSelectorName name,
+                                                     std::size_t num_vars);
 
 } // namespace xorcle

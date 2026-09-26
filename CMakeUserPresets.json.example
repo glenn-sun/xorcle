@@ -1,0 +1,19 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "sanitize-local-runtimes",
+            "displayName": "sanitize, with GCC's runtimes unpacked into ~/.local",
+            "inherits": "sanitize",
+            "cacheVariables": {
+                "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined -L$env{HOME}/.local/lib/gcc-sanitizers -Wl,-rpath,$env{HOME}/.local/lib/gcc-sanitizers"
+            }
+        }
+    ],
+    "buildPresets": [
+        { "name": "sanitize-local-runtimes", "configurePreset": "sanitize-local-runtimes", "configuration": "Debug" }
+    ],
+    "testPresets": [
+        { "name": "sanitize-local-runtimes", "inherits": "sanitize", "configurePreset": "sanitize-local-runtimes" }
+    ]
+}

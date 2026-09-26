@@ -13,7 +13,7 @@ FixedLiterals::FixedLiterals(EquationRepr repr, std::size_t num_vars, Seed seed)
 
 void FixedLiterals::reinitialize() {
     reset_phase_rng();
-    reset_stats();
+    reset_counters();
     decision_basis_.clear();
     decision_basis_.reserve(num_vars());
     for (std::size_t var = 0; var < num_vars(); ++var) {
@@ -30,7 +30,7 @@ DecisionResult FixedLiterals::make_decision(const RowSpace& trail_span, const st
            "the trail span does not match the procedure's representation");
     assert(trail_span.rows() < num_vars() && "no legal decision remains");
 
-    record_decision(false);
+    record_decision();
     return DecisionResult{decide_from_basis(decision_basis_, trail_span), std::nullopt};
 }
 

@@ -33,9 +33,10 @@ struct SubsumedReason {
     /// still names the reason exactly if this row survived.
     std::size_t trail_idx;
 
-    /// @brief Whether the subsumed clause is the conflicting clause. It opens
-    /// the derivation instead of closing it, so the replacement's chain is the
-    /// first `num_reasons` entries of `reason_ids` with nothing appended.
+    /// @brief Whether the subsumed clause is the conflicting clause.
+    ///
+    /// It opens the derivation instead of closing it, so the replacement's chain
+    /// is the first `num_reasons` entries of `reason_ids` with nothing appended.
     bool subsumed_conflicting_clause = false;
 };
 
@@ -140,17 +141,11 @@ struct ResolvedReason {
 };
 
 /// @brief One resolution step, in trail-basis coordinates: removes the coordinate
-/// `pivot_col_idx` from `asserting_basis` against the reason clause it names, then
-/// merges in the reason's remaining rows.
-///
-/// @return The reason clause resolved against, measured when `measure_lbd`.
-/// @pre `asserting_basis` is non-empty and `pivot_col_idx` leads its first row.
-/// @pre `trail_basis_one` is the unit vector at column 0 of the basis.
-/// @brief The same resolution step on any row, leaving the decision procedure
-/// untouched.
+/// `pivot_col_idx` from row `pivot_row_idx` of `asserting_basis` against the reason
+/// clause it names, then merges in the reason's remaining rows.
 ///
 /// Continued past the asserting point the step can leave nothing after the pivot
-/// row, which is why this one does not require a row there afterwards.
+/// row.
 ///
 /// With `pivot_row_idx > 0` the rows before the pivot are free: each may take
 /// the popped pivot row or not, one choice per row, and every combination spans
@@ -160,6 +155,7 @@ struct ResolvedReason {
 /// @return The reason clause resolved against, measured when `measure_lbd`.
 /// @pre `pivot_col_idx` leads row `pivot_row_idx`, its trail step was propagated
 /// with a reason id in `clauses`, and the trail is conflicting.
+/// @pre `trail_basis_one` is the unit vector at column 0 of the basis.
 /// @post No row from `pivot_row_idx` on leads at or before `pivot_col_idx`.
 ResolvedReason resolve_asserting_basis(
     TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx, std::size_t pivot_col_idx,

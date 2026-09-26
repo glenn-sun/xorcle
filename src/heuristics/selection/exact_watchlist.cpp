@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <bit>
 #include <cassert>
-#include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <utility>
 
@@ -16,6 +14,8 @@ namespace xorcle {
 namespace {
 
 using Word = DenseGF2Vector::Word;
+constexpr std::size_t word_shift = DenseGF2Vector::word_shift;
+constexpr std::size_t word_mask = DenseGF2Vector::word_mask;
 
 constexpr std::size_t npos = static_cast<std::size_t>(-1);
 
@@ -26,7 +26,7 @@ const Word* words_of(const Equation& equation) {
 std::size_t leading_bit(const Word* words, std::size_t num_words) {
     for (std::size_t w = 0; w < num_words; ++w) {
         if (words[w] != 0) {
-            return (w << 6) + static_cast<std::size_t>(std::countr_zero(words[w]));
+            return (w << word_shift) + static_cast<std::size_t>(std::countr_zero(words[w]));
         }
     }
     return npos;
@@ -37,14 +37,15 @@ std::size_t leading_bit(const Word* words, std::size_t num_words) {
 std::size_t add_and_next(Word* cell, const Word* row, std::size_t num_words, std::size_t bit) {
     const std::size_t next = bit + 1;
     std::size_t found = npos;
-    for (std::size_t w = bit >> 6; w < num_words; ++w) {
+    for (std::size_t w = bit >> word_shift; w < num_words; ++w) {
         const Word word = (cell[w] ^= row[w]);
         if (found != npos) {
             continue;
         }
-        const Word above = (next >> 6) == w ? word & (~Word{0} << (next & 63)) : word;
+        const Word above =
+            (next >> word_shift) == w ? word & (~Word{0} << (next & word_mask)) : word;
         if (above != 0) {
-            found = (w << 6) + static_cast<std::size_t>(std::countr_zero(above));
+            found = (w << word_shift) + static_cast<std::size_t>(std::countr_zero(above));
         }
     }
     return found;
@@ -54,17 +55,9 @@ std::size_t add_and_next(Word* cell, const Word* row, std::size_t num_words, std
 
 ExactWatchlist::ExactWatchlist(std::size_t num_vars) { reset(num_vars + 1); }
 
-#ifdef XORCLE_EXACT_WATCHLIST_TIMING
-ExactWatchlist::~ExactWatchlist() {
-    std::fprintf(stderr, "c exact_watchlist sweep_ns %lld\n",
-                 static_cast<long long>(
-                     std::chrono::duration_cast<std::chrono::nanoseconds>(sweep_time_).count()));
-}
-#endif
-
 void ExactWatchlist::reset(std::size_t num_cols) {
     num_cols_ = num_cols;
-    num_words_ = (num_cols + 63) / 64;
+    num_words_ = (num_cols + word_mask) >> word_shift;
     words_.clear();
     watch_words_.clear();
 #ifndef NDEBUG
@@ -103,14 +96,14 @@ void ExactWatchlist::open_level() {
 }
 
 std::uint32_t ExactWatchlist::reduce_by_span(Word* words, std::size_t lead,
-                                             std::size_t& xors) const {
+                                             std::size_t& row_additions) const {
     while (lead != npos) {
         const Word* row = pivot_row_[lead];
         if (row == nullptr) {
             break;
         }
         lead = add_and_next(words, row, num_words_, lead);
-        ++xors;
+        ++row_additions;
     }
     return lead == npos ? zero_key : static_cast<std::uint32_t>(lead);
 }
@@ -118,7 +111,7 @@ std::uint32_t ExactWatchlist::reduce_by_span(Word* words, std::size_t lead,
 std::uint32_t ExactWatchlist::reduce_by_span_and_first(Word* words, std::size_t lead,
                                                        const Word* first,
                                                        std::uint32_t first_key,
-                                                       std::size_t& xors) const {
+                                                       std::size_t& row_additions) const {
     while (lead != npos) {
         if (const Word* row = pivot_row_[lead]; row != nullptr) {
             lead = add_and_next(words, row, num_words_, lead);
@@ -127,7 +120,7 @@ std::uint32_t ExactWatchlist::reduce_by_span_and_first(Word* words, std::size_t 
         } else {
             break;
         }
-        ++xors;
+        ++row_additions;
     }
     return lead == npos ? zero_key : static_cast<std::uint32_t>(lead);
 }
@@ -150,16 +143,16 @@ void ExactWatchlist::load_watch(std::uint32_t cell) {
 void ExactWatchlist::build_first(std::uint32_t cell, const Word* watch) {
     Word* words = cell_words(cell);
     std::memcpy(words, watch, num_words_ * sizeof(Word));
-    std::size_t xors = 0;
-    key_[cell] = reduce_by_span(words, leading_bit(words, num_words_), xors);
+    std::size_t row_additions = 0;
+    key_[cell] = reduce_by_span(words, leading_bit(words, num_words_), row_additions);
 }
 
 void ExactWatchlist::build_second(std::uint32_t cell, const Word* watch) {
     Word* words = cell_words(cell);
     std::memcpy(words, watch, num_words_ * sizeof(Word));
-    std::size_t xors = 0;
+    std::size_t row_additions = 0;
     key_[cell] = reduce_by_span_and_first(words, leading_bit(words, num_words_),
-                                          cell_words(cell - 1), key_[cell - 1], xors);
+                                          cell_words(cell - 1), key_[cell - 1], row_additions);
 }
 
 void ExactWatchlist::build_pair(ClauseId id) {
@@ -167,7 +160,6 @@ void ExactWatchlist::build_pair(ClauseId id) {
     assert(clause.repr() == EquationRepr::dense && "the exact watchlist needs dense equations");
     assert(clause.cols() == num_cols_ && "a clause is over another numbering than the trail");
     assert(clause.rows() >= 1 && "a clause has no rows");
-    assert(gf2_vector_of<DenseGF2Vector>(clause.row(0)).num_words() == num_words_);
 
     const auto pair = static_cast<std::uint32_t>(pair_clause_.size());
     const std::uint32_t first = 2 * pair;
@@ -225,11 +217,11 @@ void ExactWatchlist::maybe_clean_buckets() {
     cleanup_kept_.resize(key_.size(), 0);
     std::size_t kept = 0;
     // Stable, so the entries left are swept in the order they were placed.
-    for (std::size_t col = 0; col < buckets_.size(); ++col) {
-        std::vector<std::uint32_t>& bucket = buckets_[col];
+    for (std::size_t col_idx = 0; col_idx < buckets_.size(); ++col_idx) {
+        std::vector<std::uint32_t>& bucket = buckets_[col_idx];
         std::size_t out = 0;
         for (const std::uint32_t cell : bucket) {
-            if (key_[cell] == col && cleanup_kept_[cell] == 0 &&
+            if (key_[cell] == col_idx && cleanup_kept_[cell] == 0 &&
                 clause_active_[pair_clause_[cell >> 1]] != 0) {
                 cleanup_kept_[cell] = 1;
                 bucket[out++] = cell;
@@ -277,13 +269,13 @@ bool ExactWatchlist::advance(std::uint32_t cell, std::size_t level) {
 
     if ((cell & 1) != 0) {
         const std::uint32_t key = reduce_by_span_and_first(
-            words, key_[cell], cell_words(cell - 1), key_[cell - 1], counters_.xors);
+            words, key_[cell], cell_words(cell - 1), key_[cell - 1], counters_.row_additions);
         key_[cell] = key;
         place(cell);
         return key == zero_key;
     }
 
-    const std::uint32_t key = reduce_by_span(words, key_[cell], counters_.xors);
+    const std::uint32_t key = reduce_by_span(words, key_[cell], counters_.row_additions);
     key_[cell] = key;
     place(cell);
     if (pair_is_unit_[pair] != 0) {
@@ -297,9 +289,9 @@ bool ExactWatchlist::advance(std::uint32_t cell, std::size_t level) {
         save(second, level);
         Word* second_words = cell_words(second);
         const std::size_t second_lead = add_and_next(second_words, words, num_words_, key);
-        ++counters_.xors;
-        key_[second] =
-            reduce_by_span_and_first(second_words, second_lead, words, key, counters_.xors);
+        ++counters_.row_additions;
+        key_[second] = reduce_by_span_and_first(second_words, second_lead, words, key,
+                                                counters_.row_additions);
         place(second);
         second_is_zero = key_[second] == zero_key;
     }
@@ -362,7 +354,7 @@ void ExactWatchlist::drop_paused_sweeps() {
         std::vector<std::uint32_t>& bucket = buckets_[sweep.col_idx];
         const auto unreached = sweep.cells.begin() + static_cast<std::ptrdiff_t>(sweep.cursor);
         for (auto it = unreached; it != sweep.cells.end(); ++it) {
-            counters_.sweeps_dropped_unreached += key_[*it] == sweep.col_idx ? 1 : 0;
+            counters_.sweeps_dropped_unreached += key_[*it] == sweep.col_idx ? 1U : 0U;
         }
         bucket.insert(bucket.end(), unreached, sweep.cells.end());
         bucket_entries_ += sweep.cells.size() - sweep.cursor;
@@ -433,15 +425,7 @@ void ExactWatchlist::clear_side_queue() {
     side_queue_head_ = 0;
 }
 
-std::optional<ClauseId> ExactWatchlist::next() {
-    const std::optional<ClauseSelection> selection = next_with_hint();
-    if (!selection.has_value()) {
-        return std::nullopt;
-    }
-    return selection->id;
-}
-
-std::optional<ClauseSelection> ExactWatchlist::next_with_hint() {
+std::optional<ClauseSelection> ExactWatchlist::next() {
     while (side_queue_head_ < side_queue_.size()) {
         const ClauseId id = side_queue_[side_queue_head_++];
         in_side_queue_[id] = 0;
@@ -461,14 +445,7 @@ std::optional<ClauseSelection> ExactWatchlist::next_with_hint() {
     }
     side_queue_.clear();
     side_queue_head_ = 0;
-#ifdef XORCLE_EXACT_WATCHLIST_TIMING
-    const auto start = std::chrono::steady_clock::now();
-    const std::optional<ClauseSelection> selection = resume_sweeps();
-    sweep_time_ += std::chrono::steady_clock::now() - start;
-    return selection;
-#else
     return resume_sweeps();
-#endif
 }
 
 void ExactWatchlist::add_clause(Clause clause) {
@@ -542,7 +519,6 @@ void ExactWatchlist::update_with_new_watch(ClauseId id, ClauseRowIdx, WatchType 
                                            const Trail& trail) {
     assert(is_clause_active(id) && "a watch moved on an inactive clause");
     assert(clauses_[id].rows() >= 2 && "a watch moved on a unit clause");
-    assert(type != WatchType::sum && "sum triggers are normalized to one before reaching a selector");
     assert(trail.level() == top_level() && "a watch moved at a level the selector never saw");
     (void)trail;
     const std::uint32_t pair = clause_pair_[id];
@@ -727,7 +703,7 @@ void ExactWatchlist::add_to_stats(RunStats& stats) const {
     stats.exact_touches = counters_.touches;
     stats.exact_skips = counters_.skips;
     stats.exact_fixups = counters_.fixups;
-    stats.exact_xors = counters_.xors;
+    stats.exact_row_additions = counters_.row_additions;
     stats.exact_triggers = counters_.triggers;
     stats.exact_saves = counters_.saves;
     stats.exact_restores = counters_.restores;
@@ -754,17 +730,17 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
     const RowSpace& span = trail.span();
     assert(span.cols() == num_cols_ && "the trail is over another numbering than the cells");
     const std::size_t num_vars = num_cols_ - 1;
-    for (std::size_t col = 0; col < num_vars; ++col) {
-        assert(span.pivot_col_idxs().test(col) == (pivot_row_[col] != nullptr) &&
+    for (std::size_t col_idx = 0; col_idx < num_vars; ++col_idx) {
+        assert(span.pivot_col_idxs().test(col_idx) == (pivot_row_[col_idx] != nullptr) &&
                "the selector's pivot table disagrees with the span");
     }
     std::vector<std::uint8_t> in_bucket(key_.size(), 0);
     std::size_t num_entries = 0;
-    for (std::size_t col = 0; col < buckets_.size(); ++col) {
-        for (const std::uint32_t cell : buckets_[col]) {
-            in_bucket[cell] |= key_[cell] == col ? 1 : 0;
+    for (std::size_t col_idx = 0; col_idx < buckets_.size(); ++col_idx) {
+        for (const std::uint32_t cell : buckets_[col_idx]) {
+            in_bucket[cell] |= static_cast<std::uint8_t>(key_[cell] == col_idx);
         }
-        num_entries += buckets_[col].size();
+        num_entries += buckets_[col_idx].size();
     }
     assert(num_entries == bucket_entries_ && "the bucket entry count is off");
     assert(bucket_entries_ <= cleanup_threshold_ && "the buckets outgrew their cleanup");
@@ -780,7 +756,7 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
         }
         for (std::size_t j = sweep.cursor; j < sweep.cells.size(); ++j) {
             const std::uint32_t cell = sweep.cells[j];
-            awaiting[cell] |= key_[cell] == sweep.col_idx ? 1 : 0;
+            awaiting[cell] |= static_cast<std::uint8_t>(key_[cell] == sweep.col_idx);
         }
     }
     const auto cell_equation = [&](std::uint32_t cell) {
@@ -788,7 +764,8 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
         const Word* words = cell_words(cell);
         for (std::size_t w = 0; w < num_words_; ++w) {
             for (Word word = words[w]; word != 0; word &= word - 1) {
-                bits.push_back((w << 6) + static_cast<std::size_t>(std::countr_zero(word)));
+                bits.push_back((w << word_shift) +
+                               static_cast<std::size_t>(std::countr_zero(word)));
             }
         }
         return Equation::from_bits(EquationRepr::dense, num_vars, bits);

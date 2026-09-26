@@ -3,6 +3,9 @@
 #include <cassert>
 #include <utility>
 
+#include "heuristics/selection/cyclic.h"
+#include "heuristics/selection/exact_watchlist.h"
+
 namespace xorcle {
 
 #ifndef NDEBUG
@@ -23,13 +26,6 @@ void ClauseSelector::debug_assert_clause_id(ClauseId id) const {
 #endif
 
 Clause& ClauseSelector::clause(ClauseId id) {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    return clauses_[id];
-}
-
-const Clause& ClauseSelector::clause(ClauseId id) const {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
 #endif
@@ -134,18 +130,6 @@ ClauseTier ClauseSelector::tier_for_lbd(std::size_t lbd) const {
     return lbd <= tier_config_.secondary_lbd ? ClauseTier::secondary : ClauseTier::local;
 }
 
-void ClauseSelector::set_attempt_budget(std::size_t) {}
-
-bool ClauseSelector::last_stop_was_budget() const noexcept { return false; }
-
-std::optional<ClauseSelection> ClauseSelector::next_with_hint() {
-    const std::optional<ClauseId> id = next();
-    if (!id.has_value()) {
-        return std::nullopt;
-    }
-    return ClauseSelection{*id, std::nullopt};
-}
-
 void ClauseSelector::add_starting_clause(Clause clause) {
     add_clause(std::move(clause));
 }
@@ -166,8 +150,6 @@ void ClauseSelector::update_with_propagation(const Equation& reduced_eqn, const 
 void ClauseSelector::update_with_decision(const Equation& reduced_eqn, const Trail& trail) {
     update_with_new_equation(reduced_eqn, trail);
 }
-
-void ClauseSelector::update_with_decision_clause(std::optional<ClauseId>) {}
 
 void ClauseSelector::update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&) {}
 
@@ -190,5 +172,17 @@ void ClauseSelector::add_clause(Clause clause) {
 }
 
 void ClauseSelector::update_with_new_equation(const Equation&, const Trail&) {}
+
+std::unique_ptr<ClauseSelector> make_clause_selector(ClauseSelectorName name,
+                                                     std::size_t num_vars) {
+    switch (name) {
+        case ClauseSelectorName::cyclic:
+            return std::make_unique<Cyclic>(num_vars);
+        case ClauseSelectorName::exact_watchlist:
+            return std::make_unique<ExactWatchlist>(num_vars);
+    }
+    assert(false && "make_clause_selector: unknown clause selector name");
+    std::unreachable();
+}
 
 } // namespace xorcle

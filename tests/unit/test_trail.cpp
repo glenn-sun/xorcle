@@ -275,6 +275,35 @@ TEST_CASE_TEMPLATE("trail: learning below the current level", Tag, DenseTag, Spa
     CHECK(rows_in_trail_order(trail) == std::vector<std::vector<std::size_t>>{{1}, {2, 4}});
 }
 
+TEST_CASE_TEMPLATE("trail: stored reason coordinates go when a row at or below them changes",
+                   Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Trail trail(repr, 6);
+    trail.learn(make_equation_with(repr, 6, {0}), std::nullopt, 1);
+    trail.learn(make_equation_with(repr, 6, {1}), ClauseId{0}, 1);
+    trail.learn(make_equation_with(repr, 6, {2}), std::nullopt, 2);
+    trail.learn(make_equation_with(repr, 6, {3}), ClauseId{1}, 2);
+    for (std::size_t trail_idx = 0; trail_idx < 4; ++trail_idx) {
+        trail.store_reason_coordinates(trail_idx, TrailCoordinates{});
+    }
+
+    // A level-1 learn goes in at trail index 2, so the rows from there on moved.
+    trail.learn(make_equation_with(repr, 6, {4}), ClauseId{2}, 1);
+    REQUIRE(trail.span().rows() == 5);
+    CHECK(trail.reason_coordinates(0) != nullptr);
+    CHECK(trail.reason_coordinates(1) != nullptr);
+    for (std::size_t trail_idx = 2; trail_idx < 5; ++trail_idx) {
+        CHECK(trail.reason_coordinates(trail_idx) == nullptr);
+    }
+
+    // A backjump keeps what it keeps of them.
+    trail.store_reason_coordinates(3, TrailCoordinates{});
+    trail.resize(2);
+    REQUIRE(trail.span().rows() == 3);
+    CHECK(trail.reason_coordinates(1) != nullptr);
+    CHECK(trail.reason_coordinates(2) == nullptr);
+}
+
 TEST_CASE_TEMPLATE("trail: an out-of-order learn on a free column leaves every row alone", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
@@ -378,7 +407,7 @@ TEST_CASE_TEMPLATE("trail: learning matches reinsertion on random trails", Tag, 
 
             REQUIRE(trail.learn(candidate, reason, level) == trail_idx);
             reference.learn(candidate, trail_idx);
-            out_of_order_learns += trail_idx + 1 < trail.span().rows() ? 1 : 0;
+            out_of_order_learns += trail_idx + 1 < trail.span().rows() ? 1U : 0U;
             REQUIRE(rows_in_trail_order(trail) == reference.rows_in_trail_order());
         }
     }

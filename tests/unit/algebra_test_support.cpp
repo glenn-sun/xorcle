@@ -22,6 +22,14 @@ Equation make_equation_with_num_bits(EquationRepr repr, std::size_t num_bits,
     return out;
 }
 
+std::vector<std::vector<std::size_t>> rows_of(const RowEchelonMatrix& matrix) {
+    std::vector<std::vector<std::size_t>> rows;
+    for (const Equation& row : matrix) {
+        rows.push_back(row.bits());
+    }
+    return rows;
+}
+
 std::vector<std::size_t> bits_of(const Equation& equation) {
     return equation.bits();
 }

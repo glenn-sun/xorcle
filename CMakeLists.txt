@@ -102,3 +102,18 @@ target_compile_definitions(xorcle PRIVATE XORCLE_VERSION="${XORCLE_VERSION}")
 
 enable_testing()
 add_subdirectory(tests)
+
+# Warnings for xorcle's own targets only; gf2 and doctest are SYSTEM.
+option(XORCLE_WERROR "Treat warnings in xorcle's own targets as errors" OFF)
+if(NOT MSVC)
+    set(XORCLE_WARNINGS
+        -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wold-style-cast
+        -Wnon-virtual-dtor -Woverloaded-virtual -Wsuggest-override -Wextra-semi -Wcast-qual
+        -Wformat=2 -Wimplicit-fallthrough -Wundef -Wredundant-decls -Wmissing-declarations
+        -Wnull-dereference
+        $<$<CXX_COMPILER_ID:GNU>:-Wduplicated-cond;-Wduplicated-branches;-Wlogical-op>
+        $<$<BOOL:${XORCLE_WERROR}>:-Werror>)
+    foreach(target xorcle_core xorcle xorcle_tests)
+        target_compile_options(${target} PRIVATE ${XORCLE_WARNINGS})
+    endforeach()
+endif()

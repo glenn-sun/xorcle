@@ -20,33 +20,22 @@ class MaxHeap {
 public:
     using Key = std::size_t;
 
-    /// @brief Add `delta` to the activity of `key`; a negative `delta` does nothing.
+    /// @brief Add `delta` to the activity of `key`.
+    /// @pre `delta >= 0`.
     void increase_key(Key key, double delta) {
-        if (delta < 0.0) return;
-        grow_for(key);
-
-        const double old_value = activity_[key];
-        const double new_value = old_value + delta;
-        activity_[key] = new_value;
-
-        const std::size_t heap_idx = key_to_heap_idx_[key];
-        if (heap_idx == not_in_heap) return;
-
-        heap_[heap_idx].activity = new_value;
-        if (new_value > old_value) {
-            sift_up(heap_idx);
-        } else if (new_value < old_value) {
-            sift_down(heap_idx);
-        }
+        assert(delta >= 0.0 && "increase_key requires a non-negative delta");
+        set_activity(key, activity(key) + delta);
     }
 
-    double get_priority(Key key) const {
+    double activity(Key key) const {
         return key < activity_.size() ? activity_[key] : 0.0;
     }
 
     /// @brief `std::nullopt` if empty.
     std::optional<Key> extract_max() {
-        if (heap_.empty()) return std::nullopt;
+        if (heap_.empty()) {
+            return std::nullopt;
+        }
         return take_max();
     }
 
@@ -54,8 +43,12 @@ public:
     /// @pre `k >= 0`.
     void rescale(double k) {
         assert(k >= 0.0 && "rescale requires k >= 0");
-        for (double& value : activity_) value *= k;
-        for (Entry& entry : heap_) entry.activity *= k;
+        for (double& value : activity_) {
+            value *= k;
+        }
+        for (Entry& entry : heap_) {
+            entry.activity *= k;
+        }
         // Scaling can bring two activities together, which reranks the pair.
         heapify();
     }
@@ -83,7 +76,9 @@ public:
         activity_[key] = value;
 
         const std::size_t heap_idx = key_to_heap_idx_[key];
-        if (heap_idx == not_in_heap) return;
+        if (heap_idx == not_in_heap) {
+            return;
+        }
 
         heap_[heap_idx].activity = value;
         if (value > old_value) {
@@ -96,7 +91,9 @@ public:
     /// @brief Put a key into the heap; a no-op if it is already there.
     void insert(Key key) {
         grow_for(key);
-        if (key_to_heap_idx_[key] != not_in_heap) return;
+        if (key_to_heap_idx_[key] != not_in_heap) {
+            return;
+        }
         const std::size_t heap_idx = heap_.size();
         heap_.push_back(Entry{key, activity_[key]});
         key_to_heap_idx_[key] = heap_idx;
@@ -116,7 +113,9 @@ private:
     std::vector<double> activity_;
 
     void grow_for(Key key) {
-        if (key < activity_.size()) return;
+        if (key < activity_.size()) {
+            return;
+        }
         activity_.resize(key + 1, 0.0);
         key_to_heap_idx_.resize(key + 1, not_in_heap);
     }
@@ -126,7 +125,9 @@ private:
     static std::size_t right(std::size_t i) { return 2 * i + 2; }
 
     static bool outranks(const Entry& lhs, const Entry& rhs) {
-        if (lhs.activity != rhs.activity) return lhs.activity > rhs.activity;
+        if (lhs.activity != rhs.activity) {
+            return lhs.activity > rhs.activity;
+        }
         return lhs.key < rhs.key;
     }
 
@@ -148,7 +149,9 @@ private:
     }
 
     void swap_positions(std::size_t a, std::size_t b) {
-        if (a == b) return;
+        if (a == b) {
+            return;
+        }
         std::swap(heap_[a], heap_[b]);
         key_to_heap_idx_[heap_[a].key] = a;
         key_to_heap_idx_[heap_[b].key] = b;
@@ -173,10 +176,16 @@ private:
             const std::size_t r = right(heap_idx);
             std::size_t largest = heap_idx;
 
-            if (l < n && outranks(heap_[l], heap_[largest])) largest = l;
-            if (r < n && outranks(heap_[r], heap_[largest])) largest = r;
+            if (l < n && outranks(heap_[l], heap_[largest])) {
+                largest = l;
+            }
+            if (r < n && outranks(heap_[r], heap_[largest])) {
+                largest = r;
+            }
 
-            if (largest == heap_idx) break;
+            if (largest == heap_idx) {
+                break;
+            }
             swap_positions(heap_idx, largest);
             heap_idx = largest;
         }

@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <memory>
 
+#include "util/stats.h"
+
 namespace xorcle {
 
 enum class RestartMethod {
@@ -17,9 +19,8 @@ enum class RestartMethod {
 
 struct RestartConfig {
     RestartMethod method = RestartMethod::none;
-    /// @brief The budget for a Luby value of 1. No default: the schedule requires
-    /// a value.
-    std::size_t luby_unit_conflicts = 0;
+    /// @brief The budget for a Luby value of 1; `Luby` requires it nonzero.
+    std::size_t luby_unit_conflicts = 1;
 
     std::size_t lbd_fast_window = 33;
     std::size_t lbd_slow_window = 1000;
@@ -32,24 +33,13 @@ struct RestartConfig {
     /// @brief Whether a restart keeps the decisions it would immediately re-make.
     bool reuse_trail = false;
 
+    bool operator==(const RestartConfig&) const = default;
 };
 
 /// @brief What a conflict tells a restart policy.
 struct ConflictSummary {
     std::size_t lbd;        ///< Of the asserting clause just derived.
     std::size_t trail_length; ///< Trail rows at the conflict, before the backjump.
-};
-
-/// @brief What a policy can report about its own decisions.
-///
-/// Only `LbdRestarts` fills any of it; the fixed schedules have nothing to say, so the
-/// base returns zeroes and the statistics report the section only when a
-/// schedule is in force.
-struct RestartStats {
-    /// @brief Restarts the trail-length guard canceled once they were due.
-    std::size_t canceled = 0;
-    double fast_lbd = 0.0; ///< The fast average as the run ended.
-    double slow_lbd = 0.0; ///< The slow average as the run ended.
 };
 
 /// @brief Stateful restart scheduler driven by the conflicts as they happen.
@@ -73,8 +63,8 @@ public:
     /// @pre A restart has just happened.
     virtual void note_restart() = 0;
 
-    /// @brief What the policy has to report; zeroes unless it overrides this.
-    virtual RestartStats stats() const { return {}; }
+    /// @brief Add this policy's own counters to `stats`; the default has none.
+    virtual void add_to_stats(RunStats& stats) const;
 
 private:
     bool reuse_trail_;

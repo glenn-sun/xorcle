@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file cyclic.h
-/// @brief The round-robin clause selector, and the default.
+/// @brief The round-robin clause selector.
 
 #include <cstddef>
 #include <optional>
@@ -21,21 +21,24 @@ public:
     /// @param num_vars Unused; cyclic order is independent of the variable numbering.
     explicit Cyclic(std::size_t num_vars);
 
-    std::optional<ClauseId> next() override;
+    /// @brief The next active clause in round-robin order, never with a trigger.
+    std::optional<ClauseSelection> next() override;
 
-    void set_attempt_budget(std::size_t budget) override;
+    /// @brief Open a propagation run, capping the attempts it may make; `0` is
+    /// uncapped.
+    void set_attempt_budget(std::size_t budget);
 
-    bool last_stop_was_budget() const noexcept override;
+    /// @brief Whether the last `std::nullopt` from `next()` was the budget rather
+    /// than quiescence.
+    bool last_stop_was_budget() const noexcept;
 
     /// @brief Try an asserting clause next, but keep the cursor for a replacement.
     void add_asserting_clause(Clause clause, const Trail& trail,
                               const AssertingClauseInfo& info) override;
 
-    /// @brief Note that an equation was learned, restarting both budgets.
-    void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
-
-    /// @brief Prefer the decision procedure's clause on the next call to `next()`.
-    void update_with_decision_clause(std::optional<ClauseId> clause_id) override;
+    /// @brief Prefer the decision procedure's clause on the next call to `next()`,
+    /// if it is active.
+    void update_with_decision_clause(std::optional<ClauseId> clause_id);
 
     /// @brief Move the cursor back into range and onto an active clause.
     void update_with_compaction(const CompactionTransform& transform, const Trail& trail) override;
@@ -43,6 +46,9 @@ public:
 protected:
     /// @brief Store a clause and make it the next one tried.
     void add_clause(Clause clause) override;
+
+    /// @brief Note that an equation was learned, restarting both budgets.
+    void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
 private:
     /// @brief End a run, recording whether the budget rather than quiescence

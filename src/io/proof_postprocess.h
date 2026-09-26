@@ -3,8 +3,10 @@
 /// @file proof_postprocess.h
 /// @brief Turn a raw proof into an LRUP(⊕) proof: drop every derivation the
 /// empty clause does not depend on, and prove each reason clause compaction has
-/// reduced again as a line of its own. Renumbering, and placing each clause's
-/// deletion after its last use, follow from those.
+/// reduced again as a line of its own.
+///
+/// Renumbering, and placing each clause's deletion after its last use, follow
+/// from those.
 
 #include <cstddef>
 #include <ostream>
@@ -33,8 +35,8 @@ struct PostprocessSummary {
 /// id. A compacted raw proof needs them, to say which units an input clause used
 /// as a reason propagates modulo; an uncompacted one never reads them.
 /// @pre `input_clause_rows.size() == num_input_clauses`.
-/// @pre `source` holds exactly one `RawEmpty`, as its last learning record.
-/// @throws std::runtime_error On a raw proof that cannot be turned into a proof.
+/// @pre `source` holds exactly one `RawEmpty`, as its last learning record, and
+/// is the raw proof the solver wrote for this instance.
 PostprocessSummary postprocess_raw_proof(RawRecordSource& source, std::size_t num_vars,
                                          std::size_t num_input_clauses, EquationRepr repr,
                                          std::ostream& out,

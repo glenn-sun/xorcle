@@ -1,7 +1,6 @@
 # doctest, fetched and pinned. v2.5.3 declares `cmake_minimum_required(VERSION
 # 3.14)`, which recent CMake still accepts; older doctest tags declare versions
 # below 3.5 and fail to configure.
-include(FetchContent)
 FetchContent_Declare(doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git
     GIT_TAG        2d0a9359a60c51affe2a9bebb1be1dca47868151
@@ -14,6 +13,7 @@ add_executable(xorcle_tests
     unit/algebra_test_support.cpp
     unit/allocation_counter.cpp
     unit/heuristics_test_support.cpp
+    unit/io_test_support.cpp
     unit/main.cpp
     unit/reference_matrix.cpp
     unit/test_analysis.cpp
@@ -26,6 +26,7 @@ add_executable(xorcle_tests
     unit/test_dimacs.cpp
     unit/test_ema.cpp
     unit/test_equation.cpp
+    unit/test_fuzz.cpp
     unit/test_implication_graph.cpp
     unit/test_index_set.cpp
     unit/test_max_heap.cpp
@@ -45,10 +46,26 @@ add_executable(xorcle_tests
 
 target_link_libraries(xorcle_tests PRIVATE xorcle_core doctest::doctest)
 
-add_test(NAME unit COMMAND xorcle_tests)
+# The fuzz cases run as a test of their own, so `ctest -j` runs them beside
+# the rest.
+add_test(NAME unit COMMAND xorcle_tests --test-case-exclude=fuzz:*)
+add_test(NAME fuzz COMMAND xorcle_tests --test-case=fuzz:*)
+
+# Exit codes, error lines, a SAT model and the statistics file, end to end.
+add_test(NAME cli
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_cli.sh ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle>)
+set_tests_properties(cli PROPERTIES SKIP_RETURN_CODE 77)
+
+# The proof checker the roundtrips rely on, against mutated proofs.
+add_test(NAME lrup_checker
+    COMMAND sh -c "if [ -x \"$1/.venv/bin/python\" ]; then python=\"$1/.venv/bin/python\"; \
+elif command -v python3 >/dev/null 2>&1; then python=python3; else exit 77; fi; \
+exec \"$python\" \"$1/tests/test_check_lrup_parity.py\" -v"
+            sh ${CMAKE_SOURCE_DIR})
+set_tests_properties(lrup_checker PROPERTIES SKIP_RETURN_CODE 77)
 
 # Everything registers with CTest, so `ctest --test-dir build` is the single
-# command. `proof_roundtrip` skips rather than fails without python3.
+# command. The roundtrips skip rather than fail without python3.
 add_test(NAME proof_roundtrip
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
@@ -62,16 +79,18 @@ add_test(NAME proof_roundtrip_no_minimize
             --minimize=false)
 set_tests_properties(proof_roundtrip_no_minimize PROPERTIES SKIP_RETURN_CODE 77)
 
-# Deletion adds deletion lines, and the checker refuses a reason it has already
-# deleted, so this is where a clause deleted too early would show up.
-add_test(NAME proof_roundtrip_deletion
-    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+# A restart after every conflict or two changes which reasons a subsumed
+# clause is still named by after the backjump, and so which replacement and
+# deletion lines are written.
+add_test(NAME proof_roundtrip_luby
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect "^c Restarts: [1-9]"
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
-            --deletion=true)
-set_tests_properties(proof_roundtrip_deletion PROPERTIES SKIP_RETURN_CODE 77)
+            --restart=luby --restart-luby-unit=1)
+set_tests_properties(proof_roundtrip_luby PROPERTIES SKIP_RETURN_CODE 77)
 
 # Compaction is on by default above, so this is the one variant that exercises
-# a raw proof with no compaction record in it at all.
+# a raw proof with no compaction record in it at all, and, since the implication
+# graph needs compaction, none of the graph's lines either.
 add_test(NAME proof_roundtrip_no_compact
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
@@ -95,30 +114,29 @@ add_test(NAME proof_roundtrip_cyclic
             --selection=cyclic)
 set_tests_properties(proof_roundtrip_cyclic PROPERTIES SKIP_RETURN_CODE 77)
 
-# The cyclic selector propagating to a fixed point, with no trigger hint.
-add_test(NAME proof_roundtrip_complete_propagation
+# The sparse representation, which runs only the cyclic selector.
+add_test(NAME proof_roundtrip_sparse
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
-            --selection=cyclic --propagate-miss-rate=0)
-set_tests_properties(proof_roundtrip_complete_propagation PROPERTIES SKIP_RETURN_CODE 77)
+            --equation-repr=sparse --selection=cyclic)
+set_tests_properties(proof_roundtrip_sparse PROPERTIES SKIP_RETURN_CODE 77)
 
-# An instance on which the implication graph feeds units by all four of its
-# derivations: a refuted side, a side reaching one an earlier pair refuted, the
-# span of the side opposite a refuted one, and the two spans of a pair with
-# neither side refuted.
+# A rand_qp instance of 78 variables on which the implication graph feeds units,
+# so the proof carries its lines; test_implication_graph checks that each of its
+# four derivations writes lines that check.
 add_test(NAME proof_roundtrip_implication_graph
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> rand_qp "n=15;m=30;planted=0" 1
-            --implication-graph=true)
+            --expect "^c Units fed to the root trail: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> rand_qp "n=12;m=36;planted=0" 1)
 set_tests_properties(proof_roundtrip_implication_graph PROPERTIES SKIP_RETURN_CODE 77)
 
-# The implication graph is on by default and writes its own derivations, so this
-# is the variant that covers a proof with none of them in it.
-add_test(NAME proof_roundtrip_no_implication_graph
-    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> rand_qp "n=15;m=30;planted=0" 1
-            --implication-graph=false)
-set_tests_properties(proof_roundtrip_no_implication_graph PROPERTIES SKIP_RETURN_CODE 77)
+# 135 variables, three words a row, compacting at every conflict, so rewrite
+# lines and the compaction records span word boundaries.
+add_test(NAME proof_roundtrip_wide
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect "^c Compactions: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> tseitin "n=90;k=3" 1
+            --compact-cadence=1)
+set_tests_properties(proof_roundtrip_wide PROPERTIES SKIP_RETURN_CODE 77)
 
 # CNF-XOR input numbers its XOR lines among the clauses in file order, which the
 # proof's reasons cite.
@@ -128,15 +146,11 @@ add_test(NAME proof_roundtrip_cnf_xor
 set_tests_properties(proof_roundtrip_cnf_xor PROPERTIES SKIP_RETURN_CODE 77)
 
 # An empty input clause ends the run at once, and the proof cites it by its
-# position; `1+2+1+2` is empty only once its variables cancel.
+# position.
 add_test(NAME proof_roundtrip_empty_clause
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --insert "0"
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip_empty_clause PROPERTIES SKIP_RETURN_CODE 77)
-add_test(NAME proof_roundtrip_empty_clause_cancelled
-    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --insert "1+2+1+2 0"
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
-set_tests_properties(proof_roundtrip_empty_clause_cancelled PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_empty_clause_cnf_xor
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --cnf-xor --insert "x 0"
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)

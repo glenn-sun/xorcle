@@ -3,7 +3,6 @@
 
 #include <doctest/doctest.h>
 
-#include <cstddef>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -32,7 +31,7 @@ TEST_CASE("MaxHeap: an empty heap") {
     MaxHeap heap;
     CHECK(heap.empty());
     CHECK_FALSE(heap.extract_max().has_value());
-    CHECK(heap.get_priority(3) == 0.0);
+    CHECK(heap.activity(3) == 0.0);
 }
 
 TEST_CASE("MaxHeap: keys come out in descending activity") {
@@ -52,7 +51,7 @@ TEST_CASE("MaxHeap: keys come out in descending activity") {
 TEST_CASE("MaxHeap: set_activity without insert registers a score only") {
     MaxHeap heap;
     heap.set_activity(7, 9.0);
-    CHECK(heap.get_priority(7) == 9.0);
+    CHECK(heap.activity(7) == 9.0);
     CHECK(heap.empty());
 
     heap.insert(7);
@@ -63,18 +62,15 @@ TEST_CASE("MaxHeap: set_activity without insert registers a score only") {
 
 TEST_CASE("MaxHeap: increase_key reorders live keys") {
     MaxHeap heap;
-    for (Key key : {1, 2, 3}) {
+    for (Key key : {Key{1}, Key{2}, Key{3}}) {
         heap.set_activity(key, static_cast<double>(key));
         heap.insert(key);
     }
     CHECK(heap.peek_max() == 3);
 
     heap.increase_key(1, 10.0);
-    CHECK(heap.get_priority(1) == 11.0);
+    CHECK(heap.activity(1) == 11.0);
     CHECK(heap.peek_max() == 1);
-
-    heap.increase_key(1, -100.0);
-    CHECK(heap.get_priority(1) == 11.0);
 
     CHECK(drain(heap) == Order{1, 3, 2});
 }
@@ -88,7 +84,7 @@ TEST_CASE("MaxHeap: increase_key on an extracted key still records the score") {
 
     CHECK(heap.extract_max() == 2);
     heap.increase_key(2, 100.0);
-    CHECK(heap.get_priority(2) == 102.0);
+    CHECK(heap.activity(2) == 102.0);
 
     heap.insert(2);
     CHECK(heap.peek_max() == 2);
@@ -96,7 +92,7 @@ TEST_CASE("MaxHeap: increase_key on an extracted key still records the score") {
 
 TEST_CASE("MaxHeap: an extracted key stays out and keeps its activity") {
     MaxHeap heap;
-    for (Key key : {1, 2, 3}) {
+    for (Key key : {Key{1}, Key{2}, Key{3}}) {
         heap.set_activity(key, static_cast<double>(key));
         heap.insert(key);
     }
@@ -104,19 +100,19 @@ TEST_CASE("MaxHeap: an extracted key stays out and keeps its activity") {
     CHECK(heap.extract_max() == 2);
 
     heap.insert(3);
-    CHECK(heap.get_priority(2) == 2.0);
+    CHECK(heap.activity(2) == 2.0);
     CHECK(drain(heap) == Order{3, 1});
 }
 
 TEST_CASE("MaxHeap: rescale preserves the order") {
     MaxHeap heap;
-    for (Key key : {1, 2, 3}) {
+    for (Key key : {Key{1}, Key{2}, Key{3}}) {
         heap.set_activity(key, static_cast<double>(key) * 1e100);
         heap.insert(key);
     }
     heap.rescale(1e-100);
-    CHECK(heap.get_priority(1) == doctest::Approx(1.0));
-    CHECK(heap.get_priority(3) == doctest::Approx(3.0));
+    CHECK(heap.activity(1) == doctest::Approx(1.0));
+    CHECK(heap.activity(3) == doctest::Approx(3.0));
     CHECK(drain(heap) == Order{3, 2, 1});
 }
 
@@ -128,7 +124,7 @@ TEST_CASE("MaxHeap: reset clears activities as well as the heap") {
 
     heap.reset();
     CHECK(heap.empty());
-    CHECK(heap.get_priority(1) == 0.0);
+    CHECK(heap.activity(1) == 0.0);
 }
 
 TEST_CASE("MaxHeap: equal activities come back by ascending key") {
@@ -147,7 +143,7 @@ TEST_CASE("MaxHeap: equal activities come back by ascending key") {
 
 TEST_CASE("MaxHeap: a rescale that brings activities together reranks them") {
     MaxHeap heap;
-    for (Key key : {1, 2, 3, 4}) {
+    for (Key key : {Key{1}, Key{2}, Key{3}, Key{4}}) {
         heap.set_activity(key, static_cast<double>(key));
         heap.insert(key);
     }

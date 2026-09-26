@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -11,26 +10,9 @@
 #include "algebra/equation_repr.h"
 #include "algebra_test_support.h"
 #include "io/dimacs.h"
+#include "io_test_support.h"
 
 namespace xorcle {
-
-namespace {
-
-/// @brief The set bits of every row of a clause, in row-echelon order.
-std::vector<std::vector<std::size_t>> rows_of(const Clause& clause) {
-    std::vector<std::vector<std::size_t>> out;
-    for (std::size_t i = 0; i < clause.rows(); ++i) {
-        out.push_back(bits_of(clause.row(i)));
-    }
-    return out;
-}
-
-/// @brief A path in the temp directory, unique to one test case.
-std::filesystem::path scratch_path(std::string_view name) {
-    return std::filesystem::temp_directory_path() / ("xorcle_dimacs_test_" + std::string{name});
-}
-
-} // namespace
 
 TEST_CASE_TEMPLATE("dimacs: a plain CNF instance", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
@@ -107,16 +89,17 @@ TEST_CASE_TEMPLATE("dimacs: rows are echelonized, not stored verbatim", Tag, Den
     }
 }
 
-TEST_CASE_TEMPLATE("dimacs: a missing header is an error", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+// Parse errors are thrown before any representation matters.
+TEST_CASE("dimacs: a missing header is an error") {
+    constexpr EquationRepr repr = EquationRepr::dense;
 
     CHECK_THROWS_AS(parse_dimacs_string("", repr), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("c only comments\n\n", repr), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("1 2 0\n", repr), DimacsError);
 }
 
-TEST_CASE_TEMPLATE("dimacs: malformed headers are errors", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+TEST_CASE("dimacs: malformed headers are errors") {
+    constexpr EquationRepr repr = EquationRepr::dense;
 
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3\n", repr), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1 extra\n1 0\n", repr), DimacsError);
@@ -126,15 +109,15 @@ TEST_CASE_TEMPLATE("dimacs: malformed headers are errors", Tag, DenseTag, Sparse
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 -1\n1 0\n", repr), DimacsError);
 }
 
-TEST_CASE_TEMPLATE("dimacs: a wrong header clause count is an error", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+TEST_CASE("dimacs: a wrong header clause count is an error") {
+    constexpr EquationRepr repr = EquationRepr::dense;
 
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 3\n1 0\n2 0\n", repr), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1 0\n2 0\n", repr), DimacsError);
 }
 
-TEST_CASE_TEMPLATE("dimacs: a clause line must end with 0", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+TEST_CASE("dimacs: a clause line must end with 0") {
+    constexpr EquationRepr repr = EquationRepr::dense;
 
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1 2\n", repr), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n1 0\n2 3\n", repr), DimacsError);
@@ -143,8 +126,8 @@ TEST_CASE_TEMPLATE("dimacs: a clause line must end with 0", Tag, DenseTag, Spars
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 2\n1 0 2 0\n", repr), DimacsError);
 }
 
-TEST_CASE_TEMPLATE("dimacs: out-of-range variables are errors", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+TEST_CASE("dimacs: out-of-range variables are errors") {
+    constexpr EquationRepr repr = EquationRepr::dense;
 
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n4 0\n", repr), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-4 0\n", repr), DimacsError);
@@ -152,8 +135,8 @@ TEST_CASE_TEMPLATE("dimacs: out-of-range variables are errors", Tag, DenseTag, S
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n-0 0\n", repr), DimacsError);
 }
 
-TEST_CASE_TEMPLATE("dimacs: junk tokens are errors", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+TEST_CASE("dimacs: junk tokens are errors") {
+    constexpr EquationRepr repr = EquationRepr::dense;
 
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nhello 0\n", repr), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\n1x 0\n", repr), DimacsError);
@@ -256,8 +239,8 @@ TEST_CASE_TEMPLATE("dimacs: the header count may include or exclude XOR lines", 
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 4\n" + body, repr), DimacsError);
 }
 
-TEST_CASE_TEMPLATE("dimacs: malformed XOR lines are errors", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+TEST_CASE("dimacs: malformed XOR lines are errors") {
+    constexpr EquationRepr repr = EquationRepr::dense;
 
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx1 2\n", repr), DimacsError);
     CHECK_THROWS_AS(parse_dimacs_string("p cnf 3 1\nx\n", repr), DimacsError);
@@ -274,8 +257,8 @@ TEST_CASE_TEMPLATE("dimacs: malformed XOR lines are errors", Tag, DenseTag, Spar
     CHECK_THROWS_AS(parse_dimacs_string("x1 2 0\np cnf 3 1\n", repr), DimacsError);
 }
 
-TEST_CASE_TEMPLATE("dimacs: errors name the input and the line", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+TEST_CASE("dimacs: errors name the input and the line") {
+    constexpr EquationRepr repr = EquationRepr::dense;
 
     try {
         parse_dimacs_string("p cnf 3 1\nc a comment\n9 0\n", repr, "instance.xnf");
@@ -289,7 +272,7 @@ TEST_CASE_TEMPLATE("dimacs: the stream and file forms agree", Tag, DenseTag, Spa
     constexpr EquationRepr repr = Tag::value;
     const std::string text = "p cnf 3 2\n1+2 0\n-3 0\n";
     const std::filesystem::path path =
-        scratch_path(repr == EquationRepr::dense ? "dense.xnf" : "sparse.xnf");
+        scratch_path(repr == EquationRepr::dense ? "dimacs_dense.xnf" : "dimacs_sparse.xnf");
 
     {
         std::ofstream file{path};
@@ -309,8 +292,8 @@ TEST_CASE_TEMPLATE("dimacs: the stream and file forms agree", Tag, DenseTag, Spa
     std::filesystem::remove(path);
 }
 
-TEST_CASE_TEMPLATE("dimacs: an unopenable file is an error", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
+TEST_CASE("dimacs: an unopenable file is an error") {
+    constexpr EquationRepr repr = EquationRepr::dense;
     const std::filesystem::path path = scratch_path("no_such_directory/missing.xnf");
 
     CHECK_THROWS_AS(parse_dimacs_file(path, repr), DimacsError);

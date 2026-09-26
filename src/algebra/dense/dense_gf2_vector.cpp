@@ -8,8 +8,7 @@ namespace xorcle {
 void DenseGF2Vector::assign_from(const DenseGF2Vector& other) noexcept {
     assert(bits_.size() == other.bits_.size() && "bit count mismatch in assign_from");
     const std::size_t num_words = bits_.words();
-    // For 8 words (512 variables) or more, `std::memcpy` performs empirically
-    // better than `gf2::copy`
+    // Below 8 words a plain word loop beats `std::memcpy`.
     if (num_words < 8) {
         Word* destination = bits_.store();
         const Word* source = other.bits_.store();

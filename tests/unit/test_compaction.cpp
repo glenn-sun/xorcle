@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "algebra/compaction_transform.h"
-#include "algebra/equation.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
 #include "core/clause_id.h"
@@ -298,6 +297,65 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         CHECK(original.size() == 4);
         // x0 = 1 from the first step, x2 set directly, x1 = x2 from the second.
         CHECK(set_variables(original) == std::vector<std::size_t>{0, 1, 2});
+    }
+}
+
+// Over three words a row, a plan tests each dropped variable while there are
+// fewer root units than words, and a word at a time from there on; both must
+// find exactly the clauses holding a dropped variable.
+TEST_CASE_TEMPLATE("compaction: a plan over three words finds every clause to rewrite", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    constexpr std::size_t num_vars = 130;
+    constexpr std::size_t constant = num_vars;
+    std::vector<std::size_t> var_map(num_vars);
+    for (std::size_t var = 0; var < num_vars; ++var) {
+        var_map[var] = var;
+    }
+
+    SUBCASE("one root unit, tested variable by variable") {
+        Trail trail(repr, num_vars);
+        trail.learn(make_equation_with(repr, num_vars, {100, constant}), ClauseId{0},
+                    trail.level()); // x100 = 1
+        std::vector<Clause> clauses;
+        clauses.push_back(make_clause(repr, num_vars, {{100}, {3}}));      // satisfied
+        clauses.push_back(make_clause(repr, num_vars, {{5, 100}, {7}}));   // holds x100
+        clauses.push_back(make_clause(repr, num_vars, {{5}, {120}}));      // untouched
+        clauses.push_back(make_clause(repr, num_vars, {{64}, {129}}));     // untouched
+        const std::vector<std::uint8_t> active(clauses.size(), 1);
+
+        const CompactionState state{trail, clauses, active, var_map, num_vars, true};
+        const CompactionTransform transform = build_compaction_transform(trail, num_vars);
+        REQUIRE(transform.new_num_vars() == num_vars - 1);
+        const CompactionPlan plan = build_compaction_plan(state, transform);
+
+        CHECK(plan.rewritten_clause_ids == std::vector<ClauseId>{0, 1});
+        CHECK(plan.clause_is_active == std::vector<std::uint8_t>{0, 1, 1, 1});
+        // x5 + x100 reduced by x100 = 1 is x5 = 1, whose constant is now bit 129.
+        REQUIRE(plan.rewritten_clauses.size() == 2);
+        CHECK(rows_of(plan.rewritten_clauses[1]) ==
+              std::vector<std::vector<std::size_t>>{{5, num_vars - 1}, {7}});
+    }
+
+    SUBCASE("three root units, tested a word at a time") {
+        Trail trail(repr, num_vars);
+        for (const std::size_t var : {10UL, 70UL, 128UL}) {
+            trail.learn(make_equation_with(repr, num_vars, {var}), ClauseId{0}, trail.level());
+        }
+        std::vector<Clause> clauses;
+        clauses.push_back(make_clause(repr, num_vars, {{1}, {2}}));         // untouched
+        clauses.push_back(make_clause(repr, num_vars, {{69, 70}, {100}}));  // holds x70
+        clauses.push_back(make_clause(repr, num_vars, {{127}, {129}}));     // untouched
+        clauses.push_back(make_clause(repr, num_vars, {{0, 128}, {64}}));   // holds x128
+        const std::vector<std::uint8_t> active(clauses.size(), 1);
+
+        const CompactionState state{trail, clauses, active, var_map, num_vars, true};
+        const CompactionTransform transform = build_compaction_transform(trail, num_vars);
+        REQUIRE(transform.new_num_vars() == num_vars - 3);
+        const CompactionPlan plan = build_compaction_plan(state, transform);
+
+        CHECK(plan.rewritten_clause_ids == std::vector<ClauseId>{1, 3});
+        CHECK(plan.clause_is_active == std::vector<std::uint8_t>{1, 1, 1, 1});
     }
 }
 

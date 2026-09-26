@@ -18,7 +18,7 @@ std::vector<std::size_t> row_idxs_after_dropping(const std::vector<std::uint8_t>
     std::size_t dropped = 0;
     for (std::size_t row_idx = 0; row_idx < is_dropped.size(); ++row_idx) {
         after[row_idx] = row_idx - dropped;
-        dropped += is_dropped[row_idx] != 0 ? 1 : 0;
+        dropped += is_dropped[row_idx] != 0 ? 1U : 0U;
     }
     return after;
 }
@@ -98,8 +98,8 @@ std::size_t Trail::learn(const Equation& eqn, std::optional<ClauseId> reason, st
 
     const std::size_t trail_idx = level_end_[level];
     const std::size_t inserted_trail_idx =
-        trail_idx == span_.rows() ? learn_in_order(eqn, std::move(reason), level)
-                                  : learn_out_of_order(eqn, std::move(reason), level, trail_idx);
+        trail_idx == span_.rows() ? learn_in_order(eqn, reason, level)
+                                  : learn_out_of_order(eqn, reason, level, trail_idx);
 
     for (std::size_t l = level; l < level_end_.size(); ++l) {
         ++level_end_[l];
@@ -117,7 +117,7 @@ std::size_t Trail::learn_in_order(const Equation& eqn, std::optional<ClauseId> r
     assert(maybe_inserted_row_idx.has_value() && "learned an equation already in the span");
 
     const std::size_t inserted_row_idx = *maybe_inserted_row_idx;
-    reasons_.push_back(std::move(reason));
+    reasons_.push_back(reason);
     reason_coordinates_.emplace_back();
     levels_.push_back(level);
 
@@ -184,7 +184,7 @@ std::size_t Trail::learn_out_of_order(const Equation& eqn, std::optional<ClauseI
         row_trail_idx = displaced_trail_idx;
     }
 
-    reasons_.insert(reasons_.begin() + static_cast<std::ptrdiff_t>(trail_idx), std::move(reason));
+    reasons_.insert(reasons_.begin() + static_cast<std::ptrdiff_t>(trail_idx), reason);
     // The rows from `trail_idx` on moved or changed, so their coordinates go.
     reason_coordinates_.resize(trail_idx);
     reason_coordinates_.resize(reasons_.size());
@@ -268,27 +268,32 @@ void Trail::debug_assert_matches_reinsertion(const Trail& before, const Equation
 
 void Trail::debug_assert_valid() const {
     const std::size_t trail_rows = span_.rows();
-    assert(trail_idx_to_row_idx_.size() == trail_rows);
-    assert(row_idx_to_trail_idx_.size() == trail_rows);
-    assert(reasons_.size() == trail_rows);
-    assert(reason_coordinates_.size() == trail_rows);
-    assert(levels_.size() == trail_rows);
+    assert(trail_idx_to_row_idx_.size() == trail_rows && "trail-to-row map is missized");
+    assert(row_idx_to_trail_idx_.size() == trail_rows && "row-to-trail map is missized");
+    assert(reasons_.size() == trail_rows && "reasons are missized");
+    assert(reason_coordinates_.size() == trail_rows && "reason coordinates are missized");
+    assert(levels_.size() == trail_rows && "levels are missized");
 
     for (std::size_t trail_idx = 0; trail_idx < trail_rows; ++trail_idx) {
         const std::size_t row_idx = trail_idx_to_row_idx_[trail_idx];
-        assert(row_idx < trail_rows);
-        assert(row_idx_to_trail_idx_[row_idx] == trail_idx);
-        assert(trail_idx == 0 || levels_[trail_idx - 1] <= levels_[trail_idx]);
-        assert(levels_[trail_idx] < level_end_.size());
-        assert(reasons_[trail_idx].has_value() ||
-               (levels_[trail_idx] > 0 && level_end_[levels_[trail_idx] - 1] == trail_idx));
+        assert(row_idx < trail_rows && "a trail element maps past the last row");
+        assert(row_idx_to_trail_idx_[row_idx] == trail_idx && "the order maps are not inverse");
+        assert((trail_idx == 0 || levels_[trail_idx - 1] <= levels_[trail_idx]) &&
+               "the trail is not ordered by level");
+        assert(levels_[trail_idx] < level_end_.size() && "a trail element's level has no end");
+        assert((reasons_[trail_idx].has_value() ||
+                (levels_[trail_idx] > 0 && level_end_[levels_[trail_idx] - 1] == trail_idx)) &&
+               "an element without a reason is not its level's decision");
     }
 
-    assert(level_end_.back() == trail_rows);
+    assert(level_end_.back() == trail_rows && "the top level does not end the trail");
     for (std::size_t level = 0; level < level_end_.size(); ++level) {
-        assert(level == 0 || level_end_[level - 1] <= level_end_[level]);
-        assert(level_end_[level] == trail_rows || levels_[level_end_[level]] > level);
-        assert(level_end_[level] == 0 || levels_[level_end_[level] - 1] <= level);
+        assert((level == 0 || level_end_[level - 1] <= level_end_[level]) &&
+               "level ends are not ascending");
+        assert((level_end_[level] == trail_rows || levels_[level_end_[level]] > level) &&
+               "a level ends before its last element");
+        assert((level_end_[level] == 0 || levels_[level_end_[level] - 1] <= level) &&
+               "a level ends after an element of a later level");
     }
 }
 #endif

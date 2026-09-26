@@ -1,6 +1,7 @@
 #include "util/stats.h"
 
 #include <cassert>
+#include <utility>
 
 namespace xorcle {
 
@@ -13,7 +14,7 @@ to_string(const SolveResult result) {
             return "UNSAT";
     }
     assert(false && "to_string: not a solve result");
-    return "unknown";
+    std::unreachable();
 }
 
 std::string
@@ -28,8 +29,7 @@ config_value(const RunStats& stats, const std::string_view name) {
 
 bool
 RunStats::reports(const StatsSection section) const {
-    // Each condition reads the recorded configuration rather than a flag of its
-    // own, so the block can never claim a feature ran that the row says was off.
+    // Each condition reads the recorded configuration rather than a flag of its own.
     switch (section) {
         case StatsSection::instance:
         case StatsSection::search:
@@ -65,7 +65,7 @@ RunStats::reports(const StatsSection section) const {
             return proof_postprocess_time_s > 0.0;
     }
     assert(false && "RunStats::reports: not a statistics section");
-    return false;
+    std::unreachable();
 }
 
 } // namespace xorcle

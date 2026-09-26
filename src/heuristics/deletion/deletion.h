@@ -22,7 +22,7 @@ enum class DeletionKey : std::uint8_t {
 
 /// @brief When the solver deletes learned clauses, and by which key.
 struct DeletionConfig {
-    bool enabled = false;
+    bool enabled = true;
 
     std::size_t cadence = 100; ///< Conflicts between deletion passes.
 
@@ -30,11 +30,10 @@ struct DeletionConfig {
     /// becomes `local`.
     std::size_t demote_cadence_in_passes = 2;
 
-    ClauseTierConfig tiers;
+    ClauseTierConfig tiers = {};
     DeletionKey key = DeletionKey::activity;
 
-    /// @brief Where `DeletionKey::activity` reads its score; not owned.
-    const ClauseActivitySource* activity = nullptr;
+    bool operator==(const DeletionConfig&) const = default;
 };
 
 /// @brief A read-only view of the state a deletion pass is planned against.
@@ -62,7 +61,7 @@ struct DeletionPlan {
 /// `local` tier to delete.
 ///
 /// A clause some trail row names as its reason is locked: neither deleted nor
-/// counted as unused. A clause demoted here is not also an deletion candidate.
+/// counted as unused. A clause demoted here is not also a deletion candidate.
 ///
 /// @pre `state.activity` is non-null if `state.key` is `DeletionKey::activity`.
 DeletionPlan build_deletion_plan(const DeletionState& state);

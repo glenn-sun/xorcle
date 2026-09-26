@@ -65,8 +65,6 @@ template <GF2Vector V>
 class EquationTemplate final : public EquationInterface {
 public:
     /// @brief Recycle the object's storage rather than returning it to malloc.
-    /// Reducing allocates and frees an equation for every row a matrix gains or
-    /// loses, all of them this size.
     static void* operator new(std::size_t size) {
         if (free_list_.empty()) {
             return ::operator new(size);

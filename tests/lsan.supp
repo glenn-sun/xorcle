@@ -1,0 +1,3 @@
+# EquationTemplate recycles its blocks through a static free list, whose vector
+# is destroyed at exit before LeakSanitizer scans, orphaning the parked blocks.
+leak:xorcle::EquationTemplate

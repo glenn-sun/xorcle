@@ -18,10 +18,10 @@ public:
     CompactionTransform() = default;
 
     /// @brief Build the transform dropping the given variables of the old numbering.
-    /// @pre `dropped_columns.size() == old_num_vars + 1` and does not mark the
+    /// @pre `dropped_col_idxs.size() == old_num_vars + 1` and does not mark the
     /// constant column.
     static CompactionTransform from_dropped_columns(std::size_t old_num_vars,
-                                                    const IndexSet& dropped_columns);
+                                                    const IndexSet& dropped_col_idxs);
 
     std::size_t old_num_vars() const noexcept { return old_num_vars_; }
 

@@ -31,8 +31,9 @@ void RowSpace::compact(const CompactionTransform& transform) {
            "compact: the transform was built for a different variable count");
 #ifndef NDEBUG
     for (std::size_t row_idx = 0; row_idx < rows(); ++row_idx) {
-        const std::size_t pivot = pivot_col_idx(row_idx);
-        assert((pivot == num_vars() || transform.to_new(pivot) != CompactionTransform::npos) &&
+        const std::size_t leading_col_idx = pivot_col_idx(row_idx);
+        assert((leading_col_idx == num_vars() ||
+                transform.to_new(leading_col_idx) != CompactionTransform::npos) &&
                "compact: a pivot column is dropped");
     }
 #endif

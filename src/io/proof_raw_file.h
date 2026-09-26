@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -41,7 +42,7 @@ public:
 
     std::ofstream& out() noexcept { return out_; }
 
-    const std::filesystem::path& final_path() const noexcept { return final_path_; }
+    bool finalized() const noexcept { return finalized_; }
 
     /// @brief Close the file, moving it into place if `keep`.
     /// @throws RawProofError If the file was to be kept and cannot be written.
@@ -134,7 +135,7 @@ public:
     std::size_t num_input_clauses() const noexcept { return num_input_clauses_; }
 
     /// @throws RawProofError On a truncated or corrupt record.
-    bool next(RawRecord& record) override;
+    std::optional<RawRecord> next() override;
 
     void rewind() override;
 

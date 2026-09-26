@@ -98,7 +98,7 @@ std::optional<std::size_t> ReferenceMatrix::add_row_get_row_idx(const Bits& v) {
                 break;
             }
         }
-        insert_row_idx += pivot_[leading_col_idx] ? 1 : 0;
+        insert_row_idx += pivot_[leading_col_idx] ? 1U : 0U;
     }
 
     if (none_set(reduced)) {
@@ -157,6 +157,52 @@ void ReferenceMatrix::pop_last_row() {
     const std::size_t leading = *first_set(rows_.back());
     rows_.pop_back();
     pivot_[leading] = false;
+}
+
+Bits ReferenceMatrix::pop_row(std::size_t row_idx) {
+    assert(row_idx < rows() && "pop_row index is out of range");
+    Bits popped = rows_[row_idx];
+    rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(row_idx));
+    index_pivots();
+    return popped;
+}
+
+void ReferenceMatrix::add_to_row(std::size_t row_idx, const Bits& v) {
+    assert(row_idx < rows() && "add_to_row index is out of range");
+    assert(first_set(v) > first_set(rows_[row_idx]) && "the addend must lead after the row");
+    plus_into(rows_[row_idx], v);
+}
+
+void ReferenceMatrix::reduce_rows() {
+    // From the last row up, so each row added in is already reduced.
+    for (std::size_t pivot_row_idx = rows_.size(); pivot_row_idx-- > 0;) {
+        const std::size_t col_idx = *first_set(rows_[pivot_row_idx]);
+        for (std::size_t row_idx = 0; row_idx < rows_.size(); ++row_idx) {
+            if (row_idx != pivot_row_idx && rows_[row_idx][col_idx]) {
+                plus_into(rows_[row_idx], rows_[pivot_row_idx]);
+            }
+        }
+    }
+}
+
+bool ReferenceMatrix::carries_any_col(const std::vector<std::size_t>& col_idxs) const {
+    for (const Bits& row : rows_) {
+        for (const std::size_t col_idx : col_idxs) {
+            if (row[col_idx]) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void ReferenceMatrix::index_pivots() {
+    pivot_.assign(num_vars_ + 1, false);
+    for (std::size_t row_idx = 0; row_idx < rows_.size(); ++row_idx) {
+        const std::size_t col_idx = *first_set(rows_[row_idx]);
+        pivot_[col_idx] = true;
+        col_idx_to_row_idx_[col_idx] = row_idx;
+    }
 }
 
 } // namespace xorcle

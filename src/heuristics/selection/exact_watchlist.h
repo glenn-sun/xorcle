@@ -3,7 +3,6 @@
 /// @file exact_watchlist.h
 /// @brief The selector that queues exactly the clauses whose watch pair became dependent.
 
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -25,7 +24,7 @@ struct ExactWatchlistCounters {
     std::size_t touches_ahead = 0; ///< Touches of a triggered pair's partner ahead of its sweep.
     std::size_t skips = 0; ///< Cells a sweep left alone because their pair cannot trigger.
     std::size_t fixups = 0; ///< Second cells reduced by their first after its key moved onto theirs.
-    std::size_t xors = 0; ///< Row additions made by sweeps and fix-ups.
+    std::size_t row_additions = 0; ///< Row additions made by sweeps and fix-ups.
     std::size_t triggers = 0; ///< Clauses a sweep found triggered, or queued on the side.
     std::size_t saves = 0; ///< Cells copied onto a level's save stack.
     std::size_t restores = 0; ///< Saved cells a backjump copied back.
@@ -60,23 +59,12 @@ public:
     /// @param num_vars The variable count of the starting clauses.
     explicit ExactWatchlist(std::size_t num_vars);
 
-#ifdef XORCLE_EXACT_WATCHLIST_TIMING
-    /// @brief Print the time spent sweeping to stderr.
-    ~ExactWatchlist() override;
-#endif
-
-    std::optional<ClauseId> next() override;
-
     /// @brief The next triggered clause: first from the side queue, else from the
     /// oldest paused sweep; `std::nullopt` once both are empty.
-    std::optional<ClauseSelection> next_with_hint() override;
-
-    /// @pre `reduced_eqn` is the row `trail` stores for its last equation, and every
-    /// earlier one was reported here too; a new level opens only at quiescence.
-    void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
+    std::optional<ClauseSelection> next() override;
 
     /// @pre `id` names an active clause of at least two rows.
-    void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch, WatchType type,
+    void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch_row_idx, WatchType type,
                                const Trail& trail) override;
 
     void update_with_backjump(std::size_t level, const Trail& trail) override;
@@ -92,6 +80,10 @@ protected:
     /// @brief Store a clause, build its cells against the trail as last reported, and
     /// queue it on the side if it is already triggered.
     void add_clause(Clause clause) override;
+
+    /// @pre `reduced_eqn` is the row `trail` stores for its last equation, and every
+    /// earlier one was reported here too; a new level opens only at quiescence.
+    void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
 private:
     using Word = DenseGF2Vector::Word;
@@ -147,11 +139,12 @@ private:
 
     /// @brief Reduce `words`, leading on `lead`, by the span until its lead is not a
     /// pivot; the key it ends on.
-    std::uint32_t reduce_by_span(Word* words, std::size_t lead, std::size_t& xors) const;
+    std::uint32_t reduce_by_span(Word* words, std::size_t lead, std::size_t& row_additions) const;
 
     /// @brief As `reduce_by_span`, and by `first` too while the lead is `first_key`.
     std::uint32_t reduce_by_span_and_first(Word* words, std::size_t lead, const Word* first,
-                                           std::uint32_t first_key, std::size_t& xors) const;
+                                           std::uint32_t first_key,
+                                           std::size_t& row_additions) const;
 
     void place(std::uint32_t cell);
 
@@ -241,10 +234,6 @@ private:
     std::vector<std::uint8_t> in_side_queue_;
 
     ExactWatchlistCounters counters_;
-
-#ifdef XORCLE_EXACT_WATCHLIST_TIMING
-    std::chrono::steady_clock::duration sweep_time_{};
-#endif
 
 #ifndef NDEBUG
     std::size_t debug_events_ = 0;

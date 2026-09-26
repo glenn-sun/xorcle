@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cassert>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -17,8 +18,11 @@
 #include "core/clause_id.h"
 #include "heuristics/decisions/phase.h"
 #include "util/random.h"
+#include "util/stats.h"
 
 namespace xorcle {
+
+struct CsidsConfig;
 
 enum class DecisionProcedureName {
     fixed_literals, ///< Debug baseline only.
@@ -68,7 +72,7 @@ private:
 };
 
 /// @brief What drawing decisions from clause intersections did, summed over the run.
-struct IntersectionStats {
+struct IntersectionCounters {
     std::size_t decisions = 0; ///< Drawn from an intersection of two or more clauses.
     std::size_t intersected_clauses = 0; ///< Below the top, whose intersection was kept.
     std::size_t dimension_before = 0; ///< Of the top clause modulo the trail.
@@ -90,6 +94,12 @@ struct DecisionResult {
     std::optional<ClauseId> propagating_clause;
 };
 
+struct DecisionCounters {
+    std::size_t decisions = 0;
+    /// @brief Variables the solver assigned when completing a model.
+    std::size_t fallback_decisions = 0;
+};
+
 /// @brief Picks the equation the solver decides on next.
 ///
 /// A decision `f` is legal when neither `f` nor `f + [0 = 1]` lies in the trail span.
@@ -98,13 +108,6 @@ struct DecisionResult {
 /// learning. Only the phase is observable, phase-then-reduce differing from the reverse.
 class DecisionProcedure {
 public:
-    struct DecisionStats {
-        std::size_t decisions = 0;
-        /// @brief Decided from the literal basis, no clause having yielded one.
-        std::size_t fallback_decisions = 0;
-        IntersectionStats intersections;
-    };
-
     /// @brief The phase RNG stream is derived from `seed`.
     DecisionProcedure(EquationRepr repr, std::size_t num_vars, Seed seed);
 
@@ -129,10 +132,6 @@ public:
                                          const std::vector<Clause>& clauses,
                                          const std::vector<std::uint8_t>& clause_active,
                                          const SatisfactionRecord& known = {}) = 0;
-
-    /// @brief Note an equation resolved through during conflict analysis.
-    /// @pre `eqn` has `num_vars() + 1` bits and a variable leading bit.
-    virtual void update_with_critical_equation(const Equation& eqn);
 
     /// @pre `clause.cols() == num_vars() + 1`, and every row has a variable leading bit.
     /// @note Called before `update_with_new_clause()` for the same clause, which is where
@@ -161,8 +160,8 @@ public:
     ///
     /// The levels this procedure would rank ahead of the decision it is about to
     /// make, so that keeping them costs no search. `decision_clauses[k]` is the
-    /// clause the decision at level `k + 1` came from, empty when the fallback
-    /// basis supplied it.
+    /// clause the decision at level `k + 1` came from, empty when no clause
+    /// supplied it.
     /// @return At most `decision_clauses.size()`. The default keeps nothing.
     /// @pre `trail_span` is not conflicting.
     /// @pre `clause_active.size() == clauses.size()`.
@@ -180,7 +179,10 @@ public:
                                         const std::vector<Clause>& clauses,
                                         const std::vector<std::uint8_t>& clause_active);
 
-    virtual DecisionStats decision_stats() const;
+    const DecisionCounters& counters() const noexcept { return counters_; }
+
+    /// @brief Add this procedure's counters to `stats`.
+    virtual void add_to_stats(RunStats& stats) const;
 
     std::size_t num_vars() const noexcept { return num_vars_; }
     EquationRepr repr() const noexcept { return repr_; }
@@ -191,7 +193,7 @@ public:
     Seed base_seed() const noexcept { return base_seed_; }
 
 protected:
-    void record_decision(bool used_fallback);
+    void record_decision() noexcept { ++counters_.decisions; }
 
 public:
     /// @brief Record decisions the solver made itself, completing a model the
@@ -199,7 +201,7 @@ public:
     void note_filled_decisions(std::size_t num_decisions);
 
 protected:
-    void reset_stats() noexcept;
+    void reset_counters() noexcept { counters_ = {}; }
 
     void reset_phase_rng();
 
@@ -220,11 +222,18 @@ private:
 
     mutable Rng phase_rng_;
 
-    std::size_t decisions_ = 0;
-    std::size_t fallback_decisions_ = 0;
+    DecisionCounters counters_;
 
     /// @brief Preallocated, so `satisfy` is one whole-row op, not a per-bit flip.
     Equation false_equation_;
 };
+
+/// @brief Build the procedure named by @p name, deciding in @p phase; only CSIDS
+/// reads @p csids.
+std::unique_ptr<DecisionProcedure> make_decision_procedure(DecisionProcedureName name,
+                                                           EquationRepr repr,
+                                                           std::size_t num_vars, Seed seed,
+                                                           DecisionPhase phase,
+                                                           const CsidsConfig& csids);
 
 } // namespace xorcle

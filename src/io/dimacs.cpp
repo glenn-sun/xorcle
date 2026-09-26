@@ -10,7 +10,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <utility>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -160,7 +159,7 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
                                             std::string_view origin, std::size_t line_number) {
     std::vector<std::size_t> bits;
 
-    if (token.find('+') == std::string_view::npos) {
+    if (!token.contains('+')) {
         const std::optional<long long> literal = parse_signed(token);
         if (!literal) {
             fail(origin, line_number, "not an equation token: " + std::string{token});
@@ -177,7 +176,7 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
     if (body.empty()) {
         fail(origin, line_number, "empty XOR expression in token: " + std::string{token});
     }
-    if (body.find('-') != std::string_view::npos) {
+    if (body.contains('-')) {
         fail(origin, line_number, "'-' inside an XOR expression in token: " +
                                       std::string{token});
     }

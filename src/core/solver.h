@@ -14,12 +14,14 @@
 #include "core/propagation.h"
 #include "core/trail.h"
 #include "heuristics/compaction/compaction.h"
+#include "heuristics/decisions/clause_activity.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/deletion/deletion.h"
 #include "heuristics/implication_graph/implication_graph.h"
 #include "heuristics/propagation/attempt_budget.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/selection/clause_selector.h"
+#include "heuristics/selection/cyclic.h"
 #include "io/proof_raw_file.h"
 #include "util/index_set.h"
 #include "util/progress_reporter.h"
@@ -36,6 +38,8 @@ struct CompactionConfig {
     bool enabled = true;
 
     std::size_t cadence = 256; ///< Conflicts between two successful compactions.
+
+    bool operator==(const CompactionConfig&) const = default;
 };
 
 /// @brief How far a propagation run may go before deferring to a decision.
@@ -47,6 +51,8 @@ struct PropagationConfig {
     /// @brief Learned equations over which the attempt budget falls by a factor
     /// of `e` when none of them is missed.
     std::size_t window = 2000;
+
+    bool operator==(const PropagationConfig&) const = default;
 };
 
 /// @brief Where the solver reports progress while it runs, and how often.
@@ -180,7 +186,7 @@ struct ImplicationGraphCounters {
 /// @brief The CDCL(⊕) solver.
 ///
 /// The loop is propagate, then either analyse a conflict, report SAT, compact,
-/// or decide. The `ClauseSelector` is also the authoritative clause store.
+/// run the implication graph, or decide. The `ClauseSelector` is also the authoritative clause store.
 class Solver {
 public:
     /// @brief Construct a solver over an empty clause database.
@@ -190,15 +196,16 @@ public:
     ///
     /// @pre `selector`, `decisions` and `restarts` are all non-null; use
     /// `NoRestarts` to disable restarts.
+    /// @pre A nonzero `propagation.miss_rate` comes with a `Cyclic` selector.
     /// @pre If `proof_writer` is non-null then `proof_writer->num_vars() == num_vars`.
-    /// @pre If `deletion.key` is `DeletionKey::activity` and deletion is
-    /// enabled then `deletion.activity` is non-null.
+    /// @pre If deletion is enabled with `DeletionKey::activity` then `decisions`
+    /// is a `ClauseActivitySource`.
     Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
            std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
            RawProofWriter* proof_writer = nullptr, const CompactionConfig& compaction = {},
            const ProgressConfig& progress = {}, bool minimize = true,
            const DeletionConfig& deletion = {}, bool bump_responsible_clauses = false,
-           bool subsume = false, const PropagationConfig& propagation = {},
+           bool subsume = true, const PropagationConfig& propagation = {},
            const ImplicationGraphConfig& implication_graph = {});
 
     Solver(const Solver&) = delete;
@@ -220,13 +227,12 @@ public:
     /// @brief Original variable count, before compaction.
     std::size_t num_vars() const noexcept { return original_num_vars_; }
 
-    /// @brief Clause ids ever handed out; deletion deactivates rather than
-    /// reclaiming them, so this only grows. `num_active_clauses()` is the
-    /// database as it stands.
+    /// @brief Clause ids ever handed out, which only grows: deletion deactivates
+    /// rather than reclaiming them.
     std::size_t num_clauses() const noexcept { return selector_->num_clauses(); }
 
     /// @brief Clauses still in the database: neither deleted nor dropped by a
-    /// compaction. Tracked as they change, so a progress line costs nothing.
+    /// compaction.
     std::size_t num_active_clauses() const noexcept { return num_active_clauses_; }
 
     /// @brief Variables left after compaction, which is `num_vars()` until one runs.
@@ -245,9 +251,10 @@ public:
     /// @brief Width-2 clauses and vertices as the graph last held them.
     const ImplicationGraph& implication_graph() const noexcept { return implication_graph_; }
 
-    DecisionProcedure::DecisionStats decision_stats() const { return decisions_->decision_stats(); }
+    const DecisionProcedure& decision_procedure() const noexcept { return *decisions_; }
 
-    RestartStats restart_stats() const { return restarts_->stats(); }
+    /// @brief Add the counters of the solver and of its heuristics to `stats`.
+    void add_to_stats(RunStats& stats) const;
 
 private:
     /// @brief What one decision step found.
@@ -268,6 +275,11 @@ private:
     /// the trail now holds `0 = 1`, in which case `conflict_clause_id_` names the
     /// clause that propagated it and `conflict_level_` the level it holds at.
     bool propagate_until_conflict();
+
+    /// @brief Whether the last propagation run ended on its attempt budget.
+    bool last_run_stopped_on_budget() const noexcept {
+        return cyclic_selector_ != nullptr && cyclic_selector_->last_stop_was_budget();
+    }
 
     /// @brief Attempts a fruitless stretch gets before the run defers, or `0`
     /// for quiescence; also follows the database and samples the fractions
@@ -314,17 +326,20 @@ private:
     std::vector<ClauseId> write_implication_graph_lines(
         const ImplicationGraphProofRecord& record);
 
+    /// @brief The lines a replay cited, in order, and whether the last of them
+    /// falsified a clause.
+    struct Citations {
+        std::vector<ClauseId> hints;
+        bool conflicted = false;
+    };
+
     /// @brief Cite the lines of the root units @p rows needs before a hint can
-    /// name the clause holding them.
-    /// @return Whether one of those lines already falsified a clause.
-    bool cite_root_units(std::span<const Equation> rows, HintTrail& trail,
-                         std::vector<ClauseId>& hints);
+    /// name the clause holding them, stopping at one that falsifies a clause.
+    Citations cite_root_units(std::span<const Equation> rows, HintTrail& trail);
 
     /// @brief Cite the clause behind each arc in turn, stopping at the one the
     /// trail falsifies.
-    /// @return Whether that clause was reached.
-    bool replay_arcs(std::span<const ClauseId> arcs, HintTrail& trail,
-                     std::vector<ClauseId>& hints);
+    Citations replay_arcs(std::span<const ClauseId> arcs, HintTrail& trail);
 
     /// @brief The rows of clause @p id over the original variables.
     std::vector<Equation> lift_clause(ClauseId id) const;
@@ -385,7 +400,7 @@ private:
     bool every_active_clause_is_satisfied(const RowSpace& model) const;
 
     /// @brief Whether the tracked live-clause count still matches the flags it
-    /// summarises. Recounting is linear, so this is a debug check only.
+    /// summarises.
     bool active_clause_count_is_consistent() const;
 
     /// @brief Whether no active clause is unit or falsified modulo the trail, which
@@ -432,6 +447,8 @@ private:
 
     CompactionConfig compaction_;
     DeletionConfig deletion_;
+    /// @brief `decisions_` as the score `DeletionKey::activity` reads; not owned.
+    const ClauseActivitySource* clause_activity_ = nullptr;
 
     /// @brief Whether a compaction is owed: before the first one, once the
     /// conflict interval has elapsed since the last, and once the implication
@@ -452,6 +469,7 @@ private:
     std::vector<std::optional<ClauseId>> decision_clause_of_level_;
 
     std::unique_ptr<ClauseSelector> selector_;
+    Cyclic* cyclic_selector_ = nullptr; ///< `selector_`, if it is `Cyclic`.
     std::unique_ptr<DecisionProcedure> decisions_;
     std::unique_ptr<RestartPolicy> restarts_;
     Propagator propagator_;
@@ -477,12 +495,14 @@ private:
     /// variables, each reduced by the ones before it.
     RowSpace proof_root_span_;
     std::vector<RawUnit> proof_root_units_;   ///< In trail order.
-    std::vector<ClauseId> proof_col_idx_to_unit_idx_; ///< Pivot column to the unit's proof id.
+    std::vector<ClauseId> proof_col_idx_to_unit_id_; ///< Pivot column to the unit's proof id.
 
     /// @brief A distinct stamp per decision level, reissued whenever a level is
-    /// built again after a backjump, so a clause's record of having been
-    /// satisfied cannot be read against a different level of the same depth.
-    /// Index 0 is the root, whose span only ever grows.
+    /// built again after a backjump.
+    ///
+    /// A clause's record of having been satisfied is thereby never read against
+    /// a different level of the same depth. Index 0 is the root, whose span only
+    /// ever grows.
     std::vector<std::size_t> level_stamp_{1};
     std::size_t next_level_stamp_ = 2;
 
@@ -490,8 +510,7 @@ private:
     ///
     /// Reducing @p row names the span rows it used, and the level filtration
     /// only ever grows, so the deepest level among them is the level the row
-    /// first became satisfied at. Recording the shallowest, rather than the
-    /// current level, is what lets a record outlive a backjump.
+    /// first became satisfied at.
     /// @pre `row` reduces to `0 = 1` against the current span.
     std::size_t shallowest_satisfying_level(const Equation& row);
 
@@ -589,7 +608,7 @@ private:
     /// @brief Whether a run fed units and the follow-up clause test is still owed.
     bool follow_up_is_pending_ = false;
 
-    /// @brief Which of the counters below to credit the run that is due to.
+    /// @brief Which of the `ImplicationGraphCounters` to credit the run that is due to.
     enum class RunTrigger : std::uint8_t { first_run, clauses, conflicts, feed };
     RunTrigger run_is_due_from_ = RunTrigger::first_run;
 

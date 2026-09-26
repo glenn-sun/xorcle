@@ -75,19 +75,10 @@ void AtomicOutputFile::finalize(bool keep) {
     std::filesystem::remove(final_path_, ec);
     ec.clear();
     std::filesystem::rename(temp_path_, final_path_, ec);
-    if (!ec) {
-        return;
-    }
-
-    // Rename fails across filesystems; fall back to a copy so the file lands.
-    ec.clear();
-    std::filesystem::copy_file(temp_path_, final_path_,
-                               std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) {
+        std::filesystem::remove(temp_path_, ec);
         throw RawProofError("failed to write the final file: " + final_path_.string());
     }
-    ec.clear();
-    std::filesystem::remove(temp_path_, ec);
 }
 
 RawRow lift_row(const Equation& row, std::span<const std::size_t> active_var_to_original,
@@ -142,6 +133,7 @@ void RawProofWriter::write_ids(const std::vector<ClauseId>& ids) {
 void RawProofWriter::write_learned(ClauseId id, const Clause& clause,
                                    std::span<const std::size_t> active_var_to_original,
                                    const std::vector<ClauseId>& reasons) {
+    assert(!file_.finalized() && "the raw proof was written to after finalize()");
     file_.out().put(static_cast<char>(RawTag::learned));
     write_varint(id);
     write_varint(clause.rows());
@@ -153,6 +145,7 @@ void RawProofWriter::write_learned(ClauseId id, const Clause& clause,
 
 void RawProofWriter::write_learned(ClauseId id, std::span<const RawRow> rows,
                                    const std::vector<ClauseId>& reasons) {
+    assert(!file_.finalized() && "the raw proof was written to after finalize()");
     file_.out().put(static_cast<char>(RawTag::learned));
     write_varint(id);
     write_varint(rows.size());
@@ -163,12 +156,14 @@ void RawProofWriter::write_learned(ClauseId id, std::span<const RawRow> rows,
 }
 
 void RawProofWriter::write_empty(ClauseId id, const std::vector<ClauseId>& reasons) {
+    assert(!file_.finalized() && "the raw proof was written to after finalize()");
     file_.out().put(static_cast<char>(RawTag::empty));
     write_varint(id);
     write_ids(reasons);
 }
 
 void RawProofWriter::write_compaction(const std::vector<RawUnit>& units) {
+    assert(!file_.finalized() && "the raw proof was written to after finalize()");
     file_.out().put(static_cast<char>(RawTag::compaction));
     write_varint(units.size());
     for (const RawUnit& unit : units) {
@@ -178,6 +173,7 @@ void RawProofWriter::write_compaction(const std::vector<RawUnit>& units) {
 }
 
 void RawProofWriter::write_deleted(const std::vector<ClauseId>& ids) {
+    assert(!file_.finalized() && "the raw proof was written to after finalize()");
     assert(!ids.empty() && "a deletion record names at least one clause");
     file_.out().put(static_cast<char>(RawTag::deleted));
     write_ids(ids);
@@ -245,10 +241,10 @@ std::vector<ClauseId> RawProofFileSource::read_ids() {
     return ids;
 }
 
-bool RawProofFileSource::next(RawRecord& record) {
+std::optional<RawRecord> RawProofFileSource::next() {
     const std::ifstream::int_type tag = in_.get();
     if (tag == std::ifstream::traits_type::eof()) {
-        return false;
+        return std::nullopt;
     }
 
     switch (static_cast<RawTag>(tag)) {
@@ -260,15 +256,13 @@ bool RawProofFileSource::next(RawRecord& record) {
                 row = read_row();
             }
             learned.reasons = read_ids();
-            record = std::move(learned);
-            return true;
+            return learned;
         }
         case RawTag::empty: {
             RawEmpty empty;
             empty.id = read_varint();
             empty.reasons = read_ids();
-            record = std::move(empty);
-            return true;
+            return empty;
         }
         case RawTag::compaction: {
             RawCompaction compaction;
@@ -277,12 +271,10 @@ bool RawProofFileSource::next(RawRecord& record) {
                 unit.row = read_row();
                 unit.id = read_varint();
             }
-            record = std::move(compaction);
-            return true;
+            return compaction;
         }
         case RawTag::deleted: {
-            record = RawDeleted{read_ids()};
-            return true;
+            return RawDeleted{read_ids()};
         }
     }
     throw RawProofError("the raw proof holds an unknown record tag " + std::to_string(tag));

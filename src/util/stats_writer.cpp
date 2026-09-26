@@ -15,8 +15,7 @@ namespace {
 
 constexpr std::size_t assignment_literals_per_line = 20;
 
-/// @brief The prefix a configuration column carries, so a reader can tell the
-/// settings of a run apart from what it measured.
+/// @brief The prefix a configuration column carries.
 constexpr const char* config_column_prefix = "config.";
 
 /// @brief How the console block prints one statistic, by its table kind.
@@ -61,14 +60,13 @@ void append_dimacs_assignment(std::ostringstream& output, const IndexSet& assign
 
     std::size_t line_literal_count = 0;
     output << "v";
-    for (std::size_t col_idx = 0; col_idx < assignment.size(); ++col_idx) {
+    for (std::size_t var = 0; var < assignment.size(); ++var) {
         if (line_literal_count == assignment_literals_per_line) {
             output << "\nv";
             line_literal_count = 0;
         }
-        const int literal = assignment.test(col_idx)
-                                ? static_cast<int>(col_idx + 1)
-                                : -static_cast<int>(col_idx + 1);
+        const int literal =
+            assignment.test(var) ? static_cast<int>(var + 1) : -static_cast<int>(var + 1);
         output << " " << literal;
         ++line_literal_count;
     }

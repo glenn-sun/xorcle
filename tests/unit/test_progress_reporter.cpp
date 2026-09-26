@@ -68,7 +68,7 @@ std::vector<std::string> values_of(const std::string& line) {
 
 } // namespace
 
-TEST_CASE("the header precedes the first line") {
+TEST_CASE("progress: the header precedes the first line") {
     std::ostringstream out;
     ConsoleProgressReporter reporter(out);
     reporter.report(sample_snapshot());
@@ -80,7 +80,7 @@ TEST_CASE("the header precedes the first line") {
     CHECK(lines[1] == lines[2]);
 }
 
-TEST_CASE("the header repeats so it stays on screen") {
+TEST_CASE("progress: the header repeats so it stays on screen") {
     std::ostringstream out;
     ConsoleProgressReporter reporter(out);
     // One more line than the interval, so exactly two headers are due.
@@ -95,7 +95,7 @@ TEST_CASE("the header repeats so it stays on screen") {
     CHECK(lines.size() == 26 + headers);
 }
 
-TEST_CASE("the default columns carry their snapshot values") {
+TEST_CASE("progress: the default columns carry their snapshot values") {
     std::ostringstream out;
     ConsoleProgressReporter reporter(out);
     reporter.report(sample_snapshot());
@@ -106,7 +106,7 @@ TEST_CASE("the default columns carry their snapshot values") {
                                                           "4096", "17.2", "41.5", "128"});
 }
 
-TEST_CASE("a group adds its columns to the default ones") {
+TEST_CASE("progress: a group adds its columns to the default ones") {
     std::ostringstream out;
     ConsoleProgressReporter reporter(out, progress_group::defaults | progress_group::deletion);
     reporter.report(sample_snapshot());
@@ -118,7 +118,7 @@ TEST_CASE("a group adds its columns to the default ones") {
                                                           "640", "512", "96"});
 }
 
-TEST_CASE("--report names map onto the groups") {
+TEST_CASE("progress: --report names map onto the groups") {
     CHECK(parse_progress_groups("default") == progress_group::defaults);
     CHECK(parse_progress_groups("all") == progress_group::all);
     // The default columns are what makes a line readable, so they are never off.
@@ -132,7 +132,7 @@ TEST_CASE("--report names map onto the groups") {
     CHECK(!parse_progress_groups("search,").has_value());
 }
 
-TEST_CASE("no progress line has the shape of an end-of-run statistic") {
+TEST_CASE("progress: no progress line has the shape of an end-of-run statistic") {
     std::ostringstream out;
     ConsoleProgressReporter reporter(out, progress_group::all);
     reporter.report(sample_snapshot());
@@ -145,7 +145,7 @@ TEST_CASE("no progress line has the shape of an end-of-run statistic") {
     }
 }
 
-TEST_CASE("columns stay aligned as values widen") {
+TEST_CASE("progress: columns stay aligned as values widen") {
     std::ostringstream out;
     ConsoleProgressReporter reporter(out, progress_group::all);
     reporter.report(ProgressSnapshot{});

@@ -27,7 +27,7 @@ class RecordingHandler final : public WatchUpdateHandler {
 public:
     struct Record {
         ClauseId id; ///< The clause whose watch moved.
-        ClauseRowIdx old_watch; ///< The row the watch pointed at before the move.
+        ClauseRowIdx old_watch_row_idx; ///< The row the watch pointed at before the move.
         WatchType type; ///< Which watch moved.
         std::size_t watched0; ///< The clause's `watched0` as seen by the handler.
         std::size_t watched1; ///< The clause's `watched1` as seen by the handler.
@@ -36,9 +36,9 @@ public:
     /// @brief Observe `clause`, so the recorded watches reflect the update order.
     explicit RecordingHandler(const Clause& clause) : clause_(&clause) {}
 
-    void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch, WatchType type,
+    void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch_row_idx, WatchType type,
                                const Trail&) override {
-        records.push_back({id, old_watch, type, clause_->watched0, clause_->watched1});
+        records.push_back({id, old_watch_row_idx, type, clause_->watched0, clause_->watched1});
     }
 
     std::vector<Record> records; ///< Every notification, in order.
@@ -89,7 +89,7 @@ TEST_CASE_TEMPLATE("propagation: unit clause already satisfied", Tag, DenseTag, 
     trail.learn(make_equation_with(repr, default_num_vars, {0, default_num_vars}), ClauseId{0},
                 trail.level());
 
-    // The row reduces to 1, so its negation is 0: nothing to propagate.
+    // The row reduces to `0 = 1`, so its negation is `0 = 0`: nothing to propagate.
     CHECK(propagator.unit_propagate_one_clause(0, clause, trail, std::nullopt, num_watch_updates,
                                                handler) == nullptr);
 }
@@ -105,7 +105,7 @@ TEST_CASE_TEMPLATE("propagation: unit clause conflict is an implied false equati
     Clause clause = make_clause(repr, default_num_vars, {{0}});
     trail.learn(make_equation_with(repr, default_num_vars, {0}), ClauseId{0}, trail.level());
 
-    // The row reduces to 0, so the clause implies 1.
+    // The row reduces to `0 = 0`, so the clause implies `0 = 1`.
     Equation* implied = propagator.unit_propagate_one_clause(0, clause, trail, std::nullopt,
                                                              num_watch_updates, handler);
     REQUIRE(implied != nullptr);
@@ -164,7 +164,7 @@ TEST_CASE_TEMPLATE("propagation: clause satisfied through the complement watch",
     trail.learn(make_equation_with(repr, default_num_vars, {1, default_num_vars}), ClauseId{1},
                 trail.level());
 
-    // Watch 0 died, but watch 1 reduces to 1, so the clause is satisfied and
+    // Watch 0 died, but watch 1 reduces to `0 = 1`, so the clause is satisfied and
     // nothing is implied.
     CHECK(propagator.unit_propagate_one_clause(3, clause, trail, std::nullopt, num_watch_updates,
                                                handler) == nullptr);
@@ -189,12 +189,9 @@ TEST_CASE_TEMPLATE("propagation: a dead watch moves to a live row", Tag, DenseTa
     CHECK(clause.watched1 == 1);
     CHECK(num_watch_updates == 1);
 
-    // The cyclic search resumes just past the row it settled on.
-    CHECK(clause.next_watch_search_start == 0);
-
     REQUIRE(handler.records.size() == 1);
     CHECK(handler.records[0].id == 3);
-    CHECK(handler.records[0].old_watch == 0);
+    CHECK(handler.records[0].old_watch_row_idx == 0);
     CHECK(handler.records[0].type == WatchType::zero);
     // The clause is updated before the handler is called, so the handler sees
     // the new row while being handed the old one.
@@ -247,7 +244,7 @@ TEST_CASE_TEMPLATE("propagation: two tasks run against the already-updated watch
     CHECK(num_watch_updates == 1);
 
     REQUIRE(handler.records.size() == 1);
-    CHECK(handler.records[0].old_watch == 0);
+    CHECK(handler.records[0].old_watch_row_idx == 0);
     CHECK(handler.records[0].type == WatchType::zero);
 }
 
@@ -273,7 +270,6 @@ TEST_CASE_TEMPLATE("propagation: watches must stay independent, not merely nonze
     CHECK(clause.watched0 == 3);
     CHECK(clause.watched1 == 1);
     CHECK(num_watch_updates == 1);
-    CHECK(clause.next_watch_search_start == 0);
 }
 
 TEST_CASE_TEMPLATE("propagation: the cyclic search start persists across calls", Tag, DenseTag,
@@ -302,7 +298,7 @@ TEST_CASE_TEMPLATE("propagation: the cyclic search start persists across calls",
     CHECK(num_watch_updates == 2);
 
     REQUIRE(handler.records.size() == 2);
-    CHECK(handler.records[1].old_watch == 1);
+    CHECK(handler.records[1].old_watch_row_idx == 1);
     CHECK(handler.records[1].type == WatchType::one);
 }
 

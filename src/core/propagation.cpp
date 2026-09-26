@@ -69,11 +69,9 @@ void Propagator::debug_assert_watch_hint_holds(const Clause& clause, const Trail
             assert(!watch1_is_one && "hinted zero trigger has companion 0 = 1");
             break;
         case WatchType::one:
-        case WatchType::sum:
-            // Both move the second watch, so either holds for both.
             assert((watch1_is_zero || sum_is_zero) &&
-                   "hinted one or sum trigger: the second watch is not in the span plus the first");
-            assert(!watch0_is_one && "hinted one or sum trigger has companion 0 = 1");
+                   "hinted one trigger: the second watch is not in the span plus the first");
+            assert(!watch0_is_one && "hinted one trigger has companion 0 = 1");
             break;
     }
 }
@@ -100,7 +98,7 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
         working_eqn_.assign_from(clause.row(0));
         const ReduceResult reduced = trail.span().partial_reduce(working_eqn_);
         if (reduced.kind == ReduceResult::Kind::eq_false) {
-            // Reduced to 1, so its negation is 0: already satisfied.
+            // Reduced to `0 = 1`, so its negation is `0 = 0`: already satisfied.
             found_satisfied_ = true;
             satisfying_row_idx_ = 0;
             return nullptr;
@@ -150,7 +148,6 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
     bool reduced0_in_working_eqn = false;
 
     if (trigger_hint.has_value()) {
-        // A sum trigger is normalized here to moving `watched1`.
 #ifndef NDEBUG
         debug_assert_watch_hint_holds(clause, trail, *trigger_hint);
 #endif
@@ -159,9 +156,6 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
                 tasks[num_tasks++] = {&clause.watched0, &clause.watched1, WatchType::zero};
                 break;
             case WatchType::one:
-                tasks[num_tasks++] = {&clause.watched1, &clause.watched0, WatchType::one};
-                break;
-            case WatchType::sum:
                 tasks[num_tasks++] = {&clause.watched1, &clause.watched0, WatchType::one};
                 break;
         }
@@ -192,7 +186,7 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
         }
 
         // Reducing modulo the span *plus* the reduced first watch folds the sum
-        // check in: the result is 0 exactly when the second watch is dead or has
+        // check in: the result is `0 = 0` exactly when the second watch is dead or has
         // become equal to the first.
         const std::optional<std::size_t> extra_leading_col_idx =
             reduced0.is_leading() ? std::optional<std::size_t>(reduced0.bit) : std::nullopt;
@@ -231,13 +225,13 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
 
         if (const std::optional<std::size_t> replacement =
                 find_replacement_cyclic(working_eqn_, *complement_eqn)) {
-            const ClauseRowIdx old_watch = *task.update_ptr;
+            const ClauseRowIdx old_watch_row_idx = *task.update_ptr;
             *task.update_ptr = *replacement;
             ++num_watch_updates;
-            handler.update_with_new_watch(id, old_watch, task.type, trail);
+            handler.update_with_new_watch(id, old_watch_row_idx, task.type, trail);
         } else {
             if (complement.kind == ReduceResult::Kind::eq_false) {
-                // Complement reduced to 1: satisfied. A second task still runs.
+                // Complement reduced to `0 = 1`: satisfied. A second task still runs.
                 found_satisfied_ = true;
                 satisfying_row_idx_ = *task.complement_ptr;
                 continue;

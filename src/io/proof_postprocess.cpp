@@ -6,7 +6,6 @@
 #include <limits>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -21,8 +20,7 @@ namespace {
 
 constexpr std::size_t no_index = std::numeric_limits<std::size_t>::max();
 
-/// @brief Above every id a raw proof can hold, so a corrupt one fails rather
-/// than allocating.
+/// @brief Above every id a raw proof can hold.
 constexpr ClauseId max_clause_id = std::size_t{1} << 48;
 
 /// @brief One line the proof may keep.
@@ -85,8 +83,8 @@ private:
 
     void scan(RawRecordSource& source) {
         source.rewind();
-        RawRecord record;
-        while (source.next(record)) {
+        while (const std::optional<RawRecord> next = source.next()) {
+            const RawRecord& record = *next;
             if (const auto* learned = std::get_if<RawLearned>(&record)) {
                 scan_learned(*learned);
             } else if (const auto* compaction = std::get_if<RawCompaction>(&record)) {
@@ -103,15 +101,12 @@ private:
                 }
             }
         }
-        if (empty_derivation_ == no_index) {
-            throw std::runtime_error("the raw proof has no empty clause");
-        }
+        assert(empty_derivation_ != no_index && "the raw proof has no empty clause");
     }
 
     void scan_learned(const RawLearned& learned) {
-        if (learned.id < num_input_clauses_) {
-            throw std::runtime_error("the raw proof learns a clause with an input clause's id");
-        }
+        assert(learned.id >= num_input_clauses_ &&
+               "the raw proof learns a clause with an input clause's id");
         ++summary_.raw_learned;
         std::vector<std::size_t> reasons = final_reasons(learned.reasons);
         ClauseCache& cache = clause(learned.id);
@@ -123,9 +118,7 @@ private:
     }
 
     void scan_empty(const RawEmpty& empty) {
-        if (empty_derivation_ != no_index) {
-            throw std::runtime_error("the raw proof has more than one empty clause");
-        }
+        assert(empty_derivation_ == no_index && "the raw proof has more than one empty clause");
         ++summary_.raw_learned;
         std::vector<std::size_t> reasons = final_reasons(empty.reasons);
         ClauseCache& cache = clause(empty.id);
@@ -141,9 +134,7 @@ private:
         std::vector<std::size_t> reasons;
         for (const ClauseId id : raw_reasons) {
             ClauseCache& cache = clause(id);
-            if (!cache.known) {
-                throw std::runtime_error("the raw proof names an unknown reason clause");
-            }
+            assert(cache.known && "the raw proof names an unknown reason clause");
             if (unit_echelon_.rows() > cache.watermark) {
                 reduce_by_units(cache);
             }
@@ -184,29 +175,23 @@ private:
         const std::size_t index = num_compactions_++;
         for (const RawUnit& unit : compaction.units) {
             const std::size_t unit_derivation = clause(unit.id).derivation;
-            if (unit_derivation == no_index && unit.id >= num_input_clauses_) {
-                throw std::runtime_error("the raw proof names an unknown root unit line");
-            }
+            assert((unit_derivation != no_index || unit.id < num_input_clauses_) &&
+                   "the raw proof names an unknown root unit line");
             Equation unit_row = make_equation(repr_, num_vars_);
             unit_row.assign_bits(unit.row);
+#ifndef NDEBUG
             Equation probe = unit_row;
-            bool holds_eliminated = false;
             unit_echelon_.reduce_get_coefficients(probe).for_each_set([&](std::size_t row_idx) {
-                if (units_[unit_of(row_idx)].compaction != index) {
-                    holds_eliminated = true;
-                }
+                assert(units_[unit_of(row_idx)].compaction == index &&
+                       "a root unit holds a variable an earlier compaction eliminated");
             });
-            if (holds_eliminated) {
-                throw std::runtime_error(
-                    "a root unit holds a variable an earlier compaction eliminated");
-            }
+#endif
             // Stored unchanged, the row is exactly what the unit's line proves,
             // so its pivot can stand for that line.
             const std::optional<std::size_t> row_idx =
                 unit_echelon_.add_row_get_row_idx(std::move(unit_row));
-            if (!row_idx || unit_echelon_.row(*row_idx).bits() != unit.row) {
-                throw std::runtime_error("a root unit is not reduced by the ones before it");
-            }
+            assert(row_idx && unit_echelon_.row(*row_idx).bits() == unit.row &&
+                   "a root unit is not reduced by the ones before it");
             const std::optional<std::size_t> pivot = unit_echelon_.row(*row_idx).leading_bit();
             assert(pivot && "a stored echelon row is never zero");
             col_idx_to_unit_idx_[*pivot] = units_.size();
@@ -233,10 +218,8 @@ private:
             }
             coefficients.for_each_set([&](std::size_t row_idx) {
                 const std::size_t unit = unit_of(row_idx);
-                if (unit < cache.watermark) {
-                    throw std::runtime_error(
-                        "the raw proof learns a clause over a variable compaction eliminated");
-                }
+                assert(unit >= cache.watermark &&
+                       "the raw proof learns a clause over a variable compaction eliminated");
                 if (unit_stamps_[unit] != unit_stamp_) {
                     unit_stamps_[unit] = unit_stamp_;
                     used.push_back(unit);
@@ -248,10 +231,9 @@ private:
         if (used.empty()) {
             return;
         }
-        const RawRow constant{num_vars_};
-        if (std::find(cache.rows.begin(), cache.rows.end(), constant) != cache.rows.end()) {
-            throw std::runtime_error("the raw proof names a reason clause root units satisfy");
-        }
+        assert(std::find(cache.rows.begin(), cache.rows.end(), RawRow{num_vars_}) ==
+                   cache.rows.end() &&
+               "the raw proof names a reason clause root units satisfy");
         std::stable_sort(used.begin(), used.end(), [&](std::size_t a, std::size_t b) {
             return units_[a].compaction < units_[b].compaction;
         });
@@ -358,9 +340,9 @@ private:
         }
 
         source.rewind();
-        RawRecord record;
         std::size_t next_index = 0;
-        while (source.next(record)) {
+        while (const std::optional<RawRecord> next = source.next()) {
+            const RawRecord& record = *next;
             if (const auto* learned = std::get_if<RawLearned>(&record)) {
                 const std::size_t index = clauses_[learned->id].derivation;
                 emit_rewrites(out, next_index, index);
@@ -451,9 +433,7 @@ private:
     }
 
     ClauseCache& clause(ClauseId id) {
-        if (id >= max_clause_id) {
-            throw std::runtime_error("the raw proof's clause ids are out of range");
-        }
+        assert(id < max_clause_id && "the raw proof's clause ids are out of range");
         if (id >= clauses_.size()) {
             clauses_.resize(id + 1);
         }

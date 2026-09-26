@@ -3,45 +3,32 @@
 #include <cassert>
 #include <chrono>
 #include <optional>
-#include <span>
 #include <utility>
 
 namespace xorcle {
 
 void CsidsActivity::bump_activity(ClauseId id) {
     activity_heap.increase_key(id, inc_amt);
-    if (activity_heap.get_priority(id) > 1e100) {
+    if (activity_heap.activity(id) > 1e100) {
         activity_heap.rescale(1e-100);
         inc_amt *= 1e-100;
     }
 }
 
-CsidsState::CsidsState(EquationRepr repr, std::size_t num_vars, const CsidsConfig& config)
-    : initial_inc_amt(config.bump), repr(repr), num_vars(num_vars) {
+CsidsState::CsidsState(const CsidsConfig& config)
+    : activity{.activity_heap = {},
+               .inc_amt = config.bump,
+               .initial_activity = config.initial_activity,
+               .decay = config.decay},
+      initial_inc_amt(config.bump) {
     assert(config.decay >= 0.0 && config.decay <= 1.0 && "CSIDS requires 0 <= decay <= 1");
     assert(config.initial_activity >= 0.0 && "CSIDS requires a non-negative A0");
     assert(config.bump >= 0.0 && "CSIDS requires a non-negative bump");
     assert(config.intersection_depth >= 1 && "CSIDS requires an intersection depth of at least 1");
-    activity.initial_activity = config.initial_activity;
-    activity.decay = config.decay;
-    activity.inc_amt = config.bump;
-}
-
-void CsidsState::ensure_unit_eqns() {
-    if (unit_eqns.size() == num_vars) {
-        return;
-    }
-    unit_eqns.clear();
-    unit_eqns.reserve(num_vars);
-    for (std::size_t var = 0; var < num_vars; ++var) {
-        unit_eqns.push_back(
-            Equation::from_bits(repr, num_vars, std::span<const std::size_t>(&var, 1)));
-    }
 }
 
 void CsidsState::reset_activity() {
     activity.activity_heap.reset();
-    ensure_unit_eqns();
     for (ClauseId id = 0; id < num_clauses; ++id) {
         activity.activity_heap.set_activity(id, 0.0);
         activity.activity_heap.insert(id);
@@ -53,7 +40,7 @@ void CsidsState::reset_activity() {
 
 Csids::Csids(EquationRepr repr, std::size_t num_vars, Seed seed, const CsidsConfig& config)
     : DecisionProcedure(repr, num_vars, seed),
-      state_(repr, num_vars, config),
+      state_(config),
       clause_sat_workspace_(repr, num_vars),
       intersection_depth_(config.intersection_depth),
       clause_equation_rng_(make_rng(seed, RngComponent::csids_equation)) {
@@ -63,8 +50,8 @@ Csids::Csids(EquationRepr repr, std::size_t num_vars, Seed seed, const CsidsConf
 void Csids::reinitialize() {
     reset_phase_rng();
     clause_equation_rng_ = make_rng(base_seed(), RngComponent::csids_equation);
-    reset_stats();
-    intersection_stats_ = {};
+    reset_counters();
+    intersection_counters_ = {};
     state_.reset_activity();
     satisfied_by_level_.clear();
     level_ = 0;
@@ -83,13 +70,12 @@ DecisionResult Csids::make_decision(const RowSpace& trail_span,
     assert((!known.level().has_value() || *known.level() == level_) &&
            "CSIDS lost track of the trail's level");
 
-    state_.ensure_unit_eqns();
     while (!state_.activity.activity_heap.empty()) {
         const ClauseId id = state_.activity.activity_heap.peek_max();
         if (id >= clauses.size() || clause_active[id] == 0) {
-            // Stale: left over from before a compaction shrank the database, or
-            // naming a clause since deleted. Neither is ever undone, so the id
-            // is no candidate again and the heap need not carry it.
+            // Stale: naming a clause since deleted or made inactive. Neither is
+            // ever undone, so the id is no candidate again and the heap need not
+            // carry it.
             state_.activity.activity_heap.extract_max();
             continue;
         }
@@ -108,7 +94,7 @@ DecisionResult Csids::make_decision(const RowSpace& trail_span,
             std::optional<DecisionResult> result =
                 decide_from_intersection(id, trail_span, clauses, clause_active, known);
             const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
-            intersection_stats_.time_s += elapsed.count();
+            intersection_counters_.time_s += elapsed.count();
             if (result.has_value()) {
                 if (result->equation.has_value()) {
                     state_.last_decision_clause = id;
@@ -122,7 +108,7 @@ DecisionResult Csids::make_decision(const RowSpace& trail_span,
         SampledDecision sample =
             sample_equation_from_clause(clause, trail_span, clause_equation_rng_);
 
-        record_decision(false);
+        record_decision();
         apply_decision_phase(sample.reduced);
         ++level_;
         return DecisionResult{std::move(sample.reduced), std::nullopt};
@@ -163,7 +149,7 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
         }
         const ClauseStatus status = candidate_status(id, clauses[id], trail_span, known);
         if (status == ClauseStatus::satisfied) {
-            ++intersection_stats_.passed_satisfied_clauses;
+            ++intersection_counters_.passed_satisfied_clauses;
             continue;
         }
         if (status == ClauseStatus::propagating) {
@@ -193,16 +179,16 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
     }
 
     if (propagating_id.has_value()) {
-        ++intersection_stats_.propagating_clauses;
+        ++intersection_counters_.propagating_clauses;
         return DecisionResult{std::nullopt, propagating_id};
     }
     if (intersected_clauses == 0) {
         return std::nullopt;
     }
-    ++intersection_stats_.decisions;
-    intersection_stats_.intersected_clauses += intersected_clauses;
-    intersection_stats_.dimension_before += dimension_before;
-    intersection_stats_.dimension_after += space.rows();
+    ++intersection_counters_.decisions;
+    intersection_counters_.intersected_clauses += intersected_clauses;
+    intersection_counters_.dimension_before += dimension_before;
+    intersection_counters_.dimension_after += space.rows();
 
     Equation decision = Equation::eq_true(repr(), num_vars());
     random_nonzero_coefficients(space.rows(), clause_equation_rng_)
@@ -212,7 +198,7 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
     assert(trail_span.partial_reduce(reduced).is_leading() &&
            "a decision from an intersection is not legal");
 #endif
-    record_decision(false);
+    record_decision();
     apply_decision_phase(decision);
     return DecisionResult{std::move(decision), std::nullopt};
 }
@@ -290,14 +276,19 @@ void Csids::update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replaceme
     }
 }
 
-DecisionProcedure::DecisionStats Csids::decision_stats() const {
-    DecisionStats stats = DecisionProcedure::decision_stats();
-    stats.intersections = intersection_stats_;
-    return stats;
+void Csids::add_to_stats(RunStats& stats) const {
+    DecisionProcedure::add_to_stats(stats);
+    stats.intersection_decisions = intersection_counters_.decisions;
+    stats.intersected_clauses = intersection_counters_.intersected_clauses;
+    stats.intersection_dimension_before = intersection_counters_.dimension_before;
+    stats.intersection_dimension_after = intersection_counters_.dimension_after;
+    stats.intersection_passed_satisfied_clauses = intersection_counters_.passed_satisfied_clauses;
+    stats.intersection_propagating_clauses = intersection_counters_.propagating_clauses;
+    stats.intersection_time_s = intersection_counters_.time_s;
 }
 
 double Csids::clause_activity(ClauseId id) const {
-    return state_.activity.activity_heap.get_priority(id);
+    return state_.activity.activity_heap.activity(id);
 }
 
 std::optional<ClauseId> Csids::decision_clause_hint() const {
@@ -325,18 +316,17 @@ std::size_t Csids::reusable_levels(
         }
     }
 
-    // Nothing left to decide from, so every level is one the fallback basis
-    // would have to supply again.
+    // Nothing left to decide from, so no level outranks it.
     if (!next.has_value()) {
         return 0;
     }
 
-    const double next_activity = state_.activity.activity_heap.get_priority(*next);
+    const double next_activity = state_.activity.activity_heap.activity(*next);
     std::size_t levels = 0;
     while (levels < decision_clauses.size()) {
         const std::optional<ClauseId>& id = decision_clauses[levels];
         if (!id.has_value() || *id >= clause_active.size() || clause_active[*id] == 0 ||
-            state_.activity.activity_heap.get_priority(*id) <= next_activity) {
+            state_.activity.activity_heap.activity(*id) <= next_activity) {
             break;
         }
         ++levels;
@@ -349,12 +339,8 @@ void Csids::update_with_compaction(const CompactionTransform& transform, const R
                                    const std::vector<std::uint8_t>& clause_active) {
     assert(transform.old_num_vars() == num_vars() &&
            "the transform was built for a different active variable numbering");
-    state_.unit_eqns = compact_basis_keep_order(state_.unit_eqns, transform, repr());
-
     set_num_vars(transform.new_num_vars());
     clause_sat_workspace_.reconfigure(num_vars());
-
-    state_.num_vars = num_vars();
     state_.num_clauses = static_cast<ClauseId>(clauses.size());
 
     // Every clause is rewritten, and the root trail rebuilt, so none is known

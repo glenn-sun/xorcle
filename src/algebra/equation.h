@@ -39,8 +39,7 @@ public:
     Equation& operator=(Equation&& other) noexcept = default;
     ~Equation() = default;
 
-    /// @brief The all-zero vector of `num_bits` bits, for a coefficient vector
-    /// that carries no constant bit.
+    /// @brief The all-zero vector of `num_bits` bits.
     static Equation with_num_bits(EquationRepr repr, std::size_t num_bits);
 
     static Equation eq_true(EquationRepr repr, std::size_t num_vars);
@@ -95,14 +94,13 @@ public:
     /// representation and bit count.
     void plus_assign(const Equation& other);
 
-    /// @brief Overwrite this equation's contents from `other`, without
-    /// allocating. Use this instead of default copy assignment for efficiency.
+    /// @brief Overwrite this equation's contents from `other`, reusing its buffer.
     /// @pre Neither handle is null, and `other` shares this equation's
     /// representation and bit count.
     void assign_from(const Equation& other);
 
-    /// @brief Overwrite this equation to have exactly the given bits set,
-    /// without allocating. Use this instead of `from_bits` + copy, for efficiency.
+    /// @brief Overwrite this equation to have exactly the given bits set, reusing
+    /// its buffer.
     /// @param bits Bits to set; need not be sorted or distinct, may include the
     /// constant bit `num_vars()`, and must each be `< num_bits()`.
     /// @pre `!is_null()`.

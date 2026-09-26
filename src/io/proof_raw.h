@@ -10,6 +10,7 @@
 /// units included; post-processing renumbers.
 
 #include <cstddef>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -50,7 +51,7 @@ struct RawCompaction {
     std::vector<RawUnit> units;
 };
 
-/// @brief Clauses the solver deleted. No later record names them; a memory hint.
+/// @brief Clauses the solver deleted, which no later record names.
 struct RawDeleted {
     std::vector<ClauseId> ids;
 };
@@ -62,8 +63,8 @@ class RawRecordSource {
 public:
     virtual ~RawRecordSource() = default;
 
-    /// @return False at the end of the stream, leaving `record` untouched.
-    virtual bool next(RawRecord& record) = 0;
+    /// @return The next record, or `std::nullopt` at the end of the stream.
+    virtual std::optional<RawRecord> next() = 0;
 
     virtual void rewind() = 0;
 };
@@ -74,12 +75,11 @@ public:
     explicit RawRecordVectorSource(std::vector<RawRecord> records)
         : records_(std::move(records)) {}
 
-    bool next(RawRecord& record) override {
+    std::optional<RawRecord> next() override {
         if (position_ == records_.size()) {
-            return false;
+            return std::nullopt;
         }
-        record = records_[position_++];
-        return true;
+        return records_[position_++];
     }
 
     void rewind() override { position_ = 0; }

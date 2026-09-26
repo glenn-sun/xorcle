@@ -8,12 +8,6 @@
 
 namespace xorcle {
 
-namespace {
-
-constexpr std::size_t no_index = static_cast<std::size_t>(-1);
-
-} // namespace
-
 ImplicationGraph::ImplicationGraph(const EquationRepr repr, const std::size_t num_vars,
                                    const ImplicationGraphConfig& config)
     : repr_(repr),
@@ -216,7 +210,7 @@ void ImplicationGraph::sample_pairs(ImplicationGraphRun& summary) {
 
 ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
                                           const std::vector<std::uint8_t>& clause_is_active,
-                                          const RowSpace& root_span, std::vector<Equation>& units,
+                                          const RowSpace& root_span,
                                           ImplicationGraphProofRecord* proof) {
     assert(clause_is_active.size() == clauses.size() &&
            "the clause active flags are desynchronized");
@@ -249,7 +243,7 @@ ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
     }
 
     if (!key_eqn_.empty()) {
-        walk_span_intersections(root_span, clauses, clause_is_active, units, summary, proof);
+        walk_span_intersections(root_span, clauses, clause_is_active, summary, proof);
     }
     return summary;
 }

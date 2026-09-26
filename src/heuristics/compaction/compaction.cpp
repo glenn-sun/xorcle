@@ -2,10 +2,10 @@
 
 #include <cassert>
 #include <cstddef>
-#include <optional>
 #include <utility>
 #include <vector>
 
+#include "algebra/dense/dense_gf2_vector.h"
 #include "core/clause_id.h"
 #include "heuristics/decisions/clause_decisions.h"
 
@@ -13,7 +13,7 @@ namespace xorcle {
 
 namespace {
 
-/// @brief Re-establish a rewritten clause's watches and cyclic search cursor.
+/// @brief Re-establish a rewritten clause's watches and watch search cursor.
 ///
 /// Applying the plan leaves an empty root trail, against which no stored row is
 /// `0 = 0` and any two distinct rows are independent, so the first two rows are
@@ -86,7 +86,8 @@ CompactionPlan build_compaction_plan(const CompactionState& state,
     // row beats a word-wise test while there are fewer of them than words in a row.
     const IndexSet& dropped_var_set = state.trail.span().pivot_col_idxs();
     const bool tests_each_dropped_var =
-        state.trail.span().rows() < (state.active_num_vars + 1 + 63) / 64;
+        state.trail.span().rows() < (state.active_num_vars + DenseGF2Vector::bits_per_word) /
+                                        DenseGF2Vector::bits_per_word;
     std::vector<std::size_t> dropped_vars;
     if (tests_each_dropped_var) {
         dropped_var_set.for_each_set([&](std::size_t var) { dropped_vars.push_back(var); });

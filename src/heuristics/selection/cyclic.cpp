@@ -12,7 +12,7 @@ void Cyclic::stop(const bool by_budget) {
     last_stop_was_budget_ = by_budget;
 }
 
-std::optional<ClauseId> Cyclic::next() {
+std::optional<ClauseSelection> Cyclic::next() {
     if (clauses_.empty()) {
         stop(false);
         return std::nullopt;
@@ -42,7 +42,7 @@ std::optional<ClauseId> Cyclic::next() {
         ++count_;
         ++budget_count_;
         if (is_clause_active(current)) {
-            return current;
+            return ClauseSelection{current, std::nullopt};
         }
         if (count_ >= clauses_.size()) {
             stop(false);

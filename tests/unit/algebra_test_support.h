@@ -34,6 +34,9 @@ Equation make_equation_with_num_bits(EquationRepr repr, std::size_t num_bits,
 /// @brief The set bits of an equation, ascending.
 std::vector<std::size_t> bits_of(const Equation& equation);
 
+/// @brief The set bits of every row, in row-echelon order.
+std::vector<std::vector<std::size_t>> rows_of(const RowEchelonMatrix& matrix);
+
 /// @brief Assert every representation invariant of a row-echelon matrix,
 /// through its public interface, in every build.
 void check_echelon_invariant(const RowEchelonMatrix& matrix);

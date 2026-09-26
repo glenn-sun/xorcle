@@ -6,9 +6,9 @@
 #include <cassert>
 #include <chrono>
 #include <cstddef>
-#include <optional>
 #include <vector>
 
+#include "algebra/dense/dense_gf2_vector.h"
 #include "algebra/equation.h"
 #include "algebra/reduce_result.h"
 #include "algebra/row_echelon_matrix.h"
@@ -17,8 +17,6 @@
 namespace xorcle {
 
 namespace {
-
-constexpr std::size_t no_index = static_cast<std::size_t>(-1);
 
 #ifndef NDEBUG
 /// @brief Vertices below which every descendant is also checked path by path,
@@ -31,8 +29,7 @@ constexpr std::size_t path_check_vertices = 512;
 void ImplicationGraph::walk_span_intersections(
     const RowSpace& root_span, [[maybe_unused]] const std::vector<Clause>& clauses,
     [[maybe_unused]] const std::vector<std::uint8_t>& clause_is_active,
-    std::vector<Equation>& units, ImplicationGraphRun& summary,
-    ImplicationGraphProofRecord* const proof) {
+    ImplicationGraphRun& summary, ImplicationGraphProofRecord* const proof) {
     using Kind = ImplicationGraphProofStep::Kind;
     const auto start = std::chrono::steady_clock::now();
     const std::size_t num_vertices = 2 * key_eqn_.size();
@@ -45,9 +42,6 @@ void ImplicationGraph::walk_span_intersections(
     // Everything below is modulo the root trail span, against which the vertex
     // equations are already reduced.
     RowSpace accumulated = root_span;
-    for (const Equation& unit : units) {
-        accumulated.add_row(unit);
-    }
     Equation candidate(repr_, num_vars_);
 
     // Where the vertices have fewer set bits than words, a pair's spans are
@@ -57,7 +51,9 @@ void ImplicationGraph::walk_span_intersections(
     for (const Equation* key_eqn : key_eqn_) {
         num_key_bits += key_eqn->num_set_bits();
     }
-    const bool local_columns = num_key_bits < key_eqn_.size() * ((num_vars_ + 64) / 64);
+    const bool local_columns =
+        num_key_bits < key_eqn_.size() * ((num_vars_ + DenseGF2Vector::bits_per_word) /
+                                          DenseGF2Vector::bits_per_word);
     std::vector<std::size_t> key_bits;
     std::vector<std::size_t> key_bits_begin;
     if (local_columns) {
@@ -107,8 +103,9 @@ void ImplicationGraph::walk_span_intersections(
             collect(*second);
         }
         std::sort(local_col_idx_to_col_idx.begin(), local_col_idx_to_col_idx.end());
-        for (std::size_t local = 0; local < local_col_idx_to_col_idx.size(); ++local) {
-            col_idx_to_local_col_idx[local_col_idx_to_col_idx[local]] = local;
+        for (std::size_t local_col_idx = 0; local_col_idx < local_col_idx_to_col_idx.size();
+             ++local_col_idx) {
+            col_idx_to_local_col_idx[local_col_idx_to_col_idx[local_col_idx]] = local_col_idx;
         }
         num_span_vars = local_col_idx_to_col_idx.size();
         col_idx_to_local_col_idx[num_vars_] = num_span_vars;
@@ -219,7 +216,7 @@ void ImplicationGraph::walk_span_intersections(
         const bool cut_there =
             mark_descendants(vertex + 1, other_descendant_stamp_, ++next_mark_,
                              other_descendants_, summary.edges_visited, other_parents);
-        summary.truncated_sides += (cut_here ? 1 : 0) + (cut_there ? 1 : 0);
+        summary.truncated_sides += (cut_here ? 1U : 0U) + (cut_there ? 1U : 0U);
 #ifndef NDEBUG
         if (num_vertices <= path_check_vertices) {
             for (const std::size_t reached : descendants_) {
@@ -259,7 +256,7 @@ void ImplicationGraph::walk_span_intersections(
                     if (proof != nullptr) {
                         proof->steps[refuted_step[deep_vertex]].fed = true;
                     }
-                    units.push_back(std::move(unit));
+                    summary.units.push_back(std::move(unit));
                 }
             }
             continue;
@@ -278,7 +275,7 @@ void ImplicationGraph::walk_span_intersections(
         if (!there_refuted) {
             there_refuted = is_refuted(there);
         }
-        summary.refuted_sides += (here_refuted ? 1 : 0) + (there_refuted ? 1 : 0);
+        summary.refuted_sides += (here_refuted ? 1U : 0U) + (there_refuted ? 1U : 0U);
         if (here_refuted) {
             record_refutation(vertex, here_inherited, parent_clauses_);
         }
@@ -357,24 +354,24 @@ void ImplicationGraph::walk_span_intersections(
             accumulated.add_row(candidate);
             // A refuted side stands for the whole space, so it holds every
             // equation and there is nothing to check against its rows.
-            assert(([&] {
-                       const auto holds = [&](const RowSpace& span) {
-                           Equation reduced(repr_, num_span_vars);
-                           if (local_columns) {
-                               bits = eqn.bits();
-                               for (std::size_t& bit : bits) {
-                                   bit = col_idx_to_local_col_idx[bit];
-                               }
-                               reduced.assign_bits(bits);
-                           } else {
-                               reduced.assign_from(eqn);
-                           }
-                           span.reduce(reduced);
-                           return reduced.is_eq_true();
-                       };
-                       return (here_refuted || holds(here)) && (there_refuted || holds(there));
-                   }()) &&
+#ifndef NDEBUG
+            const auto holds = [&](const RowSpace& span) {
+                Equation reduced(repr_, num_span_vars);
+                if (local_columns) {
+                    std::vector<std::size_t> local_bits = eqn.bits();
+                    for (std::size_t& bit : local_bits) {
+                        bit = col_idx_to_local_col_idx[bit];
+                    }
+                    reduced.assign_bits(local_bits);
+                } else {
+                    reduced.assign_from(eqn);
+                }
+                span.reduce(reduced);
+                return reduced.is_eq_true();
+            };
+            assert((here_refuted || holds(here)) && (there_refuted || holds(there)) &&
                    "a span-intersection unit is not in both sides' spans");
+#endif
             if (proof != nullptr) {
                 if (!intersection_step.empty()) {
                     proof->steps[intersection_step[i]].fed = true;
@@ -409,7 +406,7 @@ void ImplicationGraph::walk_span_intersections(
                     proof->steps.push_back(std::move(step));
                 }
             }
-            units.push_back(eqn);
+            summary.units.push_back(eqn);
         }
     }
 

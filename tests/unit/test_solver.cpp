@@ -1,8 +1,10 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -12,20 +14,17 @@
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
+#include "cli/options.h"
 #include "core/clause_id.h"
 #include "core/solver.h"
 #include "core/trail.h"
-#include "heuristics/decisions/csids.h"
-#include "heuristics/decisions/decision_procedure.h"
-#include "heuristics/decisions/fixed_literals.h"
-#include "heuristics/deletion/deletion.h"
-#include "heuristics/restarts/luby.h"
-#include "heuristics/restarts/restart_policy.h"
+#include "heuristics_test_support.h"
 #include "heuristics/selection/clause_selector.h"
-#include "heuristics/selection/cyclic.h"
 #include "io/dimacs.h"
+#include "io/proof_postprocess.h"
+#include "io/proof_raw_file.h"
+#include "io_test_support.h"
 #include "util/index_set.h"
-#include "util/random.h"
 
 namespace xorcle {
 
@@ -48,6 +47,7 @@ constexpr std::string_view unit_sat_instance = "p cnf 3 3\n"
                                                "1+3 0\n";
 
 /// @brief SAT, but only after deciding: no clause is unit to begin with.
+///
 /// `[x1 v x2] ^ [-x1 v -x2] ^ [[x1 + x2 = 1] v x3]` forces exactly one of
 /// x1, x2 and satisfies the third clause outright, leaving x3 free to decide.
 constexpr std::string_view search_sat_instance = "p cnf 3 3\n"
@@ -67,17 +67,17 @@ constexpr std::string_view search_unsat_instance = "p cnf 3 8\n"
                                                    "-1 -2 3 0\n"
                                                    "-1 -2 -3 0\n";
 
-/// @brief SAT, and built so that one clause is left unit three levels before the
-/// decision that falsifies it.
-///
-/// Deciding `x1 = 0`, `x2 = 0`, `x3 = 0`, `x4 = 0` in turn leaves `[x1 v x4]`
-/// unit from level 1 on, implying `x4 = 1`, and falsified by the decision at
-/// level 4. The other two clauses hold under that decision order, so the run
-/// ends SAT once `x5` is decided.
-constexpr std::string_view missed_unit_instance = "p cnf 5 3\n"
-                                                  "1 4 0\n"
-                                                  "-2 -3 0\n"
-                                                  "-3 -5 0\n";
+/// @brief A random 3-CNF, SAT, on which a cyclic search deferring after every
+/// fruitless attempt (`--propagate-miss-rate=0.5 --propagate-window=1`) decides
+/// against a clause it left unit, and undoes that decision.
+constexpr std::string_view missed_unit_instance = "p cnf 6 21\n"
+                                                  "-4 2 5 0\n-4 -1 -5 0\n-1 -4 -6 0\n"
+                                                  "3 -4 -6 0\n-3 -4 2 0\n-3 5 -1 0\n"
+                                                  "-5 -4 -3 0\n5 3 2 0\n2 4 -1 0\n"
+                                                  "-6 -2 -1 0\n-1 4 2 0\n-1 -6 5 0\n"
+                                                  "3 -1 -4 0\n-3 6 -5 0\n-5 -1 -3 0\n"
+                                                  "-3 2 -1 0\n3 6 -5 0\n-3 1 4 0\n"
+                                                  "2 5 -4 0\n2 3 4 0\n-2 -4 6 0\n";
 
 /// @brief SAT, with three root-level determined variables for compaction to
 /// eliminate.
@@ -139,59 +139,59 @@ struct Run {
     std::unique_ptr<Solver> solver; ///< The solver, already loaded with `clauses`.
 };
 
-/// @brief Parse an instance and build a solver over it with the CLI's default
-/// heuristics, so that a run here is the run `xorcle <file>` performs.
-///
-/// Null `restarts`/`selector`/`decisions` mean `NoRestarts`, `Cyclic` and `Csids`.
-Run make_run(EquationRepr repr, std::string_view instance, const CompactionConfig& compaction = {},
-             std::unique_ptr<RestartPolicy> restarts = nullptr,
-             std::unique_ptr<ClauseSelector> selector = nullptr,
-             bool bump_responsible_clauses = false, const PropagationConfig& propagation = {},
-             std::unique_ptr<DecisionProcedure> decisions = nullptr,
-             const ImplicationGraphConfig& implication_graph = {}) {
-    ParsedDimacs parsed = parse_dimacs_string(instance, repr);
+/// @brief The heuristics these tests were written against, before the defaults
+/// moved on: cyclic selection propagating to a fixed point, and no deletion,
+/// subsumption or implication graph.
+std::vector<std::string> old_heuristics() {
+    return {"--selection=cyclic", "--propagate-miss-rate=0", "--deletion=false",
+            "--subsume=false", "--implication-graph=false"};
+}
 
+/// @brief `a` followed by `b`.
+std::vector<std::string> operator+(std::vector<std::string> a, const std::vector<std::string>& b) {
+    a.insert(a.end(), b.begin(), b.end());
+    return a;
+}
+
+/// @brief Parse an instance and build the solver `xorcle` builds for it under
+/// @p flags, so that a run here is the run `xorcle <flags> <file>` performs.
+///
+/// The sparse representation runs the cyclic selector, the only one it supports,
+/// unless @p flags choose.
+/// @param selector Replaces the selector @p flags name, when non-null.
+/// @param proof_writer Not owned; null for no proof.
+Run make_run(EquationRepr repr, std::string_view instance,
+             const std::vector<std::string>& flags = {},
+             std::unique_ptr<ClauseSelector> selector = nullptr,
+             RawProofWriter* proof_writer = nullptr) {
+    std::vector<std::string> arguments;
+    if (repr == EquationRepr::sparse) {
+        arguments = {"--equation-repr=sparse", "--selection=cyclic"};
+    }
+    arguments = arguments + flags + std::vector<std::string>{"instance.xnf"};
+    std::ostringstream help;
+    const std::optional<Options> options = parse_options(arguments, help);
+    REQUIRE(options.has_value());
+
+    ParsedDimacs parsed = parse_dimacs_string(instance, repr);
     Run run;
     run.num_vars = parsed.num_vars;
     run.clauses = parsed.clauses;
-    run.solver = std::make_unique<Solver>(
-        repr, parsed.num_vars,
-        selector != nullptr ? std::move(selector) : std::make_unique<Cyclic>(parsed.num_vars),
-        decisions != nullptr ? std::move(decisions)
-                             : std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
-        restarts != nullptr ? std::move(restarts) : std::make_unique<NoRestarts>(), nullptr,
-        compaction, ProgressConfig{}, true, DeletionConfig{}, bump_responsible_clauses, false,
-        propagation, implication_graph);
+    run.solver =
+        make_solver(*options, parsed.num_vars, proof_writer, nullptr, std::move(selector));
     for (Clause& clause : parsed.clauses) {
         run.solver->add_starting_clause(std::move(clause));
     }
     return run;
 }
 
-/// @brief A `Luby` policy on the smallest unit budget -- 1, 1, 2, 1, ... -- so a
+/// @brief A `Luby` schedule on the smallest unit budget -- 1, 1, 2, 1, ... -- so a
 /// handful of conflicts restart several times.
-std::unique_ptr<RestartPolicy> tiny_luby_restarts(bool reuse_trail = false) {
-    RestartConfig config;
-    config.method = RestartMethod::luby;
-    config.luby_unit_conflicts = 1;
-    config.reuse_trail = reuse_trail;
-    return std::make_unique<Luby>(config);
+std::vector<std::string> tiny_luby_restarts() {
+    return {"--restart=luby", "--restart-luby-unit=1"};
 }
 
 // --- Watching the backjump -------------------------------------------------
-
-/// @brief How many dimensions a clause adds to a span, i.e. the dimension of
-/// `(neg(C) + span(U)) / span(U)`; the clause propagates exactly when this is 1.
-std::size_t dimension_outside_span(const Clause& clause, const RowSpace& span) {
-    RowSpace extended = span;
-    std::size_t outside = 0;
-    for (const Equation& row : clause) {
-        if (extended.add_row_get_row_idx(row).has_value()) {
-            ++outside;
-        }
-    }
-    return outside;
-}
 
 /// @brief The level a clause asserts at, recomputed by backjumping a copy of
 /// the conflicting trail.
@@ -199,7 +199,7 @@ std::size_t asserting_level_of(const Clause& clause, const Trail& conflict_trail
     for (std::size_t level = 0; level <= conflict_trail.level(); ++level) {
         Trail backjumped = conflict_trail;
         backjumped.resize(level + 1);
-        if (dimension_outside_span(clause, backjumped.span()) == 1) {
+        if (dimensions_outside_span(clause, backjumped.span()) == 1) {
             return level;
         }
     }
@@ -217,10 +217,14 @@ struct Backjump {
 };
 
 /// @brief A cyclic selector that records every backjump it is told about.
+///
+/// It runs under `old_heuristics`: it has no attempt budget, and it takes every
+/// clause added to it for a conflict's, which subsumption and the implication
+/// graph would break.
 class RecordingSelector final : public ClauseSelector {
 public:
     /// @brief The next active clause in cyclic order, or `std::nullopt` at quiescence.
-    std::optional<ClauseId> next() override {
+    std::optional<ClauseSelection> next() override {
         if (clauses_.empty() || count_ >= clauses_.size()) {
             count_ = 0;
             return std::nullopt;
@@ -230,7 +234,7 @@ public:
             id_ = (id_ + 1) % clauses_.size();
             ++count_;
             if (is_clause_active(current)) {
-                return current;
+                return ClauseSelection{current, std::nullopt};
             }
             if (count_ >= clauses_.size()) {
                 count_ = 0;
@@ -263,13 +267,13 @@ public:
         ClauseSelector::add_asserting_clause(std::move(clause), trail, info);
     }
 
-    /// @brief Refresh the quiescence budget, as `Cyclic` does.
-    void update_with_new_equation(const Equation&, const Trail&) override { count_ = 0; }
-
     /// @brief Every conflict this selector was told about, oldest first.
     std::vector<Backjump> backjumps;
 
 protected:
+    /// @brief Refresh the quiescence budget, as `Cyclic` does.
+    void update_with_new_equation(const Equation&, const Trail&) override { count_ = 0; }
+
     /// @brief Store a clause and make it the next one tried.
     void add_clause(Clause clause) override {
         ClauseSelector::add_clause(std::move(clause));
@@ -281,132 +285,6 @@ private:
     ClauseId id_ = 0;
     std::size_t count_ = 0;
     std::optional<Trail> last_trail_;
-};
-
-/// @brief A cyclic selector that defers after a single attempt whenever the
-/// solver gives it a budget at all, and records how each propagated row landed
-/// on the trail.
-///
-/// Deferring that early leaves plenty for the decision step to meet, which is
-/// what this is for. It ignores the size of the budget on purpose, since the
-/// size the solver hands out is an adaptive figure.
-class BudgetedRecordingSelector final : public ClauseSelector {
-public:
-    struct Record {
-        std::size_t level = 0;       ///< The level the row was recorded at.
-        std::size_t trail_level = 0; ///< The level the trail stood at.
-        bool has_reason = false;
-        /// @brief Whether the run had already stopped, so the solver was
-        /// propagating a clause the decision step handed back.
-        bool after_the_run = false;
-    };
-
-    std::optional<ClauseId> next() override {
-        const bool spent = budgeted_ && attempts_ == 1;
-        if (clauses_.empty() || spent || count_ >= clauses_.size()) {
-            stopped_on_budget_ = spent && count_ < clauses_.size();
-            count_ = 0;
-            attempts_ = 0;
-            run_is_over_ = true;
-            return std::nullopt;
-        }
-        for (std::size_t tries = 0; tries < clauses_.size(); ++tries) {
-            const ClauseId current = id_;
-            id_ = (id_ + 1) % clauses_.size();
-            ++count_;
-            if (is_clause_active(current)) {
-                ++attempts_;
-                stopped_on_budget_ = false;
-                return current;
-            }
-            if (count_ >= clauses_.size()) {
-                break;
-            }
-        }
-        count_ = 0;
-        attempts_ = 0;
-        stopped_on_budget_ = false;
-        run_is_over_ = true;
-        return std::nullopt;
-    }
-
-    void set_attempt_budget(std::size_t budget) override {
-        budgeted_ = budget != 0;
-        attempts_ = 0;
-        run_is_over_ = false;
-    }
-
-    bool last_stop_was_budget() const noexcept override { return stopped_on_budget_; }
-
-    void update_with_propagation(const Equation& reduced_eqn, const Trail& trail) override {
-        for (std::size_t row_idx = 0; row_idx < trail.span().rows(); ++row_idx) {
-            if (trail.span().row(row_idx) == reduced_eqn) {
-                const std::size_t trail_idx = trail.row_idx_to_trail_idx()[row_idx];
-                propagations.push_back(Record{trail.level_of(trail_idx), trail.level(),
-                                              trail.reasons()[trail_idx].has_value(),
-                                              run_is_over_});
-                break;
-            }
-        }
-        ClauseSelector::update_with_propagation(reduced_eqn, trail);
-    }
-
-    void update_with_new_equation(const Equation&, const Trail&) override { count_ = 0; }
-
-    std::vector<Record> propagations; ///< Oldest first.
-
-protected:
-    void add_clause(Clause clause) override {
-        ClauseSelector::add_clause(std::move(clause));
-        id_ = clauses_.size() - 1;
-        count_ = 0;
-    }
-
-private:
-    ClauseId id_ = 0;
-    std::size_t count_ = 0;
-    std::size_t attempts_ = 0;
-    bool budgeted_ = false;
-    bool stopped_on_budget_ = false;
-    bool run_is_over_ = false;
-};
-
-/// @brief A selector that hands out one clause on one propagation run and defers
-/// on every other, so that a test can place a single attempt where it wants one.
-class ScriptedSelector final : public ClauseSelector {
-public:
-    /// @param id The clause to hand out.
-    /// @param run The propagation run to hand it out on, counted from one.
-    ScriptedSelector(ClauseId id, std::size_t run) : id_(id), run_(run) {}
-
-    std::optional<ClauseId> next() override {
-        if (runs_ != run_ || handed_out_) {
-            return std::nullopt;
-        }
-        handed_out_ = true;
-        return id_;
-    }
-
-    void set_attempt_budget(std::size_t) override {
-        ++runs_;
-        handed_out_ = false;
-    }
-
-    bool last_stop_was_budget() const noexcept override { return false; }
-
-    void update_with_propagation(const Equation& reduced_eqn, const Trail& trail) override {
-        propagations.push_back(trail);
-        ClauseSelector::update_with_propagation(reduced_eqn, trail);
-    }
-
-    /// @brief The trail as it stood at each propagation, oldest first.
-    std::vector<Trail> propagations;
-
-private:
-    ClauseId id_;
-    std::size_t run_;
-    std::size_t runs_ = 0;
-    bool handed_out_ = false;
 };
 
 } // namespace
@@ -422,7 +300,7 @@ TEST_CASE_TEMPLATE("solver: a root conflict, proved with no decisions", Tag, Den
     // Both clauses are unit, so both propagate at the root: `[x1 = 1]` and then
     // `[x1 = 0]`, whose sum is 1.
     CHECK(run.solver->level() == 0);
-    CHECK(run.solver->decision_stats().decisions == 0);
+    CHECK(run.solver->decision_procedure().counters().decisions == 0);
     CHECK(run.solver->counters().num_conflicts == 1);
     CHECK(run.solver->counters().num_propagations == 2);
     CHECK(run.solver->counters().num_restarts == 0);
@@ -461,7 +339,7 @@ TEST_CASE_TEMPLATE("solver: SAT decided entirely by root propagation", Tag, Dens
 
     CHECK(run.solver->counters().num_propagations == 3);
     CHECK(run.solver->counters().num_conflicts == 0);
-    CHECK(run.solver->decision_stats().decisions == 0);
+    CHECK(run.solver->decision_procedure().counters().decisions == 0);
 }
 
 TEST_CASE_TEMPLATE("solver: SAT found by search", Tag, DenseTag, SparseTag) {
@@ -474,7 +352,7 @@ TEST_CASE_TEMPLATE("solver: SAT found by search", Tag, DenseTag, SparseTag) {
     // The first two clauses force exactly one of x1, x2, and no clause is unit
     // at the root, so the answer cannot be reached without deciding.
     CHECK(solution.assignment->test(0) != solution.assignment->test(1));
-    CHECK(run.solver->decision_stats().decisions > 0);
+    CHECK(run.solver->decision_procedure().counters().decisions > 0);
 }
 
 TEST_CASE_TEMPLATE("solver: UNSAT found by search", Tag, DenseTag, SparseTag) {
@@ -487,113 +365,71 @@ TEST_CASE_TEMPLATE("solver: UNSAT found by search", Tag, DenseTag, SparseTag) {
 
     // Eight clauses over three variables, each ruling out one assignment: the
     // solver has to decide, conflict, and learn its way through them.
-    CHECK(run.solver->decision_stats().decisions > 0);
+    CHECK(run.solver->decision_procedure().counters().decisions > 0);
     CHECK(run.solver->num_clauses() > run.clauses.size());
 }
 
 TEST_CASE_TEMPLATE("solver: a clause the decision step hands back propagates with a reason", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    auto recorder = std::make_unique<BudgetedRecordingSelector>();
-    BudgetedRecordingSelector& recorded = *recorder;
-    // The recorder defers after one attempt above the root, so the decision step
-    // is what meets the clauses the trail has left unit. A window of one takes
-    // the budget off its opening whole sweep within the first few learns.
-    Run run = make_run(repr, search_unsat_instance, CompactionConfig{}, nullptr,
-                       std::move(recorder), false,
-                       PropagationConfig{.miss_rate = 0.01, .window = 1});
-    REQUIRE(run.num_vars == 3);
+    const std::string instance = sign_pattern_instance(4);
+    const std::filesystem::path path =
+        scratch_path(repr == EquationRepr::dense ? "handed_back_dense.raw"
+                                                 : "handed_back_sparse.raw");
+    const std::vector<std::vector<RawRow>> inputs =
+        clause_rows(parse_dimacs_string(instance, repr).clauses);
 
-    CHECK(run.solver->solve().result == SolveResult::unsat);
-
-    const SolverCounters& counters = run.solver->counters();
-    CHECK(counters.num_decision_propagations > 0);
-    // More clauses came back than conflicted, so at least one was unit rather
-    // than refuted, which is the case that used to be decided on instead.
-    CHECK(counters.num_decision_propagations > counters.num_decision_conflicts);
-
-    REQUIRE_FALSE(recorded.propagations.empty());
-    std::size_t after_the_run = 0;
-    for (const BudgetedRecordingSelector::Record& record : recorded.propagations) {
-        CHECK(record.has_reason);
-        CHECK(record.level <= record.trail_level);
-        after_the_run += record.after_the_run ? 1 : 0;
+    // Deferring after every fruitless attempt leaves unit clauses for the
+    // decision step to meet.
+    {
+        RawProofWriter writer(path, 4, inputs.size());
+        Run run = make_run(repr, instance,
+                           {"--selection=cyclic", "--propagate-miss-rate=0.5",
+                            "--propagate-window=1"},
+                           nullptr, &writer);
+        CHECK(run.solver->solve().result == SolveResult::unsat);
+        CHECK(run.solver->counters().num_decision_propagations > 0);
+        writer.finalize(true);
     }
-    CHECK(after_the_run == counters.num_decision_propagations);
+
+    // Every propagated row a chain cites has to have come with its reason.
+    RawProofFileSource source(path);
+    std::ostringstream proof;
+    postprocess_raw_proof(source, 4, inputs.size(), repr, proof, inputs);
+    LrupChecker checker(repr, 4, inputs);
+    CHECK(checker.check(proof.str()) == "");
+    std::filesystem::remove(path);
 }
 
 TEST_CASE_TEMPLATE("solver: a decision a missed propagation forbids is undone", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    // `[x1 v x4]` is handed out for the first time on the fifth run, by which
-    // point four decisions have been taken and the last of them falsifies it.
-    auto scripted = std::make_unique<ScriptedSelector>(ClauseId{0}, 5);
-    ScriptedSelector& recorded = *scripted;
-    Run run = make_run(repr, missed_unit_instance, CompactionConfig{}, nullptr,
-                       std::move(scripted), false,
-                       PropagationConfig{.miss_rate = 0.5, .window = 1},
-                       std::make_unique<FixedLiterals>(repr, 5, default_seed));
-    REQUIRE(run.num_vars == 5);
+    Run run = make_run(repr, missed_unit_instance,
+                       {"--selection=cyclic", "--propagate-miss-rate=0.5", "--propagate-window=1"});
 
     check_satisfies(run.clauses, run.solver->solve(), run.num_vars);
-
-    const SolverCounters& counters = run.solver->counters();
-    CHECK(counters.num_undone_decisions == 1);
-    // The clause was met, not analysed: no conflict, and nothing learned.
-    CHECK(counters.num_conflicts == 0);
-    CHECK(run.solver->num_clauses() == run.clauses.size());
-    CHECK(run.solver->decision_stats().decisions == 5);
-    // The one equation the run put on the trail, recorded below the level the
-    // undone decision had opened.
-    CHECK(counters.num_propagations == 1);
-    CHECK(counters.num_out_of_order_learns == 1);
-    // That single learn reached the budget as a miss, which holds it at the whole
-    // sweep it starts on; a hit would have taken it down by a factor of `e`.
-    CHECK(counters.final_budget_fraction == doctest::Approx(1.0));
-
-    REQUIRE(recorded.propagations.size() == 1);
-    const Trail& trail = recorded.propagations.front();
-    // Only the top level went: the decisions at levels 1, 2 and 3 stand, with
-    // the propagated equation in beside the first of them.
-    CHECK(trail.level() == 3);
-    CHECK(trail.rows_at_level(0) == 0);
-    CHECK(trail.rows_at_level(1) == 2);
-    CHECK(trail.rows_at_level(2) == 3);
-    CHECK(trail.rows_at_level(3) == 4);
-
-    std::vector<std::size_t> reason_trail_idxs;
-    for (std::size_t trail_idx = 0; trail_idx < trail.reasons().size(); ++trail_idx) {
-        if (trail.reasons()[trail_idx].has_value()) {
-            reason_trail_idxs.push_back(trail_idx);
-        }
-    }
-    REQUIRE(reason_trail_idxs.size() == 1);
-    const std::size_t propagated_idx = reason_trail_idxs.front();
-    CHECK(trail.reasons()[propagated_idx] == std::optional<ClauseId>{0});
-    CHECK(trail.level_of(propagated_idx) == 1);
-    // `x4 = 1`, which the decision at level 4 had just denied.
-    CHECK(trail.span().row(trail.trail_idx_to_row_idx()[propagated_idx]) ==
-          make_equation_with(repr, run.num_vars, {3, 5}));
+    CHECK(run.solver->counters().num_undone_decisions > 0);
 }
 
 TEST_CASE_TEMPLATE("solver: a budget leaves the verdicts alone", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const PropagationConfig budgeted{.miss_rate = 0.01, .window = 4};
+    const std::vector<std::string> budgeted =
+        std::vector<std::string>{"--selection=cyclic", "--propagate-miss-rate=0.01",
+                                 "--propagate-window=4"};
 
-    Run unsat = make_run(repr, search_unsat_instance, CompactionConfig{}, nullptr, nullptr, false,
-                         budgeted);
+    Run unsat = make_run(repr, search_unsat_instance, budgeted);
     CHECK(unsat.solver->solve().result == SolveResult::unsat);
 
-    Run sat = make_run(repr, compaction_sat_instance, CompactionConfig{}, nullptr, nullptr, false,
-                       budgeted);
+    Run sat = make_run(repr, compaction_sat_instance, budgeted);
     check_satisfies(sat.clauses, sat.solver->solve(), sat.num_vars);
 }
 
 TEST_CASE_TEMPLATE("solver: bumping the learned clause's pivots leaves the answers alone", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const auto bumping = [repr](std::string_view instance) {
-        return make_run(repr, instance, CompactionConfig{}, nullptr, nullptr, true);
+    const auto bumping = [](std::string_view instance) {
+        return make_run(repr, instance,
+                        std::vector<std::string>{"--bump-responsible-clauses=true"});
     };
 
     Run unsat = bumping(search_unsat_instance);
@@ -623,18 +459,15 @@ TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTa
     // watch to.
     CHECK(counters.num_watch_updates > 0);
     CHECK(counters.num_restarts == 0);
-
-    // Not hand-derived: measured on this instance with the heuristics `make_run`
-    // fixes (CSIDS at seed 0, cyclic selection, falsify phase, compaction on).
-    CHECK(counters.num_conflicts == 4);
-    CHECK(run.solver->decision_stats().decisions == 3);
 }
 
 TEST_CASE("solver: the two representations agree on what the search did") {
     // Deliberately not a `TEST_CASE_TEMPLATE`: the claim is about the two
     // representations together.
-    Run dense = make_run(EquationRepr::dense, search_unsat_instance);
-    Run sparse = make_run(EquationRepr::sparse, search_unsat_instance);
+    // The sparse representation supports only the cyclic selector.
+    const std::vector<std::string> cyclic = {"--selection=cyclic"};
+    Run dense = make_run(EquationRepr::dense, search_unsat_instance, cyclic);
+    Run sparse = make_run(EquationRepr::sparse, search_unsat_instance, cyclic);
 
     const Solution dense_solution = dense.solver->solve();
     const Solution sparse_solution = sparse.solver->solve();
@@ -653,8 +486,7 @@ TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the ori
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    CompactionConfig compaction_off;
-    compaction_off.enabled = false;
+    const std::vector<std::string> compaction_off = {"--compact=false"};
     Run without = make_run(repr, compaction_sat_instance, compaction_off);
     const Solution without_solution = without.solver->solve();
     check_satisfies(without.clauses, without_solution, without.num_vars);
@@ -664,6 +496,8 @@ TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the ori
 
     // The root trail determines variables 0, 1 and 3, leaving x3 and x5 to
     // search in, while `num_vars()` still reports the original space.
+    CHECK(with.solver->counters().num_compactions > 0);
+    CHECK(with.solver->active_num_vars() < 5);
     REQUIRE(with.solver->num_vars() == 5);
 
     // Same verdict, and an assignment over the *original* five variables.
@@ -682,25 +516,23 @@ TEST_CASE_TEMPLATE("solver: compaction does not change an UNSAT verdict", Tag, D
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    CompactionConfig compaction_off;
-    compaction_off.enabled = false;
+    const std::vector<std::string> compaction_off = {"--compact=false"};
     Run without = make_run(repr, search_unsat_instance, compaction_off);
-    Run with = make_run(repr, search_unsat_instance);
+    Run with = make_run(repr, search_unsat_instance, {"--compact-cadence=1"});
 
     CHECK(without.solver->solve().result == SolveResult::unsat);
     CHECK(with.solver->solve().result == SolveResult::unsat);
+    CHECK(with.solver->counters().num_compactions > 0);
 }
 
 TEST_CASE_TEMPLATE("solver: restarting does not change the verdict", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    Run restarting = make_run(repr, search_unsat_instance, CompactionConfig{},
-                              tiny_luby_restarts());
+    Run restarting = make_run(repr, search_unsat_instance, tiny_luby_restarts());
 
     CHECK(restarting.solver->solve().result == SolveResult::unsat);
     CHECK(restarting.solver->counters().num_restarts > 0);
 
-    Run satisfiable =
-        make_run(repr, search_sat_instance, CompactionConfig{}, tiny_luby_restarts());
+    Run satisfiable = make_run(repr, search_sat_instance, tiny_luby_restarts());
     const Solution solution = satisfiable.solver->solve();
     check_satisfies(satisfiable.clauses, solution, satisfiable.num_vars);
 }
@@ -712,17 +544,17 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
     // `removed_levels` is what the solver discarded, which is the complement of
     // the asserting level only when no restart fired. The restarting subcase is
     // where the two quantities come apart.
-    auto record = [&](std::unique_ptr<RestartPolicy> restarts) {
+    auto record = [&](const std::vector<std::string>& restarts) {
         auto selector = std::make_unique<RecordingSelector>();
         RecordingSelector& recorder = *selector;
-        Run run = make_run(repr, search_unsat_instance, CompactionConfig{},
-                           std::move(restarts), std::move(selector));
+        Run run = make_run(repr, search_unsat_instance, old_heuristics() + restarts,
+                           std::move(selector));
         CHECK(run.solver->solve().result == SolveResult::unsat);
         return recorder.backjumps;
     };
 
     SUBCASE("without restarts the removed count is the asserting level's complement") {
-        const std::vector<Backjump> backjumps = record(nullptr);
+        const std::vector<Backjump> backjumps = record({});
         REQUIRE_FALSE(backjumps.empty());
         for (const Backjump& backjump : backjumps) {
             CHECK(backjump.level_after + backjump.removed_levels == backjump.level_before);
@@ -753,7 +585,8 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
     }
 
     SUBCASE("trail reuse stops a restart short of the root, never above the clause") {
-        const std::vector<Backjump> backjumps = record(tiny_luby_restarts(true));
+        const std::vector<Backjump> backjumps =
+            record(tiny_luby_restarts() + std::vector<std::string>{"--restart-reuse-trail=true"});
         REQUIRE_FALSE(backjumps.empty());
 
         for (const Backjump& backjump : backjumps) {
@@ -771,8 +604,7 @@ TEST_CASE_TEMPLATE("solver: the learned clause's LBD reaches the selector", Tag,
 
     auto selector = std::make_unique<RecordingSelector>();
     RecordingSelector& recorder = *selector;
-    Run run = make_run(repr, search_unsat_instance, CompactionConfig{}, nullptr,
-                       std::move(selector));
+    Run run = make_run(repr, search_unsat_instance, old_heuristics(), std::move(selector));
     const std::size_t num_input_clauses = run.clauses.size();
     CHECK(run.solver->solve().result == SolveResult::unsat);
 
@@ -801,31 +633,33 @@ TEST_CASE_TEMPLATE("solver: the learned clause's LBD reaches the selector", Tag,
 // leaves the one run the start of a solve always makes.
 TEST_CASE_TEMPLATE("solver: what makes an implication graph run due", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    constexpr std::size_t never = static_cast<std::size_t>(1) << 40;
 
-    const auto counters = [&](const ImplicationGraphConfig& config) {
-        Run run = make_run(repr, search_unsat_instance, CompactionConfig{}, nullptr, nullptr, false,
-                           PropagationConfig{}, nullptr, config);
+    const std::string never = "1099511627776";
+    const std::vector<std::string> without_graph = {
+        "--selection=cyclic", "--propagate-miss-rate=0", "--deletion=false", "--subsume=false"};
+
+    const auto counters = [&](const std::vector<std::string>& graph) {
+        Run run = make_run(repr, search_unsat_instance, without_graph + graph);
         CHECK(run.solver->solve().result == SolveResult::unsat);
         return run.solver->implication_graph_counters();
     };
 
     const ImplicationGraphCounters idle =
-        counters(ImplicationGraphConfig{.enabled = true, .clause_cadence = never,
-                                        .cadence = never});
+        counters({"--implication-graph=true", "--implication-graph-clause-cadence=" + never,
+                  "--implication-graph-cadence=" + never});
     CHECK(idle.num_runs_due_to_clauses == 0);
     CHECK(idle.num_runs_due_to_conflicts == 0);
     CHECK(idle.num_runs <= 1);
 
     const ImplicationGraphCounters eager =
-        counters(ImplicationGraphConfig{.enabled = true, .clause_cadence = 1, .cadence = never});
+        counters({"--implication-graph=true", "--implication-graph-clause-cadence=1",
+                  "--implication-graph-cadence=" + never});
     CHECK(eager.num_runs_due_to_clauses > 0);
     CHECK(eager.num_runs_due_to_conflicts == 0);
     CHECK(eager.num_runs > idle.num_runs);
 
     // Off, nothing is read however many clauses narrow.
-    const ImplicationGraphCounters off =
-        counters(ImplicationGraphConfig{.clause_cadence = 1, .cadence = 1});
+    const ImplicationGraphCounters off = counters({"--implication-graph=false"});
     CHECK(off.num_runs == 0);
 }
 

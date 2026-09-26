@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -18,13 +19,23 @@ namespace xorcle {
 namespace {
 
 void check_matches_reference(const RowEchelonMatrix& matrix, const ReferenceMatrix& reference) {
-    REQUIRE(matrix.rows() == reference.rows());
-    for (std::size_t index = 0; index < matrix.rows(); ++index) {
-        CHECK(bits_of(matrix.row(index)) == set_bits(reference.row(index)));
+    std::vector<std::vector<std::size_t>> reference_rows;
+    reference_rows.reserve(reference.rows());
+    for (std::size_t index = 0; index < reference.rows(); ++index) {
+        reference_rows.push_back(set_bits(reference.row(index)));
     }
+    REQUIRE(rows_of(matrix) == reference_rows);
+    std::vector<std::size_t> pivots;
+    std::vector<std::size_t> reference_pivots;
     for (std::size_t col_idx = 0; col_idx < matrix.cols(); ++col_idx) {
-        REQUIRE(matrix.pivot_col_idxs().test(col_idx) == reference.is_pivot(col_idx));
+        if (matrix.pivot_col_idxs().test(col_idx)) {
+            pivots.push_back(col_idx);
+        }
+        if (reference.is_pivot(col_idx)) {
+            reference_pivots.push_back(col_idx);
+        }
     }
+    REQUIRE(pivots == reference_pivots);
 }
 
 } // namespace
@@ -362,16 +373,18 @@ TEST_CASE_TEMPLATE("row echelon: pop_first_row and pop_last_row", Tag, DenseTag,
     check_echelon_invariant(matrix);
 }
 
-TEST_CASE_TEMPLATE("row echelon: matches the reference matrix", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
-    constexpr std::size_t num_vars = 17;
-    TestRandom random(987654321);
+namespace {
 
-    for (int trial = 0; trial < 60; ++trial) {
+/// @brief Drive a matrix and `ReferenceMatrix` through the same random
+/// insertions, row additions, reductions and pops, checking every result.
+void exercise_against_reference(EquationRepr repr, std::size_t num_vars, int trials, int steps,
+                                std::uint64_t seed) {
+    TestRandom random(seed);
+    for (int trial = 0; trial < trials; ++trial) {
         RowSpace matrix(repr, num_vars);
         ReferenceMatrix reference(num_vars);
 
-        for (int step = 0; step < 40; ++step) {
+        for (int step = 0; step < steps; ++step) {
             const Bits candidate = random_bits(random, num_vars, 4);
             const std::optional<std::size_t> actual =
                 matrix.add_row_get_row_idx(to_equation(repr, candidate));
@@ -400,20 +413,74 @@ TEST_CASE_TEMPLATE("row echelon: matches the reference matrix", Tag, DenseTag, S
                 CHECK(matrix.partial_reduce(partial_from_leading, *leading) == result);
                 CHECK(partial_from_leading == partial);
             }
+
+            // A column set, asked both ways.
+            std::vector<std::size_t> col_idxs;
+            IndexSet col_set(num_vars + 1);
+            for (std::size_t count = 1 + random.next(3); count > 0; --count) {
+                const std::size_t col_idx = random.next(num_vars + 1);
+                if (!col_set.test(col_idx)) {
+                    col_set.set(col_idx);
+                    col_idxs.push_back(col_idx);
+                }
+            }
+            CHECK(matrix.carries_any_col(col_idxs) == reference.carries_any_col(col_idxs));
+            CHECK(matrix.carries_any_col(col_set) == reference.carries_any_col(col_idxs));
+
+            if (matrix.rows() > 0 && random.chance(3)) {
+                const std::size_t row_idx = random.next(matrix.rows());
+                Bits addend = random_bits(random, num_vars, 3);
+                const std::size_t lead = *matrix.row(row_idx).leading_bit();
+                for (std::size_t bit = 0; bit <= lead; ++bit) {
+                    addend[bit] = false;
+                }
+                if (!set_bits(addend).empty()) {
+                    matrix.add_to_row(row_idx, to_equation(repr, addend));
+                    reference.add_to_row(row_idx, addend);
+                    check_matches_reference(matrix, reference);
+                    check_echelon_invariant(matrix);
+                }
+            }
+            if (random.chance(8)) {
+                matrix.reduce_rows();
+                reference.reduce_rows();
+                check_matches_reference(matrix, reference);
+                check_echelon_invariant(matrix);
+            }
         }
 
         while (matrix.rows() > 0) {
-            if (random.chance(2)) {
-                const Equation popped = matrix.pop_first_row();
-                CHECK(to_bits(popped) == reference.pop_first_row());
-            } else {
-                matrix.pop_last_row();
-                reference.pop_last_row();
+            switch (random.next(3)) {
+                case 0:
+                    CHECK(to_bits(matrix.pop_first_row()) == reference.pop_first_row());
+                    break;
+                case 1:
+                    matrix.pop_last_row();
+                    reference.pop_last_row();
+                    break;
+                default: {
+                    const std::size_t row_idx = random.next(matrix.rows());
+                    CHECK(to_bits(matrix.pop_row(row_idx)) == reference.pop_row(row_idx));
+                }
             }
             check_matches_reference(matrix, reference);
             check_echelon_invariant(matrix);
         }
     }
+}
+
+} // namespace
+
+TEST_CASE_TEMPLATE("row echelon: matches the reference matrix", Tag, DenseTag, SparseTag) {
+    exercise_against_reference(Tag::value, 17, 60, 40, 987654321);
+}
+
+// Two and three words a row, where the dense word loops and the pivot tables
+// meet their word boundaries.
+TEST_CASE_TEMPLATE("row echelon: matches the reference matrix past one word", Tag, DenseTag,
+                   SparseTag) {
+    exercise_against_reference(Tag::value, 70, 2, 50, 1234567);
+    exercise_against_reference(Tag::value, 130, 1, 70, 7654321);
 }
 
 TEST_CASE_TEMPLATE("row echelon: a reduced row never leads on a pivot column", Tag, DenseTag,
@@ -546,33 +613,47 @@ TEST_CASE_TEMPLATE("row echelon: copy is deep", Tag, DenseTag, SparseTag) {
     check_echelon_invariant(assigned);
 }
 
-TEST_CASE("row echelon: the two representations agree") {
-    constexpr std::size_t num_vars = 29;
-    TestRandom random(2718281828);
+// Zassenhaus hands back a basis of the intersection: every row lies in both
+// spans, the rows are independent, and there are as many as
+// dim U + dim W - dim (U + W).
+TEST_CASE_TEMPLATE("row echelon: span_intersection is a basis of the intersection", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    TestRandom random(271828);
+    for (const std::size_t num_vars : {std::size_t{9}, std::size_t{70}}) {
+        for (int trial = 0; trial < 25; ++trial) {
+            RowSpace left(repr, num_vars);
+            RowSpace right(repr, num_vars);
+            RowSpace sum(repr, num_vars);
+            // Some shared rows, so the intersection is often more than zero.
+            for (std::size_t count = random.next(num_vars / 2 + 2); count > 0; --count) {
+                const Equation row = to_equation(repr, random_bits(random, num_vars, 3));
+                left.add_row(row);
+                right.add_row(row);
+            }
+            for (RowSpace* space : {&left, &right}) {
+                for (std::size_t count = random.next(num_vars / 2 + 2); count > 0; --count) {
+                    space->add_row(to_equation(repr, random_bits(random, num_vars, 3)));
+                }
+            }
+            for (const RowSpace* space : {&left, &right}) {
+                for (const Equation& row : *space) {
+                    sum.add_row(row);
+                }
+            }
 
-    RowSpace dense(EquationRepr::dense, num_vars);
-    RowSpace sparse(EquationRepr::sparse, num_vars);
-
-    for (int step = 0; step < 400; ++step) {
-        const Bits candidate = random_bits(random, num_vars, 4);
-        const std::optional<std::size_t> dense_index =
-            dense.add_row_get_row_idx(to_equation(EquationRepr::dense, candidate));
-        const std::optional<std::size_t> sparse_index =
-            sparse.add_row_get_row_idx(to_equation(EquationRepr::sparse, candidate));
-        REQUIRE(dense_index == sparse_index);
-        REQUIRE(dense.rows() == sparse.rows());
-
-        for (std::size_t index = 0; index < dense.rows(); ++index) {
-            REQUIRE(dense.row(index).to_string() == sparse.row(index).to_string());
-            REQUIRE(bits_of(dense.row(index)) == bits_of(sparse.row(index)));
+            const std::vector<Equation> basis = span_intersection(left, right);
+            RowSpace found(repr, num_vars);
+            for (const Equation& row : basis) {
+                for (const RowSpace* space : {&left, &right}) {
+                    Equation reduced = row;
+                    space->reduce(reduced);
+                    CHECK(reduced.is_eq_true());
+                }
+                CHECK(found.add_row_get_row_idx(row).has_value());
+            }
+            CHECK(basis.size() == left.rows() + right.rows() - sum.rows());
         }
-        REQUIRE(dense.pivot_col_idxs() == sparse.pivot_col_idxs());
-
-        const Bits probe = random_bits(random, num_vars, 4);
-        Equation dense_probe = to_equation(EquationRepr::dense, probe);
-        Equation sparse_probe = to_equation(EquationRepr::sparse, probe);
-        CHECK(dense.partial_reduce(dense_probe) == sparse.partial_reduce(sparse_probe));
-        CHECK(bits_of(dense_probe) == bits_of(sparse_probe));
     }
 }
 

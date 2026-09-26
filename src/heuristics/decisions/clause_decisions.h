@@ -58,9 +58,8 @@ const Equation& decide_from_basis(const std::vector<Equation>& basis, const RowS
 
 /// @brief What the trail leaves of a clause, under every extension.
 /// @param reduced_rows When non-null and the clause is not satisfied, receives
-/// each clause row reduced by `trail_span`, in row order. Compaction wants those
-/// rows and would otherwise reduce every one of them again; the decision path
-/// passes nothing and pays for nothing.
+/// each clause row reduced by `trail_span`, in row order. Compaction passes it
+/// once per rewritten clause, a median of 1000 per compaction.
 /// @pre `clause.cols() == trail_span.cols()`, and `workspace` was configured for
 /// `trail_span.cols() - 1` variables in `trail_span`'s representation.
 ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& clause,

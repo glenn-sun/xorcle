@@ -1,7 +1,6 @@
 #include "heuristics/restarts/lbd_restarts.h"
 
 #include <cassert>
-#include <cstddef>
 
 namespace xorcle {
 
@@ -39,11 +38,11 @@ LbdRestarts::should_restart_after_conflict(const ConflictSummary& conflict) {
     return true;
 }
 
-RestartStats
-LbdRestarts::stats() const {
-    return RestartStats{.canceled = canceled_,
-                        .fast_lbd = fast_lbd_.value(),
-                        .slow_lbd = slow_lbd_.value()};
+void
+LbdRestarts::add_to_stats(RunStats& stats) const {
+    stats.num_canceled_restarts = canceled_;
+    stats.fast_lbd = fast_lbd_.value();
+    stats.slow_lbd = slow_lbd_.value();
 }
 
 void

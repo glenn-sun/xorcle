@@ -1,14 +1,28 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <set>
+#include <utility>
 #include <vector>
 
 #include "algebra/equation.h"
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
+#include "cli/options.h"
+#include "core/solver.h"
 #include "heuristics/implication_graph/implication_graph.h"
+#include "algebra_test_support.h"
 #include "heuristics_test_support.h"
+#include "io/proof_raw.h"
+#include "io/proof_raw_file.h"
+#include "io_test_support.h"
 
 namespace xorcle {
 
@@ -62,9 +76,9 @@ TEST_CASE("implication graph: a cycle makes its equations equivalent") {
     clauses.push_back(make_clause(repr, num_vars, {{4, 5}, {2}}));
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
     const ImplicationGraphRun summary =
-        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), units);
+        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars));
+    const std::vector<Equation>& units = summary.units;
 
     CHECK(summary.did_work);
     CHECK(graph.num_width_2_clauses() == 3);
@@ -91,9 +105,9 @@ TEST_CASE("implication graph: an equation whose descendants span 0 = 1 is refute
     clauses.push_back(make_clause(repr, num_vars, {{2, 3}, {0, 3}}));
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
     const ImplicationGraphRun summary =
-        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), units);
+        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars));
+    const std::vector<Equation>& units = summary.units;
 
     CHECK(summary.edges_visited > 0);
     CHECK(graph.num_width_2_clauses() == 3);
@@ -120,9 +134,9 @@ TEST_CASE("implication graph: an equation can hold on both sides without a path"
     const std::vector<std::size_t> d{1, 2};
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
     const ImplicationGraphRun summary =
-        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), units);
+        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars));
+    const std::vector<Equation>& units = summary.units;
 
     REQUIRE(units.size() == 1);
     CHECK(units[0] == Equation::from_bits(repr, num_vars, d));
@@ -143,9 +157,9 @@ TEST_CASE("implication graph: a span refutes an equation no pair of descendants 
     const std::vector<std::size_t> x1_is_zero{0};
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
     const ImplicationGraphRun summary =
-        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), units);
+        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars));
+    const std::vector<Equation>& units = summary.units;
 
     REQUIRE(units.size() == 1);
     CHECK(units[0] == Equation::from_bits(repr, num_vars, x1_is_zero));
@@ -160,8 +174,8 @@ TEST_CASE("implication graph: a refuted root leaves nothing to analyse") {
     RowSpace root_span(repr, num_vars);
     root_span.add_row(Equation::eq_false(repr, num_vars));
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
-    const ImplicationGraphRun summary = graph.run(clauses, all_active(clauses), root_span, units);
+    const ImplicationGraphRun summary = graph.run(clauses, all_active(clauses), root_span);
+    const std::vector<Equation>& units = summary.units;
 
     CHECK(!summary.did_work);
     CHECK(graph.num_vertex_pairs() == 0);
@@ -175,12 +189,12 @@ TEST_CASE("implication graph: a clause of another width contributes nothing") {
     clauses.push_back(make_clause(repr, num_vars, {{0, 3}, {1}, {2}}));
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
-    graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), units);
+    const ImplicationGraphRun summary =
+        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars));
 
     CHECK(graph.num_width_2_clauses() == 0);
     CHECK(graph.num_vertex_pairs() == 0);
-    CHECK(units.empty());
+    CHECK(summary.units.empty());
 }
 
 TEST_CASE("implication graph: a unit the root trail already holds is not offered") {
@@ -194,10 +208,7 @@ TEST_CASE("implication graph: a unit the root trail already holds is not offered
     const std::vector<std::size_t> x1_is_zero{0};
     root_span.add_row(Equation::from_bits(repr, num_vars, x1_is_zero));
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
-    graph.run(clauses, all_active(clauses), root_span, units);
-
-    CHECK(units.empty());
+    CHECK(graph.run(clauses, all_active(clauses), root_span).units.empty());
 }
 
 // The first two clauses of the cycle above leave an acyclic graph; the third
@@ -210,13 +221,13 @@ TEST_CASE("implication graph: a run reads the clause database afresh") {
     clauses.push_back(make_clause(repr, num_vars, {{3, 5}, {4}}));
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> first;
-    CHECK(graph.run(clauses, all_active(clauses), root_span, first).did_work);
-    REQUIRE(first.empty());
+    const ImplicationGraphRun first = graph.run(clauses, all_active(clauses), root_span);
+    CHECK(first.did_work);
+    REQUIRE(first.units.empty());
 
     clauses.push_back(make_clause(repr, num_vars, {{4, 5}, {2}}));
-    std::vector<Equation> units;
-    const ImplicationGraphRun summary = graph.run(clauses, all_active(clauses), root_span, units);
+    const ImplicationGraphRun summary = graph.run(clauses, all_active(clauses), root_span);
+    const std::vector<Equation>& units = summary.units;
 
     CHECK(summary.did_work);
     CHECK(graph.num_width_2_clauses() == 3);
@@ -235,9 +246,8 @@ TEST_CASE("implication graph: the caps bound one run and keep its units sound") 
     clauses.push_back(make_clause(repr, num_vars, {{4, 5}, {2}}));
 
     ImplicationGraph uncapped(repr, num_vars);
-    std::vector<Equation> all_units;
-    const ImplicationGraphRun full =
-        uncapped.run(clauses, all_active(clauses), root_span, all_units);
+    const ImplicationGraphRun full = uncapped.run(clauses, all_active(clauses), root_span);
+    const std::vector<Equation>& all_units = full.units;
     REQUIRE(full.pairs_eligible > 2);
     CHECK(full.pairs_examined == full.pairs_eligible);
     CHECK(!full.at_the_pair_cap);
@@ -246,8 +256,8 @@ TEST_CASE("implication graph: the caps bound one run and keep its units sound") 
 
     SUBCASE("the pair cap stops the walk at the pairs it sampled") {
         ImplicationGraph graph(repr, num_vars, ImplicationGraphConfig{.max_pairs = 2});
-        std::vector<Equation> units;
-        const ImplicationGraphRun capped = graph.run(clauses, all_active(clauses), root_span, units);
+        const ImplicationGraphRun capped = graph.run(clauses, all_active(clauses), root_span);
+        const std::vector<Equation>& units = capped.units;
 
         CHECK(capped.pairs_eligible == full.pairs_eligible);
         CHECK(capped.pairs_examined == 2);
@@ -261,8 +271,8 @@ TEST_CASE("implication graph: the caps bound one run and keep its units sound") 
     SUBCASE("the descendant cap cuts a distance level short") {
         // Room for a side's own equation and one of the two its clause reaches.
         ImplicationGraph graph(repr, num_vars, ImplicationGraphConfig{.max_descendants = 2});
-        std::vector<Equation> units;
-        const ImplicationGraphRun capped = graph.run(clauses, all_active(clauses), root_span, units);
+        const ImplicationGraphRun capped = graph.run(clauses, all_active(clauses), root_span);
+        const std::vector<Equation>& units = capped.units;
 
         CHECK(capped.pairs_examined == full.pairs_eligible);
         CHECK(capped.truncated_sides > 0);
@@ -282,9 +292,9 @@ TEST_CASE("implication graph: a refuted side records the arcs it was refuted thr
     clauses.push_back(make_clause(repr, num_vars, {{0, 3}, {1, 2}}));
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
     ImplicationGraphProofRecord record;
-    graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), units, &record);
+    const std::vector<Equation> units =
+        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), &record).units;
 
     REQUIRE(units.size() == 1);
     const std::vector<const ImplicationGraphProofStep*> fed = fed_steps(record);
@@ -308,9 +318,9 @@ TEST_CASE("implication graph: a unit on both sides records a replay per side") {
     clauses.push_back(make_clause(repr, num_vars, {{0}, {1, 2, 3}}));
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
     ImplicationGraphProofRecord record;
-    graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), units, &record);
+    const std::vector<Equation> units =
+        graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), &record).units;
 
     REQUIRE(units.size() == 1);
     const std::vector<const ImplicationGraphProofStep*> fed = fed_steps(record);
@@ -331,12 +341,221 @@ TEST_CASE("implication graph: a clause over other variables adds a component and
     clauses.push_back(make_clause(repr, num_vars, {{3, 5}, {4}}));
 
     ImplicationGraph graph(repr, num_vars);
-    std::vector<Equation> units;
-    const ImplicationGraphRun summary = graph.run(clauses, all_active(clauses), root_span, units);
+    const ImplicationGraphRun summary = graph.run(clauses, all_active(clauses), root_span);
+    const std::vector<Equation>& units = summary.units;
 
     CHECK(summary.did_work);
     CHECK(graph.num_width_2_clauses() == 3);
     CHECK(units.empty());
+}
+
+
+namespace {
+
+/// @brief A random database of mostly width-2 clauses over @p num_vars
+/// variables, each equation over one or two variables.
+std::vector<Clause> random_width_2_clauses(TestRandom& random, std::size_t num_vars) {
+    std::vector<Clause> clauses;
+    const std::size_t num_clauses = num_vars + random.next(2 * num_vars);
+    for (std::size_t index = 0; index < num_clauses; ++index) {
+        Clause clause(repr, num_vars);
+        const std::size_t width = random.chance(6) ? 3 : 2;
+        while (clause.rows() < width) {
+            std::set<std::size_t> bits{random.next(num_vars)};
+            if (random.chance(3)) {
+                bits.insert(random.next(num_vars));
+            }
+            if (random.chance(2)) {
+                bits.insert(num_vars);
+            }
+            const std::vector<std::size_t> sorted(bits.begin(), bits.end());
+            const Equation row = Equation::from_bits(repr, num_vars, sorted);
+            if (!row.is_eq_false()) {
+                clause.add_row(row);
+            }
+        }
+        clauses.push_back(std::move(clause));
+    }
+    return clauses;
+}
+
+/// @brief Whether @p eqn holds in every assignment satisfying the active clauses.
+bool holds_in_every_model(const Equation& eqn, const std::vector<Clause>& clauses,
+                          const std::vector<std::uint8_t>& active, std::size_t num_vars) {
+    const auto value = [&](const Equation& row, std::uint64_t assignment) {
+        bool parity = false;
+        for (const std::size_t bit : row.bits()) {
+            parity ^= bit == num_vars || ((assignment >> bit) & 1U) != 0;
+        }
+        return !parity;
+    };
+    for (std::uint64_t assignment = 0; assignment < (std::uint64_t{1} << num_vars);
+         ++assignment) {
+        bool model = true;
+        for (std::size_t id = 0; id < clauses.size() && model; ++id) {
+            if (active[id] == 0) {
+                continue;
+            }
+            // A clause holds where one of its rows, its equations negated, fails.
+            bool satisfied = false;
+            for (const Equation& row : clauses[id]) {
+                satisfied = satisfied || !value(row, assignment);
+            }
+            model = satisfied;
+        }
+        if (model && !value(eqn, assignment)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+// Any sound rule may only ever offer what every model of the active clauses
+// satisfies, whatever the caps leave it to read.
+TEST_CASE("implication graph: every unit holds in every model of the active clauses") {
+    TestRandom random(8675309);
+    std::set<ImplicationGraphProofStep::Kind> kinds;
+    std::size_t num_units = 0;
+    for (std::size_t trial = 0; trial < 100; ++trial) {
+        const std::size_t num_vars = 3 + random.next(6);
+        const std::vector<Clause> clauses = random_width_2_clauses(random, num_vars);
+        std::vector<std::uint8_t> active(clauses.size(), 1);
+        for (std::uint8_t& flag : active) {
+            flag = random.chance(5) ? 0 : 1;
+        }
+        CAPTURE(trial);
+
+        for (const ImplicationGraphConfig& config :
+             {ImplicationGraphConfig{},
+              ImplicationGraphConfig{.max_pairs = 1 + random.next(4),
+                                     .max_descendants = 1 + random.next(3)}}) {
+            ImplicationGraph graph(repr, num_vars, config);
+            graph.set_base_seed(trial);
+            ImplicationGraphProofRecord record;
+            const ImplicationGraphRun run =
+                graph.run(clauses, active, RowSpace(repr, num_vars), &record);
+            for (const Equation& unit : run.units) {
+                CHECK(holds_in_every_model(unit, clauses, active, num_vars));
+            }
+            num_units += run.units.size();
+            for (const ImplicationGraphProofStep& step : record.steps) {
+                if (step.fed) {
+                    kinds.insert(step.kind);
+                }
+            }
+        }
+    }
+    CHECK(num_units > 0);
+    CHECK(kinds.size() == 4);
+}
+
+namespace {
+
+/// @brief A raw row as the proof spells it: `-` for a set constant bit, then
+/// the 1-based variables joined by `+`.
+std::string proof_token(const RawRow& row, std::size_t num_vars) {
+    std::string token = !row.empty() && row.back() == num_vars ? "-" : "";
+    for (const std::size_t bit : row) {
+        if (bit != num_vars) {
+            token += (token.empty() || token == "-" ? "" : "+") + std::to_string(bit + 1);
+        }
+    }
+    return token;
+}
+
+} // namespace
+
+// The solver's first run reads the input clauses over an empty root trail, as
+// the standalone run beside it does, so that run's derivations are the ones
+// the solver writes lines for: one per step, and two more per two-sided step,
+// before any other line. Until a compaction eliminates units, raw ids are
+// proof ids less one, so those lines check as written.
+TEST_CASE("implication graph: the solver's lines for every derivation check") {
+    TestRandom random(4242);
+    std::set<ImplicationGraphProofStep::Kind> kinds;
+    std::size_t num_lines_checked = 0;
+    std::ostringstream help;
+    const std::optional<Options> options = parse_options({"instance.xnf"}, help);
+    REQUIRE(options.has_value());
+    const std::filesystem::path path = scratch_path("implication_graph.raw");
+
+    for (std::size_t trial = 0; trial < 60; ++trial) {
+        const std::size_t num_vars = 3 + random.next(6);
+        const std::vector<Clause> clauses = random_width_2_clauses(random, num_vars);
+        // A clause spanning `0 = 1` always holds, and the solver's first
+        // compaction drops it before the graph reads the database.
+        if (std::ranges::any_of(clauses, [&](const Clause& clause) {
+                return clause.pivot_col_idxs().test(num_vars);
+            })) {
+            continue;
+        }
+        CAPTURE(trial);
+
+        ImplicationGraph graph(repr, num_vars);
+        ImplicationGraphProofRecord record;
+        const ImplicationGraphRun first =
+            graph.run(clauses, all_active(clauses), RowSpace(repr, num_vars), &record);
+        if (first.units.empty()) {
+            continue;
+        }
+
+        {
+            RawProofWriter writer(path, num_vars, clauses.size());
+            const std::unique_ptr<Solver> solver = make_solver(*options, num_vars, &writer);
+            for (const Clause& clause : clauses) {
+                solver->add_starting_clause(clause);
+            }
+            solver->solve();
+            CHECK(solver->implication_graph_counters().num_units_fed >= first.units.size());
+            writer.finalize(true);
+        }
+
+        std::size_t num_graph_lines = record.steps.size();
+        for (const ImplicationGraphProofStep& step : record.steps) {
+            num_graph_lines += step.kind == ImplicationGraphProofStep::Kind::both_sides ? 2 : 0;
+        }
+        std::string text;
+        std::size_t num_lines = 0;
+        RawProofFileSource source(path);
+        while (const std::optional<RawRecord> next = source.next()) {
+            if (num_lines == num_graph_lines) {
+                break;
+            }
+            if (const auto* compaction = std::get_if<RawCompaction>(&*next)) {
+                REQUIRE(compaction->units.empty());
+            } else if (const auto* learned = std::get_if<RawLearned>(&*next)) {
+                text += std::to_string(learned->id + 1);
+                for (const RawRow& row : learned->rows) {
+                    text += " " + proof_token(row, num_vars);
+                }
+                text += " 0";
+                for (const ClauseId reason : learned->reasons) {
+                    text += " " + std::to_string(reason + 1);
+                }
+                text += " 0\n";
+                ++num_lines;
+            } else {
+                FAIL("the graph's lines are interrupted");
+            }
+        }
+        REQUIRE(num_lines == num_graph_lines);
+        LrupChecker checker(repr, num_vars, clause_rows(clauses));
+        const std::string error = checker.check(text);
+        CAPTURE(text);
+        CHECK((error.empty() || error == "no line derives the empty clause"));
+        num_lines_checked += num_lines;
+
+        for (const ImplicationGraphProofStep& step : record.steps) {
+            if (step.fed) {
+                kinds.insert(step.kind);
+            }
+        }
+    }
+    std::filesystem::remove(path);
+    CHECK(num_lines_checked > 0);
+    CHECK(kinds.size() == 4);
 }
 
 } // namespace xorcle

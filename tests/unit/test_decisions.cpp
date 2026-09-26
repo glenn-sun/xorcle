@@ -18,21 +18,14 @@
 
 namespace xorcle {
 
-TEST_CASE("csids: the presets carry their documented values") {
-    // The declaration order is (A0, alpha, delta), while the triple is usually
-    // written (A0, delta, alpha), so these check the members by name.
-    CHECK(csids_default_config.initial_activity == doctest::Approx(1.0));
-    CHECK(csids_default_config.bump == doctest::Approx(1.0));
-    CHECK(csids_default_config.decay == doctest::Approx(0.98));
-    CHECK(csids_default_config.intersection_depth == 8);
-
-    CHECK(csids_berkmin_config.initial_activity == doctest::Approx(1.0));
-    CHECK(csids_berkmin_config.bump == doctest::Approx(0.0));
-    CHECK(csids_berkmin_config.decay == doctest::Approx(0.5));
-
-    CHECK(csids_cmtf_config.initial_activity == doctest::Approx(1.0));
-    CHECK(csids_cmtf_config.bump == doctest::Approx(1.0));
-    CHECK(csids_cmtf_config.decay == doctest::Approx(0.25));
+TEST_CASE("make_decision_procedure: dispatches on the name") {
+    const auto make = [](DecisionProcedureName name) {
+        return make_decision_procedure(name, EquationRepr::dense, 4, default_seed,
+                                       default_decision_phase, CsidsConfig{});
+    };
+    CHECK(dynamic_cast<Csids*>(make(DecisionProcedureName::csids).get()) != nullptr);
+    CHECK(dynamic_cast<FixedLiterals*>(make(DecisionProcedureName::fixed_literals).get()) !=
+          nullptr);
 }
 
 TEST_CASE_TEMPLATE("phase: applying a decision phase", Tag, DenseTag, SparseTag) {
@@ -68,10 +61,6 @@ TEST_CASE_TEMPLATE("phase: applying a decision phase", Tag, DenseTag, SparseTag)
                    bits == std::vector<std::size_t>{1, 4}));
         }
     }
-
-    SUBCASE("falsify is the default") {
-        CHECK(default_decision_phase == DecisionPhase::falsify);
-    }
 }
 
 TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, SparseTag) {
@@ -88,12 +77,12 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
     CHECK(bits_of(*procedure.make_decision(span, clauses, active).equation) ==
           std::vector<std::size_t>{1});
 
-    CHECK(procedure.decision_stats().decisions == 2);
-    CHECK(procedure.decision_stats().fallback_decisions == 0);
+    CHECK(procedure.counters().decisions == 2);
+    CHECK(procedure.counters().fallback_decisions == 0);
 
     SUBCASE("reinitialize resets the counters") {
         procedure.reinitialize();
-        CHECK(procedure.decision_stats().decisions == 0);
+        CHECK(procedure.counters().decisions == 0);
     }
 
     SUBCASE("compaction rewrites the basis") {
@@ -129,7 +118,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         procedure.update_with_resolved_clause(1);
         CHECK(procedure.make_decision(empty, clauses, active).equation.has_value());
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
-        CHECK(procedure.decision_stats().fallback_decisions == 0);
+        CHECK(procedure.counters().fallback_decisions == 0);
     }
 
     SUBCASE("a new asserting clause enters above every starting clause") {
@@ -228,7 +217,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         CHECK(result.propagating_clause == std::optional<ClauseId>{0});
         // It names no decision, so the record from before stands.
         CHECK(procedure.decision_clause_hint() == std::nullopt);
-        CHECK(procedure.decision_stats().decisions == 0);
+        CHECK(procedure.counters().decisions == 0);
     }
 
     SUBCASE("a clause the trail refutes goes back to propagation") {
@@ -262,11 +251,11 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         // rather than deciding the rest one variable at a time.
         CHECK_FALSE(fallback.make_decision(empty, no_clauses, no_active).equation.has_value());
         CHECK(fallback.decision_clause_hint() == std::nullopt);
-        CHECK(fallback.decision_stats().decisions == 0);
+        CHECK(fallback.counters().decisions == 0);
 
         fallback.note_filled_decisions(4);
-        CHECK(fallback.decision_stats().decisions == 4);
-        CHECK(fallback.decision_stats().fallback_decisions == 4);
+        CHECK(fallback.counters().decisions == 4);
+        CHECK(fallback.counters().fallback_decisions == 4);
     }
 
     SUBCASE("reinitialize restores the sampling stream") {
@@ -277,7 +266,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         procedure.update_with_new_clause(clauses[1], 1);
         procedure.update_with_resolved_clause(1);
         CHECK(*procedure.make_decision(empty, clauses, active).equation == first);
-        CHECK(procedure.decision_stats().decisions == 1);
+        CHECK(procedure.counters().decisions == 1);
     }
 
     SUBCASE("compaction adopts the new variable count and forgets a dropped decision clause") {
@@ -324,7 +313,7 @@ TEST_CASE_TEMPLATE("csids: decay makes later bumps worth more", Tag, DenseTag, S
 TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decision", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    CsidsConfig config = csids_default_config;
+    CsidsConfig config;
     config.intersection_depth = 2;
     Csids procedure(repr, 4, default_seed, config);
     const RowSpace empty(repr, 4);
@@ -345,15 +334,15 @@ TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decisi
         CHECK(bits_of(*result.equation) == std::vector<std::size_t>{1});
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
 
-        const IntersectionStats stats = procedure.decision_stats().intersections;
-        CHECK(stats.decisions == 1);
-        CHECK(stats.intersected_clauses == 1);
-        CHECK(stats.dimension_before == 2);
-        CHECK(stats.dimension_after == 1);
+        const IntersectionCounters counters = procedure.intersection_counters();
+        CHECK(counters.decisions == 1);
+        CHECK(counters.intersected_clauses == 1);
+        CHECK(counters.dimension_before == 2);
+        CHECK(counters.dimension_after == 1);
     }
 
     SUBCASE("with nothing kept the draw is the top clause's alone") {
-        CsidsConfig top_alone = csids_default_config;
+        CsidsConfig top_alone;
         top_alone.intersection_depth = 1;
         Csids plain(repr, 4, default_seed, top_alone);
         for (ClauseId id = 0; id < clauses.size(); ++id) {
@@ -368,7 +357,7 @@ TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decisi
         REQUIRE(deep.equation.has_value());
         REQUIRE(top.equation.has_value());
         CHECK(*deep.equation == *top.equation);
-        CHECK(procedure.decision_stats().intersections.decisions == 0);
+        CHECK(procedure.intersection_counters().decisions == 0);
     }
 
     SUBCASE("a propagating clause below the top is handed back") {
@@ -377,7 +366,7 @@ TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decisi
         const DecisionResult result = procedure.make_decision(span, clauses, active);
         CHECK(!result.equation.has_value());
         CHECK(result.propagating_clause == std::optional<ClauseId>{1});
-        CHECK(procedure.decision_stats().intersections.propagating_clauses == 1);
+        CHECK(procedure.intersection_counters().propagating_clauses == 1);
 
         // Nothing it set aside is lost: off that trail, both clauses are back.
         const DecisionResult next = procedure.make_decision(empty, clauses, active);

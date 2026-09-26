@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <sstream>
@@ -38,8 +39,6 @@
 namespace xorcle {
 
 /// @brief A malformed command line, or one whose values do not make sense.
-///
-/// User-facing input, so an exception caught in `main` rather than an assert.
 class CliError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -58,7 +57,7 @@ struct OptionKind {
     struct Name {};  ///< A string from a fixed vocabulary the option itself checks. Unbounded.
 };
 
-/// @brief The storage type an `OptionKind` tag stands for.
+/// @brief The value type an `OptionKind` tag stands for.
 template <class Kind>
 struct OptionValue;
 
@@ -89,8 +88,7 @@ struct OptionValue<OptionKind::Name> {
 
 // --- The generated structs -------------------------------------------------
 
-/// @brief One member per table row, plus the two things that are not options:
-/// the positional input path, and which `--decisions=` preset was chosen.
+/// @brief One member per table row, plus the positional input path.
 struct Options {
 #define XORCLE_OPTION(name, kind, default_value, lo, hi, help)                                     \
     OptionValue<OptionKind::kind>::type name = default_value;
@@ -98,9 +96,6 @@ struct Options {
 #include "cli/options.inc"
 
     std::string input_path;
-
-    /// @brief The `--decisions=` preset in force, or empty.
-    std::string csids_preset;
 };
 
 /// @brief Which options the command line actually gave, one flag per table row.
@@ -110,7 +105,7 @@ struct OptionSeen {
 #include "cli/options.inc"
 };
 
-// --- Enum values and presets, as parallel tables ---------------------------
+// --- Enum values and requirements, as parallel tables ----------------------
 
 /// @brief One accepted spelling of one enum-valued option.
 ///
@@ -118,7 +113,7 @@ struct OptionSeen {
 /// that knows the type.
 struct EnumOptionValue {
     std::string_view option;   ///< The option's table name, e.g. `"decisions"`.
-    std::string_view spelling; ///< The accepted value, e.g. `"berkmin"`.
+    std::string_view spelling; ///< The accepted value, e.g. `"csids"`.
     int value;
 };
 
@@ -152,27 +147,6 @@ inline std::string requirement_text(const std::string_view option) {
         text += row.needs;
     }
     return text;
-}
-
-/// @brief A `--decisions=` spelling that fixes the whole CSIDS triple.
-struct CsidsPreset {
-    std::string_view spelling; ///< The `--decisions=` value, e.g. `"cmtf"`.
-    CsidsConfig config;
-};
-
-/// @brief The CSIDS presets, from the same table.
-inline constexpr CsidsPreset csids_presets[]{
-#define XORCLE_PRESET(spelling, config) {#spelling, config},
-#include "cli/options.inc"
-};
-
-inline const CsidsPreset* find_csids_preset(std::string_view spelling) {
-    for (const CsidsPreset& preset : csids_presets) {
-        if (preset.spelling == spelling) {
-            return &preset;
-        }
-    }
-    return nullptr;
 }
 
 // --- Spelling --------------------------------------------------------------
@@ -216,10 +190,6 @@ inline std::string enum_option_spellings(std::string_view option) {
 }
 
 /// @brief The label for an enum option's value: the first spelling naming it.
-///
-/// `--decisions=berkmin` and `--decisions=csids` both select
-/// `DecisionProcedureName::csids`, and the table lists `csids` first, so that is
-/// what the statistics report.
 inline std::string enum_option_label(std::string_view option, int value) {
     for (const EnumOptionValue& row : enum_option_values) {
         if (row.option == option && row.value == value) {
@@ -227,7 +197,7 @@ inline std::string enum_option_label(std::string_view option, int value) {
         }
     }
     assert(false && "no spelling in the option table for this enum value");
-    return {};
+    std::unreachable();
 }
 
 // --- Value parsing and bounds checking, one overload per kind --------------
@@ -416,8 +386,7 @@ inline void append_option_help(std::ostream& out, std::string_view table_name,
                                const std::string& default_text, const std::string& bounds) {
     out << "  " << cli_spelling(table_name) << "=" << syntax << "\n";
     out << "      " << help;
-    // Naming what reads an option here is what keeps its refusal from being a
-    // surprise; `validate_options` enforces the same rows.
+    // `validate_options` enforces the same rows.
     if (const std::string requires_text = requirement_text(table_name); !requires_text.empty()) {
         out << "; " << requires_text;
     }
@@ -446,8 +415,10 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
                        enum_option_label(#name, static_cast<int>(default_value)), "");
 #include "cli/options.inc"
 
-    out << "  --help\n"
-        << "      show this message and exit\n";
+    out << "  --help, -h\n"
+        << "      show this message and exit\n"
+        << "  --version\n"
+        << "      show the version and exit\n";
 }
 
 // --- Parsing a command line ------------------------------------------------
@@ -476,16 +447,12 @@ inline void apply_option(Options& options, OptionSeen& seen, const std::string& 
     throw CliError("unknown option '" + spelling + "'");
 }
 
-/// @brief Record which `--decisions=` preset is in force, or none if the given
-/// spelling is not a preset.
-inline void apply_decisions_preset(Options& options, const std::string& value) {
-    options.csids_preset = find_csids_preset(value) != nullptr ? value : std::string{};
-}
-
 // --- The effective configuration, as the statistics record it --------------
 
 /// @brief How the statistics record a value: the text `--name=` would take to
-/// reproduce it. Unlike the help text, an unset path records as empty.
+/// reproduce it.
+///
+/// Unlike the help text, an unset path records as empty.
 inline std::string format_option_value(OptionKind::Bool, bool value) {
     return value ? "true" : "false";
 }
@@ -508,14 +475,13 @@ inline std::string format_option_value(OptionKind::Name, std::string_view value)
 /// @brief Every option and its effective value, in table order.
 ///
 /// This is what makes a statistics row a reproduction recipe, so it is taken
-/// from the resolved `Options`: a `--decisions=` preset has already become the
-/// CSIDS triple it stands for.
+/// from the resolved `Options`.
 inline std::vector<ConfigEntry> option_settings(const Options& options) {
     std::vector<ConfigEntry> settings;
 
     // Each row compares its value against the table's own default, so the
     // console block can show what was asked for rather than the whole table.
-    const auto entry = [](const char* name, std::string value, std::string default_value) {
+    const auto entry = [](const char* name, std::string value, const std::string& default_value) {
         const bool is_default = value == default_value;
         return ConfigEntry{name, std::move(value), is_default};
     };
@@ -532,16 +498,8 @@ inline std::vector<ConfigEntry> option_settings(const Options& options) {
 }
 
 /// @brief Check the constraints that span more than one option.
-/// @throws CliError if a preset was combined with a manual CSIDS override, or if
-/// the restart and deletion options do not agree with each other and with the
-/// heuristics they need.
+/// @throws CliError if options conflict with each other.
 inline void validate_options(const Options& options, const OptionSeen& seen) {
-    if (!options.csids_preset.empty() &&
-        (seen.csids_initial || seen.csids_decay || seen.csids_bump)) {
-        throw CliError("--decisions=" + options.csids_preset +
-                       " is a preset and does not accept --csids-initial, --csids-decay "
-                       "or --csids-bump");
-    }
     // One check per `XORCLE_REQUIRES` row: an option given where nothing would
     // read it is refused, so a run never reports a setting it did not act on.
 #define XORCLE_REQUIRES(option, condition, needs)                                                  \
@@ -630,9 +588,6 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
         const std::string spelling = argument.substr(0, equals);
         const std::string value = argument.substr(equals + 1);
         apply_option(options, seen, spelling, value);
-        if (spelling == "--decisions") {
-            apply_decisions_preset(options, value);
-        }
     }
 
     if (positionals.size() != 1) {
@@ -642,11 +597,6 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     }
     options.input_path = positionals.front();
 
-    if (const CsidsPreset* preset = find_csids_preset(options.csids_preset)) {
-        options.csids_initial = preset->config.initial_activity;
-        options.csids_decay = preset->config.decay;
-        options.csids_bump = preset->config.bump;
-    }
     // The rule needs a compaction after each feed, so without compaction the
     // implication graph resolves to off unless it was given.
     if (!seen.implication_graph && !options.compact) {
@@ -659,7 +609,7 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
 
 // --- Projections onto the configuration structs the solver takes -----------
 
-/// @brief The CSIDS triple, by member name (see `CsidsConfig`'s warning).
+/// @brief The CSIDS parameters, by member name.
 inline CsidsConfig csids_config(const Options& options) {
     return CsidsConfig{.initial_activity = options.csids_initial,
                        .decay = options.csids_decay,
@@ -679,16 +629,13 @@ inline ImplicationGraphConfig implication_graph_config(const Options& options) {
                                   .max_descendants = options.implication_graph_max_descendants};
 }
 
-/// @brief Everything but the activity source, which only the caller holding the
-/// decision procedure can supply.
 inline DeletionConfig deletion_config(const Options& options) {
     return DeletionConfig{.enabled = options.deletion,
                           .cadence = options.deletion_cadence,
                           .demote_cadence_in_passes = options.deletion_demote_cadence_in_passes,
                           .tiers = ClauseTierConfig{.core_lbd = options.deletion_core_lbd,
                                                     .secondary_lbd = options.deletion_secondary_lbd},
-                          .key = options.deletion_key,
-                          .activity = nullptr};
+                          .key = options.deletion_key};
 }
 
 /// @brief Only the cyclic selector runs an attempt budget; under any other,
@@ -709,6 +656,32 @@ inline RestartConfig restart_config(const Options& options) {
                          .lbd_min_conflicts = options.restart_lbd_min_conflicts,
                          .lbd_trail_ratio = options.restart_lbd_trail_ratio,
                          .reuse_trail = options.restart_reuse_trail};
+}
+
+// --- Building the solver -----------------------------------------------------
+
+/// @brief The solver `xorcle` runs for @p options over @p num_vars variables,
+/// with no clauses yet.
+/// @param proof_writer Not owned; null for no proof.
+/// @param progress_reporter Not owned; null reports nothing.
+/// @param selector Replaces the selector @p options names, when non-null.
+inline std::unique_ptr<Solver> make_solver(const Options& options, std::size_t num_vars,
+                                           RawProofWriter* proof_writer = nullptr,
+                                           ProgressReporter* progress_reporter = nullptr,
+                                           std::unique_ptr<ClauseSelector> selector = nullptr) {
+    if (selector == nullptr) {
+        selector = make_clause_selector(options.selection, num_vars);
+    }
+    const DeletionConfig deletion = deletion_config(options);
+    selector->set_tier_config(deletion.tiers);
+    return std::make_unique<Solver>(
+        options.equation_repr, num_vars, std::move(selector),
+        make_decision_procedure(options.decisions, options.equation_repr, num_vars, options.seed,
+                                options.phase, csids_config(options)),
+        make_restart_policy(restart_config(options)), proof_writer, compaction_config(options),
+        ProgressConfig{.reporter = progress_reporter, .cadence = options.report_cadence},
+        options.minimize, deletion, options.bump_responsible_clauses, options.subsume,
+        propagation_config(options), implication_graph_config(options));
 }
 
 } // namespace xorcle

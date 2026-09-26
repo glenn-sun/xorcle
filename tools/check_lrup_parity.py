@@ -162,11 +162,29 @@ def propagate_clause(clause_rows: List[int], basis: Basis, nvars: int):
     return "none", None
 
 
+def parse_ids(tokens: List[str]) -> List[int]:
+    ids = [int(t) for t in tokens]
+    for cid in ids:
+        if cid <= 0:
+            raise ValueError(f"Clause id must be positive: {cid}")
+    return ids
+
+
 def check_proof(xnf_path: str, proof_path: str, verbose: bool) -> int:
+    """Check every line, and fail unless some learned line derives the empty clause.
+
+    A learned line is `<new id> <xor expr> ... 0 <reason id> ... 0`, with exactly two
+    `0` tokens and the second one last; a deletion line is `<id> ... 0`, with one `0`,
+    at least one id, and every id naming a clause not yet deleted. A new id must exceed
+    every id before it, so a learned line cut short after its first `0` is refused as
+    a deletion of a clause that does not exist.
+    """
     nvars, clauses = parse_xnf_file(xnf_path)
+    max_id = len(clauses)
     learned_count = 0
     deleted_count = 0
     line_count = 0
+    refuted = False
 
     with open(proof_path, "r", encoding="utf-8") as f:
         for lineno, raw in enumerate(f, start=1):
@@ -174,38 +192,41 @@ def check_proof(xnf_path: str, proof_path: str, verbose: bool) -> int:
             if not line or line.startswith("c"):
                 continue
             tokens = line.split()
-            if not tokens:
-                continue
             line_count += 1
 
             try:
-                if tokens.count("0") == 1:
-                    ids_part = tokens[: tokens.index("0")]
-                    ids = [int(t) for t in ids_part] if ids_part else []
+                if tokens[-1] != "0":
+                    raise ValueError("Proof line must end with 0")
+                zeros = tokens.count("0")
+                if zeros == 1:
+                    ids = parse_ids(tokens[:-1])
+                    if not ids:
+                        raise ValueError("Deletion line lists no clause id")
                     for cid in ids:
-                        clauses.pop(cid, None)
+                        if cid not in clauses:
+                            raise ValueError(f"Deletion of clause id {cid}, which does not exist")
+                        del clauses[cid]
                     deleted_count += len(ids)
                     continue
 
-                if tokens.count("0") == 2:
-                    idx0 = tokens.index("0")
-                    idx1 = tokens.index("0", idx0 + 1)
-                    if idx0 == 0:
-                        raise ValueError("Missing learned clause id")
-                    new_id = int(tokens[0])
-                    clause_tokens = tokens[1:idx0]
-                    reason_tokens = tokens[idx0 + 1 : idx1]
-                    clause_rows = [parse_clause_token(t, nvars) for t in clause_tokens]
-                    reason_ids = [int(t) for t in reason_tokens] if reason_tokens else []
-                else:
+                if zeros != 2:
                     raise ValueError("Proof line must contain exactly one or two zeros")
+                idx0 = tokens.index("0")
+                if idx0 == 0:
+                    raise ValueError("Missing learned clause id")
+                new_id = parse_ids(tokens[:1])[0]
+                clause_rows = [parse_clause_token(t, nvars) for t in tokens[1:idx0]]
+                reason_ids = parse_ids(tokens[idx0 + 1 : -1])
 
             except Exception as exc:
                 print(f"ERROR line {lineno}: parse error: {exc}", file=sys.stderr)
                 return 1
 
-            if new_id in clauses:
-                print(f"ERROR line {lineno}: duplicate clause id {new_id}", file=sys.stderr)
+            if new_id <= max_id:
+                print(
+                    f"ERROR line {lineno}: learned id {new_id} does not exceed every earlier id ({max_id})",
+                    file=sys.stderr,
+                )
                 return 1
 
             basis = Basis(nvars)
@@ -240,10 +261,17 @@ def check_proof(xnf_path: str, proof_path: str, verbose: bool) -> int:
                 return 1
 
             clauses[new_id] = clause_rows
+            max_id = new_id
             learned_count += 1
+            if not any(clause_rows):
+                refuted = True
 
             if verbose:
                 print(f"OK line {lineno}: learned {new_id}")
+
+    if not refuted:
+        print("ERROR: no line derives the empty clause", file=sys.stderr)
+        return 1
 
     print(
         f"OK: lines={line_count} learned={learned_count} deletions={deleted_count} clauses_final={len(clauses)}"

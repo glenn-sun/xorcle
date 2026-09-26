@@ -3,6 +3,9 @@
 #include <cassert>
 #include <span>
 
+#include "heuristics/decisions/csids.h"
+#include "heuristics/decisions/fixed_literals.h"
+
 namespace xorcle {
 
 DecisionProcedure::DecisionProcedure(EquationRepr repr, std::size_t num_vars, Seed seed)
@@ -11,8 +14,6 @@ DecisionProcedure::DecisionProcedure(EquationRepr repr, std::size_t num_vars, Se
       base_seed_(seed),
       phase_rng_(make_rng(seed, RngComponent::decision_phase)),
       false_equation_(Equation::eq_false(repr, num_vars)) {}
-
-void DecisionProcedure::update_with_critical_equation(const Equation&) {}
 
 void DecisionProcedure::update_with_asserting_clause(const Clause&) {}
 
@@ -45,25 +46,14 @@ void DecisionProcedure::update_with_compaction(const CompactionTransform& transf
     set_num_vars(transform.new_num_vars());
 }
 
-DecisionProcedure::DecisionStats DecisionProcedure::decision_stats() const {
-    return DecisionStats{decisions_, fallback_decisions_};
-}
-
-void DecisionProcedure::record_decision(bool used_fallback) {
-    ++decisions_;
-    if (used_fallback) {
-        ++fallback_decisions_;
-    }
+void DecisionProcedure::add_to_stats(RunStats& stats) const {
+    stats.decisions = counters_.decisions;
+    stats.fallback_decisions = counters_.fallback_decisions;
 }
 
 void DecisionProcedure::note_filled_decisions(std::size_t num_decisions) {
-    decisions_ += num_decisions;
-    fallback_decisions_ += num_decisions;
-}
-
-void DecisionProcedure::reset_stats() noexcept {
-    decisions_ = 0;
-    fallback_decisions_ = 0;
+    counters_.decisions += num_decisions;
+    counters_.fallback_decisions += num_decisions;
 }
 
 void DecisionProcedure::reset_phase_rng() {
@@ -83,6 +73,25 @@ void DecisionProcedure::set_num_vars(std::size_t num_vars) {
 Equation DecisionProcedure::unit_equation(std::size_t var) const {
     assert(var < num_vars_ && "unit_equation: variable index is out of range");
     return Equation::from_bits(repr_, num_vars_, std::span<const std::size_t>(&var, 1));
+}
+
+std::unique_ptr<DecisionProcedure> make_decision_procedure(DecisionProcedureName name,
+                                                           EquationRepr repr,
+                                                           std::size_t num_vars, Seed seed,
+                                                           DecisionPhase phase,
+                                                           const CsidsConfig& csids) {
+    std::unique_ptr<DecisionProcedure> procedure;
+    switch (name) {
+        case DecisionProcedureName::fixed_literals:
+            procedure = std::make_unique<FixedLiterals>(repr, num_vars, seed);
+            break;
+        case DecisionProcedureName::csids:
+            procedure = std::make_unique<Csids>(repr, num_vars, seed, csids);
+            break;
+    }
+    assert(procedure != nullptr && "make_decision_procedure: unknown decision procedure name");
+    procedure->set_decision_phase(phase);
+    return procedure;
 }
 
 } // namespace xorcle

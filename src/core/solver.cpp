@@ -2,9 +2,10 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cmath>
-#include <cstdint>
 #include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -38,11 +39,11 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       propagator_(repr, num_vars),
       proof_writer_(proof_writer),
       proof_root_span_(repr, num_vars),
+      propagate_miss_rate_(propagation.miss_rate),
+      propagate_window_(propagation.window),
       propagated_row_eqn_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)),
       satisfied_probe_eqn_(repr, num_vars),
-      propagate_miss_rate_(propagation.miss_rate),
-      propagate_window_(propagation.window),
       progress_(progress),
       minimize_(minimize),
       bump_responsible_clauses_(bump_responsible_clauses),
@@ -52,11 +53,15 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
+    cyclic_selector_ = dynamic_cast<Cyclic*>(selector_.get());
+    assert((propagate_miss_rate_ == 0.0 || cyclic_selector_ != nullptr) &&
+           "an attempt budget needs the cyclic selector");
     assert((proof_writer_ == nullptr || proof_writer_->num_vars() == original_num_vars_) &&
            "the proof writer's variable numbering must be the instance's");
+    clause_activity_ = dynamic_cast<const ClauseActivitySource*>(decisions_.get());
     assert((!deletion_.enabled || deletion_.key != DeletionKey::activity ||
-            deletion_.activity != nullptr) &&
-           "the activity key has no activity source");
+            clause_activity_ != nullptr) &&
+           "the activity key needs a decision procedure that scores clauses");
 #ifdef NDEBUG
     tracked_used_row_idxs_ = propagate_miss_rate_ != 0.0 ? &used_row_idxs_ : nullptr;
 #else
@@ -68,7 +73,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
     implication_graph_.set_base_seed(decisions_->base_seed());
     std::iota(active_var_to_original_.begin(), active_var_to_original_.end(), std::size_t{0});
     if (proof_writer_ != nullptr) {
-        proof_col_idx_to_unit_idx_.resize(num_vars);
+        proof_col_idx_to_unit_id_.resize(num_vars);
     }
 }
 
@@ -100,17 +105,23 @@ void Solver::add_starting_clause(Clause clause) {
 }
 
 bool Solver::propagate_until_conflict() {
-    assert(active_var_to_original_.size() == active_num_vars_);
-    assert(false_equation_.num_bits() == active_num_vars_ + 1);
-    assert(propagated_row_eqn_.num_bits() == active_num_vars_ + 1);
+    assert(active_var_to_original_.size() == active_num_vars_ &&
+           "the variable map is out of step with the active numbering");
+    assert(false_equation_.num_bits() == active_num_vars_ + 1 &&
+           "0 = 1 is over another numbering than the active one");
+    assert(propagated_row_eqn_.num_bits() == active_num_vars_ + 1 &&
+           "the propagation scratch is over another numbering than the active one");
 
-    selector_->set_attempt_budget(attempt_budget());
+    const std::size_t budget = attempt_budget();
+    if (cyclic_selector_ != nullptr) {
+        cyclic_selector_->set_attempt_budget(budget);
+    }
     force_complete_sweep_ = false;
 
     while (true) {
-        const std::optional<ClauseSelection> selection = selector_->next_with_hint();
+        const std::optional<ClauseSelection> selection = selector_->next();
         if (!selection.has_value()) {
-            counters_.num_deferred_runs += selector_->last_stop_was_budget() ? 1 : 0;
+            counters_.num_deferred_runs += last_run_stopped_on_budget() ? 1U : 0U;
             assert((budget_.has_value() || debug_nothing_left_to_propagate()) &&
                    "propagation stopped short of a fixed point with no budget");
             return false;
@@ -152,7 +163,8 @@ Solver::PropagationOutcome Solver::propagate_from_clause(ClauseId id,
         return PropagationOutcome::nothing;
     }
 
-    assert(propagated_eqn->num_bits() == active_num_vars_ + 1);
+    assert(propagated_eqn->num_bits() == active_num_vars_ + 1 &&
+           "a propagated equation is over another numbering than the active one");
 
     std::size_t level = current_level;
     if (attribute) {
@@ -257,7 +269,7 @@ void Solver::handle_non_root_conflict() {
         counters_.minimize_width_before += learned.width_before_minimize;
         counters_.minimize_width_after += learned.clause.rows();
         counters_.num_minimized_clauses +=
-            learned.clause.rows() < learned.width_before_minimize ? 1 : 0;
+            learned.clause.rows() < learned.width_before_minimize ? 1U : 0U;
     }
     // Density of the learned clause in variable space, not just its row count.
     for (const Equation& row : learned.clause) {
@@ -284,8 +296,7 @@ void Solver::handle_non_root_conflict() {
     assert((learned.clause.rows() != 1 || learned.asserting_level == 0) &&
            "a unit asserting clause must assert at the root");
     const std::size_t level_before_backjump = trail_.level();
-    // Sampled at the conflict rather than after the backjump, which is where the
-    // progress line used to read them and why they read low.
+    // Sampled at the conflict, before the backjump.
     counters_.sum_learned_lbd += learned.lbd;
     ++counters_.num_asserting_clauses;
     counters_.sum_conflict_level += level_before_backjump;
@@ -335,7 +346,8 @@ void Solver::handle_non_root_conflict() {
                 const std::size_t prefix = record.num_reasons -
                                            (record.subsumed_conflicting_clause ? 0 : 1);
                 replacement_chains[i].insert(replacement_chains[i].end(),
-                                             learned.reason_ids.rend() - prefix,
+                                             learned.reason_ids.rend() -
+                                                 static_cast<std::ptrdiff_t>(prefix),
                                              learned.reason_ids.rend());
             }
         }
@@ -352,14 +364,12 @@ void Solver::handle_non_root_conflict() {
     }
 
     const AssertingClauseInfo learned_info{.lbd = learned.lbd, .removed_levels = removed_levels};
-    counters_.num_learned_width_1 += learned.clause.rows() == 1 ? 1 : 0;
-    counters_.num_learned_width_2 += learned.clause.rows() == 2 ? 1 : 0;
+    counters_.num_learned_width_1 += learned.clause.rows() == 1 ? 1U : 0U;
+    counters_.num_learned_width_2 += learned.clause.rows() == 2 ? 1U : 0U;
     selector_->add_asserting_clause(std::move(learned.clause), trail_, learned_info);
     ++num_active_clauses_;
 
-    // A reason a trail row still names is left as is, replacement included:
-    // that case never occurred in any measured run, so acting on it would ship
-    // behavior nothing has exercised.
+    // A reason a trail row still names is left as is, replacement included.
     const auto reason_still_named = [this](const SubsumedReason& record) {
         const std::vector<std::optional<ClauseId>>& reasons = trail_.reasons();
         const bool named = record.trail_idx < reasons.size() &&
@@ -381,7 +391,7 @@ void Solver::handle_non_root_conflict() {
             continue;
         }
         // A replacement takes the subsumed clause's standing, and so on along
-        // chains of replacements: what replaces an input clause is no more an
+        // chains of replacements: what replaces an input clause is no more a
         // deletion candidate than the input clause was, and what replaces a core
         // clause stays in core.
         const bool replaces_input = !selector_->is_clause_learned(record.clause_id);
@@ -397,7 +407,7 @@ void Solver::handle_non_root_conflict() {
                                              proof_ids(replacement_chains[i]));
             }
             counters_.num_subsume_narrowed_to_width_2 +=
-                record.replacement->rows() <= 2 ? 1 : 0;
+                record.replacement->rows() <= 2 ? 1U : 0U;
             selector_->add_asserting_clause(
                 std::move(*record.replacement), trail_,
                 AssertingClauseInfo{.lbd = record.lbd,
@@ -472,7 +482,7 @@ void Solver::write_root_unit(ClauseId reason_id, std::size_t trail_idx) {
         std::vector<ClauseId> reasons;
         used.for_each_set([this, &reasons](std::size_t row_idx) {
             reasons.push_back(
-                proof_col_idx_to_unit_idx_[*proof_root_span_.row(row_idx).leading_bit()]);
+                proof_col_idx_to_unit_id_[*proof_root_span_.row(row_idx).leading_bit()]);
         });
         reasons.push_back(unit_id);
         unit_id = next_proof_clause_id_++;
@@ -484,7 +494,7 @@ void Solver::write_root_unit(ClauseId reason_id, std::size_t trail_idx) {
     const std::optional<std::size_t> row_idx =
         proof_root_span_.add_row_get_row_idx(std::move(unit));
     assert(row_idx.has_value() && "a root unit is in the span of the ones before it");
-    proof_col_idx_to_unit_idx_[*proof_root_span_.row(*row_idx).leading_bit()] = unit_id;
+    proof_col_idx_to_unit_id_[*proof_root_span_.row(*row_idx).leading_bit()] = unit_id;
     proof_root_units_.push_back(RawUnit{std::move(unit_row), unit_id});
 }
 
@@ -551,8 +561,7 @@ Solver::DecisionStep Solver::make_decision_step() {
     const auto start = std::chrono::steady_clock::now();
     // The last propagation run ended without a conflict, so how it stopped says
     // whether it reached quiescence.
-    const SatisfactionRecord known(level_stamp_, trail_.level(),
-                                   !selector_->last_stop_was_budget());
+    const SatisfactionRecord known(level_stamp_, trail_.level(), !last_run_stopped_on_budget());
     DecisionResult decision = decisions_->make_decision(trail_.span(), selector_->clauses(),
                                                         selector_->active_flags(), known);
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
@@ -566,8 +575,9 @@ Solver::DecisionStep Solver::make_decision_step() {
     }
     Equation decision_eqn = *std::move(decision.equation);
     [[maybe_unused]] const ReduceResult reduced = trail_.span().partial_reduce(decision_eqn);
-    assert(decision_eqn.num_bits() == active_num_vars_ + 1);
-    // A decision must be neither 0 (already implied) nor 1 (already refuted).
+    assert(decision_eqn.num_bits() == active_num_vars_ + 1 &&
+           "a decision is over another numbering than the active one");
+    // A decision must be neither `0 = 0` (already implied) nor `0 = 1` (already refuted).
     assert(reduced.kind == ReduceResult::Kind::leading &&
            "the decision procedure returned an equation the trail already decides");
 
@@ -578,7 +588,9 @@ Solver::DecisionStep Solver::make_decision_step() {
     assert(decision_clause_of_level_.size() == trail_.level() &&
            "the decision clause record fell out of step with the trail");
     selector_->update_with_decision(decision_eqn, trail_);
-    selector_->update_with_decision_clause(decisions_->decision_clause_hint());
+    if (cyclic_selector_ != nullptr) {
+        cyclic_selector_->update_with_decision_clause(decision_clause_of_level_.back());
+    }
     return DecisionStep::decided;
 }
 
@@ -696,7 +708,7 @@ ProgressSnapshot Solver::progress_snapshot() const {
         .average_trail_length = per_conflict(counters_.sum_conflict_trail_length -
                                             sum_trail_length_at_last_report_),
         .remaining_vars = active_num_vars_ - trail_.rows_at_level(0),
-        .decisions = decisions_->decision_stats().decisions,
+        .decisions = decisions_->counters().decisions,
         .decision_level = trail_.level(),
         .trail_length = trail_.span().rows(),
         .num_restarts = counters_.num_restarts,
@@ -745,7 +757,8 @@ void Solver::apply_compaction(CompactionPlan plan) {
     }
 
     const std::size_t num_clauses = selector_->num_clauses();
-    assert(plan.clause_is_active.size() == num_clauses);
+    assert(plan.clause_is_active.size() == num_clauses &&
+           "the compaction plan does not cover every clause");
 
     num_active_clauses_ = 0;
     std::size_t rewritten_idx = 0;
@@ -857,12 +870,13 @@ void Solver::maybe_delete_clauses() {
                                                      .demote_cadence_in_passes =
                                                          deletion_.demote_cadence_in_passes,
                                                      .key = deletion_.key,
-                                                     .activity = deletion_.activity}));
+                                                     .activity = clause_activity_}));
 }
 
 void Solver::apply_deletion(const DeletionPlan& plan) {
     const std::size_t num_clauses = selector_->num_clauses();
-    assert(plan.unused_passes.size() == num_clauses);
+    assert(plan.unused_passes.size() == num_clauses &&
+           "the deletion plan does not cover every clause");
 
     for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
         selector_->set_clause_unused_passes(clause_id, plan.unused_passes[clause_id]);
@@ -931,11 +945,11 @@ bool Solver::maybe_run_implication_graph() {
     const std::size_t conflicts_waited = counters_.num_conflicts - conflicts_at_run_became_due_;
 
     const auto start = std::chrono::steady_clock::now();
-    std::vector<Equation> units;
     // Every trail row is at the root level, so the trail's span is the root span.
     const ImplicationGraphRun summary = implication_graph_.run(
-        selector_->clauses(), selector_->active_flags(), trail_.span(), units,
+        selector_->clauses(), selector_->active_flags(), trail_.span(),
         proof_writer_ != nullptr ? &implication_graph_proof_ : nullptr);
+    const std::vector<Equation>& units = summary.units;
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
     implication_graph_counters_.time_s += elapsed.count();
@@ -1046,7 +1060,7 @@ Solution Solver::solve() {
 
         // Quiescent at full rank: the trail is a total assignment.
         if (trail_.span().rows() == active_num_vars_) {
-            if (did_complete_sweep_ || !selector_->last_stop_was_budget()) {
+            if (did_complete_sweep_ || !last_run_stopped_on_budget()) {
                 return complete_satisfying_assignment();
             }
             // Full rank reached on a budgeted run is not yet quiescence, and one
@@ -1094,8 +1108,7 @@ Solution Solver::solve() {
 
 Solution Solver::complete_satisfying_assignment() {
     // Every active clause is satisfied, so any completion of the trail is a
-    // model. Filling the rest here rather than deciding them one at a time
-    // spares a propagation sweep and a trail snapshot per variable.
+    // model.
     RowSpace complete = trail_.span();
     Equation unit(repr_, active_num_vars_);
     Equation reduced(repr_, active_num_vars_);
@@ -1119,6 +1132,87 @@ Solution Solver::complete_satisfying_assignment() {
         complete.unique_solution(), compaction_history_, active_var_to_original_,
         original_num_vars_);
     return Solution{SolveResult::sat, std::move(original_assignment)};
+}
+
+void Solver::add_to_stats(RunStats& stats) const {
+    stats.num_vars = num_vars();
+    stats.active_vars = active_num_vars();
+
+    stats.num_conflicts = counters_.num_conflicts;
+    stats.num_propagations = counters_.num_propagations;
+    stats.num_attempt_props = counters_.num_attempt_props;
+    stats.num_watch_updates = counters_.num_watch_updates;
+    stats.num_compactions = counters_.num_compactions;
+    stats.num_deferred_runs = counters_.num_deferred_runs;
+    stats.num_out_of_order_learns = counters_.num_out_of_order_learns;
+    stats.num_undone_decisions = counters_.num_undone_decisions;
+    stats.num_decision_propagations = counters_.num_decision_propagations;
+    stats.num_decision_conflicts = counters_.num_decision_conflicts;
+    stats.mean_budget_fraction =
+        counters_.num_budgeted_runs == 0
+            ? 0.0
+            : counters_.sum_budget_fraction / static_cast<double>(counters_.num_budgeted_runs);
+    stats.final_budget_fraction = counters_.final_budget_fraction;
+
+    stats.num_restarts = counters_.num_restarts;
+    stats.num_reused_levels = counters_.num_reused_levels;
+
+    // Ids are never reused, so what was allocated and what is still there part
+    // company as soon as deletion runs.
+    stats.clauses_allocated = num_clauses();
+    stats.clauses_in_database = num_active_clauses();
+    stats.average_learned_lbd =
+        counters_.num_asserting_clauses == 0
+            ? 0.0
+            : static_cast<double>(counters_.sum_learned_lbd) /
+                  static_cast<double>(counters_.num_asserting_clauses);
+
+    stats.learned_equation_bits = counters_.learned_equation_bits;
+    stats.learned_width_1 = counters_.num_learned_width_1;
+    stats.learned_width_2 = counters_.num_learned_width_2;
+    stats.subsume_narrowed_to_width_2 = counters_.num_subsume_narrowed_to_width_2;
+    stats.compaction_narrowed_to_width_2 = counters_.num_compaction_narrowed_to_width_2;
+
+    stats.num_minimized_clauses = counters_.num_minimized_clauses;
+    stats.minimize_width_before = counters_.minimize_width_before;
+    stats.minimize_width_after = counters_.minimize_width_after;
+
+    stats.num_subsumed_clauses = counters_.num_subsumed_clauses;
+    stats.num_subsumed_conflicting_clauses = counters_.num_subsumed_conflicting_clauses;
+    stats.num_subsume_replacements = counters_.num_subsume_replacements;
+
+    stats.num_deletion_passes = counters_.num_deletion_passes;
+    stats.num_deleted_clauses = counters_.num_deleted_clauses;
+    stats.num_demoted_clauses = counters_.num_demoted_clauses;
+    stats.num_promoted_clauses = counters_.num_promoted_clauses;
+
+    const ImplicationGraphCounters& graph = implication_graph_counters_;
+    stats.implication_graph_runs = graph.num_runs;
+    stats.implication_graph_edges_visited = graph.num_edges_visited;
+    stats.implication_graph_pairs_eligible = graph.num_pairs_eligible;
+    stats.implication_graph_pairs_examined = graph.num_pairs_examined;
+    stats.implication_graph_refuted_sides = graph.num_refuted_sides;
+    stats.implication_graph_runs_at_the_pair_cap = graph.num_runs_at_the_pair_cap;
+    stats.implication_graph_truncated_sides = graph.num_truncated_sides;
+    stats.implication_graph_units_fed = graph.num_units_fed;
+    stats.implication_graph_runs_after_a_conflict = graph.num_runs_after_a_conflict;
+    stats.implication_graph_runs_due_to_clauses = graph.num_runs_due_to_clauses;
+    stats.implication_graph_runs_due_to_conflicts = graph.num_runs_due_to_conflicts;
+    stats.implication_graph_runs_due_to_a_feed = graph.num_runs_due_to_a_feed;
+    stats.implication_graph_follow_ups_suppressed = graph.num_follow_ups_suppressed;
+    stats.implication_graph_conflicts_waited = graph.num_conflicts_waited;
+    stats.implication_graph_max_conflicts_waited = graph.max_conflicts_waited;
+    stats.implication_graph_width_2_clauses = implication_graph_.num_width_2_clauses();
+    stats.implication_graph_vertex_pairs = implication_graph_.num_vertex_pairs();
+    stats.implication_graph_forced_compactions = graph.num_forced_compactions;
+    stats.implication_graph_span_intersection_time_s = graph.span_intersection_time_s;
+    stats.implication_graph_time_s = graph.time_s;
+
+    stats.decision_time_s = counters_.decision_time_s;
+
+    selector_->add_to_stats(stats);
+    decisions_->add_to_stats(stats);
+    restarts_->add_to_stats(stats);
 }
 
 } // namespace xorcle

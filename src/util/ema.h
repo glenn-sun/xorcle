@@ -1,8 +1,5 @@
 #pragma once
 
-/// @file ema.h
-/// @brief An exponential moving average.
-
 #include <cassert>
 #include <cstddef>
 
@@ -10,9 +7,6 @@ namespace xorcle {
 
 /// @brief An exponential moving average over a window, corrected for the weight
 /// the zero it starts at still holds while the window fills.
-///
-/// Without the correction a slow average reads far below its samples for as
-/// many updates as its window is wide.
 class Ema {
 public:
     /// @param window The number of samples smoothed over; the decay is its reciprocal.

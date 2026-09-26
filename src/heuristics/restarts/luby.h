@@ -10,7 +10,9 @@
 namespace xorcle {
 
 /// @brief The Luby sequence value at a 1-indexed position: 1, 1, 2, 1, 1, 2, 4, 1, 1, 2,
-/// 1, 1, 2, 4, 8, ..., always a power of two. Index 0 returns 1.
+/// 1, 1, 2, 4, 8, ..., always a power of two.
+///
+/// Index 0 returns 1.
 std::size_t luby_value(std::size_t index);
 
 /// @brief Restart on `RestartConfig::luby_unit_conflicts` times the Luby sequence.
@@ -19,7 +21,7 @@ std::size_t luby_value(std::size_t index);
 class Luby final : public RestartPolicy {
 public:
     /// @pre `config.luby_unit_conflicts != 0`.
-    explicit Luby(const RestartConfig& config = {});
+    explicit Luby(const RestartConfig& config);
 
     bool should_restart_after_conflict(const ConflictSummary& conflict) override;
     void note_restart() override;

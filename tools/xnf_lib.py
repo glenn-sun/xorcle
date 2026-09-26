@@ -87,7 +87,8 @@ def negate_equation(eq: Equation) -> Equation:
     return Equation(vars=eq.vars, rhs=1 - eq.rhs)
 
 
-def add_equations(lhs: Equation, rhs: Equation) -> Equation:
+def negation_of_sum(lhs: Equation, rhs: Equation) -> Equation:
+    """The negation of `lhs + rhs`: their variables' sum, equal to `1 + lhs.rhs + rhs.rhs`."""
     parity: Dict[int, int] = {}
     for v in lhs.vars:
         parity[v] = parity.get(v, 0) ^ 1
@@ -269,8 +270,8 @@ def convert_xnf_to_2xnf(nvars: int, clauses: List[Clause]) -> Tuple[int, List[Cl
             current = [yi] + rest
             out.append(Clause(equations=[yi, negate_equation(l2)]))
 
-            yi_plus_l1 = add_equations(yi, l1)
-            out.append(Clause(equations=[negate_equation(yi_plus_l1), l2]))
+            yi_plus_l1 = negate_equation(negation_of_sum(yi, l1))
+            out.append(Clause(equations=[yi_plus_l1, l2]))
 
         out.append(Clause(equations=current))
 

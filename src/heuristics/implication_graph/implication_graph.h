@@ -21,7 +21,7 @@ namespace xorcle {
 /// @brief When the solver reads the implication graph of the width-2 clauses,
 /// and how much of it one run may read.
 struct ImplicationGraphConfig {
-    bool enabled = false;
+    bool enabled = true;
 
     /// @brief Clauses that reached width at most 2 since the last run, and, as a
     /// fallback, conflicts since it, either of which makes a run due.
@@ -32,6 +32,8 @@ struct ImplicationGraphConfig {
     /// keeps.
     std::size_t max_pairs = 10000;
     std::size_t max_descendants = 100;
+
+    bool operator==(const ImplicationGraphConfig&) const = default;
 };
 
 /// @brief No step of an `ImplicationGraphProofRecord`.
@@ -87,6 +89,7 @@ struct ImplicationGraphRun {
     bool at_the_pair_cap = false;
     std::size_t truncated_sides = 0; ///< Sides the descendant cap cut a level short.
     double span_intersection_time_s = 0.0; ///< Of the run's own seconds.
+    std::vector<Equation> units; ///< Units the root trail did not already have.
 };
 
 /// @brief The implication graph of the width-2 clauses.
@@ -117,18 +120,19 @@ public:
 
     /// @brief Look for units the root trail does not already have.
     ///
-    /// `units` is appended to, and is empty exactly when the run found nothing.
     /// A non-null `proof` is cleared and filled with a step per equation the run
-    /// proved, the units among them in the order `units` takes them.
+    /// proved, the units among them in the order the run's `units` takes them.
     ///
     /// @pre `clause_is_active` is sized by clause id, and every clause shares
     /// `root_span`'s representation and column count.
     ImplicationGraphRun run(const std::vector<Clause>& clauses,
                             const std::vector<std::uint8_t>& clause_is_active,
-                            const RowSpace& root_span, std::vector<Equation>& units,
+                            const RowSpace& root_span,
                             ImplicationGraphProofRecord* proof = nullptr);
 
 private:
+    static constexpr std::size_t no_index = static_cast<std::size_t>(-1);
+
     /// @brief One implication, with the clause that stands behind it.
     struct Arc {
         std::size_t target;
@@ -171,11 +175,8 @@ private:
                           std::vector<std::size_t>& reached, std::size_t& edges_visited,
                           std::vector<ClauseId>* parent_clause);
 
-    /// @brief The vertex pairs with an out-arc on either side that one run
-    /// examines, at most `max_pairs` of them.
-    ///
-    /// A sample rather than the lowest ids, because vertex ids follow clause
-    /// order, which is not a property of the problem.
+    /// @brief A uniform sample of the vertex pairs with an out-arc on either side,
+    /// at most `max_pairs` of them, for one run to examine.
     void sample_pairs(ImplicationGraphRun& summary);
 
     /// @brief Intersect the spans of the two sides of every sampled vertex pair,
@@ -188,8 +189,7 @@ private:
     /// `a` and `not a` does.
     void walk_span_intersections(const RowSpace& root_span, const std::vector<Clause>& clauses,
                                  const std::vector<std::uint8_t>& clause_is_active,
-                                 std::vector<Equation>& units, ImplicationGraphRun& summary,
-                                 ImplicationGraphProofRecord* proof);
+                                 ImplicationGraphRun& summary, ImplicationGraphProofRecord* proof);
 
 #ifndef NDEBUG
     /// @brief Whether some path from @p from to @p to has every arc backed by
@@ -245,7 +245,7 @@ private:
     std::vector<ClauseId> parent_clauses_;
     std::vector<ClauseId> other_parent_clauses_;
 
-    /// @brief Rows the walk's spans gave back, of any width, reused so building
+    /// @brief Rows the walk's spans gave back, of any bit count, reused so building
     /// a span allocates no rows.
     std::vector<Equation> spare_rows_;
 };

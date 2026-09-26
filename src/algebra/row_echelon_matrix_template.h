@@ -107,7 +107,7 @@ public:
     explicit RowEchelonMatrixTemplate(std::size_t cols)
         : pivot_col_idxs_(cols), cols_(cols) {}
 
-    // `pivot_row_` points into another matrix's rows, so a copy has to rebuild it.
+    // `col_idx_to_row_` points into another matrix's rows, so a copy has to rebuild it.
     RowEchelonMatrixTemplate(const RowEchelonMatrixTemplate& other)
         : rows_(other.rows_), pivot_col_idxs_(other.pivot_col_idxs_),
           cols_(other.cols_) {
@@ -184,12 +184,12 @@ public:
     }
 
     void reduce(Equation& v) const override {
-        V& row = gf2_vector_of<V>(v);
+        V& vec = gf2_vector_of<V>(v);
         // `v` is mutated while its set pivot columns are being walked, so each
-        // step reads the live row.
-        for (auto col_idx = row.first_bit_in(pivot_col_idxs_, 0); col_idx;
-             col_idx = row.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
-            row.plus_assign(gf2_vector_of<V>(rows_[row_idx_for_col_idx(*col_idx)].row));
+        // step reads the live vector.
+        for (auto col_idx = vec.first_bit_in(pivot_col_idxs_, 0); col_idx;
+             col_idx = vec.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
+            vec.plus_assign(gf2_vector_of<V>(rows_[row_idx_for_col_idx(*col_idx)].row));
         }
     }
 
@@ -201,11 +201,11 @@ public:
 
     void reduce_get_coefficients(Equation& v, IndexSet& coefficients) const override {
         coefficients.resize(rows_.size());
-        V& row = gf2_vector_of<V>(v);
-        for (auto col_idx = row.first_bit_in(pivot_col_idxs_, 0); col_idx;
-             col_idx = row.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
+        V& vec = gf2_vector_of<V>(v);
+        for (auto col_idx = vec.first_bit_in(pivot_col_idxs_, 0); col_idx;
+             col_idx = vec.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
             const std::size_t row_idx = row_idx_for_col_idx(*col_idx);
-            row.plus_assign(gf2_vector_of<V>(rows_[row_idx].row));
+            vec.plus_assign(gf2_vector_of<V>(rows_[row_idx].row));
             coefficients.set(row_idx);
         }
     }
@@ -245,8 +245,8 @@ public:
     ReduceResult partial_reduce_below(Equation& v, std::span<const std::size_t> row_idx_to_order,
                                       std::size_t bound) const override {
         // The order table is indexed by row, so `col_idx_to_row_` saves nothing.
-        V& row = gf2_vector_of<V>(v);
-        std::optional<std::size_t> col_idx = row.leading_bit();
+        V& vec = gf2_vector_of<V>(v);
+        std::optional<std::size_t> col_idx = vec.leading_bit();
         while (true) {
             if (!col_idx) {
                 return ReduceResult::eq_true();
@@ -258,15 +258,12 @@ public:
             if (row_idx_to_order[row_idx] >= bound) {
                 return classify_col_idx(*col_idx);
             }
-            col_idx = row.plus_assign_and_next_bit(gf2_vector_of<V>(rows_[row_idx].row), *col_idx);
+            col_idx = vec.plus_assign_and_next_bit(gf2_vector_of<V>(rows_[row_idx].row), *col_idx);
         }
     }
 
     void add_to_row(std::size_t row_idx, const Equation& eqn) override {
         // Leading strictly later leaves every pivot, and so both tables, alone.
-        assert(gf2_vector_of<V>(eqn).leading_bit() >
-                   gf2_vector_of<V>(rows_[row_idx].row).leading_bit() &&
-               "add_to_row: the addend must lead strictly after the row");
         gf2_vector_of<V>(rows_[row_idx].row).plus_assign(gf2_vector_of<V>(eqn));
 
         debug_assert_valid_representation();
@@ -292,8 +289,7 @@ public:
         Equation popped_row = std::move(rows_[row_idx].row);
         const std::optional<std::size_t> leading_col_idx =
             gf2_vector_of<V>(popped_row).leading_bit();
-        // Stronger than the caller's `rows() > 0`: a structural invariant of a
-        // row-echelon matrix, which never stores a zero row.
+        // A structural invariant: a stored row is never zero.
         assert(leading_col_idx && "stored row has no pivot");
 
         rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(row_idx));
@@ -309,7 +305,7 @@ public:
     void pop_last_row() override {
         const std::optional<std::size_t> leading_col_idx =
             gf2_vector_of<V>(rows_.back().row).leading_bit();
-        // Stronger than the caller's `rows() > 0`; see `pop_row()`.
+        // A structural invariant: a stored row is never zero.
         assert(leading_col_idx && "stored row has no pivot");
 
         rows_.pop_back();
@@ -412,7 +408,7 @@ private:
 
     template <bool FromColIdxToRow>
     ReduceResult partial_reduce_impl(Equation& v, std::optional<std::size_t> col_idx) const {
-        V& row = gf2_vector_of<V>(v);
+        V& vec = gf2_vector_of<V>(v);
         while (true) {
             if (!col_idx) {
                 return ReduceResult::eq_true();
@@ -420,7 +416,7 @@ private:
             if (!pivot_col_idxs_.test(*col_idx)) {
                 return classify_col_idx(*col_idx);
             }
-            col_idx = row.plus_assign_and_next_bit(row_for_col_idx<FromColIdxToRow>(*col_idx),
+            col_idx = vec.plus_assign_and_next_bit(row_for_col_idx<FromColIdxToRow>(*col_idx),
                                                    *col_idx);
         }
     }
@@ -429,20 +425,20 @@ private:
     ReduceResult partial_reduce_with_extra_impl(
         Equation& v, std::optional<std::size_t> col_idx, const Equation& extra,
         std::optional<std::size_t> extra_leading_col_idx) const {
-        const V& extra_row = gf2_vector_of<V>(extra);
-        V& row = gf2_vector_of<V>(v);
+        const V& extra_vec = gf2_vector_of<V>(extra);
+        V& vec = gf2_vector_of<V>(v);
         while (true) {
             if (!col_idx) {
                 return ReduceResult::eq_true();
             }
             if (!pivot_col_idxs_.test(*col_idx)) {
                 if (extra_leading_col_idx && *col_idx == *extra_leading_col_idx) {
-                    col_idx = row.plus_assign_and_next_bit(extra_row, *col_idx);
+                    col_idx = vec.plus_assign_and_next_bit(extra_vec, *col_idx);
                     continue;
                 }
                 return classify_col_idx(*col_idx);
             }
-            col_idx = row.plus_assign_and_next_bit(row_for_col_idx<FromColIdxToRow>(*col_idx),
+            col_idx = vec.plus_assign_and_next_bit(row_for_col_idx<FromColIdxToRow>(*col_idx),
                                                    *col_idx);
         }
     }
@@ -468,33 +464,39 @@ private:
     /// @brief Check representation invariants for `RowEchelonMatrix`.
     void debug_assert_valid_representation() const {
 #ifndef NDEBUG
-        assert(pivot_col_idxs_.size() == cols());
-        assert(pivot_col_idxs_.count() == rows_.size());
+        assert(pivot_col_idxs_.size() == cols() && "the pivot set is not sized by column");
+        assert(pivot_col_idxs_.count() == rows_.size() && "pivot count differs from row count");
 
-        std::optional<std::size_t> previous_pivot;
+        std::optional<std::size_t> previous_pivot_col_idx;
         for (std::size_t row_idx = 0; row_idx < rows_.size(); ++row_idx) {
             const V& current = gf2_vector_of<V>(rows_[row_idx].row);
-            assert(current.num_bits() == cols());
+            assert(current.num_bits() == cols() && "a row's bit count differs from cols()");
 
             const std::optional<std::size_t> leading_col_idx = current.leading_bit();
-            assert(leading_col_idx && *leading_col_idx < cols());
-            if (previous_pivot) {
-                assert(*previous_pivot < *leading_col_idx);
+            assert(leading_col_idx && *leading_col_idx < cols() && "a stored row is zero");
+            if (previous_pivot_col_idx) {
+                assert(*previous_pivot_col_idx < *leading_col_idx &&
+                       "rows are not in row-echelon order");
             }
-            assert(pivot_col_idxs_.test(*leading_col_idx));
-            assert(row_idx_for_col_idx(*leading_col_idx) == row_idx);
-            assert(rows_[row_idx].pivot_col_idx == *leading_col_idx);
-            previous_pivot = leading_col_idx;
+            assert(pivot_col_idxs_.test(*leading_col_idx) &&
+                   "a row's leading column is not in the pivot set");
+            assert(row_idx_for_col_idx(*leading_col_idx) == row_idx &&
+                   "a pivot column maps to the wrong row");
+            assert(rows_[row_idx].pivot_col_idx == *leading_col_idx &&
+                   "a row's cached pivot column is stale");
+            previous_pivot_col_idx = leading_col_idx;
         }
 
         pivot_col_idxs_.for_each_set([&](std::size_t pivot_col_idx) {
-            assert(row_idx_for_col_idx(pivot_col_idx) < rows_.size());
-            assert(row_idx_for_col_idx(pivot_col_idx) == pivot_col_idxs_.count_below(pivot_col_idx));
+            assert(row_idx_for_col_idx(pivot_col_idx) < rows_.size() &&
+                   "a pivot column maps past the last row");
             assert(gf2_vector_of<V>(rows_[row_idx_for_col_idx(pivot_col_idx)].row)
-                       .leading_bit() == std::optional<std::size_t>(pivot_col_idx));
-            assert(col_idx_to_row_.empty() ||
-                   col_idx_to_row_[pivot_col_idx] ==
-                       &gf2_vector_of<V>(rows_[row_idx_for_col_idx(pivot_col_idx)].row));
+                           .leading_bit() == std::optional<std::size_t>(pivot_col_idx) &&
+                   "a pivot column's row does not lead on it");
+            assert((col_idx_to_row_.empty() ||
+                    col_idx_to_row_[pivot_col_idx] ==
+                        &gf2_vector_of<V>(rows_[row_idx_for_col_idx(pivot_col_idx)].row)) &&
+                   "col_idx_to_row_ is stale");
         });
 #endif
     }
@@ -507,8 +509,7 @@ private:
     std::vector<StoredRow> rows_;
     IndexSet pivot_col_idxs_;
 
-    /// @brief Empty until the rows are a large enough fraction of the columns,
-    /// since a table indexed by column costs a clause more than it saves it.
+    /// @brief Empty until the rows are a large enough fraction of the columns.
     std::vector<const V*> col_idx_to_row_;
     std::size_t cols_;
 };

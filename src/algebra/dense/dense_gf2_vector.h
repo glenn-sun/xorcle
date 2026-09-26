@@ -21,6 +21,14 @@ public:
     using BitVector = gf2::BitVector<gf2::u64>;
     using Word = BitVector::word_type;
 
+    static constexpr std::size_t bits_per_word = sizeof(Word) * 8;
+
+    /// @brief `log2(bits_per_word)`: shifts a bit index down to its word index.
+    static constexpr std::size_t word_shift =
+        static_cast<std::size_t>(std::countr_zero(bits_per_word));
+
+    static constexpr std::size_t word_mask = bits_per_word - 1; ///< Bit offset within a word.
+
     /// @brief Construct an all-zeros vector.
     explicit DenseGF2Vector(std::size_t num_bits) : bits_(num_bits) {}
 
@@ -65,7 +73,6 @@ public:
     }
 
     /// @brief Get index of the first set bit, or `std::nullopt` if none are set.
-    /// Custom reimplementation of `gf2::first_set()` for efficiency.
     std::optional<std::size_t> leading_bit() const noexcept {
         const Word* words = bits_.store();
         const std::size_t num_words = bits_.words();
@@ -78,7 +85,6 @@ public:
     }
 
     /// @brief Get index of the first set bit strictly after `i`, or `std::nullopt`.
-    /// Custom reimplementation of `gf2::next_set()` for efficiency.
     /// @pre `i < num_bits()`.
     std::optional<std::size_t> next_bit(std::size_t i) const noexcept {
         assert(i < bits_.size() && "next_bit index is out of range");
@@ -122,11 +128,7 @@ public:
     }
 
     /// @brief Add another vector into this one over GF(2).
-    /// Custom reimplementation of `gf2::operator^=()` for efficiency.
     /// @pre `other.num_bits() == num_bits()`.
-    ///
-    /// gf2's `operator^=` writes through `set_word`, which re-cleans the tail
-    /// word on every call; a plain word loop does not.
     void plus_assign(const DenseGF2Vector& other) noexcept {
         assert(bits_.size() == other.bits_.size() && "bit count mismatch in plus_assign");
         Word* lhs = bits_.store();
@@ -192,14 +194,6 @@ private:
         return !first || *first >= i;
     }
 #endif
-
-    static constexpr std::size_t bits_per_word = sizeof(Word) * 8;
-
-    /// @brief `log2(bits_per_word)`: shifts a bit index down to its word index.
-    static constexpr std::size_t word_shift =
-        static_cast<std::size_t>(std::countr_zero(bits_per_word));
-
-    static constexpr std::size_t word_mask = bits_per_word - 1; ///< Bit offset within a word.
 
     BitVector bits_;
 };

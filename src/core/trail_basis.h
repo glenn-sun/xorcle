@@ -55,7 +55,7 @@ public:
     /// @brief The level to backjump to, in `[0, trail.level()]`: `0` is the root,
     /// `trail.level()` means nothing can be discarded.
     /// @pre `rows() > 0`.
-    /// @note `O(trail.level())`, called twice per resolution step.
+    /// @note `O(trail.level())`.
     std::size_t asserting_level() const;
 
     /// @brief How many dimensions these rows span at the top decision level,
@@ -96,7 +96,6 @@ private:
     static TrailBasisSpace from_coordinates(const TrailCoordinates& coordinates,
                                             const Trail& trail, std::size_t last_trail_idx);
 
-    /// @brief Held by pointer, not by reference, so the class stays assignable.
     const Trail* trail_;
 };
 

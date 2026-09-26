@@ -17,8 +17,6 @@
 /// - `XORCLE_ENUM_VALUE(option, spelling, enumerator)` — one accepted spelling
 ///   of one enum option. The **first** spelling naming a given enumerator is the
 ///   one the statistics output labels it with.
-/// - `XORCLE_PRESET(spelling, config)` — a `--decisions=` spelling that also
-///   fixes the CSIDS parameters.
 /// - `XORCLE_REQUIRES(option, condition, needs)` — `option` is only read when
 ///   `condition` holds of the parsed `options`, so giving it otherwise is
 ///   rejected rather than silently ignored. `needs` completes the sentence
@@ -32,9 +30,6 @@
 #endif
 #ifndef XORCLE_ENUM_VALUE
 #define XORCLE_ENUM_VALUE(option, spelling, enumerator)
-#endif
-#ifndef XORCLE_PRESET
-#define XORCLE_PRESET(spelling, config)
 #endif
 #ifndef XORCLE_REQUIRES
 #define XORCLE_REQUIRES(option, condition, needs)
@@ -58,15 +53,9 @@ XORCLE_OPTION(compact_cadence, Size, 256, 1, SIZE_MAX, "number of conflicts betw
 // --- Decisions -------------------------------------------------------------
 
 XORCLE_ENUM_OPTION(decisions, DecisionProcedureName, DecisionProcedureName::csids,
-                   "decision procedure (berkmin/cmtf are CSIDS presets; fixed_literals is a\n"
-                   "debug baseline)")
+                   "decision procedure (fixed_literals is a debug baseline)")
 XORCLE_ENUM_VALUE(decisions, "csids", DecisionProcedureName::csids)
 XORCLE_ENUM_VALUE(decisions, "fixed_literals", DecisionProcedureName::fixed_literals)
-XORCLE_ENUM_VALUE(decisions, "berkmin", DecisionProcedureName::csids)
-XORCLE_ENUM_VALUE(decisions, "cmtf", DecisionProcedureName::csids)
-
-XORCLE_PRESET(berkmin, csids_berkmin_config)
-XORCLE_PRESET(cmtf, csids_cmtf_config)
 
 XORCLE_OPTION(csids_initial, Real, 1.0, 0.0, INFINITY, "initial activity of asserting clauses")
 XORCLE_OPTION(csids_bump, Real, 1.0, 0.0, INFINITY, "activity bump per resolution step")
@@ -115,7 +104,7 @@ XORCLE_OPTION(restart_reuse_trail, Bool, false, false, true,
               "(only with CSIDS)")
 
 XORCLE_OPTION(restart_luby_unit, Size, 1, 1, SIZE_MAX,
-              "conflicts for a luby value of 1 (required with --restart=luby)")
+              "conflicts for a luby value of 1")
 XORCLE_OPTION(restart_lbd_fast, Size, 33, 1, SIZE_MAX,
               "window of the fast LBD average")
 XORCLE_OPTION(restart_lbd_slow, Size, 1000, 1, SIZE_MAX,
@@ -242,5 +231,4 @@ XORCLE_REQUIRES(report, options.report_cadence != 0, "--report-cadence=N with N 
 #undef XORCLE_OPTION
 #undef XORCLE_ENUM_OPTION
 #undef XORCLE_ENUM_VALUE
-#undef XORCLE_PRESET
 #undef XORCLE_REQUIRES

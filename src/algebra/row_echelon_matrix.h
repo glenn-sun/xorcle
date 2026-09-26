@@ -30,7 +30,6 @@ public:
     RowEchelonMatrix(RowEchelonMatrix&& other) noexcept = default;
     RowEchelonMatrix& operator=(const RowEchelonMatrix& other);
     RowEchelonMatrix& operator=(RowEchelonMatrix&& other) noexcept = default;
-    virtual ~RowEchelonMatrix() = default;
 
     EquationRepr repr() const noexcept { return interface_->repr(); }
 
@@ -109,6 +108,8 @@ public:
         assert(row_idx < rows() && "add_to_row index is out of range");
         assert(eqn.num_bits() == cols() && "add_to_row: bit count does not match the matrix");
         assert(eqn.repr() == repr() && "add_to_row: representation does not match the matrix");
+        assert(eqn.leading_bit() > row(row_idx).leading_bit() &&
+               "add_to_row: the addend must lead strictly after the row");
         interface_->add_to_row(row_idx, eqn);
     }
 
@@ -173,7 +174,8 @@ public:
 
 protected:
     /// @brief For use inside `src/algebra/` only.
-    RowEchelonMatrixInterface& interface() const noexcept { return *interface_; }
+    const RowEchelonMatrixInterface& interface() const noexcept { return *interface_; }
+    RowEchelonMatrixInterface& interface() noexcept { return *interface_; }
 
 private:
     std::unique_ptr<RowEchelonMatrixInterface> interface_;
@@ -281,12 +283,13 @@ public:
     /// @brief Where the next cyclic search for a replacement watch starts.
     std::size_t next_watch_search_start = 0;
 
-    /// @brief The decision level whose span was found to satisfy this clause,
-    /// and the stamp that level carried when it did. Spans nest, so a clause
-    /// satisfied at a level stays satisfied at every deeper one; the stamp is
-    /// what distinguishes that level from the different level of the same depth
-    /// a later branch builds. `satisfied_stamp == 0` is no record.
+    /// @brief The decision level whose span was found to satisfy this clause.
+    ///
+    /// Spans nest, so a clause satisfied at a level stays satisfied at every
+    /// deeper one.
     std::size_t satisfied_level = 0;
+    /// @brief The stamp `satisfied_level` carried then, which tells it from the
+    /// level of the same depth a later branch builds; `0` is no record.
     std::size_t satisfied_stamp = 0;
 
     std::string to_string(const PrintMode& mode = {}) const;

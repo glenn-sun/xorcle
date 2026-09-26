@@ -17,12 +17,12 @@ enum class SolveResult {
 
 /// @brief Which part of the run a statistic belongs to.
 ///
-/// `restart`, `minimize`, `subsume`, `deletion`, `propagate_budget`,
-/// `implication_graph`, `exact_watchlist` and `proof` print only when the run had something to say;
-/// `RunStats::reports` decides. The CSV writes every field whatever the section
+/// `restart`, `intersection`, `minimize`, `subsume`, `deletion`, `propagate_budget`,
+/// `implication_graph`, `exact_watchlist` and `proof` print only when the run had
+/// something to say; `RunStats::reports` decides. The CSV writes every field whatever the section
 /// says, so its schema does not move with the options.
 ///
-/// @warning `ConsoleStatsWriter::log_impl` names the sections one by one, in
+/// @warning `ConsoleStatsWriter::log` names the sections one by one, in
 /// this order, so that the configuration block can sit between the first two. A
 /// section added here needs a call added there or it prints nowhere.
 enum class StatsSection {
@@ -41,7 +41,7 @@ enum class StatsSection {
     proof
 };
 
-/// @brief The storage a `XORCLE_STAT` kind tag stands for.
+/// @brief The value type a `XORCLE_STAT` kind tag stands for.
 struct StatKind {
     struct Count {};
     struct Real {};
@@ -62,8 +62,8 @@ struct StatValue<StatKind::Real> {
 struct ConfigEntry {
     std::string name;  ///< The option's table name, e.g. `compact_cadence`.
     std::string value; ///< Its value as text, e.g. `16`.
-    /// @brief Whether the value is the table's own default. The console block
-    /// prints only the options this is false for; the CSV writes them all.
+    /// @brief Whether the value is the table's own default, which the console
+    /// block leaves out.
     bool is_default = true;
 };
 

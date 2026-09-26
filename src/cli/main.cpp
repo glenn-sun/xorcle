@@ -19,15 +19,6 @@
 
 #include "cli/options.h"
 #include "core/solver.h"
-#include "heuristics/decisions/clause_activity.h"
-#include "heuristics/decisions/csids.h"
-#include "heuristics/decisions/decision_procedure.h"
-#include "heuristics/decisions/fixed_literals.h"
-#include "heuristics/deletion/deletion.h"
-#include "heuristics/restarts/restart_policy.h"
-#include "heuristics/selection/clause_selector.h"
-#include "heuristics/selection/cyclic.h"
-#include "heuristics/selection/exact_watchlist.h"
 #include "io/dimacs.h"
 #include "io/proof_postprocess.h"
 #include "io/proof_raw.h"
@@ -44,37 +35,6 @@ namespace xorcle {
 
 namespace {
 
-// --- Building the heuristics -----------------------------------------------
-
-std::unique_ptr<DecisionProcedure> make_decision_procedure(const Options& options,
-                                                           std::size_t num_vars) {
-    std::unique_ptr<DecisionProcedure> procedure;
-    switch (options.decisions) {
-        case DecisionProcedureName::fixed_literals:
-            procedure =
-                std::make_unique<FixedLiterals>(options.equation_repr, num_vars, options.seed);
-            break;
-        case DecisionProcedureName::csids:
-            procedure = std::make_unique<Csids>(options.equation_repr, num_vars, options.seed,
-                                                csids_config(options));
-            break;
-    }
-    procedure->set_decision_phase(options.phase);
-    return procedure;
-}
-
-std::unique_ptr<ClauseSelector> make_clause_selector(const Options& options,
-                                                     std::size_t num_vars) {
-    switch (options.selection) {
-        case ClauseSelectorName::cyclic:
-            return std::make_unique<Cyclic>(num_vars);
-        case ClauseSelectorName::exact_watchlist:
-            return std::make_unique<ExactWatchlist>(num_vars);
-    }
-    assert(false && "make_clause_selector: unknown clause selector name");
-    return std::make_unique<Cyclic>(num_vars);
-}
-
 // --- Proofs ----------------------------------------------------------------
 
 /// @brief Where the raw proof goes: the requested path, or a temporary next to
@@ -89,8 +49,8 @@ std::filesystem::path raw_proof_path(const Options& options) {
 std::vector<std::vector<RawRow>> input_clause_rows(const std::vector<Clause>& clauses) {
     std::vector<std::vector<RawRow>> rows(clauses.size());
     for (std::size_t id = 0; id < clauses.size(); ++id) {
-        for (std::size_t index = 0; index < clauses[id].rows(); ++index) {
-            rows[id].push_back(clauses[id].row(index).bits());
+        for (const Equation& row : clauses[id]) {
+            rows[id].push_back(row.bits());
         }
     }
     return rows;
@@ -106,7 +66,7 @@ struct PendingProof {
 
 /// @brief Turn the raw proof into the final LRUP(⊕) proof, and report on it.
 /// @return Wall-clock seconds spent post-processing and writing the proof.
-/// @throws std::runtime_error On a raw proof no proof can be made of.
+/// @throws RawProofError If the raw proof cannot be read or the proof cannot be written.
 double write_lrup_proof(const Options& options, const PendingProof& pending) {
     const auto start = std::chrono::steady_clock::now();
     PostprocessSummary summary;
@@ -120,8 +80,7 @@ double write_lrup_proof(const Options& options, const PendingProof& pending) {
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
     if (!pending.keep_raw) {
-        // Only on success: a raw proof no proof could be made of is the one
-        // thing a post-processing failure can be debugged from.
+        // Only on success: a failed post-processing leaves the raw proof behind.
         std::error_code ec;
         std::filesystem::remove(pending.raw_path, ec);
     }
@@ -187,34 +146,15 @@ RunStats run_once(const Options& options, PendingProof& pending) {
         progress_reporter = std::make_unique<ConsoleProgressReporter>(std::cout, *groups);
     }
 
-    std::unique_ptr<ClauseSelector> selector = make_clause_selector(options, parsed.num_vars);
-    std::unique_ptr<DecisionProcedure> decision_procedure =
-        make_decision_procedure(options, parsed.num_vars);
-
-    DeletionConfig deletion = deletion_config(options);
-    selector->set_tier_config(deletion.tiers);
-    if (deletion.enabled && deletion.key == DeletionKey::activity) {
-        deletion.activity = dynamic_cast<const ClauseActivitySource*>(decision_procedure.get());
-        assert(deletion.activity != nullptr &&
-               "validate_options() should have required a scoring decision procedure");
-    }
-
-    Solver solver(options.equation_repr, parsed.num_vars, std::move(selector),
-                  std::move(decision_procedure),
-                  make_restart_policy(restart_config(options)), proof_writer.get(),
-                  compaction_config(options),
-                  ProgressConfig{.reporter = progress_reporter.get(),
-                                 .cadence = options.report_cadence},
-                  options.minimize, deletion, options.bump_responsible_clauses, options.subsume,
-                  propagation_config(options),
-                  implication_graph_config(options));
+    const std::unique_ptr<Solver> solver =
+        make_solver(options, parsed.num_vars, proof_writer.get(), progress_reporter.get());
     for (Clause& clause : parsed.clauses) {
-        solver.add_starting_clause(std::move(clause));
+        solver->add_starting_clause(std::move(clause));
     }
 
-    const std::size_t start_clauses = solver.num_clauses();
+    const std::size_t start_clauses = solver->num_clauses();
     const auto start = std::chrono::steady_clock::now();
-    Solution solution = solver.solve();
+    Solution solution = solver->solve();
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
     const bool unsat = solution.result == SolveResult::unsat;
@@ -231,103 +171,12 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     stats.result = solution.result;
     stats.sat_assignment = std::move(solution.assignment);
 
-    stats.num_vars = solver.num_vars();
-    stats.active_vars = solver.active_num_vars();
+    solver->add_to_stats(stats);
     stats.start_clauses = start_clauses;
-
-    const SolverCounters& counters = solver.counters();
-    stats.num_conflicts = counters.num_conflicts;
-    stats.num_propagations = counters.num_propagations;
-    stats.num_attempt_props = counters.num_attempt_props;
-    stats.num_watch_updates = counters.num_watch_updates;
-    stats.num_compactions = counters.num_compactions;
-    stats.num_deferred_runs = counters.num_deferred_runs;
-    stats.num_out_of_order_learns = counters.num_out_of_order_learns;
-    stats.num_undone_decisions = counters.num_undone_decisions;
-    stats.num_decision_propagations = counters.num_decision_propagations;
-    stats.num_decision_conflicts = counters.num_decision_conflicts;
-    stats.mean_budget_fraction =
-        counters.num_budgeted_runs == 0
-            ? 0.0
-            : counters.sum_budget_fraction / static_cast<double>(counters.num_budgeted_runs);
-    stats.final_budget_fraction = counters.final_budget_fraction;
-
-    const DecisionProcedure::DecisionStats decisions = solver.decision_stats();
-    stats.decisions = decisions.decisions;
-    stats.fallback_decisions = decisions.fallback_decisions;
-    stats.intersection_decisions = decisions.intersections.decisions;
-    stats.intersected_clauses = decisions.intersections.intersected_clauses;
-    stats.intersection_dimension_before = decisions.intersections.dimension_before;
-    stats.intersection_dimension_after = decisions.intersections.dimension_after;
-    stats.intersection_passed_satisfied_clauses =
-        decisions.intersections.passed_satisfied_clauses;
-    stats.intersection_propagating_clauses = decisions.intersections.propagating_clauses;
-    stats.intersection_time_s = decisions.intersections.time_s;
-
-    const RestartStats restarts = solver.restart_stats();
-    stats.num_restarts = counters.num_restarts;
-    stats.num_reused_levels = counters.num_reused_levels;
-    stats.num_canceled_restarts = restarts.canceled;
-    stats.fast_lbd = restarts.fast_lbd;
-    stats.slow_lbd = restarts.slow_lbd;
-
-    // Ids are never reused, so what was allocated and what is still there part
-    // company as soon as deletion runs.
-    stats.clauses_allocated = solver.num_clauses();
-    stats.clauses_in_database = solver.num_active_clauses();
-    stats.learned_clauses = solver.num_clauses() - start_clauses;
-    stats.average_learned_lbd =
-        counters.num_asserting_clauses == 0
-            ? 0.0
-            : static_cast<double>(counters.sum_learned_lbd) /
-                  static_cast<double>(counters.num_asserting_clauses);
-
-    stats.learned_equation_bits = counters.learned_equation_bits;
-    stats.learned_width_1 = counters.num_learned_width_1;
-    stats.learned_width_2 = counters.num_learned_width_2;
-    stats.subsume_narrowed_to_width_2 = counters.num_subsume_narrowed_to_width_2;
-    stats.compaction_narrowed_to_width_2 = counters.num_compaction_narrowed_to_width_2;
-
-    stats.num_minimized_clauses = counters.num_minimized_clauses;
-    stats.minimize_width_before = counters.minimize_width_before;
-    stats.minimize_width_after = counters.minimize_width_after;
-
-    stats.num_subsumed_clauses = counters.num_subsumed_clauses;
-    stats.num_subsumed_conflicting_clauses = counters.num_subsumed_conflicting_clauses;
-    stats.num_subsume_replacements = counters.num_subsume_replacements;
-
-    stats.num_deletion_passes = counters.num_deletion_passes;
-    stats.num_deleted_clauses = counters.num_deleted_clauses;
-    stats.num_demoted_clauses = counters.num_demoted_clauses;
-    stats.num_promoted_clauses = counters.num_promoted_clauses;
-
-    const ImplicationGraphCounters& graph = solver.implication_graph_counters();
-    stats.implication_graph_runs = graph.num_runs;
-    stats.implication_graph_edges_visited = graph.num_edges_visited;
-    stats.implication_graph_pairs_eligible = graph.num_pairs_eligible;
-    stats.implication_graph_pairs_examined = graph.num_pairs_examined;
-    stats.implication_graph_refuted_sides = graph.num_refuted_sides;
-    stats.implication_graph_runs_at_the_pair_cap = graph.num_runs_at_the_pair_cap;
-    stats.implication_graph_truncated_sides = graph.num_truncated_sides;
-    stats.implication_graph_units_fed = graph.num_units_fed;
-    stats.implication_graph_runs_after_a_conflict = graph.num_runs_after_a_conflict;
-    stats.implication_graph_runs_due_to_clauses = graph.num_runs_due_to_clauses;
-    stats.implication_graph_runs_due_to_conflicts = graph.num_runs_due_to_conflicts;
-    stats.implication_graph_runs_due_to_a_feed = graph.num_runs_due_to_a_feed;
-    stats.implication_graph_follow_ups_suppressed = graph.num_follow_ups_suppressed;
-    stats.implication_graph_conflicts_waited = graph.num_conflicts_waited;
-    stats.implication_graph_max_conflicts_waited = graph.max_conflicts_waited;
-    stats.implication_graph_width_2_clauses = solver.implication_graph().num_width_2_clauses();
-    stats.implication_graph_vertex_pairs = solver.implication_graph().num_vertex_pairs();
-    stats.implication_graph_forced_compactions = graph.num_forced_compactions;
-    stats.implication_graph_span_intersection_time_s = graph.span_intersection_time_s;
-    stats.implication_graph_time_s = graph.time_s;
-
-    solver.selector().add_to_stats(stats);
+    stats.learned_clauses = solver->num_clauses() - start_clauses;
 
     stats.parse_time_s = parse_elapsed.count();
     stats.solve_time_s = elapsed.count();
-    stats.decision_time_s = counters.decision_time_s;
     return stats;
 }
 
@@ -391,10 +240,10 @@ int main(int argc, char* argv[]) {
         }
         return stats.result == SolveResult::sat ? 10 : 20;
     } catch (const CliError& error) {
-        std::cerr << "Error: " << error.what() << std::endl;
+        std::cerr << "Error: " << error.what() << '\n';
         return 2;
     } catch (const std::exception& error) {
-        std::cerr << "Error: " << error.what() << std::endl;
+        std::cerr << "Error: " << error.what() << '\n';
         return 1;
     }
 }

@@ -23,6 +23,17 @@ public:
     /// @brief Construct an all-zeros vector.
     explicit SparseGF2Vector(std::size_t num_bits) : num_bits_(num_bits) {}
 
+    /// @brief Copies the bits, not the merge buffer.
+    SparseGF2Vector(const SparseGF2Vector& other)
+        : num_bits_(other.num_bits_), bits_(other.bits_) {}
+    SparseGF2Vector& operator=(const SparseGF2Vector& other) {
+        num_bits_ = other.num_bits_;
+        bits_ = other.bits_;
+        return *this;
+    }
+    SparseGF2Vector(SparseGF2Vector&&) noexcept = default;
+    SparseGF2Vector& operator=(SparseGF2Vector&&) noexcept = default;
+
     std::size_t num_bits() const noexcept { return num_bits_; }
 
     /// @brief Drop any bit greater than or equal to `num_bits`.
@@ -93,7 +104,7 @@ public:
         return next_bit(i);
     }
 
-    /// @brief Overwrite from `other` without allocating.
+    /// @brief Overwrite from `other`, reusing this vector's buffer.
     /// @pre `other.num_bits() == num_bits()`.
     void assign_from(const SparseGF2Vector& other);
 
@@ -114,7 +125,7 @@ public:
 private:
     std::size_t num_bits_;
     std::vector<Bit> bits_;
-    std::vector<Bit> scratch_; ///< Merge buffer for `plus_assign`, kept to avoid allocating.
+    std::vector<Bit> scratch_; ///< Merge buffer for `plus_assign`, reused across calls.
 };
 
 } // namespace xorcle

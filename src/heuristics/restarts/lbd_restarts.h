@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file lbd.h
+/// @file lbd_restarts.h
 /// @brief The restart schedule driven by literal block distance.
 
 #include <cstddef>
@@ -25,7 +25,7 @@ public:
 
     bool should_restart_after_conflict(const ConflictSummary& conflict) override;
     void note_restart() override;
-    RestartStats stats() const override;
+    void add_to_stats(RunStats& stats) const override;
 
 private:
     Ema fast_lbd_;
@@ -35,7 +35,7 @@ private:
     double trail_ratio_;
     std::size_t min_conflicts_;
     std::size_t conflicts_since_restart_ = 0;
-    std::size_t canceled_ = 0;
+    std::size_t canceled_ = 0; ///< Restarts the trail-length guard canceled once they were due.
 };
 
 } // namespace xorcle

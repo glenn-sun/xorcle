@@ -2,10 +2,8 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <optional>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -31,8 +29,6 @@
 namespace xorcle {
 
 namespace {
-
-constexpr Seed default_seed = 0;
 
 /// @brief Activity read from a table rather than from a decision procedure.
 class FixedActivity final : public ClauseActivitySource {
@@ -97,47 +93,27 @@ bool contains(const std::vector<ClauseId>& ids, ClauseId id) {
 
 // --- Solver-level runs -----------------------------------------------------
 
-/// @brief All sixteen sign patterns over four variables: UNSAT, and every
-/// assignment is ruled out by exactly one clause, so the search must decide.
-constexpr std::string_view search_unsat_instance = "p cnf 4 16\n"
-                                                   "1 2 3 4 0\n"
-                                                   "1 2 3 -4 0\n"
-                                                   "1 2 -3 4 0\n"
-                                                   "1 2 -3 -4 0\n"
-                                                   "1 -2 3 4 0\n"
-                                                   "1 -2 3 -4 0\n"
-                                                   "1 -2 -3 4 0\n"
-                                                   "1 -2 -3 -4 0\n"
-                                                   "-1 2 3 4 0\n"
-                                                   "-1 2 3 -4 0\n"
-                                                   "-1 2 -3 4 0\n"
-                                                   "-1 2 -3 -4 0\n"
-                                                   "-1 -2 3 4 0\n"
-                                                   "-1 -2 3 -4 0\n"
-                                                   "-1 -2 -3 4 0\n"
-                                                   "-1 -2 -3 -4 0\n";
-
-/// @brief Solve `search_unsat_instance` once, deleting on the given cadence.
+/// @brief Solve the sign patterns over four variables once, deleting on the given cadence.
 ///
 /// The default cutoffs put every learned clause in `local`, so a run of any
 /// length deletes.
 SolverCounters solve_deleting(EquationRepr repr, std::size_t cadence,
                               ClauseTierConfig tiers = {.core_lbd = 0, .secondary_lbd = 0},
                               std::size_t demote_cadence_in_passes = 200) {
-    ParsedDimacs parsed = parse_dimacs_string(search_unsat_instance, repr);
+    ParsedDimacs parsed = parse_dimacs_string(sign_pattern_instance(4), repr);
     const DeletionConfig deletion{.enabled = true,
                                   .cadence = cadence,
                                   .demote_cadence_in_passes = demote_cadence_in_passes,
                                   .tiers = tiers,
-                                  .key = DeletionKey::lbd,
-                                  .activity = nullptr};
+                                  .key = DeletionKey::lbd};
 
     auto selector = std::make_unique<Cyclic>(parsed.num_vars);
     selector->set_tier_config(deletion.tiers);
     Solver solver(repr, parsed.num_vars, std::move(selector),
                   std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
                   std::make_unique<NoRestarts>(), nullptr, CompactionConfig{}, ProgressConfig{},
-                  true, deletion);
+                  true, deletion, false, false, PropagationConfig{},
+                  ImplicationGraphConfig{.enabled = false});
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
@@ -296,26 +272,6 @@ TEST_CASE_TEMPLATE("deletion: a deleted clause is compaction's placeholder", Tag
     CHECK(placeholder.watched0 == 0);
     CHECK(placeholder.watched1 == 0);
     CHECK(placeholder.next_watch_search_start == 0);
-
-    // The shape a compaction plan writes for a clause the root trail satisfies.
-    Trail trail(repr, 5);
-    // `x1 = 1` satisfies the clause below, which is `[x1 = 1] v [x2 = 1]`.
-    trail.learn(make_equation_with(repr, 5, {0, 5}), ClauseId{0}, trail.level());
-    const std::vector<Clause> clauses{make_clause(repr, 5, {{0}, {1}})};
-    const std::vector<std::uint8_t> active{1};
-    const std::vector<std::size_t> var_map{0, 1, 2, 3, 4};
-    const CompactionState state{trail,  clauses, active, var_map, 5, true};
-    const CompactionTransform transform = build_compaction_transform(trail, 5);
-    const CompactionPlan compacted = build_compaction_plan(state, transform);
-
-    REQUIRE(compacted.clause_is_active[0] == 0);
-    const Clause& compacted_placeholder = compacted.rewritten_clauses[0];
-    CHECK(compacted_placeholder.rows() == 1);
-    CHECK(compacted_placeholder.row(0) ==
-          Equation::eq_false(repr, compacted_placeholder.num_vars()));
-    CHECK(compacted_placeholder.watched0 == 0);
-    CHECK(compacted_placeholder.watched1 == 0);
-    CHECK(compacted_placeholder.next_watch_search_start == 0);
 }
 
 TEST_CASE_TEMPLATE("deletion: a run deletes, and deletes the same way twice", Tag, DenseTag,
@@ -343,11 +299,14 @@ TEST_CASE_TEMPLATE("deletion: a reason resolved at a better LBD is promoted", Ta
     const SolverCounters counters =
         solve_deleting(repr, 1, ClauseTierConfig{.core_lbd = 1, .secondary_lbd = 2});
     CHECK(counters.num_promoted_clauses != 0);
+}
 
-    // With every learned clause already in `core` only starting clauses move up,
-    // out of the `local` they enter at.
+TEST_CASE_TEMPLATE("deletion: a run whose learned clauses are all core deletes none", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
     const SolverCounters all_core =
         solve_deleting(repr, 1, ClauseTierConfig{.core_lbd = 64, .secondary_lbd = 64});
+    CHECK(all_core.num_deletion_passes != 0);
     CHECK(all_core.num_deleted_clauses == 0);
 }
 

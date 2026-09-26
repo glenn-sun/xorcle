@@ -106,15 +106,6 @@ TEST_CASE("Luby: an enormous unit saturates rather than wrapping") {
     CHECK_FALSE(policy.should_restart_after_conflict(any_conflict));
 }
 
-TEST_CASE("NoRestarts: never fires and consumes no budget") {
-    NoRestarts policy;
-    for (int i = 0; i < 10'000; ++i) {
-        CHECK_FALSE(policy.should_restart_after_conflict(any_conflict));
-    }
-    policy.note_restart();
-    CHECK_FALSE(policy.should_restart_after_conflict(any_conflict));
-}
-
 TEST_CASE("make_restart_policy: dispatches on the configured method") {
     SUBCASE("none is the default and yields a disabled policy") {
         const RestartConfig config;

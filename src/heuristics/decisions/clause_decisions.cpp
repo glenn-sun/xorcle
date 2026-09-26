@@ -29,7 +29,7 @@ bool clause_is_open_by_trail(const Clause& clause, const RowSpace& trail_span) {
         return false;
     }
     // In row-echelon form the constant column is a pivot exactly when some row
-    // *is* the false equation, so this is the "1 is in the reduced span" test.
+    // *is* `0 = 1`, so this is the "`0 = 1` is in the reduced span" test.
     return !reduced_clause_space.pivot_col_idxs().test(reduced_clause_space.cols() - 1);
 }
 #endif
@@ -75,7 +75,7 @@ const Equation& decide_from_basis(const std::vector<Equation>& basis,
         }
     }
     assert(false && "decide_from_basis: no legal decision remained");
-    return basis.front();
+    std::unreachable();
 }
 
 ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& clause,
@@ -94,12 +94,11 @@ ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& cl
     }
 
     if (trail_span.pivot_col_idxs().test(trail_span.cols() - 1)) {
-        // 1 is already in the trail span, so every clause is vacuously satisfied.
+        // `0 = 1` is already in the trail span, so every clause is vacuously satisfied.
         return ClauseStatus::satisfied;
     }
     // Otherwise the trail span leaves `0 = 1` alone, having no pivot in the
-    // constant column; the local basis then reduces it incrementally as it grows,
-    // since recomputing per row costs quadratic for nothing.
+    // constant column; the local basis then reduces it incrementally as it grows.
     workspace.scratch_false_.assign_from(workspace.false_equation_);
 
     for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
@@ -143,7 +142,7 @@ std::vector<Equation> compact_basis_keep_order(const std::vector<Equation>& basi
         Equation compacted = basis_equation.compact(transform);
         const ReduceResult classified = compacted.classify();
         if (!classified.is_leading()) {
-            // The compaction collapsed it to 0 or to 1; neither is a decision.
+            // The compaction collapsed it to `0 = 0` or `0 = 1`; neither is a decision.
             continue;
         }
         if (seen_literal[classified.bit] != 0) {

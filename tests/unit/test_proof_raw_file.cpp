@@ -3,16 +3,19 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "algebra/equation_repr.h"
-#include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
 #include "core/clause_id.h"
+#include "heuristics_test_support.h"
 #include "io/proof_raw.h"
 #include "io/proof_raw_file.h"
+#include "io_test_support.h"
 
 namespace xorcle {
 
@@ -21,30 +24,16 @@ namespace {
 /// @brief A raw proof path in the temp directory, unique to one test case.
 std::filesystem::path raw_path(EquationRepr repr, std::string_view name) {
     const std::string suffix = repr == EquationRepr::dense ? "_dense.raw" : "_sparse.raw";
-    return std::filesystem::temp_directory_path() /
-           ("xorcle_raw_proof_test_" + std::string{name} + suffix);
+    return scratch_path("raw_proof_" + std::string{name} + suffix);
 }
 
 /// @brief Every record of a file, read back through the file source.
 std::vector<RawRecord> read_all(RawProofFileSource& source) {
     std::vector<RawRecord> records;
-    RawRecord record;
-    while (source.next(record)) {
-        records.push_back(record);
+    while (std::optional<RawRecord> record = source.next()) {
+        records.push_back(std::move(*record));
     }
     return records;
-}
-
-/// @brief A clause with the listed rows, over `num_vars` variables.
-Clause make_clause(EquationRepr repr, std::size_t num_vars,
-                   const std::vector<std::vector<std::size_t>>& rows) {
-    Clause clause(repr, num_vars);
-    for (const std::vector<std::size_t>& bits : rows) {
-        Equation row = Equation::with_num_bits(repr, num_vars + 1);
-        row.assign_bits(bits);
-        clause.add_row(row);
-    }
-    return clause;
 }
 
 } // namespace
@@ -123,8 +112,7 @@ TEST_CASE("raw proof file: an empty proof holds only its header") {
     RawProofFileSource source(path);
     CHECK(source.num_vars() == 1000000);
     CHECK(source.num_input_clauses() == 0);
-    RawRecord record;
-    CHECK_FALSE(source.next(record));
+    CHECK_FALSE(source.next().has_value());
 
     std::filesystem::remove(path);
 }
@@ -159,8 +147,7 @@ TEST_CASE("raw proof file: a truncated or foreign file is refused") {
     const std::size_t size = std::filesystem::file_size(path);
     std::filesystem::resize_file(path, size - 1);
     RawProofFileSource source(path);
-    RawRecord record;
-    CHECK_THROWS_AS(source.next(record), RawProofError);
+    CHECK_THROWS_AS(source.next(), RawProofError);
 
     std::ofstream foreign{path, std::ios::out | std::ios::binary | std::ios::trunc};
     foreign << "not a raw proof at all";
