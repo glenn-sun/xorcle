@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
@@ -122,6 +123,13 @@ public:
     Equation pop_row(std::size_t row_idx) {
         assert(row_idx < rows() && "pop_row index is out of range");
         return interface_->pop_row(row_idx);
+    }
+
+    /// @brief Remove every row whose entry in `is_popped` is nonzero, in one pass.
+    /// @pre `is_popped.size() == rows()`.
+    void pop_rows(std::span<const std::uint8_t> is_popped) {
+        assert(is_popped.size() == rows() && "pop_rows needs one entry per row");
+        interface_->pop_rows(is_popped);
     }
 
     /// @pre `rows() > 0`.

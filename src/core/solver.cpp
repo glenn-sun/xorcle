@@ -218,8 +218,7 @@ Solver::PropagationOutcome Solver::propagate_from_clause(ClauseId id,
     const std::size_t trail_idx = trail_.learn(*learned_eqn, id, level);
     // The selector is notified even on the propagation that conflicts, and
     // with the row as stored, which is the equation reduced by its own level.
-    selector_->update_with_propagation(
-        trail_.span().row(trail_.trail_idx_to_row_idx()[trail_idx]), trail_);
+    selector_->update_with_propagation(trail_.row(trail_idx), trail_);
 
     if (conflicting) {
         conflict_clause_id_ = id;
@@ -455,8 +454,7 @@ void Solver::write_root_unit(ClauseId reason_id, std::size_t trail_idx) {
     // Reduced by the units before it, the row is what the compaction record
     // holds, so a pivot there names exactly this line.
     const RawRow trail_row =
-        lift_row(trail_.span().row(trail_.trail_idx_to_row_idx()[trail_idx]),
-                 active_var_to_original_, original_num_vars_);
+        lift_row(trail_.row(trail_idx), active_var_to_original_, original_num_vars_);
     Equation unit = Equation::from_bits(repr_, original_num_vars_, trail_row);
     proof_root_span_.reduce(unit);
     Equation negated_unit = unit;

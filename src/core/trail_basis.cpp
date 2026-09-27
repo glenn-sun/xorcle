@@ -132,8 +132,7 @@ RowSpace TrailBasisSpace::to_RowSpace() const {
         row_space_eqn.set_eq_true();
         for (const std::size_t coefficient_bit : trail_basis_row.bits()) {
             const std::size_t trail_idx = num_coefficients - coefficient_bit - 1;
-            row_space_eqn.plus_assign(
-                trail_->span().row(trail_->trail_idx_to_row_idx()[trail_idx]));
+            row_space_eqn.plus_assign(trail_->row(trail_idx));
         }
         row_space.add_row(row_space_eqn);
     }

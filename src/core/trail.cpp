@@ -121,17 +121,13 @@ std::size_t Trail::learn_in_order(const Equation& eqn, std::optional<ClauseId> r
     reason_coordinates_.emplace_back();
     levels_.push_back(level);
 
-    // Inserting a row shifts every row at or after it one place up.
-    for (std::size_t& row_idx : trail_idx_to_row_idx_) {
-        if (row_idx >= inserted_row_idx) {
-            ++row_idx;
-        }
-    }
-    trail_idx_to_row_idx_.push_back(inserted_row_idx);
+    const std::size_t trail_idx = levels_.size() - 1;
     row_idx_to_trail_idx_.insert(row_idx_to_trail_idx_.begin() +
                                      static_cast<std::ptrdiff_t>(inserted_row_idx),
-                                 trail_idx_to_row_idx_.size() - 1);
-    return trail_idx_to_row_idx_.size() - 1;
+                                 trail_idx);
+    trail_idx_to_row_idx_is_stale_ = true;
+    last_row_idx_ = inserted_row_idx;
+    return trail_idx;
 }
 
 std::size_t Trail::learn_out_of_order(const Equation& eqn, std::optional<ClauseId> reason,
@@ -207,18 +203,15 @@ void Trail::resize(std::size_t num_levels) {
     if (kept == old_rows) {
         return;
     }
+    if (trail_idx_to_row_idx_is_stale_) {
+        rebuild_trail_idx_to_row_idx();
+    }
 
     std::vector<std::uint8_t> is_dropped(old_rows, 0);
     for (std::size_t t = kept; t < old_rows; ++t) {
         is_dropped[trail_idx_to_row_idx_[t]] = 1;
     }
-    std::vector<std::size_t> pop_order(trail_idx_to_row_idx_.begin() +
-                                           static_cast<std::ptrdiff_t>(kept),
-                                       trail_idx_to_row_idx_.end());
-    std::sort(pop_order.begin(), pop_order.end(), std::greater<>{});
-    for (const std::size_t row_idx : pop_order) {
-        span_.pop_row(row_idx);
-    }
+    span_.pop_rows(is_dropped);
 
     trail_idx_to_row_idx_.resize(kept);
     reasons_.resize(kept);
@@ -243,20 +236,21 @@ void Trail::rebuild_row_idx_to_trail_idx() {
     }
 }
 
-void Trail::rebuild_trail_idx_to_row_idx() {
+void Trail::rebuild_trail_idx_to_row_idx() const {
     trail_idx_to_row_idx_.assign(row_idx_to_trail_idx_.size(), 0);
     for (std::size_t row_idx = 0; row_idx < row_idx_to_trail_idx_.size(); ++row_idx) {
         trail_idx_to_row_idx_[row_idx_to_trail_idx_[row_idx]] = row_idx;
     }
+    trail_idx_to_row_idx_is_stale_ = false;
 }
 
 #ifndef NDEBUG
 void Trail::debug_assert_matches_reinsertion(const Trail& before, const Equation& eqn,
                                              std::size_t trail_idx) const {
     const SpanInTrailOrder reference =
-        reinsert_above(before.span_, before.trail_idx_to_row_idx_, before.row_idx_to_trail_idx_,
+        reinsert_above(before.span_, before.trail_idx_to_row_idx(), before.row_idx_to_trail_idx_,
                        eqn, trail_idx);
-    assert(reference.trail_idx_to_row_idx == trail_idx_to_row_idx_ &&
+    assert(reference.trail_idx_to_row_idx == trail_idx_to_row_idx() &&
            "the chain insert put a row where reinsertion would not");
     for (std::size_t row_idx = 0; row_idx < span_.rows(); ++row_idx) {
         assert(reference.trail_idx_to_row_idx[row_idx_to_trail_idx_[row_idx]] == row_idx &&
@@ -268,16 +262,23 @@ void Trail::debug_assert_matches_reinsertion(const Trail& before, const Equation
 
 void Trail::debug_assert_valid() const {
     const std::size_t trail_rows = span_.rows();
-    assert(trail_idx_to_row_idx_.size() == trail_rows && "trail-to-row map is missized");
     assert(row_idx_to_trail_idx_.size() == trail_rows && "row-to-trail map is missized");
+    std::vector<std::size_t> trail_to_row(trail_rows, trail_rows);
+    for (std::size_t row_idx = 0; row_idx < trail_rows; ++row_idx) {
+        assert(row_idx_to_trail_idx_[row_idx] < trail_rows &&
+               trail_to_row[row_idx_to_trail_idx_[row_idx]] == trail_rows &&
+               "the row-to-trail map is not a permutation");
+        trail_to_row[row_idx_to_trail_idx_[row_idx]] = row_idx;
+    }
+    assert((trail_idx_to_row_idx_is_stale_ || trail_idx_to_row_idx_ == trail_to_row) &&
+           "the order maps are not inverse");
+    assert((!trail_idx_to_row_idx_is_stale_ || trail_to_row.back() == last_row_idx_) &&
+           "the last in-order row index does not name the last trail element");
     assert(reasons_.size() == trail_rows && "reasons are missized");
     assert(reason_coordinates_.size() == trail_rows && "reason coordinates are missized");
     assert(levels_.size() == trail_rows && "levels are missized");
 
     for (std::size_t trail_idx = 0; trail_idx < trail_rows; ++trail_idx) {
-        const std::size_t row_idx = trail_idx_to_row_idx_[trail_idx];
-        assert(row_idx < trail_rows && "a trail element maps past the last row");
-        assert(row_idx_to_trail_idx_[row_idx] == trail_idx && "the order maps are not inverse");
         assert((trail_idx == 0 || levels_[trail_idx - 1] <= levels_[trail_idx]) &&
                "the trail is not ordered by level");
         assert(levels_[trail_idx] < level_end_.size() && "a trail element's level has no end");

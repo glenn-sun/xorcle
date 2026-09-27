@@ -77,8 +77,21 @@ public:
 
     const RowSpace& span() const noexcept { return span_; }
 
-    const std::vector<std::size_t>& trail_idx_to_row_idx() const noexcept {
+    const std::vector<std::size_t>& trail_idx_to_row_idx() const {
+        if (trail_idx_to_row_idx_is_stale_) {
+            rebuild_trail_idx_to_row_idx();
+        }
         return trail_idx_to_row_idx_;
+    }
+
+    /// @brief The stored row of the equation at trail order `trail_idx`.
+    /// @pre `trail_idx < span().rows()`.
+    const Equation& row(std::size_t trail_idx) const {
+        assert(trail_idx < levels_.size() && "trail order index is out of range");
+        if (trail_idx_to_row_idx_is_stale_ && trail_idx + 1 == levels_.size()) {
+            return span_.row(last_row_idx_);
+        }
+        return span_.row(trail_idx_to_row_idx()[trail_idx]);
     }
 
     const std::vector<std::size_t>& row_idx_to_trail_idx() const noexcept {
@@ -115,7 +128,7 @@ private:
 
     void rebuild_row_idx_to_trail_idx();
 
-    void rebuild_trail_idx_to_row_idx();
+    void rebuild_trail_idx_to_row_idx() const;
 
 #ifndef NDEBUG
     void debug_assert_valid() const;
@@ -127,7 +140,14 @@ private:
 #endif
 
     RowSpace span_;
-    std::vector<std::size_t> trail_idx_to_row_idx_;
+
+    /// @brief Rebuilt from `row_idx_to_trail_idx_` on the first read after an in-order learn.
+    mutable std::vector<std::size_t> trail_idx_to_row_idx_;
+    mutable bool trail_idx_to_row_idx_is_stale_ = false;
+
+    /// @brief The row index the last in-order learn took.
+    std::size_t last_row_idx_ = 0;
+
     std::vector<std::size_t> row_idx_to_trail_idx_;
     std::vector<std::optional<ClauseId>> reasons_;
     std::vector<std::size_t> levels_;

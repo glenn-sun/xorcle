@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
@@ -81,6 +82,9 @@ public:
 
     /// @brief Remove the row at `row_idx`, returning it.
     virtual Equation pop_row(std::size_t row_idx) = 0;
+
+    /// @brief Remove every row whose entry in `is_popped` is nonzero.
+    virtual void pop_rows(std::span<const std::uint8_t> is_popped) = 0;
 
     virtual void pop_last_row() = 0;
 
@@ -300,6 +304,28 @@ public:
 
         debug_assert_valid_representation();
         return popped_row;
+    }
+
+    void pop_rows(std::span<const std::uint8_t> is_popped) override {
+        // Moving handles never moves the equations they own, so the entries for
+        // the kept pivot columns stay valid.
+        std::size_t kept = 0;
+        for (std::size_t row_idx = 0; row_idx < rows_.size(); ++row_idx) {
+            if (is_popped[row_idx] != 0) {
+                pivot_col_idxs_.reset(rows_[row_idx].pivot_col_idx);
+                if (!col_idx_to_row_.empty()) {
+                    col_idx_to_row_[rows_[row_idx].pivot_col_idx] = nullptr;
+                }
+            } else {
+                if (kept != row_idx) {
+                    rows_[kept] = std::move(rows_[row_idx]);
+                }
+                ++kept;
+            }
+        }
+        rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(kept), rows_.end());
+
+        debug_assert_valid_representation();
     }
 
     void pop_last_row() override {

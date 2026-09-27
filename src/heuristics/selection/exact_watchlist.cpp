@@ -473,7 +473,7 @@ void ExactWatchlist::update_with_new_equation(const Equation& reduced_eqn, const
                "a decision was taken before propagation was quiescent");
         open_level();
     }
-    const Equation& row = span.row(trail.trail_idx_to_row_idx()[trail_idx]);
+    const Equation& row = trail.row(trail_idx);
     assert(row == reduced_eqn && "the reported equation is not the row the trail stores");
     (void)reduced_eqn;
 
