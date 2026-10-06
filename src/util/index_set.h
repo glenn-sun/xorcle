@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace xorcle {
@@ -36,6 +37,16 @@ public:
         assert(other.size_ == size_ && "IndexSet::or_with size mismatch");
         for (std::size_t w = 0; w < words_.size(); ++w) {
             words_[w] |= other.words_[w];
+        }
+    }
+
+    /// @brief Add every index whose bit is set in `words`, packed as `word()` reads them.
+    /// @pre `words` has a word per 64 indices of `size()`, with no bit set past it.
+    void or_with_words(std::span<const std::uint64_t> words) noexcept {
+        assert(words.size() == words_.size() && "IndexSet::or_with_words word count mismatch");
+        std::uint64_t* const own_words = words_.data();
+        for (std::size_t w = 0; w < words.size(); ++w) {
+            own_words[w] |= words[w];
         }
     }
 
@@ -77,13 +88,20 @@ public:
     /// @brief Call `f(index)` for each set index, in ascending order.
     template <class F>
     void for_each_set(F&& f) const {
-        for (std::size_t w = 0; w < words_.size(); ++w) {
-            std::uint64_t word = words_[w];
-            while (word != 0) {
-                const std::size_t offset = static_cast<std::size_t>(std::countr_zero(word));
-                f((w << 6) + offset);
-                word &= word - 1;
+        const std::uint64_t* const words = words_.data();
+        const std::size_t num_words = words_.size();
+        std::size_t w = 0;
+        while (w < num_words) {
+            // Most sets are sparse, so four empty words are passed with one test.
+            if ((w & 3) == 0 && w + 4 <= num_words &&
+                (words[w] | words[w + 1] | words[w + 2] | words[w + 3]) == 0) {
+                w += 4;
+                continue;
             }
+            for (std::uint64_t word = words[w]; word != 0; word &= word - 1) {
+                f((w << 6) + static_cast<std::size_t>(std::countr_zero(word)));
+            }
+            ++w;
         }
     }
 

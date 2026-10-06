@@ -60,31 +60,18 @@ public:
     virtual std::string to_string(const PrintMode& mode) const = 0;
 };
 
-/// @brief Implements `EquationInterface` against any `GF2Vector`.
+/// @brief Implements `EquationInterface` against any `GF2Vector`, allocated in one
+/// block with the vector's buffer.
 template <GF2Vector V>
 class EquationTemplate final : public EquationInterface {
 public:
-    /// @brief Recycle the object's storage rather than returning it to malloc.
-    static void* operator new(std::size_t size) {
-        if (free_list_.empty()) {
-            return ::operator new(size);
-        }
-        void* block = free_list_.back();
-        free_list_.pop_back();
-        return block;
+    /// @brief The all-zeros vector of `num_bits` bits.
+    static std::unique_ptr<EquationTemplate> create(std::size_t num_bits) {
+        return std::unique_ptr<EquationTemplate>(
+            new (BufferBytes{V::buffer_bytes(num_bits)}) EquationTemplate(num_bits));
     }
 
-    static void operator delete(void* block) noexcept {
-        if (free_list_.size() >= free_list_cap) {
-            ::operator delete(block);
-            return;
-        }
-        free_list_.push_back(block);
-    }
-
-    explicit EquationTemplate(std::size_t num_bits) : vector_(num_bits) {}
-
-    explicit EquationTemplate(V vec) : vector_(std::move(vec)) {}
+    static void operator delete(void* block) noexcept { ::operator delete(block); }
 
     const V& vector() const noexcept { return vector_; }
 
@@ -93,7 +80,8 @@ public:
     EquationRepr repr() const noexcept override { return V::repr; }
 
     std::unique_ptr<EquationInterface> clone() const override {
-        return std::make_unique<EquationTemplate>(*this);
+        return std::unique_ptr<EquationTemplate>(
+            new (BufferBytes{V::buffer_bytes(vector_.num_bits())}) EquationTemplate(*this));
     }
 
     std::size_t num_bits() const noexcept override { return vector_.num_bits(); }
@@ -136,7 +124,8 @@ public:
 
     std::unique_ptr<EquationInterface> compact(const CompactionTransform& transform)
         const override {
-        V out(transform.new_num_vars() + 1);
+        std::unique_ptr<EquationTemplate> compacted = create(transform.new_num_vars() + 1);
+        V& out = compacted->vector_;
         const std::size_t old_constant_bit = transform.old_num_vars();
         const std::size_t new_constant_bit = transform.new_num_vars();
         vector_.for_each_set_bit([&](std::size_t old_bit) {
@@ -149,7 +138,7 @@ public:
                 out.set_bit(mapped);
             }
         });
-        return std::make_unique<EquationTemplate>(std::move(out));
+        return compacted;
     }
 
     std::vector<std::size_t> bits() const override {
@@ -218,8 +207,23 @@ private:
         return static_cast<const EquationTemplate&>(interface);
     }
 
-    static constexpr std::size_t free_list_cap = 1 << 16;
-    static inline std::vector<void*> free_list_;
+    struct BufferBytes {
+        std::size_t value;
+    };
+
+    static void* operator new(std::size_t size, BufferBytes buffer_bytes) {
+        return ::operator new(size + buffer_bytes.value);
+    }
+
+    static void operator delete(void* block, BufferBytes) noexcept { ::operator delete(block); }
+
+    explicit EquationTemplate(std::size_t num_bits) : vector_(num_bits, buffer()) {}
+
+    EquationTemplate(const EquationTemplate& other)
+        : EquationInterface(), vector_(other.vector_, buffer()) {}
+
+    /// @brief The `V::buffer_bytes()` bytes allocated after this object.
+    void* buffer() noexcept { return this + 1; }
 
     V vector_;
 };

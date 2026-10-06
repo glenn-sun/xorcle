@@ -144,6 +144,13 @@ public:
     /// @brief The columns some row carries, over `cols()` indices.
     IndexSet carried_col_idxs() const { return interface_->carried_col_idxs(); }
 
+    /// @brief Whether some row carries the column.
+    /// @pre `col_idx < cols()`.
+    bool carries(std::size_t col_idx) const {
+        assert(col_idx < cols() && "carries: column index is out of range");
+        return interface_->carries(col_idx);
+    }
+
     class iterator {
     public:
         iterator(const RowEchelonMatrix* matrix, std::size_t row_idx) noexcept

@@ -35,12 +35,9 @@ bool should_compact_before_decision(const CompactionState& state) {
 }
 
 SubstitutionPlan build_substitution_plan(const CompactionState& state) {
-    const std::size_t constant_col_idx = state.active_num_vars;
     assert(state.trail.level() == 0 && "compaction is only sound against the root trail");
-    assert(!state.trail.span().pivot_col_idxs().test(constant_col_idx) &&
+    assert(!state.trail.span().pivot_col_idxs().test(state.active_num_vars) &&
            "the root trail spans 0 = 1");
-    assert(state.clause_carried_col_idxs.size() == state.clauses.size() &&
-           "the clauses' carried columns are desynchronized");
 
     SubstitutionPlan plan;
 
@@ -52,36 +49,13 @@ SubstitutionPlan build_substitution_plan(const CompactionState& state) {
     ClauseSatisfactionWorkspace satisfaction_workspace(repr, state.active_num_vars);
     std::vector<Equation> reduced_rows;
     const Equation false_clause_row = Equation::eq_false(repr, state.active_num_vars);
-    // The dropped variables are the trail span's pivot columns. Testing each
-    // beats a word-wise test while there are fewer of them than words.
-    const IndexSet& dropped_var_set = state.trail.span().pivot_col_idxs();
-    const bool tests_each_dropped_var =
-        state.trail.span().rows() < (state.active_num_vars + DenseGF2Vector::bits_per_word) /
-                                        DenseGF2Vector::bits_per_word;
-    std::vector<std::size_t> dropped_vars;
-    if (tests_each_dropped_var) {
-        dropped_var_set.for_each_set([&](std::size_t var) { dropped_vars.push_back(var); });
-    }
-    const auto carries_a_dropped_var = [&](const IndexSet& carried) {
-        if (!tests_each_dropped_var) {
-            return carried.intersects(dropped_var_set);
-        }
-        return std::ranges::any_of(dropped_vars,
-                                   [&](std::size_t var) { return carried.test(var); });
-    };
-
     assert(std::ranges::is_sorted(state.candidate_clause_ids) &&
            "the candidate clauses are not in ascending order");
     for (const ClauseId clause_id : state.candidate_clause_ids) {
         const Clause& active_clause = state.clauses[clause_id];
-        assert(state.clause_carried_col_idxs[clause_id] == active_clause.carried_col_idxs() &&
-               "a clause's carried columns are stale");
-        // A clause no dropped variable occurs in is its own reduction by the trail,
-        // which then satisfies it only if it already spans `0 = 1`.
-        if (!active_clause.pivot_col_idxs().test(constant_col_idx) &&
-            !carries_a_dropped_var(state.clause_carried_col_idxs[clause_id])) {
-            continue;
-        }
+        assert((active_clause.pivot_col_idxs().test(state.active_num_vars) ||
+                active_clause.carried_col_idxs().intersects(state.trail.span().pivot_col_idxs())) &&
+               "a candidate clause is its own reduction by the trail");
         plan.rewritten_clause_ids.push_back(clause_id);
         if (clause_status_by_trail(root_span, active_clause, satisfaction_workspace,
                                    &reduced_rows) == ClauseStatus::satisfied) {
@@ -98,7 +72,7 @@ SubstitutionPlan build_substitution_plan(const CompactionState& state) {
             rewritten.add_row(reduced_row);
         }
         assert(rewritten.rows() != 0 && "an active clause was rewritten to zero rows");
-        assert(!rewritten.carried_col_idxs().intersects(dropped_var_set) &&
+        assert(!rewritten.carried_col_idxs().intersects(state.trail.span().pivot_col_idxs()) &&
                "a dropped variable occurs in a rewritten clause");
 
         // Against an empty root trail no stored row is `0 = 0` and any two distinct

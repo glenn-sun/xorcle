@@ -3,23 +3,25 @@
 #include <bit>
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <optional>
 #include <span>
 
-#include <gf2/gf2.h>
 
 #include "algebra/equation_repr.h"
 #include "util/index_set.h"
 
 namespace xorcle {
 
-/// @brief A bit-packed implementation of `GF2Vector` based on `gf2::BitVector`.
+/// @brief A bit-packed implementation of `GF2Vector`.
+///
+/// The words are its own allocation, or a buffer its holder allocates beside it.
 class DenseGF2Vector {
 public:
     static constexpr EquationRepr repr = EquationRepr::dense;
 
-    using BitVector = gf2::BitVector<gf2::u64>;
-    using Word = BitVector::word_type;
+    using Word = std::uint64_t;
 
     static constexpr std::size_t bits_per_word = sizeof(Word) * 8;
 
@@ -29,21 +31,74 @@ public:
 
     static constexpr std::size_t word_mask = bits_per_word - 1; ///< Bit offset within a word.
 
-    /// @brief Construct an all-zeros vector.
-    explicit DenseGF2Vector(std::size_t num_bits) : bits_(num_bits) {}
+    /// @brief The size of the buffer that holds the words of `num_bits` bits.
+    static constexpr std::size_t buffer_bytes(std::size_t num_bits) noexcept {
+        return word_count(num_bits) * sizeof(Word);
+    }
 
-    std::size_t num_bits() const noexcept { return bits_.size(); }
+    /// @brief Construct an all-zeros vector.
+    explicit DenseGF2Vector(std::size_t num_bits)
+        : num_bits_(num_bits),
+          capacity_(word_count(num_bits)),
+          words_(new Word[capacity_]()),
+          owns_words_(true) {}
+
+    /// @brief Construct an all-zeros vector whose words are kept in `buffer`.
+    /// @pre `buffer` has `buffer_bytes(num_bits)` bytes aligned for `Word`, and
+    /// outlives the vector.
+    DenseGF2Vector(std::size_t num_bits, void* buffer) noexcept
+        : num_bits_(num_bits),
+          capacity_(word_count(num_bits)),
+          words_(static_cast<Word*>(buffer)),
+          owns_words_(false) {
+        std::memset(words_, 0, capacity_ * sizeof(Word));
+    }
+
+    DenseGF2Vector(const DenseGF2Vector& other)
+        : num_bits_(other.num_bits_),
+          capacity_(word_count(other.num_bits_)),
+          words_(new Word[capacity_]),
+          owns_words_(true) {
+        std::memcpy(words_, other.words_, capacity_ * sizeof(Word));
+    }
+
+    /// @brief Construct a copy of `other` whose words are kept in `buffer`.
+    /// @pre `buffer` has `buffer_bytes(other.num_bits())` bytes aligned for `Word`,
+    /// and outlives the vector.
+    DenseGF2Vector(const DenseGF2Vector& other, void* buffer) noexcept
+        : num_bits_(other.num_bits_),
+          capacity_(word_count(other.num_bits_)),
+          words_(static_cast<Word*>(buffer)),
+          owns_words_(false) {
+        std::memcpy(words_, other.words_, capacity_ * sizeof(Word));
+    }
+
+    DenseGF2Vector& operator=(const DenseGF2Vector& other) {
+        if (this != &other) {
+            resize(other.num_bits_);
+            std::memcpy(words_, other.words_, num_words() * sizeof(Word));
+        }
+        return *this;
+    }
+
+    ~DenseGF2Vector() {
+        if (owns_words_) {
+            delete[] words_;
+        }
+    }
+
+    std::size_t num_bits() const noexcept { return num_bits_; }
 
     /// @brief The words bit `i` is packed into, `i / 64` first; bits past
     /// `num_bits()` are zero.
-    const Word* words() const noexcept { return bits_.store(); }
+    const Word* words() const noexcept { return words_; }
 
-    std::size_t num_words() const noexcept { return bits_.words(); }
+    std::size_t num_words() const noexcept { return word_count(num_bits_); }
 
     /// @brief Resize to `num_bits` bits, zeroing any new ones.
-    void resize(std::size_t num_bits) { bits_.resize(num_bits); }
+    void resize(std::size_t num_bits);
 
-    void set_zero() noexcept { gf2::set_all(bits_, false); }
+    void set_zero() noexcept { std::memset(words_, 0, num_words() * sizeof(Word)); }
 
     /// @brief Set the listed bits to 1 and the rest to 0.
     /// @pre Each bit must be below `num_bits()`.
@@ -56,26 +111,26 @@ public:
 
     /// @pre `i < num_bits()`.
     bool get_bit(std::size_t i) const noexcept {
-        assert(i < bits_.size() && "get_bit index is out of range");
-        return bits_.get(i);
+        assert(i < num_bits_ && "get_bit index is out of range");
+        return ((words_[i >> word_shift] >> (i & word_mask)) & 1U) != 0;
     }
 
     /// @pre `i < num_bits()`.
     void set_bit(std::size_t i) noexcept {
-        assert(i < bits_.size() && "set_bit index is out of range");
-        gf2::set(bits_, i, true);
+        assert(i < num_bits_ && "set_bit index is out of range");
+        words_[i >> word_shift] |= Word{1} << (i & word_mask);
     }
 
     /// @pre `i < num_bits()`.
     void reset_bit(std::size_t i) noexcept {
-        assert(i < bits_.size() && "reset_bit index is out of range");
-        gf2::set(bits_, i, false);
+        assert(i < num_bits_ && "reset_bit index is out of range");
+        words_[i >> word_shift] &= ~(Word{1} << (i & word_mask));
     }
 
     /// @brief Get index of the first set bit, or `std::nullopt` if none are set.
     std::optional<std::size_t> leading_bit() const noexcept {
-        const Word* words = bits_.store();
-        const std::size_t num_words = bits_.words();
+        const Word* words = words_;
+        const std::size_t num_words = word_count(num_bits_);
         for (std::size_t w = 0; w < num_words; ++w) {
             if (words[w] != 0) {
                 return (w << word_shift) + static_cast<std::size_t>(std::countr_zero(words[w]));
@@ -87,13 +142,13 @@ public:
     /// @brief Get index of the first set bit strictly after `i`, or `std::nullopt`.
     /// @pre `i < num_bits()`.
     std::optional<std::size_t> next_bit(std::size_t i) const noexcept {
-        assert(i < bits_.size() && "next_bit index is out of range");
+        assert(i < num_bits_ && "next_bit index is out of range");
         const std::size_t next = i + 1;
-        if (next >= bits_.size()) {
+        if (next >= num_bits_) {
             return std::nullopt;
         }
-        const Word* words = bits_.store();
-        const std::size_t num_words = bits_.words();
+        const Word* words = words_;
+        const std::size_t num_words = word_count(num_bits_);
         std::size_t w = next >> word_shift;
         Word word = words[w] & (~Word{0} << (next & word_mask));
         while (word == 0) {
@@ -110,12 +165,12 @@ public:
     /// @pre `indices.size() == num_bits()`.
     std::optional<std::size_t> first_bit_in(const IndexSet& indices,
                                             std::size_t i) const noexcept {
-        assert(indices.size() == bits_.size() && "first_bit_in size mismatch");
-        if (i >= bits_.size()) {
+        assert(indices.size() == num_bits_ && "first_bit_in size mismatch");
+        if (i >= num_bits_) {
             return std::nullopt;
         }
-        const Word* words = bits_.store();
-        const std::size_t num_words = bits_.words();
+        const Word* words = words_;
+        const std::size_t num_words = word_count(num_bits_);
         std::size_t w = i >> word_shift;
         Word word = words[w] & indices.word(w) & (~Word{0} << (i & word_mask));
         while (word == 0) {
@@ -130,10 +185,10 @@ public:
     /// @brief Add another vector into this one over GF(2).
     /// @pre `other.num_bits() == num_bits()`.
     void plus_assign(const DenseGF2Vector& other) noexcept {
-        assert(bits_.size() == other.bits_.size() && "bit count mismatch in plus_assign");
-        Word* lhs = bits_.store();
-        const Word* rhs = other.bits_.store();
-        const std::size_t num_words = bits_.words();
+        assert(num_bits_ == other.num_bits_ && "bit count mismatch in plus_assign");
+        Word* lhs = words_;
+        const Word* rhs = other.words_;
+        const std::size_t num_words = word_count(num_bits_);
         for (std::size_t i = 0; i < num_words; ++i) {
             lhs[i] ^= rhs[i];
         }
@@ -145,13 +200,13 @@ public:
     /// num_bits()`, and `i < num_bits()`.
     std::optional<std::size_t> plus_assign_and_next_bit(const DenseGF2Vector& other,
                                                         std::size_t i) noexcept {
-        assert(bits_.size() == other.bits_.size() && "bit count mismatch in plus_assign");
-        assert(i < bits_.size() && "plus_assign_and_next_bit index is out of range");
+        assert(num_bits_ == other.num_bits_ && "bit count mismatch in plus_assign");
+        assert(i < num_bits_ && "plus_assign_and_next_bit index is out of range");
         assert(no_set_bit_below(i) && other.no_set_bit_below(i) &&
                "plus_assign_and_next_bit starts below a set bit");
-        Word* lhs = bits_.store();
-        const Word* rhs = other.bits_.store();
-        const std::size_t num_words = bits_.words();
+        Word* lhs = words_;
+        const Word* rhs = other.words_;
+        const std::size_t num_words = word_count(num_bits_);
         // Words below `i` are zero in both vectors, so the add can start there.
         const std::size_t first = i >> word_shift;
         const std::size_t next = i + 1;
@@ -174,7 +229,10 @@ public:
     /// @pre `other.num_bits() == num_bits()`.
     void assign_from(const DenseGF2Vector& other) noexcept;
 
-    bool equals(const DenseGF2Vector& other) const noexcept { return bits_ == other.bits_; }
+    bool equals(const DenseGF2Vector& other) const noexcept {
+        return num_bits_ == other.num_bits_ &&
+               std::memcmp(words_, other.words_, num_words() * sizeof(Word)) == 0;
+    }
 
     std::size_t hash() const noexcept;
 
@@ -186,6 +244,13 @@ public:
         }
     }
 
+    /// @brief Add each set bit to `indices`.
+    /// @pre `indices.size() == num_bits()`.
+    void add_set_bits_to(IndexSet& indices) const noexcept {
+        assert(indices.size() == num_bits_ && "add_set_bits_to size mismatch");
+        indices.or_with_words({words_, num_words()});
+    }
+
 private:
 #ifndef NDEBUG
     /// @brief Whether every bit below `i` is zero, for the fused add's precondition.
@@ -195,7 +260,14 @@ private:
     }
 #endif
 
-    BitVector bits_;
+    static constexpr std::size_t word_count(std::size_t num_bits) noexcept {
+        return (num_bits + word_mask) >> word_shift;
+    }
+
+    std::size_t num_bits_;
+    std::size_t capacity_; ///< In words.
+    Word* words_;
+    bool owns_words_; ///< False while the words are in a buffer the holder allocated.
 };
 
 } // namespace xorcle

@@ -20,8 +20,15 @@ public:
 
     using Bit = std::uint32_t;
 
+    /// @brief Zero: the bits are always the vector's own allocation.
+    static constexpr std::size_t buffer_bytes(std::size_t) noexcept { return 0; }
+
     /// @brief Construct an all-zeros vector.
     explicit SparseGF2Vector(std::size_t num_bits) : num_bits_(num_bits) {}
+
+    SparseGF2Vector(std::size_t num_bits, void*) : SparseGF2Vector(num_bits) {}
+
+    SparseGF2Vector(const SparseGF2Vector& other, void*) : SparseGF2Vector(other) {}
 
     /// @brief Copies the bits, not the merge buffer.
     SparseGF2Vector(const SparseGF2Vector& other)
@@ -119,6 +126,15 @@ public:
     void for_each_set_bit(F&& f) const {
         for (const Bit bit : bits_) {
             f(bit);
+        }
+    }
+
+    /// @brief Add each set bit to `indices`.
+    /// @pre `indices.size() == num_bits()`.
+    void add_set_bits_to(IndexSet& indices) const noexcept {
+        assert(indices.size() == num_bits_ && "add_set_bits_to size mismatch");
+        for (const Bit bit : bits_) {
+            indices.set(bit);
         }
     }
 

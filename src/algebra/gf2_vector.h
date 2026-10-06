@@ -13,9 +13,12 @@ namespace xorcle {
 /// @brief Required features of various implementations of vectors over GF(2).
 template <class V>
 concept GF2Vector = requires(V v, const V cv, std::size_t i, std::span<const std::size_t> bits,
-                            const IndexSet& indices) {
+                            const IndexSet& indices, IndexSet& mutable_indices, void* buffer) {
     { V::repr } -> std::convertible_to<EquationRepr>;
     { V(i) }; // zero vector of `i` bits
+    { V::buffer_bytes(i) } -> std::same_as<std::size_t>; // of the buffer the next two use
+    { V(i, buffer) }; // zero vector of `i` bits, kept in `buffer`
+    { V(cv, buffer) }; // copy of `cv`, kept in `buffer`
     { cv.num_bits() } -> std::same_as<std::size_t>;
     { v.resize(i) } -> std::same_as<void>;
     { v.set_zero() } -> std::same_as<void>;
@@ -32,6 +35,7 @@ concept GF2Vector = requires(V v, const V cv, std::size_t i, std::span<const std
     { cv.equals(cv) } -> std::same_as<bool>;
     { cv.hash() } -> std::same_as<std::size_t>;
     { cv.for_each_set_bit([](std::size_t) {}) } -> std::same_as<void>;
+    { cv.add_set_bits_to(mutable_indices) } -> std::same_as<void>;
 };
 
 } // namespace xorcle

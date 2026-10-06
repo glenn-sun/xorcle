@@ -32,23 +32,36 @@ std::size_t leading_bit(const Word* words, std::size_t num_words) {
     return npos;
 }
 
-/// @brief Add `row` into `cell`, both leading on `bit`; the first set bit after
-/// `bit`, or `npos`.
+/// @brief Add `row` into `cell`, both leading on `bit`; the bit the sum leads on, or
+/// `npos`.
 std::size_t add_and_next(Word* cell, const Word* row, std::size_t num_words, std::size_t bit) {
-    const std::size_t next = bit + 1;
-    std::size_t found = npos;
     for (std::size_t w = bit >> word_shift; w < num_words; ++w) {
         const Word word = (cell[w] ^= row[w]);
-        if (found != npos) {
-            continue;
-        }
-        const Word above =
-            (next >> word_shift) == w ? word & (~Word{0} << (next & word_mask)) : word;
-        if (above != 0) {
-            found = (w << word_shift) + static_cast<std::size_t>(std::countr_zero(above));
+        if (word != 0) {
+            for (std::size_t rest = w + 1; rest < num_words; ++rest) {
+                cell[rest] ^= row[rest];
+            }
+            return (w << word_shift) + static_cast<std::size_t>(std::countr_zero(word));
         }
     }
-    return found;
+    return npos;
+}
+
+/// @brief Copy `num_words` words, which is at least one; for 8 words or fewer two
+/// fixed-size copies beat `std::memcpy`.
+void copy_words(Word* to, const Word* from, std::size_t num_words) {
+    if (num_words <= 2) {
+        to[0] = from[0];
+        to[num_words - 1] = from[num_words - 1];
+    } else if (num_words <= 4) {
+        std::memcpy(to, from, 2 * sizeof(Word));
+        std::memcpy(to + num_words - 2, from + num_words - 2, 2 * sizeof(Word));
+    } else if (num_words <= 8) {
+        std::memcpy(to, from, 4 * sizeof(Word));
+        std::memcpy(to + num_words - 4, from + num_words - 4, 4 * sizeof(Word));
+    } else {
+        std::memcpy(to, from, num_words * sizeof(Word));
+    }
 }
 
 } // namespace
@@ -134,7 +147,7 @@ const ExactWatchlist::Word* ExactWatchlist::watch_row(std::uint32_t cell) const 
 }
 
 void ExactWatchlist::load_watch(std::uint32_t cell) {
-    std::memcpy(watch_words_.data() + cell * num_words_, watch_row(cell), num_words_ * sizeof(Word));
+    copy_words(watch_words_.data() + cell * num_words_, watch_row(cell), num_words_);
 #ifndef NDEBUG
     debug_watch_loaded_[cell] = 1;
 #endif
@@ -142,14 +155,14 @@ void ExactWatchlist::load_watch(std::uint32_t cell) {
 
 void ExactWatchlist::build_first(std::uint32_t cell, const Word* watch) {
     Word* words = cell_words(cell);
-    std::memcpy(words, watch, num_words_ * sizeof(Word));
+    copy_words(words, watch, num_words_);
     std::size_t row_additions = 0;
     key_[cell] = reduce_by_span(words, leading_bit(words, num_words_), row_additions);
 }
 
 void ExactWatchlist::build_second(std::uint32_t cell, const Word* watch) {
     Word* words = cell_words(cell);
-    std::memcpy(words, watch, num_words_ * sizeof(Word));
+    copy_words(words, watch, num_words_);
     std::size_t row_additions = 0;
     key_[cell] = reduce_by_span_and_first(words, leading_bit(words, num_words_),
                                           cell_words(cell - 1), key_[cell - 1], row_additions);
@@ -280,8 +293,9 @@ void ExactWatchlist::save(std::uint32_t cell, std::size_t level) {
     }
     saves_.push_back(
         SaveEntry{cell, gen_[cell], key_[cell], save_stamp_[cell], save_words_.size()});
-    const Word* words = cell_words(cell);
-    save_words_.insert(save_words_.end(), words, words + num_words_);
+    const std::size_t offset = save_words_.size();
+    save_words_.resize(offset + num_words_);
+    copy_words(save_words_.data() + offset, cell_words(cell), num_words_);
     save_stamp_[cell] = level_stamp_[level];
     ++counters_.saves;
 }
@@ -613,8 +627,7 @@ void ExactWatchlist::restore(std::size_t level) {
             // A saved state from before a watch move is of another watch.
             const bool rebuild = entry.word_offset == rebuild_entry || entry.gen != gen_[cell];
             if (!rebuild) {
-                std::memcpy(cell_words(cell), save_words_.data() + entry.word_offset,
-                            num_words_ * sizeof(Word));
+                copy_words(cell_words(cell), save_words_.data() + entry.word_offset, num_words_);
                 key_[cell] = entry.key;
                 ++counters_.restores;
             }
@@ -637,8 +650,7 @@ void ExactWatchlist::restore(std::size_t level) {
             if (entry.word_offset == rebuild_entry || entry.gen != gen_[cell]) {
                 restore_rebuild_[cell] = 1;
             } else if (restore_rebuild_[cell] == 0) {
-                std::memcpy(cell_words(cell), save_words_.data() + entry.word_offset,
-                            num_words_ * sizeof(Word));
+                copy_words(cell_words(cell), save_words_.data() + entry.word_offset, num_words_);
                 key_[cell] = entry.key;
                 ++counters_.restores;
             }
@@ -799,25 +811,37 @@ void ExactWatchlist::update_with_renumbering(const CompactionTransform& transfor
                ((num_unmoved_words + 1) << word_shift) - 1) {
         ++num_unmoved_words;
     }
-    // No column moves up, so a cell's new words end before the next cell's old ones begin.
-    std::vector<Word> old_words(old_num_words);
+    // No column moves up, so a cell is relabelled in place: each new word lies at
+    // or below the old word being read, and is zeroed once that one has been.
     const std::size_t num_cells = words_.size() / old_num_words;
     for (std::size_t cell = 0; cell < num_cells; ++cell) {
-        std::memcpy(old_words.data(), words_.data() + cell * old_num_words,
-                    old_num_words * sizeof(Word));
-        Word* words = words_.data() + cell * num_words_;
-        std::memcpy(words, old_words.data(), num_unmoved_words * sizeof(Word));
-        std::fill(words + num_unmoved_words, words + num_words_, Word{0});
-        for (std::size_t w = num_unmoved_words; w < old_num_words; ++w) {
+        const Word* const old_words = words_.data() + cell * old_num_words;
+        Word* const words = words_.data() + cell * num_words_;
+        std::memmove(words, old_words, num_unmoved_words * sizeof(Word));
+        std::size_t num_written_words = num_unmoved_words;
+        std::size_t w = num_unmoved_words;
+        while (w < old_num_words) {
+            if (w + 4 <= old_num_words &&
+                (old_words[w] | old_words[w + 1] | old_words[w + 2] | old_words[w + 3]) == 0) {
+                w += 4;
+                continue;
+            }
             for (Word word = old_words[w]; word != 0; word &= word - 1) {
                 const std::size_t new_col_idx =
                     to_new((w << word_shift) + static_cast<std::size_t>(std::countr_zero(word)));
                 // A free pair's cells may still carry a dropped column.
-                if (new_col_idx != CompactionTransform::npos) {
-                    words[new_col_idx >> word_shift] |= Word{1} << (new_col_idx & word_mask);
+                if (new_col_idx == CompactionTransform::npos) {
+                    continue;
                 }
+                const std::size_t new_w = new_col_idx >> word_shift;
+                while (num_written_words <= new_w) {
+                    words[num_written_words++] = 0;
+                }
+                words[new_w] |= Word{1} << (new_col_idx & word_mask);
             }
+            ++w;
         }
+        std::fill(words + num_written_words, words + num_words_, Word{0});
     }
     words_.resize(num_cells * num_words_);
     // With no save left, a watch copy is loaded again before a backjump reads it.

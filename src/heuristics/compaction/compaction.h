@@ -41,12 +41,9 @@ struct SubstitutionPlan {
 struct CompactionState {
     const Trail& trail;
     const std::vector<Clause>& clauses;
-    /// @brief In ascending order, at least the active clauses that carry a pivot
-    /// column of the trail's span or span `0 = 1`, and no inactive one.
+    /// @brief In ascending order, the active clauses that carry a pivot column of
+    /// the trail's span or span `0 = 1`.
     std::span<const ClauseId> candidate_clause_ids;
-
-    /// @brief Per clause id, the columns an active clause's rows carry.
-    const std::vector<IndexSet>& clause_carried_col_idxs;
 
     /// @brief The variables of the numbering, the dropped ones included.
     std::size_t active_num_vars;
@@ -60,16 +57,16 @@ Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row)
 /// @pre The trail span's pivot column set has size `state.active_num_vars + 1`.
 bool should_compact_before_decision(const CompactionState& state);
 
-/// @brief Rewrite, reduced by the root trail, the active clauses a variable it
-/// fixes occurs in; the numbering stays, and those variables' columns go to zero.
+/// @brief Rewrite the candidate clauses, reduced by the root trail; the numbering
+/// stays, and the columns of the variables the trail fixes go to zero.
 ///
 /// A clause the trail satisfies becomes a single inactive `0 = 1` row, so clause ids stay
 /// stable; every other clause keeps its rows and its watches. Applying the plan replaces
 /// the root trail with an empty one, so root-level units are not recoverable from the clause
 /// database afterwards.
 ///
-/// @pre `state.trail` is at the root level and does not span `0 = 1`, and
-/// `state.clause_carried_col_idxs` is sized by clause id.
+/// @pre `state.trail` is at the root level and does not span `0 = 1`.
+/// @pre `state.candidate_clause_ids` is exactly the set its member describes, in ascending order.
 SubstitutionPlan build_substitution_plan(const CompactionState& state);
 
 /// @brief A renumbering waits until it frees this share of each row's words, so at

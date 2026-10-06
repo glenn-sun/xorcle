@@ -1,6 +1,8 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <optional>
 #include <vector>
@@ -12,10 +14,12 @@
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "core/watch.h"
+#include "heuristics/compaction/compaction.h"
 #include "heuristics/selection/clause_selector.h"
 #include "heuristics/selection/cyclic.h"
 #include "heuristics/selection/exact_watchlist.h"
 #include "heuristics_test_support.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -503,31 +507,6 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         CHECK(selector.clause_lbd(0) == unset_clause_lbd);
     }
 
-    SUBCASE("the carried columns follow a clause's rows") {
-        const auto carried = [&](ClauseId id) {
-            std::vector<std::size_t> out;
-            selector.carried_col_idxs()[id].for_each_set(
-                [&out](std::size_t col_idx) { out.push_back(col_idx); });
-            return out;
-        };
-        selector.add_starting_clause(make_clause(repr, 4, {{0, 1}, {2}}));
-        selector.add_starting_clause(make_clause(repr, 4, {{3}}));
-        CHECK(carried(0) == std::vector<std::size_t>{0, 1, 2});
-
-        selector.replace_clause(0, make_clause(repr, 4, {{1, 4}, {2}}));
-        CHECK(carried(0) == std::vector<std::size_t>{1, 2, 4});
-
-        selector.set_clause_active(1, false);
-        CHECK(selector.carried_col_idxs()[1].size() == 0);
-
-        IndexSet dropped(5);
-        dropped.set(0);
-        const CompactionTransform transform = CompactionTransform::from_dropped_columns(4, dropped);
-        selector.update_with_renumbering(transform, Trail(repr, 3));
-        CHECK(rows_of(selector.clause(0)) == std::vector<std::vector<std::size_t>>{{0, 3}, {1}});
-        CHECK(carried(0) == std::vector<std::size_t>{0, 1, 3});
-    }
-
     SUBCASE("the active ids are walked in ascending order") {
         const auto active_ids = [&selector] {
             std::vector<ClauseId> ids;
@@ -584,9 +563,38 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         dropped.set(0);
         selector.update_with_renumbering(CompactionTransform::from_dropped_columns(4, dropped),
                                          Trail(repr, 3));
-        IndexSet renumbered(4);
-        renumbered.set(0);
-        CHECK(selector.clause_ids_carrying(renumbered) == std::vector<ClauseId>{0, 3});
+        // The entries move with their columns: old x1, x2, x3 are x0, x1, x2.
+        const auto carrying_renumbered = [&selector](std::size_t col_idx) {
+            IndexSet set(4);
+            set.set(col_idx);
+            return selector.clause_ids_carrying(set);
+        };
+        CHECK(carrying_renumbered(0) == std::vector<ClauseId>{0, 3});
+        CHECK(carrying_renumbered(1) == std::vector<ClauseId>{0, 3});
+        CHECK(carrying_renumbered(2) == std::vector<ClauseId>{2, 3});
+    }
+
+    SUBCASE("a clause replaced or retired before it was ever looked up is found by its rows") {
+        selector.add_starting_clause(make_clause(repr, 4, {{0, 1}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{2}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{2, 3}}));
+        selector.replace_clause(0, make_clause(repr, 4, {{1, 3}}));
+        selector.set_clause_active(1, false);
+        const auto carrying = [&selector](std::size_t col_idx) {
+            IndexSet set(5);
+            set.set(col_idx);
+            return selector.clause_ids_carrying(set);
+        };
+        CHECK(carrying(0).empty());
+        CHECK(carrying(1) == std::vector<ClauseId>{0});
+        CHECK(carrying(2) == std::vector<ClauseId>{2});
+        CHECK(carrying(3) == std::vector<ClauseId>{0, 2});
+
+        // Entered by now, so a replacement is entered under its new columns only.
+        selector.replace_clause(0, make_clause(repr, 4, {{0, 3}}));
+        CHECK(carrying(0) == std::vector<ClauseId>{0});
+        CHECK(carrying(1).empty());
+        CHECK(carrying(3) == std::vector<ClauseId>{0, 2});
     }
 
     SUBCASE("metadata is id-indexed, so compaction leaves it alone") {
@@ -605,6 +613,144 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         CHECK(selector.clause_tier(1) == ClauseTier::secondary);
         CHECK(selector.is_clause_used_since_deletion(1));
         CHECK(selector.clause_unused_passes(1) == 3);
+    }
+}
+
+// Random additions, replacements, retirements, substitutions and renumberings,
+// with every lookup compared against a scan of the active clauses.
+TEST_CASE_TEMPLATE("clause selector: the column-to-clause entries against a scan", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed) {
+        TestRandom random(seed);
+        std::size_t num_vars = 140;
+        Cyclic selector(num_vars);
+        IndexSet dropped(num_vars + 1);
+
+        // A clause of one to three rows over the variables not in `avoided`.
+        const auto random_clause = [&](const IndexSet& avoided) {
+            Clause clause(repr, num_vars);
+            while (clause.rows() == 0) {
+                for (std::size_t row = random.next(3) + 1; row > 0; --row) {
+                    std::vector<std::size_t> bits;
+                    for (std::size_t bit = random.next(6); bit > 0; --bit) {
+                        const std::size_t var = random.next(num_vars);
+                        if (!avoided.test(var) && std::ranges::find(bits, var) == bits.end()) {
+                            bits.push_back(var);
+                        }
+                    }
+                    if (random.chance(4)) {
+                        bits.push_back(num_vars);
+                    }
+                    if (!bits.empty()) {
+                        clause.add_row(Equation::from_bits(repr, num_vars, bits));
+                    }
+                }
+            }
+            return clause;
+        };
+        const auto retire = [&](ClauseId id) {
+            selector.set_clause_active(id, false);
+            selector.replace_clause(
+                id, inactive_clause_placeholder(repr, Equation::eq_false(repr, num_vars)));
+        };
+        const auto random_active_id = [&]() -> std::optional<ClauseId> {
+            std::vector<ClauseId> ids;
+            for (const ClauseId id : selector.active_clause_ids()) {
+                ids.push_back(id);
+            }
+            if (ids.empty()) {
+                return std::nullopt;
+            }
+            return ids[random.next(ids.size())];
+        };
+        const auto check_lookup = [&](const IndexSet& col_idxs) {
+            std::vector<ClauseId> scanned;
+            for (const ClauseId id : selector.active_clause_ids()) {
+                const Clause& clause = selector.clause(id);
+                if (clause.pivot_col_idxs().test(num_vars) ||
+                    clause.carried_col_idxs().intersects(col_idxs)) {
+                    scanned.push_back(id);
+                }
+            }
+            std::vector<ClauseId> found = selector.clause_ids_carrying(col_idxs);
+            CHECK(found == scanned);
+            return found;
+        };
+
+        for (std::size_t step = 0; step < 600 && num_vars > 8; ++step) {
+            switch (random.next(8)) {
+                case 0:
+                case 1:
+                case 2:
+                    if (random.chance(2)) {
+                        selector.add_starting_clause(random_clause(dropped));
+                    } else {
+                        selector.add_asserting_clause(
+                            random_clause(dropped), Trail(repr, num_vars),
+                            AssertingClauseInfo{.lbd = 2, .removed_levels = 0});
+                    }
+                    break;
+                case 3:
+                    if (const std::optional<ClauseId> id = random_active_id()) {
+                        selector.replace_clause(*id, random_clause(dropped));
+                    }
+                    break;
+                case 4:
+                    if (const std::optional<ClauseId> id = random_active_id()) {
+                        retire(*id);
+                    }
+                    break;
+                case 5: {
+                    IndexSet col_idxs(num_vars + 1);
+                    for (std::size_t col = random.next(3); col > 0; --col) {
+                        col_idxs.set(random.next(num_vars));
+                    }
+                    check_lookup(col_idxs);
+                    break;
+                }
+                case 6: {
+                    // A substitution: the clauses carrying a newly dropped variable
+                    // are rewritten without it or retired.
+                    IndexSet newly_dropped(num_vars + 1);
+                    for (std::size_t col = random.next(3) + 1; col > 0; --col) {
+                        const std::size_t var = random.next(num_vars);
+                        if (!dropped.test(var)) {
+                            newly_dropped.set(var);
+                        }
+                    }
+                    const std::vector<ClauseId> found = check_lookup(newly_dropped);
+                    dropped.or_with(newly_dropped);
+                    for (const ClauseId id : found) {
+                        if (random.chance(3)) {
+                            retire(id);
+                        } else {
+                            selector.replace_clause(id, random_clause(dropped));
+                        }
+                    }
+                    CHECK(check_lookup(newly_dropped).size() <= found.size());
+                    break;
+                }
+                default:
+                    if (random.chance(4) && dropped.count() != 0) {
+                        // Clauses spanning `0 = 1` may still carry an older dropped variable.
+                        for (const ClauseId id : check_lookup(dropped)) {
+                            selector.replace_clause(id, random_clause(dropped));
+                        }
+                        const CompactionTransform transform =
+                            CompactionTransform::from_dropped_columns(num_vars, dropped);
+                        num_vars = transform.new_num_vars();
+                        selector.update_with_renumbering(transform, Trail(repr, num_vars));
+                        dropped = IndexSet(num_vars + 1);
+                    }
+                    break;
+            }
+        }
+        IndexSet all(num_vars + 1);
+        for (std::size_t var = 0; var < num_vars; ++var) {
+            all.set(var);
+        }
+        check_lookup(all);
     }
 }
 

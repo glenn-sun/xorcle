@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "algebra_test_support.h"
@@ -110,6 +112,31 @@ TEST_CASE("index_set: for_each_set visits set columns in ascending order") {
     std::vector<std::size_t> seen;
     col_idxs.for_each_set([&](std::size_t col_idx) { seen.push_back(col_idx); });
     CHECK(seen == expected);
+}
+
+TEST_CASE("index_set: for_each_set passes runs of empty words of any length") {
+    // One set index, at every position of up to eleven words.
+    for (std::size_t size = 1; size <= 11 * 64; size += 61) {
+        for (std::size_t col_idx = 0; col_idx < size; col_idx += 7) {
+            IndexSet col_idxs(size);
+            col_idxs.set(col_idx);
+            col_idxs.set(size - 1);
+            std::vector<std::size_t> seen;
+            col_idxs.for_each_set([&](std::size_t seen_idx) { seen.push_back(seen_idx); });
+            CHECK(seen == (col_idx == size - 1 ? std::vector<std::size_t>{col_idx}
+                                               : std::vector<std::size_t>{col_idx, size - 1}));
+        }
+    }
+}
+
+TEST_CASE("index_set: or_with_words adds the indices packed in the words") {
+    IndexSet col_idxs(130);
+    col_idxs.set(2);
+    const std::vector<std::uint64_t> words{std::uint64_t{1} << 63, 0, 0b11};
+    col_idxs.or_with_words(words);
+    std::vector<std::size_t> seen;
+    col_idxs.for_each_set([&](std::size_t col_idx) { seen.push_back(col_idx); });
+    CHECK(seen == std::vector<std::size_t>{2, 63, 128, 129});
 }
 
 TEST_CASE("index_set: equality and randomized agreement with a reference") {

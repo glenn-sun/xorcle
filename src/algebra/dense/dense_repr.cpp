@@ -10,7 +10,7 @@ static_assert(GF2Vector<DenseGF2Vector>,
               "DenseGF2Vector must satisfy the GF2Vector concept");
 
 std::unique_ptr<EquationInterface> make_dense_equation_interface(std::size_t num_bits) {
-    return std::make_unique<EquationTemplate<DenseGF2Vector>>(num_bits);
+    return EquationTemplate<DenseGF2Vector>::create(num_bits);
 }
 
 std::unique_ptr<RowEchelonMatrixInterface> make_dense_row_echelon_matrix_interface(

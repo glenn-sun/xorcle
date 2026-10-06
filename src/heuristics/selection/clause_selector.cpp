@@ -4,6 +4,7 @@
 #include <cassert>
 #include <utility>
 
+#include "algebra/dense/dense_gf2_vector.h"
 #include "heuristics/selection/cyclic.h"
 #include "heuristics/selection/exact_watchlist.h"
 
@@ -17,8 +18,8 @@ void ClauseSelector::debug_assert_database_synchronized() const {
            clauses_.size() == clause_used_since_deletion_.size() &&
            clauses_.size() == clause_tier_.size() && clauses_.size() == clause_lbd_.size() &&
            clauses_.size() == clause_unused_passes_.size() &&
-           clauses_.size() == clause_carried_col_idxs_.size() &&
            clauses_.size() == clause_spans_eq_false_.size() &&
+           clauses_.size() == clause_entered_.size() &&
            "clause database and metadata are desynchronized");
 }
 
@@ -39,25 +40,38 @@ void ClauseSelector::replace_clause(ClauseId id, Clause clause) {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
 #endif
-    const IndexSet carried_before = std::move(clause_carried_col_idxs_[id]);
-    clause_carried_col_idxs_[id] =
-        clause_active_[id] != 0 ? clause.carried_col_idxs() : IndexSet();
-    clauses_[id] = std::move(clause);
-    if (clause_active_[id] != 0) {
-        enter_carried_col_idxs(id, carried_before);
+    const Clause replaced = std::exchange(clauses_[id], std::move(clause));
+    if (clause_active_[id] != 0 && clause_entered_[id] != 0) {
+        assert(replaced.cols() == clauses_[id].cols() &&
+               "an active clause was replaced by one over another numbering");
+        enter_carried_col_idxs(id, &replaced);
         maybe_clean_carrier_entries();
     }
 }
 
-void ClauseSelector::enter_carried_col_idxs(const ClauseId id, const IndexSet& entered_col_idxs) {
-    const IndexSet& carried = clause_carried_col_idxs_[id];
+void ClauseSelector::enter_carried_col_idxs(const ClauseId id, const Clause* const replaced) {
+    const IndexSet carried = clauses_[id].carried_col_idxs();
     const std::size_t constant_col_idx = carried.size() - 1;
     if (col_idx_to_clause_ids_.size() < constant_col_idx) {
         col_idx_to_clause_ids_.resize(constant_col_idx);
     }
+    // Testing a column against the replaced clause's rows beats taking their union
+    // until as many columns are tested as a row has words.
+    std::size_t num_row_tests_left =
+        (carried.size() + DenseGF2Vector::word_mask) >> DenseGF2Vector::word_shift;
+    IndexSet replaced_carried;
+    const auto replaced_carries = [&](const std::size_t col_idx) {
+        if (num_row_tests_left == 0) {
+            if (replaced_carried.size() == 0) {
+                replaced_carried = replaced->carried_col_idxs();
+            }
+            return replaced_carried.test(col_idx);
+        }
+        --num_row_tests_left;
+        return replaced->carries(col_idx);
+    };
     carried.for_each_set([&](const std::size_t col_idx) {
-        if (col_idx != constant_col_idx &&
-            !(col_idx < entered_col_idxs.size() && entered_col_idxs.test(col_idx))) {
+        if (col_idx != constant_col_idx && !(replaced != nullptr && replaced_carries(col_idx))) {
             col_idx_to_clause_ids_[col_idx].push_back(id);
             ++num_carrier_entries_;
         }
@@ -74,43 +88,58 @@ void ClauseSelector::maybe_clean_carrier_entries() {
     if (num_carrier_entries_ <= carrier_cleanup_threshold_) {
         return;
     }
-    const auto clean = [](std::vector<ClauseId>& ids, const auto& is_stale) {
-        std::erase_if(ids, is_stale);
-        std::ranges::sort(ids);
-        const auto repeated = std::ranges::unique(ids);
-        ids.erase(repeated.begin(), repeated.end());
+    IndexSet kept_ids(clauses_.size()); // over clause ids; empty between lists
+    const auto clean = [&kept_ids](std::vector<ClauseId>& ids, const auto& is_right) {
+        std::erase_if(ids, [&](ClauseId id) {
+            if (kept_ids.test(id) || !is_right(id)) {
+                return true;
+            }
+            kept_ids.set(id);
+            return false;
+        });
+        for (const ClauseId id : ids) {
+            kept_ids.reset(id);
+        }
         return ids.size();
     };
     std::size_t kept = clean(clause_ids_spanning_eq_false_,
-                             [this](ClauseId id) { return !spans_eq_false(id); });
+                             [this](ClauseId id) { return spans_eq_false(id); });
     for (std::size_t col_idx = 0; col_idx < col_idx_to_clause_ids_.size(); ++col_idx) {
         kept += clean(col_idx_to_clause_ids_[col_idx],
-                      [this, col_idx](ClauseId id) { return !carries(id, col_idx); });
+                      [this, col_idx](ClauseId id) { return carries(id, col_idx); });
     }
     num_carrier_entries_ = kept;
     carrier_cleanup_threshold_ = 2 * kept + col_idx_to_clause_ids_.size();
 }
 
-std::vector<ClauseId> ClauseSelector::clause_ids_carrying(const IndexSet& col_idxs) const {
-    std::vector<ClauseId> ids;
+std::vector<ClauseId> ClauseSelector::clause_ids_carrying(const IndexSet& col_idxs) {
+    for (const ClauseId id : unentered_clause_ids_) {
+        if (clause_active_[id] != 0) {
+            clause_entered_[id] = 1;
+            enter_carried_col_idxs(id, nullptr);
+        }
+    }
+    unentered_clause_ids_.clear();
+    maybe_clean_carrier_entries();
+
+    IndexSet found(clauses_.size()); // over clause ids
     col_idxs.for_each_set([&](const std::size_t col_idx) {
         if (col_idx >= col_idx_to_clause_ids_.size()) {
             return;
         }
         for (const ClauseId id : col_idx_to_clause_ids_[col_idx]) {
-            if (carries(id, col_idx)) {
-                ids.push_back(id);
+            if (!found.test(id) && carries(id, col_idx)) {
+                found.set(id);
             }
         }
     });
     for (const ClauseId id : clause_ids_spanning_eq_false_) {
         if (spans_eq_false(id)) {
-            ids.push_back(id);
+            found.set(id);
         }
     }
-    std::ranges::sort(ids);
-    const auto repeated = std::ranges::unique(ids);
-    ids.erase(repeated.begin(), repeated.end());
+    std::vector<ClauseId> ids;
+    found.for_each_set([&ids](const std::size_t id) { ids.push_back(id); });
     assert(ids == debug_scan_clause_ids_carrying(col_idxs) &&
            "the column-to-clause entries miss a clause or name a wrong one");
     return ids;
@@ -121,11 +150,9 @@ std::vector<ClauseId> ClauseSelector::debug_scan_clause_ids_carrying(
     const IndexSet& col_idxs) const {
     std::vector<ClauseId> ids;
     for (const ClauseId id : active_clause_ids()) {
-        assert(clause_carried_col_idxs_[id] == clauses_[id].carried_col_idxs() &&
-               "a clause's carried columns are stale");
         const Clause& clause = clauses_[id];
         if (clause.pivot_col_idxs().test(clause.cols() - 1) ||
-            clause_carried_col_idxs_[id].intersects(col_idxs)) {
+            clause.carried_col_idxs().intersects(col_idxs)) {
             ids.push_back(id);
         }
     }
@@ -149,7 +176,6 @@ void ClauseSelector::set_clause_active(ClauseId id, bool active) {
         return;
     }
     clause_active_[id] = 0;
-    clause_carried_col_idxs_[id] = IndexSet();
     if (2 * ++num_inactive_listed_ > listed_clause_ids_.size()) {
         std::erase_if(listed_clause_ids_,
                       [this](ClauseId listed) { return clause_active_[listed] == 0; });
@@ -271,18 +297,28 @@ void ClauseSelector::update_with_substitution(std::span<const ClauseId>, const I
                                               const Trail&) {}
 
 void ClauseSelector::update_with_renumbering(const CompactionTransform& transform, const Trail&) {
-    for (std::vector<ClauseId>& ids : col_idx_to_clause_ids_) {
-        ids.clear();
+    for (const ClauseId id : active_clause_ids()) {
+#ifndef NDEBUG
+        clauses_[id].carried_col_idxs().for_each_set([&](const std::size_t col_idx) {
+            assert((col_idx == transform.old_num_vars() ||
+                    transform.to_new(col_idx) != CompactionTransform::npos) &&
+                   "a clause carries a dropped column at a renumbering");
+        });
+#endif
+        clauses_[id].compact(transform);
+    }
+    // Each column's entries move to its new place in order; a dropped column's are stale.
+    for (std::size_t col_idx = 0; col_idx < col_idx_to_clause_ids_.size(); ++col_idx) {
+        const std::size_t new_col_idx = transform.to_new(col_idx);
+        if (new_col_idx == CompactionTransform::npos) {
+            num_carrier_entries_ -= col_idx_to_clause_ids_[col_idx].size();
+            col_idx_to_clause_ids_[col_idx].clear();
+        } else if (new_col_idx != col_idx) {
+            col_idx_to_clause_ids_[new_col_idx] = std::move(col_idx_to_clause_ids_[col_idx]);
+            col_idx_to_clause_ids_[col_idx].clear();
+        }
     }
     col_idx_to_clause_ids_.resize(transform.new_num_vars());
-    clause_ids_spanning_eq_false_.clear();
-    num_carrier_entries_ = 0;
-    for (const ClauseId id : active_clause_ids()) {
-        clauses_[id].compact(transform);
-        clause_carried_col_idxs_[id] = clauses_[id].carried_col_idxs();
-        enter_carried_col_idxs(id, IndexSet());
-    }
-    carrier_cleanup_threshold_ = 2 * num_carrier_entries_ + col_idx_to_clause_ids_.size();
 }
 
 void ClauseSelector::add_to_stats(RunStats& stats) const {
@@ -292,12 +328,11 @@ void ClauseSelector::add_to_stats(RunStats& stats) const {
 void ClauseSelector::add_clause(Clause clause) {
     listed_clause_ids_.push_back(clauses_.size());
     const ClauseId id = clauses_.size();
-    clause_carried_col_idxs_.push_back(clause.carried_col_idxs());
     clause_spans_eq_false_.push_back(0);
     clauses_.push_back(std::move(clause));
     clause_active_.push_back(1);
-    enter_carried_col_idxs(id, IndexSet());
-    maybe_clean_carrier_entries();
+    clause_entered_.push_back(0);
+    unentered_clause_ids_.push_back(id);
     clause_learned_.push_back(0);
     clause_used_since_deletion_.push_back(0);
     // A starting clause enters `local` with no LBD: it is tiered by its first use

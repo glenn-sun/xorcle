@@ -88,15 +88,10 @@ public:
 
     void replace_clause(ClauseId id, Clause clause);
 
-    /// @brief Per clause id, the columns its rows carry; empty for an inactive clause.
-    const std::vector<IndexSet>& carried_col_idxs() const noexcept {
-        return clause_carried_col_idxs_;
-    }
-
     /// @brief The active clauses that carry a column of @p col_idxs or span `0 = 1`,
-    /// in ascending order.
+    /// in ascending order; enters the clauses added since the last call.
     /// @pre `col_idxs` is sized like a clause's columns and leaves the last one out.
-    std::vector<ClauseId> clause_ids_carrying(const IndexSet& col_idxs) const;
+    std::vector<ClauseId> clause_ids_carrying(const IndexSet& col_idxs);
 
     bool is_clause_active(ClauseId id) const;
     void set_clause_active(ClauseId id, bool active);
@@ -188,16 +183,16 @@ protected:
 
     /// @brief Whether `col_idx_to_clause_ids_[col_idx]` is right to name the clause.
     bool carries(ClauseId id, std::size_t col_idx) const {
-        return clause_active_[id] != 0 && clause_carried_col_idxs_[id].test(col_idx);
+        return clause_active_[id] != 0 && clauses_[id].carries(col_idx);
     }
 
     bool spans_eq_false(ClauseId id) const {
         return clause_active_[id] != 0 && clause_spans_eq_false_[id] != 0;
     }
 
-    /// @brief Enter an active clause under each column it carries and
-    /// @p entered_col_idxs lacks.
-    void enter_carried_col_idxs(ClauseId id, const IndexSet& entered_col_idxs);
+    /// @brief Enter an active clause under each column it carries and @p replaced,
+    /// the clause its id held until now, does not; null for a new id.
+    void enter_carried_col_idxs(ClauseId id, const Clause* replaced);
 
     /// @brief Drop the stale and repeated entries once they outnumber the rest.
     void maybe_clean_carrier_entries();
@@ -213,17 +208,20 @@ protected:
     ClauseTierConfig tier_config_;
 
     std::vector<Clause> clauses_; ///< A clause's id is its index.
-    std::vector<IndexSet> clause_carried_col_idxs_;
     std::vector<std::uint8_t> clause_spans_eq_false_;
 
     /// @brief Per variable column, the clauses that may carry it.
     ///
     /// `carries()` is the truth: an entry may be stale, and a clause may be entered twice.
+    /// An active clause is entered under every column it carries from the first
+    /// `clause_ids_carrying()` after it was added.
     std::vector<std::vector<ClauseId>> col_idx_to_clause_ids_;
     std::vector<ClauseId> clause_ids_spanning_eq_false_; ///< Entries likewise.
     std::size_t num_carrier_entries_ = 0; ///< Over both of the above.
     std::size_t peak_carrier_entries_ = 0;
     std::size_t carrier_cleanup_threshold_ = 0;
+    std::vector<std::uint8_t> clause_entered_;
+    std::vector<ClauseId> unentered_clause_ids_; ///< Added since the last `clause_ids_carrying()`.
     std::vector<std::uint8_t> clause_active_;
     /// @brief Ascending: every active id, and at most as many inactive ones.
     std::vector<ClauseId> listed_clause_ids_;

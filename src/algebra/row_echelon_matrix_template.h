@@ -4,6 +4,7 @@
 #define XORCLE_COL_IDX_TO_ROW_DIVISOR 8
 #endif
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -90,6 +91,8 @@ public:
 
     /// @brief The columns some row carries.
     virtual IndexSet carried_col_idxs() const = 0;
+
+    virtual bool carries(std::size_t col_idx) const = 0;
 
     /// @brief Renumber every row in place, reading the last column as the constant.
     virtual void compact(const CompactionTransform& transform) = 0;
@@ -345,10 +348,15 @@ public:
     IndexSet carried_col_idxs() const override {
         IndexSet carried(cols_);
         for (const StoredRow& stored : rows_) {
-            gf2_vector_of<V>(stored.row).for_each_set_bit(
-                [&carried](std::size_t col_idx) { carried.set(col_idx); });
+            gf2_vector_of<V>(stored.row).add_set_bits_to(carried);
         }
         return carried;
+    }
+
+    bool carries(std::size_t col_idx) const override {
+        return std::ranges::any_of(rows_, [col_idx](const StoredRow& stored) {
+            return gf2_vector_of<V>(stored.row).get_bit(col_idx);
+        });
     }
 
     void compact(const CompactionTransform& transform) override {

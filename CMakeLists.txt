@@ -16,17 +16,6 @@ endif()
 
 include(FetchContent)
 
-# gf2 (nessan/gf2) -- the dense representation's bit-vector library.
-#
-# Pinned to a commit rather than a tag: the only tagged release, v1.0.1, predates
-# the rename of `BitVec` to `BitVector`, and the `current` tag is a rolling
-# release asset.
-FetchContent_Declare(gf2
-    GIT_REPOSITORY https://github.com/nessan/gf2.git
-    GIT_TAG        0b09e44fd2c6615a6a1958c480650e207703b84c
-    SYSTEM)
-FetchContent_MakeAvailable(gf2)
-
 add_library(xorcle_core
     src/algebra/compaction_transform.cpp
     src/algebra/equation.cpp
@@ -67,7 +56,6 @@ add_library(xorcle_core
     src/util/stats.cpp
     src/util/stats_writer.cpp)
 
-target_link_libraries(xorcle_core PUBLIC gf2::gf2)
 target_include_directories(xorcle_core PUBLIC src)
 
 # Frame pointers, which a sampling profiler needs to walk the stack and the
@@ -91,11 +79,6 @@ if(XORCLE_NATIVE AND NOT CMAKE_CROSSCOMPILING AND NOT MSVC
     endif()
 endif()
 
-# gf2 gates its bounds checks on `gf2_debug_assert`, which is a no-op unless
-# DEBUG is defined -- and neither CMake's Debug build type nor gf2's own
-# FetchContent-consumed CMakeLists defines it.
-target_compile_definitions(xorcle_core PRIVATE $<$<CONFIG:Debug>:DEBUG>)
-
 add_executable(xorcle src/cli/main.cpp)
 target_link_libraries(xorcle PRIVATE xorcle_core)
 target_compile_definitions(xorcle PRIVATE XORCLE_VERSION="${XORCLE_VERSION}")
@@ -103,7 +86,7 @@ target_compile_definitions(xorcle PRIVATE XORCLE_VERSION="${XORCLE_VERSION}")
 enable_testing()
 add_subdirectory(tests)
 
-# Warnings for xorcle's own targets only; gf2 and doctest are SYSTEM.
+# Warnings for xorcle's own targets only; doctest is SYSTEM.
 option(XORCLE_WERROR "Treat warnings in xorcle's own targets as errors" OFF)
 if(NOT MSVC)
     set(XORCLE_WARNINGS

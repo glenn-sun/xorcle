@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -418,6 +419,10 @@ void exercise_against_reference(EquationRepr repr, std::size_t num_vars, int tri
             matrix.carried_col_idxs().for_each_set(
                 [&carried](std::size_t col_idx) { carried.push_back(col_idx); });
             CHECK(carried == reference.carried_col_idxs());
+            for (std::size_t col_idx = 0; col_idx <= num_vars; ++col_idx) {
+                CHECK(matrix.carries(col_idx) ==
+                      std::ranges::binary_search(carried, col_idx));
+            }
 
             if (matrix.rows() > 0 && random.chance(3)) {
                 const std::size_t row_idx = random.next(matrix.rows());

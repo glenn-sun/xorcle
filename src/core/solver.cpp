@@ -430,9 +430,9 @@ void Solver::handle_non_root_conflict() {
         if (proof_writer_ != nullptr) {
             proof_writer_->write_deleted({proof_id_of_clause_[record.clause_id]});
         }
+        selector_->set_clause_active(record.clause_id, false);
         selector_->replace_clause(record.clause_id,
                                   inactive_clause_placeholder(repr_, false_equation_));
-        selector_->set_clause_active(record.clause_id, false);
         --num_active_clauses_;
         ++counters_.num_subsumed_clauses;
         counters_.num_subsumed_conflicting_clauses += record.subsumed_conflicting_clause ? 1 : 0;
@@ -725,7 +725,6 @@ bool Solver::maybe_compact_before_decision() {
         .trail = trail_,
         .clauses = selector_->clauses(),
         .candidate_clause_ids = {},
-        .clause_carried_col_idxs = selector_->carried_col_idxs(),
         .active_num_vars = active_num_vars_,
     };
     if (!should_compact_before_decision(state)) {
@@ -754,11 +753,13 @@ void Solver::apply_substitution(SubstitutionPlan plan) {
         const ClauseId clause_id = plan.rewritten_clause_ids[i];
         assert(selector_->is_clause_active(clause_id) && "the plan rewrote an inactive clause");
         const std::size_t width_before = selector_->clause(clause_id).rows();
-        selector_->replace_clause(clause_id, std::move(plan.rewritten_clauses[i]));
         if (plan.rewritten_is_active[i] == 0) {
             selector_->set_clause_active(clause_id, false);
             --num_active_clauses_;
-        } else if (width_before > 2 && selector_->clause(clause_id).rows() <= 2) {
+        }
+        selector_->replace_clause(clause_id, std::move(plan.rewritten_clauses[i]));
+        if (plan.rewritten_is_active[i] != 0 && width_before > 2 &&
+            selector_->clause(clause_id).rows() <= 2) {
             ++counters_.num_compaction_narrowed_to_width_2;
         }
     }
@@ -899,8 +900,8 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
         proof_writer_->write_deleted(proof_ids(plan.deleted));
     }
     for (const ClauseId clause_id : plan.deleted) {
-        selector_->replace_clause(clause_id, inactive_clause_placeholder(repr_, false_equation_));
         selector_->set_clause_active(clause_id, false);
+        selector_->replace_clause(clause_id, inactive_clause_placeholder(repr_, false_equation_));
     }
 
     ++counters_.num_deletion_passes;

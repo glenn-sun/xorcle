@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <numeric>
 #include <vector>
 
 #include "algebra/compaction_transform.h"
@@ -25,27 +24,23 @@ std::vector<std::size_t> set_variables(const IndexSet& assignment) {
     return out;
 }
 
-std::vector<IndexSet> carried_col_idxs_of(const std::vector<Clause>& clauses) {
-    std::vector<IndexSet> out;
-    for (const Clause& clause : clauses) {
-        out.push_back(clause.carried_col_idxs());
+/// @brief The ids `build_substitution_plan()` takes when every clause is active.
+std::vector<ClauseId> candidate_ids_of(const std::vector<Clause>& clauses, const Trail& trail) {
+    std::vector<ClauseId> out;
+    for (ClauseId id = 0; id < clauses.size(); ++id) {
+        if (clauses[id].pivot_col_idxs().test(clauses[id].cols() - 1) ||
+            clauses[id].carried_col_idxs().intersects(trail.span().pivot_col_idxs())) {
+            out.push_back(id);
+        }
     }
-    return out;
-}
-
-std::vector<ClauseId> ids_of(const std::vector<Clause>& clauses) {
-    std::vector<ClauseId> out(clauses.size());
-    std::iota(out.begin(), out.end(), ClauseId{0});
     return out;
 }
 
 /// @brief The history entry of a substitution by `trail` that a renumbering followed.
 CompactionHistoryEntry renumbered_entry(const Trail& trail) {
     const std::vector<Clause> clauses;
-    const std::vector<IndexSet> carried;
     const std::vector<ClauseId> ids;
-    const CompactionState state{trail, clauses, ids, carried,
-                                trail.num_vars()};
+    const CompactionState state{trail, clauses, ids, trail.num_vars()};
     CompactionHistoryEntry entry = build_substitution_plan(state).history_entry;
     entry.renumbering = CompactionTransform::from_dropped_columns(trail.num_vars(),
                                                                   trail.span().pivot_col_idxs());
@@ -58,10 +53,9 @@ TEST_CASE_TEMPLATE("compaction: when it should run", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
     const std::vector<Clause> clauses;
-    const std::vector<IndexSet> carried;
     const std::vector<ClauseId> ids;
 
-    const CompactionState state{trail, clauses, ids, carried, 4};
+    const CompactionState state{trail, clauses, ids, 4};
 
     SUBCASE("an empty root trail has nothing to eliminate") {
         CHECK_FALSE(should_compact_before_decision(state));
@@ -108,10 +102,9 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
     clauses.push_back(make_clause(repr, 4, {{0}}));           // [x0 = 1], already satisfied
     clauses.push_back(make_clause(repr, 4, {{1}, {2}}));      // [x1 = 1] v [x2 = 1]
     clauses.push_back(make_clause(repr, 4, {{0, 1}, {3}}));   // mentions the eliminated x0
-    const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
-    const std::vector<ClauseId> ids = ids_of(clauses);
+    const std::vector<ClauseId> ids = candidate_ids_of(clauses, trail);
 
-    const CompactionState state{trail, clauses, ids, carried, 4};
+    const CompactionState state{trail, clauses, ids, 4};
     const SubstitutionPlan plan = build_substitution_plan(state);
     REQUIRE(plan.rewritten_clause_ids == std::vector<ClauseId>{0, 2});
     REQUIRE(plan.rewritten_clauses.size() == 2);
@@ -150,17 +143,16 @@ TEST_CASE_TEMPLATE("compaction: a clause that is no candidate is left out of the
     Trail trail(repr, 4);
     trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
 
+    // The second clause stands for an inactive one, which is never a candidate.
     std::vector<Clause> clauses;
     clauses.push_back(make_clause(repr, 4, {{0, 1}, {2}}));
     clauses.push_back(make_clause(repr, 4, {{0, 2}, {3}}));
     clauses.push_back(make_clause(repr, 4, {{1}, {3}}));
-    const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
-    const std::vector<ClauseId> ids{0, 2};
+    const std::vector<ClauseId> ids{0};
 
-    const CompactionState state{trail, clauses, ids, carried, 4};
+    const CompactionState state{trail, clauses, ids, 4};
     const SubstitutionPlan plan = build_substitution_plan(state);
 
-    // Only the first clause is both a candidate and mentions x0.
     REQUIRE(plan.rewritten_clause_ids == std::vector<ClauseId>{0});
     REQUIRE(plan.rewritten_clauses.size() == 1);
     CHECK(bits_of(plan.rewritten_clauses[0].row(0)) == std::vector<std::size_t>{1, 4});
@@ -176,10 +168,9 @@ TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, De
     // Both rows reduce to x2, so the rewritten clause has a single row.
     std::vector<Clause> clauses;
     clauses.push_back(make_clause(repr, 4, {{0, 1, 2}, {2}}));
-    const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
-    const std::vector<ClauseId> ids = ids_of(clauses);
+    const std::vector<ClauseId> ids = candidate_ids_of(clauses, trail);
 
-    const CompactionState state{trail, clauses, ids, carried, 4};
+    const CompactionState state{trail, clauses, ids, 4};
     const SubstitutionPlan plan = build_substitution_plan(state);
 
     const Clause& rewritten = plan.rewritten_clauses[0];
@@ -301,16 +292,13 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
     }
 }
 
-// Over three words a row, a plan tests each dropped variable while there are
-// fewer root units than words, and a word at a time from there on; both must
-// find exactly the clauses holding a dropped variable.
-TEST_CASE_TEMPLATE("compaction: a plan over three words finds every clause to rewrite", Tag,
+TEST_CASE_TEMPLATE("compaction: a plan over three words rewrites every candidate", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     constexpr std::size_t num_vars = 130;
     constexpr std::size_t constant = num_vars;
 
-    SUBCASE("one root unit, tested variable by variable") {
+    SUBCASE("one root unit") {
         Trail trail(repr, num_vars);
         trail.learn(make_equation_with(repr, num_vars, {100, constant}), ClauseId{0},
                     trail.level()); // x100 = 1
@@ -319,11 +307,9 @@ TEST_CASE_TEMPLATE("compaction: a plan over three words finds every clause to re
         clauses.push_back(make_clause(repr, num_vars, {{5, 100}, {7}}));   // holds x100
         clauses.push_back(make_clause(repr, num_vars, {{5}, {120}}));      // untouched
         clauses.push_back(make_clause(repr, num_vars, {{64}, {129}}));     // untouched
-        const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
-        const std::vector<ClauseId> ids = ids_of(clauses);
+        const std::vector<ClauseId> ids = candidate_ids_of(clauses, trail);
 
-        const CompactionState state{trail, clauses, ids, carried,
-                                    num_vars};
+        const CompactionState state{trail, clauses, ids, num_vars};
         const SubstitutionPlan plan = build_substitution_plan(state);
 
         CHECK(plan.rewritten_clause_ids == std::vector<ClauseId>{0, 1});
@@ -334,7 +320,7 @@ TEST_CASE_TEMPLATE("compaction: a plan over three words finds every clause to re
               std::vector<std::vector<std::size_t>>{{5, constant}, {7}});
     }
 
-    SUBCASE("three root units, tested a word at a time") {
+    SUBCASE("three root units over three words") {
         Trail trail(repr, num_vars);
         for (const std::size_t var : {10UL, 70UL, 128UL}) {
             trail.learn(make_equation_with(repr, num_vars, {var}), ClauseId{0}, trail.level());
@@ -344,11 +330,9 @@ TEST_CASE_TEMPLATE("compaction: a plan over three words finds every clause to re
         clauses.push_back(make_clause(repr, num_vars, {{69, 70}, {100}}));  // holds x70
         clauses.push_back(make_clause(repr, num_vars, {{127}, {129}}));     // untouched
         clauses.push_back(make_clause(repr, num_vars, {{0, 128}, {64}}));   // holds x128
-        const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
-        const std::vector<ClauseId> ids = ids_of(clauses);
+        const std::vector<ClauseId> ids = candidate_ids_of(clauses, trail);
 
-        const CompactionState state{trail, clauses, ids, carried,
-                                    num_vars};
+        const CompactionState state{trail, clauses, ids, num_vars};
         const SubstitutionPlan plan = build_substitution_plan(state);
 
         CHECK(plan.rewritten_clause_ids == std::vector<ClauseId>{1, 3});
