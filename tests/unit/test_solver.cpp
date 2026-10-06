@@ -638,14 +638,12 @@ TEST_CASE_TEMPLATE("solver: the learned clause's LBD reaches the selector", Tag,
 
     for (ClauseId id = 0; id < num_input_clauses; ++id) {
         CHECK_FALSE(recorder.is_clause_learned(id));
-        CHECK(recorder.clause_tier(id) == ClauseTier::local);
     }
     for (std::size_t index = 0; index < backjumps.size(); ++index) {
         const ClauseId id = num_input_clauses + index;
         const std::size_t lbd = backjumps[index].lbd;
         CHECK(recorder.is_clause_learned(id));
-        CHECK(recorder.clause_lbd(id) == lbd);
-        CHECK(recorder.clause_tier(id) == recorder.tier_for_lbd(lbd));
+        CHECK(recorder.clause_lbd(id) == static_cast<double>(lbd));
         // The clause is derived from the levels of the conflicting trail.
         CHECK(lbd <= backjumps[index].level_before);
     }

@@ -239,8 +239,7 @@ TEST_CASE("fuzz: past one word, the exact watchlist's answers check") {
         const std::string text = random_wide_instance(random);
         CAPTURE(index);
         CAPTURE(text);
-        run_and_check(text, {"--deletion-cadence=8"}, tally,
-                      std::nullopt);
+        run_and_check(text, {"--deletion-cadence-coefficient=0.5"}, tally, std::nullopt);
     }
     CHECK(tally.sat > 0);
     CHECK(tally.unsat > 0);
@@ -259,8 +258,8 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
         std::size_t SolverCounters::*exercised = nullptr;
     };
     // Deletion passes and the graph are due every few conflicts.
-    const std::vector<std::string> often = {"--deletion-cadence=2",
-                                            "--deletion-core-lbd=1", "--deletion-secondary-lbd=1",
+    const std::vector<std::string> often = {"--deletion-cadence-coefficient=0.1",
+                                            "--deletion-wait=0",
                                             "--implication-graph-cadence=4"};
     std::vector<std::string> often_without_graph(often.begin(), often.end() - 1);
     often_without_graph.emplace_back("--implication-graph=false");

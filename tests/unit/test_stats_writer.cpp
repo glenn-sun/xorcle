@@ -88,8 +88,6 @@ RunStats sample_stats() {
 
     stats.num_deletion_passes = 4;
     stats.num_deleted_clauses = 6;
-    stats.num_demoted_clauses = 2;
-    stats.num_promoted_clauses = 9;
 
     stats.parse_time_s = 0.002;
     stats.solve_time_s = 0.0128;
@@ -257,9 +255,7 @@ TEST_CASE("ConsoleStatsWriter: the deletion lines appear only when it ran") {
     stats.config = {ConfigEntry{"deletion", "true", true}};
     const std::string output = console_output(stats);
     CHECK(output.find("c Deletion passes: 4\n"
-                      "c Deleted clauses: 6\n"
-                      "c Tier demotions: 2\n"
-                      "c Tier promotions: 9\n") != std::string::npos);
+                      "c Deleted clauses: 6\n") != std::string::npos);
 }
 
 TEST_CASE("ConsoleStatsWriter: the restart lines appear only under a schedule") {

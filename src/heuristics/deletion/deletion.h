@@ -16,7 +16,7 @@ namespace xorcle {
 
 /// @brief Which score orders the clauses a deletion pass deletes.
 enum class DeletionKey : std::uint8_t {
-    lbd,     ///< Higher stored LBD goes first.
+    lbd,     ///< Higher LBD goes first.
     activity ///< Lower clause activity goes first.
 };
 
@@ -24,26 +24,48 @@ enum class DeletionKey : std::uint8_t {
 struct DeletionConfig {
     bool enabled = true;
 
-    std::size_t cadence = 100; ///< Conflicts between deletion passes.
+    /// @brief The conflicts between deletion passes are this times the square root of the
+    /// conflicts so far.
+    double cadence_coefficient = 0.3;
 
-    /// @brief Consecutive deletion passes a `secondary` clause goes unused before it
-    /// becomes `local`.
-    std::size_t demote_cadence_in_passes = 2;
+    /// @brief The LBD allowed one unused deletion pass; see `allowed_unused_passes()`.
+    double wait = 6.0;
 
-    ClauseTierConfig tiers = {};
+    /// @brief The window of the average of the LBDs measured at a clause's uses as a reason;
+    /// the newest measurement weighs its reciprocal.
+    std::size_t lbd_window = 2;
+
+    /// @brief The fraction of the deletion candidates a deletion pass evicts.
+    double eviction_rate = 0.5;
+
     DeletionKey key = DeletionKey::activity;
 
     bool operator==(const DeletionConfig&) const = default;
 };
 
+/// @brief The consecutive deletion passes a learned clause of this LBD may go unused,
+/// `round(2^(wait - lbd))`.
+std::size_t allowed_unused_passes(double lbd, double wait);
+
+/// @brief Whether a deletion pass may delete this clause once no trail row names it.
+/// @pre `selector.is_clause_learned(id)`.
+bool is_deletion_candidate(const ClauseSelector& selector, ClauseId id, double wait);
+
+/// @brief Average the LBD measured at a use as a reason into a learned clause's LBD, and start
+/// its unused passes over if it was a deletion candidate.
+void update_with_reason_use(ClauseSelector& selector, ClauseId id, std::size_t measured_lbd,
+                            const DeletionConfig& config);
+
+/// @brief The conflicts between the last deletion pass and the next, at least one.
+std::size_t conflicts_between_deletion_passes(const DeletionConfig& config,
+                                              std::size_t num_conflicts);
+
 /// @brief A read-only view of the state a deletion pass is planned against.
 struct DeletionState {
     const ClauseSelector& selector;
     const Trail& trail;
-
-    /// @brief The unused-pass count, this pass included, at which a clause is demoted.
-    std::size_t demote_cadence_in_passes;
-
+    double wait;
+    double eviction_rate;
     DeletionKey key;
     const ClauseActivitySource* activity;
 };
@@ -51,20 +73,23 @@ struct DeletionState {
 /// @brief What one deletion pass changes, in clause-id order.
 struct DeletionPlan {
     std::vector<ClauseId> deleted; ///< To delete, ascending.
-    std::vector<ClauseId> demoted; ///< `secondary` clauses becoming `local`, ascending.
+
+    /// @brief Clauses reaching their allowed unused passes at this pass, ascending.
+    std::vector<ClauseId> out_of_unused_passes;
 
     /// @brief The unused-pass count after the pass, by clause id; zero for an
     /// inactive clause.
     std::vector<std::size_t> unused_passes;
 };
 
-/// @brief Choose the clauses this deletion pass demotes, and the worse half of the
-/// `local` tier to delete.
+/// @brief Choose the clauses running out of unused passes at this deletion pass, and the
+/// deletion candidates to evict, worst first.
 ///
 /// A clause some trail row names as its reason is locked: neither deleted nor
-/// counted as unused. A clause demoted here is not also a deletion candidate.
+/// counted as unused. A clause running out here is not also a deletion candidate here.
 ///
-/// @pre `state.activity` is non-null if `state.key` is `DeletionKey::activity`.
+/// @pre `state.activity` is non-null if `state.key` is `DeletionKey::activity`, and
+/// `state.eviction_rate` is in `[0, 1]`.
 DeletionPlan build_deletion_plan(const DeletionState& state);
 
 } // namespace xorcle

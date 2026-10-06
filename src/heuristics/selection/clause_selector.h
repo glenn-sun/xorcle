@@ -32,25 +32,6 @@ enum class ClauseSelectorName {
     exact_watchlist ///< Work queue of the clauses whose watch pair became dependent.
 };
 
-/// @brief How long a clause survives a deletion pass.
-enum class ClauseTier : std::uint8_t {
-    core, ///< Kept forever.
-    secondary, ///< Demoted to `local` once enough deletion passes go by unused.
-    local ///< Deleted by key at a deletion pass, unless it is a starting clause.
-};
-
-/// @brief The LBD of a clause no conflict has resolved against yet, which is
-/// where a starting clause begins: it is tiered by its first use, never deleted.
-inline constexpr std::size_t unset_clause_lbd = static_cast<std::size_t>(-1);
-
-/// @brief The LBD cutoffs a clause's tier is read off.
-struct ClauseTierConfig {
-    std::size_t core_lbd = 2; ///< At most this enters `core`.
-    std::size_t secondary_lbd = 6; ///< At most this, and above `core_lbd`, enters `secondary`.
-
-    bool operator==(const ClauseTierConfig&) const = default;
-};
-
 /// @brief What conflict analysis knows about a learned clause beyond its rows.
 struct AssertingClauseInfo {
     std::size_t lbd;
@@ -109,12 +90,11 @@ public:
     /// its standing, so it is never a deletion candidate either.
     void set_clause_learned(ClauseId id, bool learned);
 
-    /// @brief `unset_clause_lbd` until a use records one.
-    std::size_t clause_lbd(ClauseId id) const;
-    void set_clause_lbd(ClauseId id, std::size_t lbd);
-
-    ClauseTier clause_tier(ClauseId id) const;
-    void set_clause_tier(ClauseId id, ClauseTier tier);
+    /// @brief The LBD deletion reads, which a use as a reason moves toward the LBD measured there.
+    /// @pre `is_clause_learned(id)`.
+    double clause_lbd(ClauseId id) const;
+    /// @pre `is_clause_learned(id)`.
+    void set_clause_lbd(ClauseId id, double lbd);
 
     bool is_clause_used_since_deletion(ClauseId id) const;
     void set_clause_used_since_deletion(ClauseId id, bool used);
@@ -123,13 +103,9 @@ public:
     std::size_t clause_unused_passes(ClauseId id) const;
     void set_clause_unused_passes(ClauseId id, std::size_t num_passes);
 
-    const ClauseTierConfig& tier_config() const noexcept { return tier_config_; }
-
-    /// @pre No clause has been added yet, and `config.core_lbd <= config.secondary_lbd`.
-    void set_tier_config(const ClauseTierConfig& config);
-
-    /// @brief The tier a learned clause of this LBD enters.
-    ClauseTier tier_for_lbd(std::size_t lbd) const;
+    /// @brief Whether the clause has gone unused for as many deletion passes as its LBD allowed.
+    bool is_clause_out_of_unused_passes(ClauseId id) const;
+    void set_clause_out_of_unused_passes(ClauseId id, bool out);
 
     /// @brief The next clause to try, with the trigger when the selector knows it;
     /// `std::nullopt` once the propagation run is over.
@@ -205,7 +181,6 @@ protected:
     void debug_assert_clause_id(ClauseId id) const;
 #endif
 
-    ClauseTierConfig tier_config_;
 
     std::vector<Clause> clauses_; ///< A clause's id is its index.
     std::vector<std::uint8_t> clause_spans_eq_false_;
@@ -228,9 +203,9 @@ protected:
     std::size_t num_inactive_listed_ = 0; ///< Inactive ids still in `listed_clause_ids_`.
     std::vector<std::uint8_t> clause_learned_;
     std::vector<std::uint8_t> clause_used_since_deletion_;
-    std::vector<ClauseTier> clause_tier_;
-    std::vector<std::size_t> clause_lbd_;
+    std::vector<double> clause_lbd_;
     std::vector<std::size_t> clause_unused_passes_;
+    std::vector<std::uint8_t> clause_out_of_unused_passes_;
 };
 
 /// @brief Build the selector named by @p name over @p num_vars variables.

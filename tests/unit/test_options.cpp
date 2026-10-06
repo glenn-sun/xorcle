@@ -99,12 +99,12 @@ TEST_CASE("options: --name=value sets each kind") {
 }
 
 TEST_CASE("options: a table name's underscores are dashes on the command line") {
-    CHECK(cli_spelling("deletion_cadence") == "--deletion-cadence");
-    CHECK(table_name_of("deletion-cadence") == "deletion_cadence");
-    CHECK(parse_with_input({"--deletion-cadence=64"}).deletion_cadence == 64);
+    CHECK(cli_spelling("implication_graph_cadence") == "--implication-graph-cadence");
+    CHECK(table_name_of("implication-graph-cadence") == "implication_graph_cadence");
+    CHECK(parse_with_input({"--implication-graph-cadence=64"}).implication_graph_cadence == 64);
     // Dashes and underscores are interchangeable in an option name, as in
     // CaDiCaL; the dashed form is the one `--help` and the errors show.
-    CHECK(parse_with_input({"--deletion_cadence=64"}).deletion_cadence == 64);
+    CHECK(parse_with_input({"--implication_graph_cadence=64"}).implication_graph_cadence == 64);
 }
 
 TEST_CASE("options: booleans accept on/off as well as true/false") {
@@ -116,7 +116,8 @@ TEST_CASE("options: booleans accept on/off as well as true/false") {
 
 TEST_CASE("options: values outside the table's bounds are rejected") {
     SUBCASE("a size below its minimum") {
-        CHECK(contains(rejection_message<CliError>({"--deletion-cadence=0"}), "must be at least 1"));
+        CHECK(contains(rejection_message<CliError>({"--implication-graph-cadence=0"}),
+                       "must be at least 1"));
         CHECK(contains(rejection_message<CliError>({"--restart-lbd-min-conflicts=0"}), "must be at least 1"));
     }
     SUBCASE("a real below its minimum") {
@@ -193,7 +194,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--seed=N"));
     CHECK(contains(text, "[default: 0; minimum 0]"));
     CHECK(contains(text, "--compact=true|false"));
-    CHECK(contains(text, "[default: " + std::to_string(Options{}.deletion_cadence) +
+    CHECK(contains(text, "[default: " + std::to_string(Options{}.implication_graph_cadence) +
                              "; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
     CHECK(contains(text, "[default: " + format_real(Options{}.csids_decay) + "; range 0..1]"));
@@ -207,12 +208,14 @@ TEST_CASE("options: --help is generated from the table") {
 
     CHECK(contains(text, "--deletion=true|false"));
     CHECK(contains(text, "periodically delete some learned clauses [default: true]"));
-    CHECK(contains(text, "--deletion-cadence=N"));
-    CHECK(contains(text, "--deletion-demote-cadence-in-passes=N"));
+    CHECK(contains(text, "--deletion-cadence-coefficient=X"));
+    CHECK(contains(text, "--deletion-lbd-window=N"));
+    CHECK(contains(text, "--deletion-eviction-rate=X"));
+    CHECK(contains(text, "--deletion-wait=X"));
     CHECK(contains(text, "--deletion-key=lbd|activity"));
 
     // The requirement table feeds the help, so a refusal is never a surprise.
-    CHECK(contains(text, "conflicts between deletion passes; requires --deletion=true"));
+    CHECK(contains(text, "conflicts so far (positive); requires --deletion=true"));
     CHECK(contains(text, "fast/slow ratio needed for LBD restart; requires --restart=lbd"));
 
     CHECK(contains(text, "--restart=none|luby|lbd"));
@@ -243,9 +246,14 @@ TEST_CASE("options: the exact watchlist takes deletion and subsumption, but not 
 }
 
 TEST_CASE("options: deletion refuses an incompatible choice rather than yielding") {
-    CHECK(contains(rejection_message<CliError>({"--deletion-core-lbd=7"}),
-                   "--deletion-core-lbd must not exceed --deletion-secondary-lbd"));
-    CHECK_NOTHROW(parse_with_input({"--deletion-core-lbd=7", "--deletion-secondary-lbd=9"}));
+    CHECK(contains(rejection_message<CliError>({"--deletion-cadence-coefficient=0"}),
+                   "--deletion-cadence-coefficient must be positive"));
+    CHECK(contains(rejection_message<CliError>({"--deletion-lbd-window=0"}), "must be at least 1"));
+    CHECK_NOTHROW(parse_with_input({"--deletion-lbd-window=1"}));
+    CHECK(contains(rejection_message<CliError>({"--deletion-eviction-rate=1.5"}),
+                   "--deletion-eviction-rate"));
+    CHECK_NOTHROW(parse_with_input({"--deletion-eviction-rate=0"}));
+    CHECK_NOTHROW(parse_with_input({"--deletion-eviction-rate=1"}));
 
     // The key defaults to activity, so the default deletion alone carries the
     // requirement, whether or not --deletion is given.
@@ -282,15 +290,17 @@ TEST_CASE("options: the configuration projections carry the values across") {
     const Options options = parse_with_input({"--compact=false",
                                               "--restart=lbd", "--restart-lbd-min-ratio=1.25",
                                               "--deletion=true",
-                                              "--deletion-cadence=25", "--deletion-core-lbd=2",
-                                              "--deletion-secondary-lbd=8", "--deletion-key=activity",
-                                              "--deletion-demote-cadence-in-passes=3"});
+                                              "--deletion-cadence-coefficient=0.75",
+                                              "--deletion-lbd-window=4",
+                                              "--deletion-eviction-rate=0.25",
+                                              "--deletion-wait=7.5",
+                                              "--deletion-key=activity"});
     const DeletionConfig deletion = deletion_config(options);
     CHECK(deletion.enabled == true);
-    CHECK(deletion.cadence == 25);
-    CHECK(deletion.demote_cadence_in_passes == 3);
-    CHECK(deletion.tiers.core_lbd == 2);
-    CHECK(deletion.tiers.secondary_lbd == 8);
+    CHECK(deletion.cadence_coefficient == doctest::Approx(0.75));
+    CHECK(deletion.lbd_window == 4);
+    CHECK(deletion.eviction_rate == doctest::Approx(0.25));
+    CHECK(deletion.wait == doctest::Approx(7.5));
     CHECK(deletion.key == DeletionKey::activity);
 
     const CompactionConfig compaction = compaction_config(options);
@@ -337,7 +347,8 @@ TEST_CASE("options: the recorded configuration is the whole table") {
         return std::string("<absent>");
     };
     CHECK(value_of("compact") == "true");
-    CHECK(value_of("deletion_cadence") == std::to_string(Options{}.deletion_cadence));
+    CHECK(value_of("implication_graph_cadence") ==
+          std::to_string(Options{}.implication_graph_cadence));
     CHECK(value_of("csids_decay") == format_real(Options{}.csids_decay));
     CHECK(value_of("decisions") == "csids");
     // An unset path records as empty, not as the help text's "unset".
@@ -364,7 +375,7 @@ TEST_CASE("options: a recorded value knows whether it is the default") {
         option_settings(parse_with_input({"--seed=7", "--minimize=false"}));
     CHECK(!entry_for(changed, "seed").is_default);
     CHECK(!entry_for(changed, "minimize").is_default);
-    CHECK(entry_for(changed, "deletion_cadence").is_default);
+    CHECK(entry_for(changed, "implication_graph_cadence").is_default);
 }
 
 TEST_CASE("options: an option nothing would read is refused, not ignored") {
@@ -373,16 +384,14 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     const auto refusal = [](std::vector<std::string> arguments) {
         return rejection_message<CliError>(std::move(arguments));
     };
-    CHECK(refusal({"--deletion=false", "--deletion-cadence=8"}) ==
-          "--deletion-cadence requires --deletion=true; nothing would read it here");
+    CHECK(refusal({"--deletion=false", "--deletion-wait=8"}) ==
+          "--deletion-wait requires --deletion=true; nothing would read it here");
     CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--csids-decay=0.5"})
               .starts_with("--csids-decay requires --decisions=csids"));
     CHECK(refusal({"--restart-lbd-min-ratio=1.2"}).starts_with("--restart-lbd-min-ratio requires"));
     CHECK(refusal({"--restart-luby-unit=50"}).starts_with("--restart-luby-unit requires"));
-    CHECK(refusal({"--deletion=false", "--deletion-cadence=25"})
-              .starts_with("--deletion-cadence requires"));
-    CHECK(refusal({"--deletion=false", "--deletion-demote-cadence-in-passes=3"})
-              .starts_with("--deletion-demote-cadence-in-passes requires"));
+    CHECK(refusal({"--deletion=false", "--deletion-cadence-coefficient=0.5"})
+              .starts_with("--deletion-cadence-coefficient requires"));
     // Only CSIDS scores clauses, so only CSIDS can bump the pivots.
     CHECK(refusal({"--decisions=fixed_literals", "--deletion=false",
                    "--bump-responsible-clauses=true"})
@@ -429,7 +438,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK_NOTHROW(parse_with_input({"--implication-graph=true", "--proof-raw=p.raw"}));
 
     // Each of these is given where something does read it.
-    CHECK(parse_with_input({"--deletion-cadence=8"}).deletion_cadence == 8);
+    CHECK(parse_with_input({"--deletion-wait=8"}).deletion_wait == doctest::Approx(8.0));
     CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-min-ratio=1.2"}).restart_lbd_min_ratio ==
           doctest::Approx(1.2));
     CHECK(refusal({"--selection=exact_watchlist", "--propagate-miss-rate=1"})

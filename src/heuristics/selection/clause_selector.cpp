@@ -16,8 +16,9 @@ void ClauseSelector::debug_assert_database_synchronized() const {
            "clause database and activity flags are desynchronized");
     assert(clauses_.size() == clause_learned_.size() &&
            clauses_.size() == clause_used_since_deletion_.size() &&
-           clauses_.size() == clause_tier_.size() && clauses_.size() == clause_lbd_.size() &&
+           clauses_.size() == clause_lbd_.size() &&
            clauses_.size() == clause_unused_passes_.size() &&
+           clauses_.size() == clause_out_of_unused_passes_.size() &&
            clauses_.size() == clause_spans_eq_false_.size() &&
            clauses_.size() == clause_entered_.size() &&
            "clause database and metadata are desynchronized");
@@ -198,32 +199,20 @@ bool ClauseSelector::is_clause_learned(ClauseId id) const {
     return clause_learned_[id] != 0;
 }
 
-std::size_t ClauseSelector::clause_lbd(ClauseId id) const {
+double ClauseSelector::clause_lbd(ClauseId id) const {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
 #endif
+    assert(clause_learned_[id] != 0 && "only a learned clause has an LBD");
     return clause_lbd_[id];
 }
 
-void ClauseSelector::set_clause_lbd(ClauseId id, std::size_t lbd) {
+void ClauseSelector::set_clause_lbd(ClauseId id, double lbd) {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
 #endif
+    assert(clause_learned_[id] != 0 && "only a learned clause has an LBD");
     clause_lbd_[id] = lbd;
-}
-
-ClauseTier ClauseSelector::clause_tier(ClauseId id) const {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    return clause_tier_[id];
-}
-
-void ClauseSelector::set_clause_tier(ClauseId id, ClauseTier tier) {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    clause_tier_[id] = tier;
 }
 
 bool ClauseSelector::is_clause_used_since_deletion(ClauseId id) const {
@@ -254,18 +243,18 @@ void ClauseSelector::set_clause_unused_passes(ClauseId id, std::size_t num_passe
     clause_unused_passes_[id] = num_passes;
 }
 
-void ClauseSelector::set_tier_config(const ClauseTierConfig& config) {
-    assert(clauses_.empty() && "the tier cutoffs must be set before any clause is added");
-    assert(config.core_lbd <= config.secondary_lbd &&
-           "the core cutoff must not exceed the secondary cutoff");
-    tier_config_ = config;
+bool ClauseSelector::is_clause_out_of_unused_passes(ClauseId id) const {
+#ifndef NDEBUG
+    debug_assert_clause_id(id);
+#endif
+    return clause_out_of_unused_passes_[id] != 0;
 }
 
-ClauseTier ClauseSelector::tier_for_lbd(std::size_t lbd) const {
-    if (lbd <= tier_config_.core_lbd) {
-        return ClauseTier::core;
-    }
-    return lbd <= tier_config_.secondary_lbd ? ClauseTier::secondary : ClauseTier::local;
+void ClauseSelector::set_clause_out_of_unused_passes(ClauseId id, bool out) {
+#ifndef NDEBUG
+    debug_assert_clause_id(id);
+#endif
+    clause_out_of_unused_passes_[id] = out ? 1 : 0;
 }
 
 void ClauseSelector::add_starting_clause(Clause clause) {
@@ -277,8 +266,7 @@ void ClauseSelector::add_asserting_clause(Clause clause, const Trail&,
     add_clause(std::move(clause));
     const ClauseId id = clauses_.size() - 1;
     clause_learned_[id] = 1;
-    clause_lbd_[id] = info.lbd;
-    clause_tier_[id] = tier_for_lbd(info.lbd);
+    clause_lbd_[id] = static_cast<double>(info.lbd);
 }
 
 void ClauseSelector::update_with_propagation(const Equation& reduced_eqn, const Trail& trail) {
@@ -335,11 +323,9 @@ void ClauseSelector::add_clause(Clause clause) {
     unentered_clause_ids_.push_back(id);
     clause_learned_.push_back(0);
     clause_used_since_deletion_.push_back(0);
-    // A starting clause enters `local` with no LBD: it is tiered by its first use
-    // and, being unlearned, is never a deletion candidate.
-    clause_tier_.push_back(ClauseTier::local);
-    clause_lbd_.push_back(unset_clause_lbd);
+    clause_lbd_.push_back(0.0);
     clause_unused_passes_.push_back(0);
+    clause_out_of_unused_passes_.push_back(0);
 }
 
 void ClauseSelector::update_with_new_equation(const Equation&, const Trail&) {}

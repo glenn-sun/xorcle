@@ -101,8 +101,6 @@ struct SolverCounters {
 
     std::size_t num_deletion_passes = 0;
     std::size_t num_deleted_clauses = 0;
-    std::size_t num_demoted_clauses = 0;
-    std::size_t num_promoted_clauses = 0; ///< Reasons an improved LBD moved up a tier.
 
     std::size_t num_subsumed_clauses = 0;      ///< Reason clauses deleted as subsumed.
     std::size_t num_subsumed_conflicting_clauses = 0; ///< Of those, subsumed as the conflicting clause.
@@ -383,10 +381,6 @@ private:
     /// @pre `apply_substitution()` has just run.
     void apply_renumbering();
 
-    /// @brief Mark a resolved reason used, and promote it if this conflict
-    /// measured a better LBD than the stored one.
-    void note_reason_use(ClauseId id, std::size_t lbd);
-
     /// @brief Bump the clause owning each of a learned clause's pivots: the
     /// reason of that trail row, or the clause its decision was sampled from.
     void bump_responsible_clauses(const std::vector<std::size_t>& responsible_trail_idxs);
@@ -434,7 +428,7 @@ private:
                counters_.num_compaction_narrowed_to_width_2;
     }
 
-    /// @brief Demote, deactivate and clear the used flags a prepared plan calls for.
+    /// @brief Apply a prepared plan and clear the used flags.
     void apply_deletion(const DeletionPlan& plan);
 
     EquationRepr repr_;

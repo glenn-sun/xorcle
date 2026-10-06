@@ -36,8 +36,6 @@ constexpr Column columns[]{
     {"reused", 9, progress_group::search},
 
     {"deleted", 10, progress_group::deletion},
-    {"demoted", 10, progress_group::deletion},
-    {"promoted", 11, progress_group::deletion},
 
     {"attempts", 13, progress_group::propagation},
     {"watch updates", 16, progress_group::propagation},
@@ -68,8 +66,6 @@ std::array<std::string, std::size(columns)> cells_of(const ProgressSnapshot& sna
         std::to_string(snapshot.num_reused_levels),
 
         std::to_string(snapshot.num_deleted_clauses),
-        std::to_string(snapshot.num_demoted_clauses),
-        std::to_string(snapshot.num_promoted_clauses),
 
         std::to_string(snapshot.num_attempt_props),
         std::to_string(snapshot.num_watch_updates),

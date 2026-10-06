@@ -84,8 +84,6 @@ XORCLE_STAT(subsume, Count, num_subsume_replacements, "subsume_replacements", "S
 
 XORCLE_STAT(deletion, Count, num_deletion_passes, "deletion_passes", "Deletion passes")
 XORCLE_STAT(deletion, Count, num_deleted_clauses, "deleted_clauses", "Deleted clauses")
-XORCLE_STAT(deletion, Count, num_demoted_clauses, "demoted_clauses", "Tier demotions")
-XORCLE_STAT(deletion, Count, num_promoted_clauses, "promoted_clauses", "Tier promotions")
 
 // --- Deferred propagation, reported only under a budget ---------------------
 

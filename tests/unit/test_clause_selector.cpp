@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <optional>
 #include <vector>
 
@@ -452,59 +451,44 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
     Cyclic selector(4);
     const Trail trail(repr, 4);
 
-    SUBCASE("an input clause is unlearned and starts in local, with no LBD recorded") {
+    SUBCASE("an input clause is unlearned, with nothing counted") {
         selector.add_starting_clause(make_clause(repr, 4, {{0}}));
         CHECK_FALSE(selector.is_clause_learned(0));
-        CHECK(selector.clause_lbd(0) == unset_clause_lbd);
-        CHECK(selector.clause_tier(0) == ClauseTier::local);
         CHECK_FALSE(selector.is_clause_used_since_deletion(0));
         CHECK(selector.clause_unused_passes(0) == 0);
+        CHECK_FALSE(selector.is_clause_out_of_unused_passes(0));
     }
 
-    SUBCASE("a learned clause takes its LBD and the tier that LBD names") {
-        const ClauseTierConfig& cutoffs = selector.tier_config();
-        REQUIRE(cutoffs.core_lbd < cutoffs.secondary_lbd);
-
-        const std::size_t lbds[] = {cutoffs.core_lbd, cutoffs.core_lbd + 1, cutoffs.secondary_lbd,
-                                    cutoffs.secondary_lbd + 1};
-        const ClauseTier tiers[] = {ClauseTier::core, ClauseTier::secondary, ClauseTier::secondary,
-                                    ClauseTier::local};
-        for (std::size_t index = 0; index < std::size(lbds); ++index) {
-            selector.add_asserting_clause(
-                make_clause(repr, 4, {{index}}), trail,
-                AssertingClauseInfo{.lbd = lbds[index], .removed_levels = 0});
-            CHECK(selector.is_clause_learned(index));
-            CHECK(selector.clause_lbd(index) == lbds[index]);
-            CHECK(selector.clause_tier(index) == tiers[index]);
-        }
-    }
-
-    SUBCASE("the cutoffs are configurable before the first clause") {
-        selector.set_tier_config(ClauseTierConfig{.core_lbd = 1, .secondary_lbd = 1});
+    SUBCASE("a learned clause takes its LBD") {
         selector.add_asserting_clause(make_clause(repr, 4, {{0}}), trail,
-                                      AssertingClauseInfo{.lbd = 2, .removed_levels = 0});
-        CHECK(selector.clause_tier(0) == ClauseTier::local);
+                                      AssertingClauseInfo{.lbd = 3, .removed_levels = 0});
+        CHECK(selector.is_clause_learned(0));
+        CHECK(selector.clause_lbd(0) == 3.0);
+        CHECK(selector.clause_unused_passes(0) == 0);
+        CHECK_FALSE(selector.is_clause_out_of_unused_passes(0));
     }
 
     SUBCASE("the mutators are independent of the flags beside them") {
-        selector.add_starting_clause(make_clause(repr, 4, {{0}}));
-        selector.add_starting_clause(make_clause(repr, 4, {{1}}));
+        for (std::size_t index = 0; index < 2; ++index) {
+            selector.add_asserting_clause(make_clause(repr, 4, {{index}}), trail,
+                                          AssertingClauseInfo{.lbd = 3, .removed_levels = 0});
+        }
 
         selector.set_clause_used_since_deletion(1, true);
         selector.set_clause_unused_passes(1, 2);
-        selector.set_clause_tier(1, ClauseTier::local);
-        selector.set_clause_lbd(1, 7);
+        selector.set_clause_out_of_unused_passes(1, true);
+        selector.set_clause_lbd(1, 7.5);
 
         CHECK(selector.is_clause_used_since_deletion(1));
         CHECK(selector.clause_unused_passes(1) == 2);
-        CHECK(selector.clause_tier(1) == ClauseTier::local);
-        CHECK(selector.clause_lbd(1) == 7);
+        CHECK(selector.is_clause_out_of_unused_passes(1));
+        CHECK(selector.clause_lbd(1) == 7.5);
         CHECK(selector.is_clause_active(1));
 
         CHECK_FALSE(selector.is_clause_used_since_deletion(0));
         CHECK(selector.clause_unused_passes(0) == 0);
-        CHECK(selector.clause_tier(0) == ClauseTier::local);
-        CHECK(selector.clause_lbd(0) == unset_clause_lbd);
+        CHECK_FALSE(selector.is_clause_out_of_unused_passes(0));
+        CHECK(selector.clause_lbd(0) == 3.0);
     }
 
     SUBCASE("the active ids are walked in ascending order") {
@@ -609,8 +593,7 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
 
         CHECK_FALSE(selector.is_clause_learned(0));
         CHECK(selector.is_clause_learned(1));
-        CHECK(selector.clause_lbd(1) == 5);
-        CHECK(selector.clause_tier(1) == ClauseTier::secondary);
+        CHECK(selector.clause_lbd(1) == 5.0);
         CHECK(selector.is_clause_used_since_deletion(1));
         CHECK(selector.clause_unused_passes(1) == 3);
     }

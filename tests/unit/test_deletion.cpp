@@ -47,9 +47,6 @@ private:
 
 /// @brief A selector holding one unlearned clause under id 0 and then one
 /// learned clause per listed LBD, each a distinct unit row.
-///
-/// The tier cutoffs are left at their defaults, so the caller names the tier it
-/// wants by the LBD it passes.
 std::unique_ptr<Cyclic> make_selector(EquationRepr repr, std::size_t num_vars,
                                       const std::vector<std::size_t>& learned_lbds) {
     auto selector = std::make_unique<Cyclic>(num_vars);
@@ -75,14 +72,13 @@ Trail make_trail_with_reasons(EquationRepr repr, std::size_t num_vars,
     return trail;
 }
 
-/// @brief A pass demoting a `secondary` clause at its `demote_cadence_in_passes`-th consecutive
-/// unused pass.
 DeletionPlan plan_for(const ClauseSelector& selector, const Trail& trail, DeletionKey key,
                       const ClauseActivitySource* activity = nullptr,
-                      std::size_t demote_cadence_in_passes = 2) {
+                      double eviction_rate = DeletionConfig{}.eviction_rate) {
     return build_deletion_plan(DeletionState{.selector = selector,
                                              .trail = trail,
-                                             .demote_cadence_in_passes = demote_cadence_in_passes,
+                                             .wait = DeletionConfig{}.wait,
+                                             .eviction_rate = eviction_rate,
                                              .key = key,
                                              .activity = activity});
 }
@@ -93,23 +89,21 @@ bool contains(const std::vector<ClauseId>& ids, ClauseId id) {
 
 // --- Solver-level runs -----------------------------------------------------
 
+/// @brief A cadence coefficient whose gap between passes is one conflict for the first 22500.
+constexpr double every_conflict = 0.01;
+
 /// @brief Solve the sign patterns over four variables once, deleting on the given cadence.
 ///
-/// The default cutoffs put every learned clause in `local`, so a run of any
-/// length deletes.
-SolverCounters solve_deleting(EquationRepr repr, std::size_t cadence,
-                              ClauseTierConfig tiers = {.core_lbd = 0, .secondary_lbd = 0},
-                              std::size_t demote_cadence_in_passes = 200) {
+/// The default `wait` of zero allows only a clause of LBD 1 an unused pass, so a run
+/// of any length deletes.
+SolverCounters solve_deleting(EquationRepr repr, double cadence_coefficient, double wait = 0.0) {
     ParsedDimacs parsed = parse_dimacs_string(sign_pattern_instance(4), repr);
     const DeletionConfig deletion{.enabled = true,
-                                  .cadence = cadence,
-                                  .demote_cadence_in_passes = demote_cadence_in_passes,
-                                  .tiers = tiers,
+                                  .cadence_coefficient = cadence_coefficient,
+                                  .wait = wait,
                                   .key = DeletionKey::lbd};
 
-    auto selector = std::make_unique<Cyclic>(parsed.num_vars);
-    selector->set_tier_config(deletion.tiers);
-    Solver solver(repr, parsed.num_vars, std::move(selector),
+    Solver solver(repr, parsed.num_vars, std::make_unique<Cyclic>(parsed.num_vars),
                   std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
                   std::make_unique<NoRestarts>(), nullptr, CompactionConfig{}, ProgressConfig{},
                   true, deletion, false, false, PropagationConfig{},
@@ -124,12 +118,73 @@ SolverCounters solve_deleting(EquationRepr repr, std::size_t cadence,
 
 } // namespace
 
+TEST_CASE("deletion: the unused passes an LBD allows") {
+    CHECK(allowed_unused_passes(6.0, 6.0) == 1);
+    CHECK(allowed_unused_passes(5.0, 6.0) == 2);
+    CHECK(allowed_unused_passes(1.0, 6.0) == 32);
+    CHECK(allowed_unused_passes(7.0, 7.0) == 1);
+
+    SUBCASE("a fractional LBD rounds to the nearest pass") {
+        CHECK(allowed_unused_passes(2.5, 6.0) == 11); // 11.31
+        CHECK(allowed_unused_passes(4.5, 6.0) == 3);  // 2.83
+        CHECK(allowed_unused_passes(5.5, 6.0) == 1);  // 1.41
+    }
+
+    SUBCASE("half a pass rounds up to one, and less to none") {
+        CHECK(allowed_unused_passes(7.0, 6.0) == 1);
+        CHECK(allowed_unused_passes(7.25, 6.0) == 0);
+        CHECK(allowed_unused_passes(8.0, 6.0) == 0);
+    }
+}
+
+TEST_CASE("deletion: the conflicts between passes") {
+    const DeletionConfig by_sqrt{.cadence_coefficient = 0.5};
+    CHECK(conflicts_between_deletion_passes(by_sqrt, 10000) == 50);
+    CHECK(conflicts_between_deletion_passes(by_sqrt, 30) == 3); // 2.74
+    CHECK(conflicts_between_deletion_passes(by_sqrt, 0) == 1);
+}
+
+TEST_CASE_TEMPLATE("deletion: a use as a reason averages the measured LBD in", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const std::unique_ptr<Cyclic> selector = make_selector(repr, 8, {6});
+    REQUIRE(selector->clause_lbd(1) == 6.0);
+
+    SUBCASE("the LBD falls toward a better measurement and rises toward a worse one") {
+        update_with_reason_use(*selector, 1, 2, DeletionConfig{});
+        CHECK(selector->clause_lbd(1) == 4.0);
+        update_with_reason_use(*selector, 1, 2, DeletionConfig{});
+        CHECK(selector->clause_lbd(1) == 3.0);
+        update_with_reason_use(*selector, 1, 9, DeletionConfig{});
+        CHECK(selector->clause_lbd(1) == 6.0);
+        update_with_reason_use(*selector, 1, 9, DeletionConfig{});
+        CHECK(selector->clause_lbd(1) == 7.5);
+    }
+
+    SUBCASE("the measurement's share is the window's reciprocal") {
+        update_with_reason_use(*selector, 1, 2, DeletionConfig{.lbd_window = 4});
+        CHECK(selector->clause_lbd(1) == 5.0);
+        update_with_reason_use(*selector, 1, 9, DeletionConfig{.lbd_window = 1});
+        CHECK(selector->clause_lbd(1) == 9.0);
+    }
+
+    SUBCASE("the use is recorded for the next pass") {
+        update_with_reason_use(*selector, 1, 6, DeletionConfig{});
+        CHECK(selector->is_clause_used_since_deletion(1));
+    }
+
+    SUBCASE("a starting clause records nothing") {
+        update_with_reason_use(*selector, 0, 2, DeletionConfig{});
+        CHECK_FALSE(selector->is_clause_used_since_deletion(0));
+    }
+}
+
 TEST_CASE_TEMPLATE("deletion: a locked clause is neither deleted nor counted", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    // Four local clauses under ids 1..4, the first of them the worst by LBD.
+    // Four candidates under ids 1..4, the first of them the worst by LBD.
     const std::unique_ptr<Cyclic> selector = make_selector(repr, 8, {12, 11, 10, 9});
-    REQUIRE(selector->clause_tier(1) == ClauseTier::local);
+    REQUIRE(is_deletion_candidate(*selector, 1, 6.0));
 
     SUBCASE("the reason a trail row names survives its own key") {
         const Trail trail = make_trail_with_reasons(repr, 8, {ClauseId{1}});
@@ -146,39 +201,35 @@ TEST_CASE_TEMPLATE("deletion: a locked clause is neither deleted nor counted", T
         CHECK(plan.deleted == std::vector<ClauseId>{1, 2});
     }
 
-    SUBCASE("a locked secondary clause does not age") {
-        const std::unique_ptr<Cyclic> secondary = make_selector(repr, 8, {5, 5});
-        REQUIRE(secondary->clause_tier(1) == ClauseTier::secondary);
+    SUBCASE("a locked clause with passes left does not age") {
+        const std::unique_ptr<Cyclic> allowed = make_selector(repr, 8, {5, 5});
         const Trail trail = make_trail_with_reasons(repr, 8, {ClauseId{1}});
 
-        const DeletionPlan plan = plan_for(*secondary, trail, DeletionKey::lbd);
+        const DeletionPlan plan = plan_for(*allowed, trail, DeletionKey::lbd);
         CHECK(plan.unused_passes[1] == 0);
         CHECK(plan.unused_passes[2] == 1);
-        CHECK(plan.demoted.empty());
+        CHECK(plan.out_of_unused_passes.empty());
     }
 }
 
-TEST_CASE_TEMPLATE("deletion: secondary demotion", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("deletion: running out of unused passes", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const std::unique_ptr<Cyclic> selector = make_selector(repr, 8, {5});
+    // LBD 5 allows two unused passes, LBD 4 four.
+    const std::unique_ptr<Cyclic> selector = make_selector(repr, 8, {5, 4});
     const Trail trail(repr, 8);
-    REQUIRE(selector->clause_tier(1) == ClauseTier::secondary);
+    REQUIRE_FALSE(is_deletion_candidate(*selector, 1, 6.0));
 
-    SUBCASE("the count accrues a pass at a time, and starts over at the demotion") {
+    SUBCASE("the count accrues a pass at a time, to what the LBD allows") {
         const DeletionPlan first = plan_for(*selector, trail, DeletionKey::lbd);
-        CHECK(first.demoted.empty());
+        CHECK(first.out_of_unused_passes.empty());
         CHECK(first.unused_passes[1] == 1);
+        CHECK(first.unused_passes[2] == 1);
 
-        selector->set_clause_unused_passes(1, first.unused_passes[1]);
+        selector->set_clause_unused_passes(1, 1);
+        selector->set_clause_unused_passes(2, 1);
         const DeletionPlan second = plan_for(*selector, trail, DeletionKey::lbd);
-        CHECK(second.demoted == std::vector<ClauseId>{1});
-        CHECK(second.unused_passes[1] == 0);
-    }
-
-    SUBCASE("a demote cadence of one demotes at the first unused pass") {
-        CHECK(plan_for(*selector, trail, DeletionKey::lbd, nullptr, 1).demoted ==
-              std::vector<ClauseId>{1});
-        CHECK(plan_for(*selector, trail, DeletionKey::lbd, nullptr, 1000).demoted.empty());
+        CHECK(second.out_of_unused_passes == std::vector<ClauseId>{1});
+        CHECK(second.unused_passes[2] == 2);
     }
 
     SUBCASE("a use resets the count") {
@@ -186,15 +237,84 @@ TEST_CASE_TEMPLATE("deletion: secondary demotion", Tag, DenseTag, SparseTag) {
         selector->set_clause_used_since_deletion(1, true);
 
         const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
-        CHECK(plan.demoted.empty());
+        CHECK(plan.out_of_unused_passes.empty());
         CHECK(plan.unused_passes[1] == 0);
     }
 
-    SUBCASE("a clause demoted here is not also deleted here") {
+    SUBCASE("a clause running out here is not also deleted here, but at the next pass") {
         selector->set_clause_unused_passes(1, 1);
+        selector->set_clause_unused_passes(2, 3);
         const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
-        REQUIRE(plan.demoted == std::vector<ClauseId>{1});
+        REQUIRE(plan.out_of_unused_passes == std::vector<ClauseId>{1, 2});
         CHECK(plan.deleted.empty());
+
+        selector->set_clause_out_of_unused_passes(1, true);
+        selector->set_clause_out_of_unused_passes(2, true);
+        CHECK(is_deletion_candidate(*selector, 1, 6.0));
+        CHECK(plan_for(*selector, trail, DeletionKey::lbd).deleted == std::vector<ClauseId>{1});
+    }
+
+    SUBCASE("a higher wait allows more passes") {
+        selector->set_clause_unused_passes(1, 1);
+        const DeletionPlan plan = build_deletion_plan(DeletionState{.selector = *selector,
+                                                                    .trail = trail,
+                                                                    .wait = 7.0,
+                                                                    .eviction_rate = 0.5,
+                                                                    .key = DeletionKey::lbd,
+                                                                    .activity = nullptr});
+        CHECK(plan.out_of_unused_passes.empty());
+        CHECK(plan.unused_passes[1] == 2);
+    }
+}
+
+TEST_CASE_TEMPLATE("deletion: a use as a reason and a deletion candidate", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const std::unique_ptr<Cyclic> selector = make_selector(repr, 8, {5, 9});
+    const Trail trail(repr, 8);
+
+    SUBCASE("a clause out of unused passes is allowed them afresh") {
+        selector->set_clause_unused_passes(1, 2);
+        selector->set_clause_out_of_unused_passes(1, true);
+        REQUIRE(is_deletion_candidate(*selector, 1, 6.0));
+
+        update_with_reason_use(*selector, 1, 5, DeletionConfig{});
+        CHECK_FALSE(is_deletion_candidate(*selector, 1, 6.0));
+        CHECK(selector->clause_unused_passes(1) == 0);
+
+        const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
+        CHECK_FALSE(contains(plan.deleted, ClauseId{1}));
+        CHECK(plan.unused_passes[1] == 0);
+    }
+
+    SUBCASE("a clause whose LBD allowed none is allowed some once its LBD does") {
+        REQUIRE(is_deletion_candidate(*selector, 2, 6.0));
+        update_with_reason_use(*selector, 2, 3, DeletionConfig{});
+        CHECK(selector->clause_lbd(2) == 6.0);
+        CHECK_FALSE(is_deletion_candidate(*selector, 2, 6.0));
+    }
+
+    SUBCASE("a use at too high an LBD leaves a candidate one") {
+        selector->set_clause_out_of_unused_passes(1, true);
+        update_with_reason_use(*selector, 1, 11, DeletionConfig{});
+        CHECK(selector->clause_lbd(1) == 8.0);
+        CHECK(is_deletion_candidate(*selector, 1, 6.0));
+    }
+
+    SUBCASE("a use at too high an LBD makes a candidate of a clause with passes left") {
+        selector->set_clause_unused_passes(1, 1);
+        update_with_reason_use(*selector, 1, 11, DeletionConfig{});
+        REQUIRE(is_deletion_candidate(*selector, 1, 6.0));
+
+        // The use does not protect it: both candidates are ordered, and the worse goes.
+        CHECK(plan_for(*selector, trail, DeletionKey::lbd).deleted == std::vector<ClauseId>{2});
+    }
+
+    SUBCASE("a use that leaves passes to spare keeps the count for the pass to reset") {
+        selector->set_clause_unused_passes(1, 1);
+        update_with_reason_use(*selector, 1, 5, DeletionConfig{});
+        CHECK(selector->clause_unused_passes(1) == 1);
+        CHECK(plan_for(*selector, trail, DeletionKey::lbd).unused_passes[1] == 0);
     }
 }
 
@@ -205,8 +325,14 @@ TEST_CASE_TEMPLATE("deletion: what the keys order", Tag, DenseTag, SparseTag) {
     SUBCASE("lbd deletes the highest LBD, and the older id of a tie") {
         const std::unique_ptr<Cyclic> selector = make_selector(repr, 8, {9, 12, 12, 10});
         const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
-        // Ordered 2, 3, 4, 1; the worse half is the first two, reported ascending.
+        // Ordered 2, 3, 4, 1; the first two are evicted, reported ascending.
         CHECK(plan.deleted == std::vector<ClauseId>{2, 3});
+    }
+
+    SUBCASE("lbd reads the averaged LBD") {
+        const std::unique_ptr<Cyclic> selector = make_selector(repr, 8, {9, 9});
+        selector->set_clause_lbd(2, 9.5);
+        CHECK(plan_for(*selector, trail, DeletionKey::lbd).deleted == std::vector<ClauseId>{2});
     }
 
     SUBCASE("activity deletes the lowest activity, and the older id of a tie") {
@@ -226,27 +352,47 @@ TEST_CASE_TEMPLATE("deletion: what the keys order", Tag, DenseTag, SparseTag) {
     }
 }
 
+TEST_CASE_TEMPLATE("deletion: the eviction rate is the fraction of the candidates deleted", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const Trail trail(repr, 8);
+    const std::unique_ptr<Cyclic> even = make_selector(repr, 8, {12, 11, 10, 9});
+    const std::unique_ptr<Cyclic> odd = make_selector(repr, 8, {13, 12, 11, 10, 9});
+    const auto evicted = [&](const Cyclic& selector, double eviction_rate) {
+        return plan_for(selector, trail, DeletionKey::lbd, nullptr, eviction_rate).deleted;
+    };
+
+    CHECK(evicted(*even, 0.0).empty());
+    CHECK(evicted(*odd, 0.0).empty());
+    CHECK(evicted(*even, 0.5) == std::vector<ClauseId>{1, 2});
+    CHECK(evicted(*odd, 0.5) == std::vector<ClauseId>{1, 2});
+    CHECK(evicted(*even, 0.75) == std::vector<ClauseId>{1, 2, 3});
+    CHECK(evicted(*odd, 0.75) == std::vector<ClauseId>{1, 2, 3});
+    CHECK(evicted(*even, 1.0) == std::vector<ClauseId>{1, 2, 3, 4});
+    CHECK(evicted(*odd, 1.0) == std::vector<ClauseId>{1, 2, 3, 4, 5});
+}
+
 TEST_CASE_TEMPLATE("deletion: what is never a candidate", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const Trail trail(repr, 8);
 
-    SUBCASE("an input clause, however the cutoffs are set") {
+    SUBCASE("an input clause") {
         auto selector = std::make_unique<Cyclic>(8);
-        selector->set_tier_config(ClauseTierConfig{.core_lbd = 0, .secondary_lbd = 0});
         for (std::size_t index = 0; index < 4; ++index) {
             selector->add_starting_clause(make_clause(repr, 8, {{index}}));
         }
-        REQUIRE(selector->clause_tier(0) == ClauseTier::local);
 
         const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
         CHECK(plan.deleted.empty());
+        CHECK(plan.out_of_unused_passes.empty());
+        CHECK(plan.unused_passes[0] == 0);
     }
 
-    SUBCASE("a core clause") {
+    SUBCASE("a clause with unused passes left") {
         const std::unique_ptr<Cyclic> selector = make_selector(repr, 8, {1, 2, 3, 3});
         const DeletionPlan plan = plan_for(*selector, trail, DeletionKey::lbd);
         CHECK(plan.deleted.empty());
-        CHECK(plan.demoted.empty());
+        CHECK(plan.out_of_unused_passes.empty());
     }
 
     SUBCASE("a clause already deleted") {
@@ -277,8 +423,8 @@ TEST_CASE_TEMPLATE("deletion: a deleted clause is compaction's placeholder", Tag
 TEST_CASE_TEMPLATE("deletion: a run deletes, and deletes the same way twice", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const SolverCounters first = solve_deleting(repr, 1);
-    const SolverCounters second = solve_deleting(repr, 1);
+    const SolverCounters first = solve_deleting(repr, every_conflict);
+    const SolverCounters second = solve_deleting(repr, every_conflict);
 
     CHECK(first.num_deletion_passes != 0);
     CHECK(first.num_deleted_clauses != 0);
@@ -287,42 +433,20 @@ TEST_CASE_TEMPLATE("deletion: a run deletes, and deletes the same way twice", Ta
     CHECK(first.num_propagations == second.num_propagations);
     CHECK(first.num_deletion_passes == second.num_deletion_passes);
     CHECK(first.num_deleted_clauses == second.num_deleted_clauses);
-    CHECK(first.num_demoted_clauses == second.num_demoted_clauses);
-    CHECK(first.num_promoted_clauses == second.num_promoted_clauses);
 }
 
-TEST_CASE_TEMPLATE("deletion: a reason resolved at a better LBD is promoted", Tag, DenseTag,
-                   SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
-    // Cutoffs low enough that a clause can be learned below them and still be
-    // resolved against later at an LBD that crosses one.
-    const SolverCounters counters =
-        solve_deleting(repr, 1, ClauseTierConfig{.core_lbd = 1, .secondary_lbd = 2});
-    CHECK(counters.num_promoted_clauses != 0);
-}
-
-TEST_CASE_TEMPLATE("deletion: a run whose learned clauses are all core deletes none", Tag,
+TEST_CASE_TEMPLATE("deletion: a run whose learned clauses never run out deletes none", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const SolverCounters all_core =
-        solve_deleting(repr, 1, ClauseTierConfig{.core_lbd = 64, .secondary_lbd = 64});
-    CHECK(all_core.num_deletion_passes != 0);
-    CHECK(all_core.num_deleted_clauses == 0);
-}
-
-TEST_CASE_TEMPLATE("deletion: a shorter demote cadence demotes more", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
-    // Cutoffs that leave a secondary to demote out of.
-    constexpr ClauseTierConfig tiers{.core_lbd = 1, .secondary_lbd = 2};
-
-    CHECK(solve_deleting(repr, 1, tiers, 1).num_demoted_clauses != 0);
-    CHECK(solve_deleting(repr, 1, tiers, 1000).num_demoted_clauses == 0);
+    const SolverCounters counters = solve_deleting(repr, every_conflict, 62.0);
+    CHECK(counters.num_deletion_passes != 0);
+    CHECK(counters.num_deleted_clauses == 0);
 }
 
 TEST_CASE_TEMPLATE("deletion: a longer pass cadence deletes less often", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const SolverCounters often = solve_deleting(repr, 1);
-    const SolverCounters seldom = solve_deleting(repr, 1000);
+    const SolverCounters often = solve_deleting(repr, every_conflict);
+    const SolverCounters seldom = solve_deleting(repr, 1000.0);
 
     CHECK(often.num_deletion_passes > seldom.num_deletion_passes);
     CHECK(seldom.num_deletion_passes == 0);

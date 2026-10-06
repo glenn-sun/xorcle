@@ -106,6 +106,15 @@ add_test(NAME proof_roundtrip_cyclic
             --selection=cyclic)
 set_tests_properties(proof_roundtrip_cyclic PROPERTIES SKIP_RETURN_CODE 77)
 
+# At the defaults few clauses run out of unused passes in a run this short, so this
+# shortens the gap between passes and what an LBD allows until clauses that had passes
+# left are deleted.
+add_test(NAME proof_roundtrip_unused_passes
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --deletion-cadence-coefficient=0.7 --deletion-wait=3)
+set_tests_properties(proof_roundtrip_unused_passes PROPERTIES SKIP_RETURN_CODE 77)
+
 # The sparse representation, which runs only the cyclic selector.
 add_test(NAME proof_roundtrip_sparse
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh

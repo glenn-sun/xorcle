@@ -61,8 +61,6 @@ struct ProgressSnapshot {
     std::size_t num_reused_levels = 0;
 
     std::size_t num_deleted_clauses = 0;
-    std::size_t num_demoted_clauses = 0;
-    std::size_t num_promoted_clauses = 0;
 
     std::size_t num_attempt_props = 0;
     std::size_t num_watch_updates = 0;

@@ -278,7 +278,8 @@ void Solver::handle_non_root_conflict() {
     if (deletion_.enabled) {
         // Before the proof path reverses `reason_ids`, which `reason_lbds` parallels.
         for (std::size_t i = 0; i < learned.reason_ids.size(); ++i) {
-            note_reason_use(learned.reason_ids[i], learned.reason_lbds[i]);
+            update_with_reason_use(*selector_, learned.reason_ids[i], learned.reason_lbds[i],
+                                   deletion_);
         }
     }
     // With the resolved-clause bumps, before the decay below.
@@ -390,12 +391,9 @@ void Solver::handle_non_root_conflict() {
         if (reason_still_named(record)) {
             continue;
         }
-        // A replacement takes the subsumed clause's standing, and so on along
-        // chains of replacements: what replaces an input clause is no more a
-        // deletion candidate than the input clause was, and what replaces a core
-        // clause stays in core.
+        // What replaces an input clause is no more a deletion candidate than the
+        // input clause was, and so on along chains of replacements.
         const bool replaces_input = !selector_->is_clause_learned(record.clause_id);
-        const bool replaces_core = selector_->clause_tier(record.clause_id) == ClauseTier::core;
         ClauseId replacement_id = new_clause_id;
         if (record.replacement.has_value()) {
             replacement_id = selector_->num_clauses();
@@ -418,8 +416,6 @@ void Solver::handle_non_root_conflict() {
         }
         if (replaces_input) {
             selector_->set_clause_learned(replacement_id, false);
-        } else if (replaces_core) {
-            selector_->set_clause_tier(replacement_id, ClauseTier::core);
         }
         decisions_->update_with_subsumed_clause(record.clause_id, replacement_id);
     }
@@ -714,8 +710,6 @@ ProgressSnapshot Solver::progress_snapshot() const {
         .num_restarts = counters_.num_restarts,
         .num_reused_levels = counters_.num_reused_levels,
         .num_deleted_clauses = counters_.num_deleted_clauses,
-        .num_demoted_clauses = counters_.num_demoted_clauses,
-        .num_promoted_clauses = counters_.num_promoted_clauses,
         .num_attempt_props = counters_.num_attempt_props,
         .num_watch_updates = counters_.num_watch_updates};
 }
@@ -829,24 +823,6 @@ void Solver::apply_renumbering() {
     ++counters_.num_renumberings;
 }
 
-void Solver::note_reason_use(ClauseId id, std::size_t lbd) {
-    selector_->set_clause_used_since_deletion(id, true);
-    // A starting clause is tiered by its uses too, so this does not check for a
-    // learned one; its LBD starts unset, so the first use always records.
-    if (lbd >= selector_->clause_lbd(id)) {
-        return;
-    }
-    selector_->set_clause_lbd(id, lbd);
-
-    // `ClauseTier` runs longest-lived first, so a smaller tier is a promotion.
-    const ClauseTier tier = selector_->tier_for_lbd(lbd);
-    if (tier < selector_->clause_tier(id)) {
-        selector_->set_clause_tier(id, tier);
-        selector_->set_clause_unused_passes(id, 0);
-        ++counters_.num_promoted_clauses;
-    }
-}
-
 void Solver::bump_responsible_clauses(const std::vector<std::size_t>& responsible_trail_idxs) {
     for (const std::size_t trail_idx : responsible_trail_idxs) {
         assert(trail_idx < trail_.reasons().size() && "a pivot names no trail row");
@@ -872,14 +848,15 @@ void Solver::maybe_delete_clauses() {
     if (!deletion_.enabled) {
         return;
     }
-    if (counters_.num_conflicts - conflicts_at_last_deletion_ < deletion_.cadence) {
+    if (counters_.num_conflicts - conflicts_at_last_deletion_ <
+        conflicts_between_deletion_passes(deletion_, counters_.num_conflicts)) {
         return;
     }
     conflicts_at_last_deletion_ = counters_.num_conflicts;
     apply_deletion(build_deletion_plan(DeletionState{.selector = *selector_,
                                                      .trail = trail_,
-                                                     .demote_cadence_in_passes =
-                                                         deletion_.demote_cadence_in_passes,
+                                                     .wait = deletion_.wait,
+                                                     .eviction_rate = deletion_.eviction_rate,
                                                      .key = deletion_.key,
                                                      .activity = clause_activity_}));
 }
@@ -892,8 +869,8 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
         selector_->set_clause_unused_passes(clause_id, plan.unused_passes[clause_id]);
         selector_->set_clause_used_since_deletion(clause_id, false);
     }
-    for (const ClauseId clause_id : plan.demoted) {
-        selector_->set_clause_tier(clause_id, ClauseTier::local);
+    for (const ClauseId clause_id : plan.out_of_unused_passes) {
+        selector_->set_clause_out_of_unused_passes(clause_id, true);
     }
 
     if (proof_writer_ != nullptr && !plan.deleted.empty()) {
@@ -907,7 +884,6 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
     ++counters_.num_deletion_passes;
     num_active_clauses_ -= plan.deleted.size();
     counters_.num_deleted_clauses += plan.deleted.size();
-    counters_.num_demoted_clauses += plan.demoted.size();
 }
 
 bool Solver::maybe_run_implication_graph() {
@@ -1196,8 +1172,6 @@ void Solver::add_to_stats(RunStats& stats) const {
 
     stats.num_deletion_passes = counters_.num_deletion_passes;
     stats.num_deleted_clauses = counters_.num_deleted_clauses;
-    stats.num_demoted_clauses = counters_.num_demoted_clauses;
-    stats.num_promoted_clauses = counters_.num_promoted_clauses;
 
     const ImplicationGraphCounters& graph = implication_graph_counters_;
     stats.implication_graph_runs = graph.num_runs;

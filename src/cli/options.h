@@ -151,8 +151,8 @@ inline std::string requirement_text(const std::string_view option) {
 
 // --- Spelling --------------------------------------------------------------
 
-/// @brief The command-line spelling of a table name: `deletion_cadence` becomes
-/// `--deletion-cadence`.
+/// @brief The command-line spelling of a table name: `deletion_lbd_window` becomes
+/// `--deletion-lbd-window`.
 inline std::string cli_spelling(std::string_view table_name) {
     std::string out = "--";
     for (const char c : table_name) {
@@ -164,7 +164,7 @@ inline std::string cli_spelling(std::string_view table_name) {
 /// @brief The table name of a command-line option name, `--` already stripped.
 ///
 /// Dashes and underscores are interchangeable in an option name, so
-/// `--deletion-cadence` and `--deletion_cadence` are the same option. The dashed
+/// `--deletion-lbd-window` and `--deletion_lbd_window` are the same option. The dashed
 /// form is the one `--help` and the error messages use.
 inline std::string table_name_of(std::string_view spelling) {
     std::string out;
@@ -526,8 +526,8 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
         throw CliError("--report='" + options.report +
                        "' is not a comma-joined list of: " + progress_group_names());
     }
-    if (options.deletion_core_lbd > options.deletion_secondary_lbd) {
-        throw CliError("--deletion-core-lbd must not exceed --deletion-secondary-lbd");
+    if (options.deletion_cadence_coefficient == 0.0) {
+        throw CliError("--deletion-cadence-coefficient must be positive");
     }
     if (options.deletion && options.deletion_key == DeletionKey::activity &&
         options.decisions != DecisionProcedureName::csids) {
@@ -631,10 +631,10 @@ inline ImplicationGraphConfig implication_graph_config(const Options& options) {
 
 inline DeletionConfig deletion_config(const Options& options) {
     return DeletionConfig{.enabled = options.deletion,
-                          .cadence = options.deletion_cadence,
-                          .demote_cadence_in_passes = options.deletion_demote_cadence_in_passes,
-                          .tiers = ClauseTierConfig{.core_lbd = options.deletion_core_lbd,
-                                                    .secondary_lbd = options.deletion_secondary_lbd},
+                          .cadence_coefficient = options.deletion_cadence_coefficient,
+                          .wait = options.deletion_wait,
+                          .lbd_window = options.deletion_lbd_window,
+                          .eviction_rate = options.deletion_eviction_rate,
                           .key = options.deletion_key};
 }
 
@@ -672,15 +672,13 @@ inline std::unique_ptr<Solver> make_solver(const Options& options, std::size_t n
     if (selector == nullptr) {
         selector = make_clause_selector(options.selection, num_vars);
     }
-    const DeletionConfig deletion = deletion_config(options);
-    selector->set_tier_config(deletion.tiers);
     return std::make_unique<Solver>(
         options.equation_repr, num_vars, std::move(selector),
         make_decision_procedure(options.decisions, options.equation_repr, num_vars, options.seed,
                                 options.phase, csids_config(options)),
         make_restart_policy(restart_config(options)), proof_writer, compaction_config(options),
         ProgressConfig{.reporter = progress_reporter, .cadence = options.report_cadence},
-        options.minimize, deletion, options.bump_responsible_clauses, options.subsume,
+        options.minimize, deletion_config(options), options.bump_responsible_clauses, options.subsume,
         propagation_config(options), implication_graph_config(options));
 }
 

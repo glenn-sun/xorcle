@@ -6,8 +6,8 @@
 /// `src/cli/options.h` includes it once per macro.
 ///
 /// - `XORCLE_OPTION(name, kind, default, lo, hi, help)` — a scalar option. The
-///   command line spells `name` with dashes, so `deletion_cadence` is
-///   `--deletion-cadence`. `kind` is one of the `OptionKind` tags: `Bool`, `U64`,
+///   command line spells `name` with dashes, so `deletion_lbd_window` is
+///   `--deletion-lbd-window`. `kind` is one of the `OptionKind` tags: `Bool`, `U64`,
 ///   `Size`, `Real` (all four have inclusive bounds), `Text` (a free-form
 ///   string, e.g. a path) or `Name` (a string from a fixed vocabulary the
 ///   option checks for itself, in `validate_options`). The last two are
@@ -130,14 +130,17 @@ XORCLE_OPTION(subsume, Bool, true, false, true,
 
 XORCLE_OPTION(deletion, Bool, true, false, true,
               "periodically delete some learned clauses")
-XORCLE_OPTION(deletion_cadence, Size, 100, 1, SIZE_MAX, "conflicts between deletion passes")
-XORCLE_OPTION(deletion_core_lbd, Size, 2, 0, SIZE_MAX,
-              "a learned clause of at most this LBD is never deleted")
-XORCLE_OPTION(deletion_secondary_lbd, Size, 6, 0, SIZE_MAX,
-              "a learned clause of at most this LBD survives until unused for "
-              "--deletion-demote-cadence-in-passes deletion passes")
-XORCLE_OPTION(deletion_demote_cadence_in_passes, Size, 2, 1, SIZE_MAX,
-              "consecutive deletion passes a secondary-tier clause goes unused before it becomes local")
+XORCLE_OPTION(deletion_cadence_coefficient, Real, 0.3, 0.0, INFINITY,
+              "conflicts between deletion passes are this times the square root of the "
+              "conflicts so far (positive)")
+XORCLE_OPTION(deletion_wait, Real, 6.0, 0.0, 62.0,
+              "a learned clause may go unused for round(2^(wait - LBD)) consecutive deletion "
+              "passes before it can be deleted")
+XORCLE_OPTION(deletion_lbd_window, Size, 2, 1, SIZE_MAX,
+              "window of the average of the LBDs measured at a learned clause's uses as a reason")
+XORCLE_OPTION(deletion_eviction_rate, Real, 0.5, 0.0, 1.0,
+              "fraction of the deletion candidates a deletion pass evicts, worst first by "
+              "--deletion-key")
 
 XORCLE_ENUM_OPTION(deletion_key, DeletionKey, DeletionKey::activity,
                    "which score orders a deletion pass (activity requires CSIDS)")
@@ -206,10 +209,10 @@ XORCLE_REQUIRES(restart_lbd_min_ratio, options.restart == RestartMethod::lbd, "-
 XORCLE_REQUIRES(restart_lbd_min_conflicts, options.restart == RestartMethod::lbd, "--restart=lbd")
 XORCLE_REQUIRES(restart_lbd_trail_ratio, options.restart == RestartMethod::lbd, "--restart=lbd")
 
-XORCLE_REQUIRES(deletion_cadence, options.deletion, "--deletion=true")
-XORCLE_REQUIRES(deletion_core_lbd, options.deletion, "--deletion=true")
-XORCLE_REQUIRES(deletion_secondary_lbd, options.deletion, "--deletion=true")
-XORCLE_REQUIRES(deletion_demote_cadence_in_passes, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_cadence_coefficient, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_wait, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_lbd_window, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_eviction_rate, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_key, options.deletion, "--deletion=true")
 
 XORCLE_REQUIRES(implication_graph_clause_cadence, options.implication_graph,

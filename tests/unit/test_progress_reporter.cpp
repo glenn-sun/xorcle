@@ -37,8 +37,6 @@ ProgressSnapshot sample_snapshot() {
                             .num_restarts = 3,
                             .num_reused_levels = 7,
                             .num_deleted_clauses = 640,
-                            .num_demoted_clauses = 512,
-                            .num_promoted_clauses = 96,
                             .num_attempt_props = 31415,
                             .num_watch_updates = 2718};
 }
@@ -115,7 +113,7 @@ TEST_CASE("progress: a group adds its columns to the default ones") {
     REQUIRE(lines.size() == 2);
     CHECK(values_of(lines[1]) == std::vector<std::string>{"1.50", "1024", "682.5", "987654",
                                                           "4096", "17.2", "41.5", "128",
-                                                          "640", "512", "96"});
+                                                          "640"});
 }
 
 TEST_CASE("progress: --report names map onto the groups") {
