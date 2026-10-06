@@ -12,11 +12,10 @@
 namespace xorcle {
 
 /// @brief Rewrite an assignment over the active variables into the original numbering.
-/// @pre `compaction_history` runs oldest first and chains: entry `i`'s
-/// `transform.new_num_vars()` is entry `i + 1`'s `old_num_vars()`.
+/// @pre `compaction_history` runs oldest first, and each entry's rows are over the
+/// numbering the latest renumbering before it left.
 /// @pre `active_assignment` is indexed by active variable, over
-/// `compaction_history.back().transform.new_num_vars()` of them, or, with no history,
-/// `active_var_to_original.size()`.
+/// `active_var_to_original.size()` of them.
 /// @pre Every entry of `active_var_to_original` is `< original_num_vars`, and every row
 /// of every entry's `trail_rows_before` is non-zero with a variable leading bit.
 IndexSet reconstruct_original_assignment(

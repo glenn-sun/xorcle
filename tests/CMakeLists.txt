@@ -97,14 +97,6 @@ add_test(NAME proof_roundtrip_no_compact
             --compact=false)
 set_tests_properties(proof_roundtrip_no_compact PROPERTIES SKIP_RETURN_CODE 77)
 
-# Compacting at every opportunity, so most reason clauses are proved again from
-# the root units compaction threw away before a chain cites them.
-add_test(NAME proof_roundtrip_compact_often
-    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
-            --compact-cadence=1)
-set_tests_properties(proof_roundtrip_compact_often PROPERTIES SKIP_RETURN_CODE 77)
-
 # The default exact watchlist hands the propagator a trigger hint; the cyclic
 # selector does not, so its attempts reach their reasons by a path of their own,
 # and its default miss rate leaves propagation short of a fixed point.
@@ -130,12 +122,11 @@ add_test(NAME proof_roundtrip_implication_graph
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> rand_qp "n=12;m=36;planted=0" 1)
 set_tests_properties(proof_roundtrip_implication_graph PROPERTIES SKIP_RETURN_CODE 77)
 
-# 135 variables, three words a row, compacting at every conflict, so rewrite
-# lines and the compaction records span word boundaries.
+# 135 variables, three words a row, so rewrite lines and the compaction records
+# span word boundaries.
 add_test(NAME proof_roundtrip_wide
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect "^c Compactions: [1-9]"
-            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> tseitin "n=90;k=3" 1
-            --compact-cadence=1)
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> tseitin "n=90;k=3" 1)
 set_tests_properties(proof_roundtrip_wide PROPERTIES SKIP_RETURN_CODE 77)
 
 # CNF-XOR input numbers its XOR lines among the clauses in file order, which the

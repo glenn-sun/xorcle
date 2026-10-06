@@ -151,8 +151,8 @@ inline std::string requirement_text(const std::string_view option) {
 
 // --- Spelling --------------------------------------------------------------
 
-/// @brief The command-line spelling of a table name: `compact_cadence` becomes
-/// `--compact-cadence`.
+/// @brief The command-line spelling of a table name: `deletion_cadence` becomes
+/// `--deletion-cadence`.
 inline std::string cli_spelling(std::string_view table_name) {
     std::string out = "--";
     for (const char c : table_name) {
@@ -164,7 +164,7 @@ inline std::string cli_spelling(std::string_view table_name) {
 /// @brief The table name of a command-line option name, `--` already stripped.
 ///
 /// Dashes and underscores are interchangeable in an option name, so
-/// `--compact-cadence` and `--compact_cadence` are the same option. The dashed
+/// `--deletion-cadence` and `--deletion_cadence` are the same option. The dashed
 /// form is the one `--help` and the error messages use.
 inline std::string table_name_of(std::string_view spelling) {
     std::string out;
@@ -618,7 +618,7 @@ inline CsidsConfig csids_config(const Options& options) {
 }
 
 inline CompactionConfig compaction_config(const Options& options) {
-    return CompactionConfig{.enabled = options.compact, .cadence = options.compact_cadence};
+    return CompactionConfig{.enabled = options.compact};
 }
 
 inline ImplicationGraphConfig implication_graph_config(const Options& options) {

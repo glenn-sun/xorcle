@@ -105,9 +105,11 @@ public:
         const std::vector<std::optional<ClauseId>>& decision_clauses,
         const SatisfactionRecord& known = {}) override;
 
-    void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
-                                const std::vector<Clause>& clauses,
-                                const std::vector<std::uint8_t>& clause_active) override;
+    void update_with_substitution(const IndexSet& dropped_col_idxs,
+                                  const std::vector<Clause>& clauses,
+                                  const std::vector<std::uint8_t>& clause_active) override;
+
+    void update_with_renumbering(const CompactionTransform& transform) override;
 
     const IntersectionCounters& intersection_counters() const noexcept {
         return intersection_counters_;

@@ -5,10 +5,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <sstream>
-#include <string>
 #include <set>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -32,9 +33,20 @@ namespace {
 
 constexpr EquationRepr repr = EquationRepr::dense;
 
-/// @brief The active flags of a database in which every clause is live.
-std::vector<std::uint8_t> all_active(const std::vector<Clause>& clauses) {
-    return std::vector<std::uint8_t>(clauses.size(), 1);
+/// @brief The ids of a clause store, with the flags saying which are active.
+struct StoreIds {
+    std::vector<ClauseId> ids;
+    std::vector<std::uint8_t> is_active;
+
+    operator ActiveClauseIds() const { return {ids, is_active}; }
+};
+
+/// @brief The ids of a store in which every clause is active.
+StoreIds all_active(const std::vector<Clause>& clauses) {
+    StoreIds out{std::vector<ClauseId>(clauses.size()),
+                 std::vector<std::uint8_t>(clauses.size(), 1)};
+    std::iota(out.ids.begin(), out.ids.end(), ClauseId{0});
+    return out;
 }
 
 /// @brief The span of @p units, so a test can name a subspace rather than the
@@ -435,7 +447,8 @@ TEST_CASE("implication graph: every unit holds in every model of the active clau
             graph.set_base_seed(trial);
             ImplicationGraphProofRecord record;
             const ImplicationGraphRun run =
-                graph.run(clauses, active, RowSpace(repr, num_vars), &record);
+                graph.run(clauses, StoreIds{all_active(clauses).ids, active},
+                          RowSpace(repr, num_vars), &record);
             for (const Equation& unit : run.units) {
                 CHECK(holds_in_every_model(unit, clauses, active, num_vars));
             }

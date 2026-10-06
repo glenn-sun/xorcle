@@ -53,7 +53,8 @@ struct DeletionPlan {
     std::vector<ClauseId> deleted; ///< To delete, ascending.
     std::vector<ClauseId> demoted; ///< `secondary` clauses becoming `local`, ascending.
 
-    /// @brief The unused-pass count after the pass, by clause id.
+    /// @brief The unused-pass count after the pass, by clause id; zero for an
+    /// inactive clause.
     std::vector<std::size_t> unused_passes;
 };
 

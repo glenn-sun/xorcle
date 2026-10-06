@@ -6,8 +6,8 @@
 /// `src/cli/options.h` includes it once per macro.
 ///
 /// - `XORCLE_OPTION(name, kind, default, lo, hi, help)` — a scalar option. The
-///   command line spells `name` with dashes, so `compact_cadence` is
-///   `--compact-cadence`. `kind` is one of the `OptionKind` tags: `Bool`, `U64`,
+///   command line spells `name` with dashes, so `deletion_cadence` is
+///   `--deletion-cadence`. `kind` is one of the `OptionKind` tags: `Bool`, `U64`,
 ///   `Size`, `Real` (all four have inclusive bounds), `Text` (a free-form
 ///   string, e.g. a path) or `Name` (a string from a fixed vocabulary the
 ///   option checks for itself, in `validate_options`). The last two are
@@ -48,7 +48,6 @@ XORCLE_OPTION(seed, U64, 0, 0, UINT64_MAX, "RNG seed")
 
 XORCLE_OPTION(compact, Bool, true, false, true, "compaction: drop the leading variables of all known units and remove the\n"
               "clauses they satisfy")
-XORCLE_OPTION(compact_cadence, Size, 256, 1, SIZE_MAX, "number of conflicts between compactions")
 
 // --- Decisions -------------------------------------------------------------
 
@@ -182,8 +181,6 @@ XORCLE_OPTION(report, Name, "default", "", "",
 // (`deletion`, `restart_reuse_trail`) are checked against their value rather
 // than against having been given, in `validate_options`, because a `true`
 // claims the feature just as loudly whether it is a default or explicit.
-
-XORCLE_REQUIRES(compact_cadence, options.compact, "--compact=true")
 
 XORCLE_REQUIRES(csids_initial, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
 XORCLE_REQUIRES(csids_bump, options.decisions == DecisionProcedureName::csids, "--decisions=csids")

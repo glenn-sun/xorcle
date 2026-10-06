@@ -85,11 +85,21 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
         CHECK(procedure.counters().decisions == 0);
     }
 
-    SUBCASE("compaction rewrites the basis") {
+    SUBCASE("a substitution takes the dropped variable out of the basis") {
+        IndexSet dropped(5);
+        dropped.set(0);
+        procedure.update_with_substitution(dropped, clauses, {});
+        CHECK(procedure.num_vars() == 4);
+        CHECK(bits_of(*procedure.make_decision(empty, clauses, active).equation) ==
+              std::vector<std::size_t>{1});
+    }
+
+    SUBCASE("a renumbering rewrites the basis") {
         IndexSet dropped(5);
         dropped.set(0);
         const CompactionTransform transform = CompactionTransform::from_dropped_columns(4, dropped);
-        procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, {});
+        procedure.update_with_substitution(dropped, clauses, {});
+        procedure.update_with_renumbering(transform);
         CHECK(procedure.num_vars() == 3);
 
         const RowSpace compacted(repr, 3);
@@ -278,10 +288,12 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         dropped.set(0);
         const CompactionTransform transform = CompactionTransform::from_dropped_columns(4, dropped);
         const std::vector<std::uint8_t> clause_active{1, 0, 1};
-        procedure.update_with_compaction(transform, RowSpace(repr, 3), clauses, clause_active);
-
-        CHECK(procedure.num_vars() == 3);
+        procedure.update_with_substitution(dropped, clauses, clause_active);
+        CHECK(procedure.num_vars() == 4);
         CHECK(procedure.decision_clause_hint() == std::nullopt);
+
+        procedure.update_with_renumbering(transform);
+        CHECK(procedure.num_vars() == 3);
     }
 }
 

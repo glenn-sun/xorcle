@@ -37,8 +37,6 @@ class HintTrail;
 struct CompactionConfig {
     bool enabled = true;
 
-    std::size_t cadence = 256; ///< Conflicts between two successful compactions.
-
     bool operator==(const CompactionConfig&) const = default;
 };
 
@@ -79,6 +77,9 @@ struct SolverCounters {
     std::size_t num_restarts = 0;
     std::size_t num_reused_levels = 0; ///< Decision levels restarts kept instead of discarding.
     std::size_t num_compactions = 0;
+    std::size_t num_renumberings = 0; ///< Compactions that also renumbered.
+    std::size_t num_dropped_vars = 0;
+    std::size_t num_substituted_clauses = 0; ///< Clauses a compaction rewrote or deactivated.
 
     /// @brief Summed LBD of the clauses learned, for their mean.
     std::size_t sum_learned_lbd = 0;
@@ -176,9 +177,6 @@ struct ImplicationGraphCounters {
     std::size_t num_conflicts_waited = 0;
     std::size_t max_conflicts_waited = 0;
 
-    /// @brief Compactions the conflict interval would not have allowed.
-    std::size_t num_forced_compactions = 0;
-
     double span_intersection_time_s = 0.0; ///< Of the graph's own seconds.
     double time_s = 0.0;
 };
@@ -236,7 +234,7 @@ public:
     std::size_t num_active_clauses() const noexcept { return num_active_clauses_; }
 
     /// @brief Variables left after compaction, which is `num_vars()` until one runs.
-    std::size_t active_num_vars() const noexcept { return active_num_vars_; }
+    std::size_t active_num_vars() const noexcept { return active_num_vars_ - num_dropped_vars_; }
 
     std::size_t level() const noexcept { return trail_.level(); }
 
@@ -370,16 +368,20 @@ private:
     /// over the interval since the last one.
     ProgressSnapshot progress_snapshot() const;
 
-    /// @brief Compact if the trigger conditions hold; true if the active variable
-    /// numbering changed, in which case the caller must restart the loop rather
-    /// than decide.
+    /// @brief Compact if the trigger conditions hold; true if the root trail was
+    /// emptied, in which case the caller must restart the loop rather than decide.
     bool maybe_compact_before_decision();
 
-    /// @brief Replace every piece of active-numbering state with a prepared plan.
+    /// @brief Rewrite the clauses by a prepared plan and drop the variables the
+    /// root trail fixes.
     ///
     /// @warning This discards the root trail, so root-level units become
     /// unrecoverable from the clause database.
-    void apply_compaction(CompactionPlan plan);
+    void apply_substitution(SubstitutionPlan plan);
+
+    /// @brief Renumber the variables without the dropped ones.
+    /// @pre `apply_substitution()` has just run.
+    void apply_renumbering();
 
     /// @brief Mark a resolved reason used, and promote it if this conflict
     /// measured a better LBD than the stored one.
@@ -438,10 +440,16 @@ private:
     EquationRepr repr_;
 
     const std::size_t original_num_vars_;
+    /// @brief The variables of the active numbering, the dropped ones included.
     std::size_t active_num_vars_;
 
-    /// @brief Active to original variable index, composed across compactions.
+    /// @brief Active to original variable index, composed across renumberings.
     std::vector<std::size_t> active_var_to_original_;
+
+    /// @brief The variables dropped since the last renumbering, over
+    /// `active_num_vars_ + 1` columns: zero in every active clause, and never on the trail.
+    IndexSet dropped_col_idxs_;
+    std::size_t num_dropped_vars_ = 0;
 
     std::vector<CompactionHistoryEntry> compaction_history_; ///< Oldest first.
 
@@ -450,15 +458,10 @@ private:
     /// @brief `decisions_` as the score `DeletionKey::activity` reads; not owned.
     const ClauseActivitySource* clause_activity_ = nullptr;
 
-    /// @brief Whether a compaction is owed: before the first one, once the
-    /// conflict interval has elapsed since the last, and once the implication
-    /// graph has fed units.
-    bool compaction_is_due_ = true;
 #ifndef NDEBUG
     bool has_solved_ = false;
     std::size_t debug_quiescences_ = 0;
 #endif
-    std::size_t conflicts_at_last_compaction_ = 0;
     std::size_t conflicts_at_last_deletion_ = 0;
     std::size_t num_active_clauses_ = 0;
 

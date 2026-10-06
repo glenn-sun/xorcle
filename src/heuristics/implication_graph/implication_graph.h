@@ -125,10 +125,9 @@ public:
     /// A non-null `proof` is cleared and filled with a step per equation the run
     /// proved, and the step proving each of the run's `units`.
     ///
-    /// @pre `clause_is_active` is sized by clause id, and every clause shares
+    /// @pre `active_clause_ids` are ids of `clauses`, and every clause shares
     /// `root_span`'s representation and column count.
-    ImplicationGraphRun run(const std::vector<Clause>& clauses,
-                            const std::vector<std::uint8_t>& clause_is_active,
+    ImplicationGraphRun run(const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
                             const RowSpace& root_span,
                             ImplicationGraphProofRecord* proof = nullptr);
 
@@ -190,8 +189,8 @@ private:
     /// intersected with `T_not_a` holds in every solution, since exactly one of
     /// `a` and `not a` does.
     void walk_span_intersections(const RowSpace& root_span, const std::vector<Clause>& clauses,
-                                 const std::vector<std::uint8_t>& clause_is_active,
-                                 ImplicationGraphRun& summary, ImplicationGraphProofRecord* proof);
+                                 ActiveClauseIds active_clause_ids, ImplicationGraphRun& summary,
+                                 ImplicationGraphProofRecord* proof);
 
 #ifndef NDEBUG
     /// @brief Whether some path from @p from to @p to has every arc backed by
@@ -201,14 +200,12 @@ private:
     /// against the database rather than against its own bookkeeping.
     bool implication_is_clause_backed(std::size_t from, std::size_t to,
                                       const std::vector<Clause>& clauses,
-                                      const std::vector<std::uint8_t>& clause_is_active,
-                                      const RowSpace& root_span);
+                                      ActiveClauseIds active_clause_ids, const RowSpace& root_span);
 
     /// @brief Whether every arc the graph holds is backed by the width-2 clause
     /// it was built from, the clause read and reduced again.
     bool all_arcs_are_clause_backed(const std::vector<Clause>& clauses,
-                                    const std::vector<std::uint8_t>& clause_is_active,
-                                    const RowSpace& root_span);
+                                    ActiveClauseIds active_clause_ids, const RowSpace& root_span);
 #endif
 
     EquationRepr repr_;

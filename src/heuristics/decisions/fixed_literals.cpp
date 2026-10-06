@@ -28,15 +28,23 @@ DecisionResult FixedLiterals::make_decision(const RowSpace& trail_span, const st
            "the trail span does not match the procedure's variable count");
     assert(trail_span.repr() == repr() &&
            "the trail span does not match the procedure's representation");
-    assert(trail_span.rows() < num_vars() && "no legal decision remains");
+    assert(trail_span.rows() < decision_basis_.size() && "no legal decision remains");
 
     record_decision();
     return DecisionResult{decide_from_basis(decision_basis_, trail_span), std::nullopt};
 }
 
-void FixedLiterals::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
-                                           const std::vector<Clause>&,
-                                           const std::vector<std::uint8_t>&) {
+void FixedLiterals::update_with_substitution(const IndexSet& dropped_col_idxs,
+                                             const std::vector<Clause>&,
+                                             const std::vector<std::uint8_t>&) {
+    assert(dropped_col_idxs.size() == num_vars() + 1 &&
+           "the dropped variables are over another numbering");
+    std::erase_if(decision_basis_, [&](const Equation& literal) {
+        return dropped_col_idxs.test(*literal.leading_bit());
+    });
+}
+
+void FixedLiterals::update_with_renumbering(const CompactionTransform& transform) {
     assert(transform.old_num_vars() == num_vars() &&
            "the transform was built for a different active variable numbering");
     decision_basis_ = compact_basis_keep_order(decision_basis_, transform, repr());

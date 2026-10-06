@@ -65,6 +65,20 @@ TEST_CASE("index_set: resize empties and or_with unions") {
     CHECK(row_idxs.test(69));
 }
 
+TEST_CASE("index_set: intersects finds a shared index in any word") {
+    IndexSet col_idxs(130);
+    col_idxs.set(3);
+    col_idxs.set(129);
+    IndexSet other(130);
+    CHECK_FALSE(col_idxs.intersects(other));
+    other.set(4);
+    other.set(128);
+    CHECK_FALSE(col_idxs.intersects(other));
+    other.set(129);
+    CHECK(col_idxs.intersects(other));
+    CHECK(other.intersects(col_idxs));
+}
+
 TEST_CASE("index_set: count_below gives row-echelon insertion indices") {
     IndexSet col_idxs(300);
     const std::vector<std::size_t> set_columns{2, 5, 63, 64, 128, 200, 299};

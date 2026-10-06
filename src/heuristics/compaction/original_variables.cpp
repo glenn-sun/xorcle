@@ -26,16 +26,16 @@ IndexSet scatter_through_map(const IndexSet& source, const std::vector<std::size
 
 /// @brief Undo one compaction step in place.
 void undo_one_compaction(IndexSet& assignment, const CompactionHistoryEntry& entry) {
-    const std::size_t old_num_vars = entry.transform.old_num_vars();
-    assert(assignment.size() == entry.transform.new_num_vars() &&
-           "compaction history does not line up with the assignment's variable count");
-
-    IndexSet before(old_num_vars);
-    for (std::size_t new_col_idx = 0; new_col_idx < entry.transform.new_num_vars(); ++new_col_idx) {
-        if (assignment.test(new_col_idx)) {
-            before.set(entry.transform.to_old(new_col_idx));
-        }
+    if (entry.renumbering.has_value()) {
+        const CompactionTransform& transform = *entry.renumbering;
+        assert(assignment.size() == transform.new_num_vars() &&
+               "compaction history does not line up with the assignment's variable count");
+        IndexSet renumbered(transform.old_num_vars());
+        assignment.for_each_set(
+            [&](std::size_t new_col_idx) { renumbered.set(transform.to_old(new_col_idx)); });
+        assignment = std::move(renumbered);
     }
+    const std::size_t old_num_vars = assignment.size();
 
     for (auto row = entry.trail_rows_before.rbegin(); row != entry.trail_rows_before.rend();
          ++row) {
@@ -51,17 +51,15 @@ void undo_one_compaction(IndexSet& assignment, const CompactionHistoryEntry& ent
         bool eliminated_value = false;
         for (std::size_t i = 1; i < row_bits.size(); ++i) {
             const std::size_t bit = row_bits[i];
-            eliminated_value ^= (bit == old_num_vars) ? true : before.test(bit);
+            eliminated_value ^= (bit == old_num_vars) ? true : assignment.test(bit);
         }
 
         if (eliminated_value) {
-            before.set(eliminated_var);
+            assignment.set(eliminated_var);
         } else {
-            before.reset(eliminated_var);
+            assignment.reset(eliminated_var);
         }
     }
-
-    assignment = std::move(before);
 }
 
 } // namespace
@@ -70,10 +68,7 @@ IndexSet reconstruct_original_assignment(
     const IndexSet& active_assignment,
     const std::vector<CompactionHistoryEntry>& compaction_history,
     const std::vector<std::size_t>& active_var_to_original, std::size_t original_num_vars) {
-    assert((compaction_history.empty()
-                ? active_assignment.size() == active_var_to_original.size()
-                : active_assignment.size() ==
-                      compaction_history.back().transform.new_num_vars()) &&
+    assert(active_assignment.size() == active_var_to_original.size() &&
            "the assignment is not indexed by the current active variable numbering");
 
     IndexSet assignment = active_assignment;

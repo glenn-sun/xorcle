@@ -33,6 +33,10 @@ XORCLE_STAT(search, Count, num_propagations, "propagations", "Propagations")
 XORCLE_STAT(search, Count, num_attempt_props, "attempt_props", "Attempted propagations")
 XORCLE_STAT(search, Count, num_watch_updates, "watch_updates", "Watch updates")
 XORCLE_STAT(search, Count, num_compactions, "compactions", "Compactions")
+XORCLE_STAT(search, Count, num_renumberings, "renumberings", "Compactions that renumbered")
+XORCLE_STAT(search, Count, num_dropped_vars, "dropped_vars", "Variables dropped")
+XORCLE_STAT(search, Count, num_substituted_clauses, "substituted_clauses", "Clauses rewritten by a compaction")
+XORCLE_STAT(search, Count, peak_carrier_entries, "peak_carrier_entries", "Peak column-to-clause entries")
 
 // --- Restarts, reported only when a schedule is in force --------------------
 
@@ -112,7 +116,6 @@ XORCLE_STAT(implication_graph, Count, implication_graph_conflicts_waited, "impli
 XORCLE_STAT(implication_graph, Count, implication_graph_max_conflicts_waited, "implication_graph_max_conflicts_waited", "Longest wait for the root trail, in conflicts")
 XORCLE_STAT(implication_graph, Count, implication_graph_width_2_clauses, "implication_graph_width_2_clauses", "Width-2 clauses in the graph")
 XORCLE_STAT(implication_graph, Count, implication_graph_vertex_pairs, "implication_graph_vertex_pairs", "Vertex pairs in the graph, one per equation and its negation")
-XORCLE_STAT(implication_graph, Count, implication_graph_forced_compactions, "implication_graph_forced_compactions", "Compactions forced by feeding")
 XORCLE_STAT(implication_graph, Real, implication_graph_span_intersection_time_s, "implication_graph_span_intersection_time_s", "Span-intersection time (s), also in the graph time")
 XORCLE_STAT(implication_graph, Real, implication_graph_time_s, "implication_graph_time_s", "Implication graph time (s)")
 

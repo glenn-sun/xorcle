@@ -414,18 +414,10 @@ void exercise_against_reference(EquationRepr repr, std::size_t num_vars, int tri
                 CHECK(partial_from_leading == partial);
             }
 
-            // A column set, asked both ways.
-            std::vector<std::size_t> col_idxs;
-            IndexSet col_set(num_vars + 1);
-            for (std::size_t count = 1 + random.next(3); count > 0; --count) {
-                const std::size_t col_idx = random.next(num_vars + 1);
-                if (!col_set.test(col_idx)) {
-                    col_set.set(col_idx);
-                    col_idxs.push_back(col_idx);
-                }
-            }
-            CHECK(matrix.carries_any_col(col_idxs) == reference.carries_any_col(col_idxs));
-            CHECK(matrix.carries_any_col(col_set) == reference.carries_any_col(col_idxs));
+            std::vector<std::size_t> carried;
+            matrix.carried_col_idxs().for_each_set(
+                [&carried](std::size_t col_idx) { carried.push_back(col_idx); });
+            CHECK(carried == reference.carried_col_idxs());
 
             if (matrix.rows() > 0 && random.chance(3)) {
                 const std::size_t row_idx = random.next(matrix.rows());

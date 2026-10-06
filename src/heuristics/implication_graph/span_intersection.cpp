@@ -28,13 +28,13 @@ constexpr std::size_t path_check_vertices = 512;
 
 void ImplicationGraph::walk_span_intersections(
     const RowSpace& root_span, [[maybe_unused]] const std::vector<Clause>& clauses,
-    [[maybe_unused]] const std::vector<std::uint8_t>& clause_is_active,
+    [[maybe_unused]] ActiveClauseIds active_clause_ids,
     ImplicationGraphRun& summary, ImplicationGraphProofRecord* const proof) {
     using Kind = ImplicationGraphProofStep::Kind;
     const auto start = std::chrono::steady_clock::now();
     const std::size_t num_vertices = 2 * key_eqn_.size();
 
-    assert(all_arcs_are_clause_backed(clauses, clause_is_active, root_span) &&
+    assert(all_arcs_are_clause_backed(clauses, active_clause_ids, root_span) &&
            "an arc of the implication graph is not witnessed by its clause");
 
     sample_pairs(summary);
@@ -220,12 +220,12 @@ void ImplicationGraph::walk_span_intersections(
 #ifndef NDEBUG
         if (num_vertices <= path_check_vertices) {
             for (const std::size_t reached : descendants_) {
-                assert(implication_is_clause_backed(vertex, reached, clauses, clause_is_active,
+                assert(implication_is_clause_backed(vertex, reached, clauses, active_clause_ids,
                                                     root_span) &&
                        "a descendant is not reached through clause-backed arcs");
             }
             for (const std::size_t reached : other_descendants_) {
-                assert(implication_is_clause_backed(vertex + 1, reached, clauses, clause_is_active,
+                assert(implication_is_clause_backed(vertex + 1, reached, clauses, active_clause_ids,
                                                     root_span) &&
                        "a descendant is not reached through clause-backed arcs");
             }
@@ -416,14 +416,14 @@ void ImplicationGraph::walk_span_intersections(
 
 #ifndef NDEBUG
 bool ImplicationGraph::all_arcs_are_clause_backed(
-    const std::vector<Clause>& clauses, const std::vector<std::uint8_t>& clause_is_active,
+    const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
     const RowSpace& root_span) {
     const auto holds = [this](const Equation& eqn) {
         return std::find(triple_.begin(), triple_.end(), eqn) != triple_.end();
     };
     for (std::size_t from = 0; from < 2 * key_eqn_.size(); ++from) {
         for (const Arc& arc : arcs_[from]) {
-            if (clause_is_active[arc.clause_id] == 0 ||
+            if (!active_clause_ids.contains(arc.clause_id) ||
                 !reduce_triple(clauses[arc.clause_id], root_span)) {
                 return false;
             }

@@ -209,12 +209,9 @@ void ImplicationGraph::sample_pairs(ImplicationGraphRun& summary) {
 }
 
 ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
-                                          const std::vector<std::uint8_t>& clause_is_active,
+                                          ActiveClauseIds active_clause_ids,
                                           const RowSpace& root_span,
                                           ImplicationGraphProofRecord* proof) {
-    assert(clause_is_active.size() == clauses.size() &&
-           "the clause active flags are desynchronized");
-
     ImplicationGraphRun summary;
     if (proof != nullptr) {
         proof->clear();
@@ -233,17 +230,14 @@ ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
     }
     num_width_2_clauses_ = 0;
 
-    for (ClauseId clause_id = 0; clause_id < clauses.size(); ++clause_id) {
-        if (clause_is_active[clause_id] == 0) {
-            continue;
-        }
+    for (const ClauseId clause_id : active_clause_ids) {
         if (reduce_triple(clauses[clause_id], root_span)) {
             add_clause(clause_id);
         }
     }
 
     if (!key_eqn_.empty()) {
-        walk_span_intersections(root_span, clauses, clause_is_active, summary, proof);
+        walk_span_intersections(root_span, clauses, active_clause_ids, summary, proof);
     }
     assert((proof == nullptr ||
             std::ranges::equal(summary.units, proof->unit_idx_to_step_idx,
@@ -257,7 +251,7 @@ ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
 #ifndef NDEBUG
 bool ImplicationGraph::implication_is_clause_backed(
     const std::size_t from, const std::size_t to, const std::vector<Clause>& clauses,
-    const std::vector<std::uint8_t>& clause_is_active, const RowSpace& root_span) {
+    ActiveClauseIds active_clause_ids, const RowSpace& root_span) {
     const std::size_t num_vertices = 2 * key_eqn_.size();
     std::vector<std::size_t> parent(num_vertices, no_index);
     std::vector<std::size_t> parent_arc(num_vertices, no_index);
@@ -283,7 +277,7 @@ bool ImplicationGraph::implication_is_clause_backed(
     for (std::size_t vertex = to; vertex != from; vertex = parent[vertex]) {
         const std::size_t tail = parent[vertex];
         const Arc& arc = arcs_[tail][parent_arc[vertex]];
-        if (clause_is_active[arc.clause_id] == 0) {
+        if (!active_clause_ids.contains(arc.clause_id)) {
             return false;
         }
         if (!reduce_triple(clauses[arc.clause_id], root_span)) {

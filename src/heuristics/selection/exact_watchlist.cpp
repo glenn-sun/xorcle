@@ -161,24 +161,40 @@ void ExactWatchlist::build_pair(ClauseId id) {
     assert(clause.cols() == num_cols_ && "a clause is over another numbering than the trail");
     assert(clause.rows() >= 1 && "a clause has no rows");
 
-    const auto pair = static_cast<std::uint32_t>(pair_clause_.size());
+    const bool unit = clause.rows() == 1;
+    std::uint32_t pair = 0;
+    if (!free_pairs_.empty()) {
+        pair = free_pairs_.back();
+        free_pairs_.pop_back();
+        pair_clause_[pair] = static_cast<std::uint32_t>(id);
+        pair_is_unit_[pair] = unit ? 1 : 0;
+        for (const std::uint32_t cell : {2 * pair, 2 * pair + 1}) {
+            assert(save_stamp_[cell] == 0 && "a free pair's cell is still saved at a level");
+            key_[cell] = zero_key;
+            ++gen_[cell];
+#ifndef NDEBUG
+            debug_watch_loaded_[cell] = 0;
+#endif
+        }
+    } else {
+        pair = static_cast<std::uint32_t>(pair_clause_.size());
+        pair_clause_.push_back(static_cast<std::uint32_t>(id));
+        pair_is_unit_.push_back(unit ? 1 : 0);
+        words_.resize(words_.size() + 2 * num_words_);
+        watch_words_.resize(words_.size());
+        for (int k = 0; k < 2; ++k) {
+            key_.push_back(zero_key);
+            gen_.push_back(0);
+#ifndef NDEBUG
+            debug_watch_loaded_.push_back(0);
+#endif
+            save_stamp_.push_back(0);
+            restore_stamp_.push_back(0);
+            restore_rebuild_.push_back(0);
+        }
+    }
     const std::uint32_t first = 2 * pair;
     clause_pair_[id] = pair;
-    pair_clause_.push_back(static_cast<std::uint32_t>(id));
-    const bool unit = clause.rows() == 1;
-    pair_is_unit_.push_back(unit ? 1 : 0);
-    words_.resize(words_.size() + 2 * num_words_);
-    watch_words_.resize(words_.size());
-    for (int k = 0; k < 2; ++k) {
-        key_.push_back(zero_key);
-        gen_.push_back(0);
-#ifndef NDEBUG
-        debug_watch_loaded_.push_back(0);
-#endif
-        save_stamp_.push_back(0);
-        restore_stamp_.push_back(0);
-        restore_rebuild_.push_back(0);
-    }
 
     // Nothing to return to below the current level, so a backjump rebuilds.
     const bool rebuildable = top_level() != 0;
@@ -197,6 +213,24 @@ void ExactWatchlist::build_pair(ClauseId id) {
         push_rebuild_entry(first + 1, top_level());
     }
     maybe_queue(pair);
+}
+
+void ExactWatchlist::rebuild_pair(std::uint32_t pair) {
+    assert(top_level() == 0 && pivot_col_idxs_.empty() && "a pair is rebuilt against a trail");
+    const std::uint32_t first = 2 * pair;
+    const bool unit = clauses_[pair_clause_[pair]].rows() == 1;
+    pair_is_unit_[pair] = unit ? 1 : 0;
+    for (const std::uint32_t cell : {first, first + 1}) {
+        key_[cell] = zero_key;
+        ++gen_[cell];
+#ifndef NDEBUG
+        debug_watch_loaded_[cell] = 0;
+#endif
+    }
+    build_first(first, watch_row(first));
+    if (!unit) {
+        build_second(first + 1, watch_row(first + 1));
+    }
 }
 
 void ExactWatchlist::place(std::uint32_t cell) {
@@ -237,7 +271,7 @@ void ExactWatchlist::maybe_clean_buckets() {
     }
     counters_.cleanup_dropped += bucket_entries_ - kept;
     bucket_entries_ = kept;
-    cleanup_threshold_ = 2 * kept + num_cols_;
+    cleanup_threshold_ = 2 * kept + num_cols_ - num_dropped_vars_;
 }
 
 void ExactWatchlist::save(std::uint32_t cell, std::size_t level) {
@@ -454,6 +488,12 @@ void ExactWatchlist::add_clause(Clause clause) {
     in_side_queue_.push_back(0);
     clause_pair_.push_back(no_pair);
     build_pair(id);
+}
+
+void ExactWatchlist::update_with_inactive_clause(ClauseId id) {
+    if (clause_pair_[id] != no_pair) {
+        retired_pairs_.push_back(clause_pair_[id]);
+    }
 }
 
 void ExactWatchlist::update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) {
@@ -683,23 +723,135 @@ void ExactWatchlist::update_with_backjump(std::size_t level, const Trail& trail)
 #endif
 }
 
-void ExactWatchlist::update_with_compaction(const CompactionTransform&, const Trail& trail) {
-    assert(trail.span().rows() == 0 && "compaction leaves an empty trail");
-    assert(top_level() == 0 && saves_.empty() && "compaction runs at the root");
-    assert(paused_head_ == paused_end_ && "compaction runs at quiescence");
-    reset(trail.span().cols());
-    for (ClauseId id = 0; id < clauses_.size(); ++id) {
-        if (clause_active_[id] != 0) {
-            build_pair(id);
+void ExactWatchlist::update_with_substitution(std::span<const ClauseId> rewritten_clause_ids,
+                                              const IndexSet& dropped_col_idxs,
+                                              const Trail& trail) {
+    assert(trail.span().rows() == 0 && trail.span().cols() == num_cols_ &&
+           "a substitution leaves an empty trail over the same numbering");
+    assert(top_level() == 0 && saves_.empty() && "a substitution runs at the root");
+    assert(paused_head_ == paused_end_ && "a substitution runs at quiescence");
+    assert(dropped_col_idxs.size() == num_cols_ &&
+           "the dropped variables are over another numbering");
+    num_dropped_vars_ = dropped_col_idxs.count();
+    for (const std::uint32_t col_idx : pivot_col_idxs_) {
+        pivot_row_[col_idx] = nullptr;
+    }
+    // No cell will lead on a dropped column again, so its bucket is never swept.
+    dropped_col_idxs.for_each_set([this](const std::size_t col_idx) {
+        bucket_entries_ -= buckets_[col_idx].size();
+        buckets_[col_idx].clear();
+    });
+    pivot_col_idxs_.clear();
+    clear_side_queue();
+
+    for (const std::uint32_t pair : retired_pairs_) {
+        clause_pair_[pair_clause_[pair]] = no_pair;
+        key_[2 * pair] = zero_key;
+        key_[2 * pair + 1] = zero_key;
+        free_pairs_.push_back(pair);
+    }
+    retired_pairs_.clear();
+    // A clause the substitution left alone carries no pivot of the trail it
+    // emptied, so its cells are already what building them now would give.
+    for (const ClauseId id : rewritten_clause_ids) {
+        if (clause_active_[id] == 0) {
+            continue;
+        }
+        const std::uint32_t pair = clause_pair_[id];
+        assert(pair != no_pair && "an active clause has no cells");
+        rebuild_pair(pair);
+        place(2 * pair);
+        if (pair_is_unit_[pair] == 0) {
+            place(2 * pair + 1);
+        }
+        maybe_queue(pair);
+    }
+    maybe_clean_buckets();
+#ifndef NDEBUG
+    debug_check_cells(trail);
+#endif
+}
+
+void ExactWatchlist::update_with_renumbering(const CompactionTransform& transform,
+                                             const Trail& trail) {
+    assert(trail.span().rows() == 0 && "a renumbering follows a substitution");
+    assert(top_level() == 0 && saves_.empty() && "a renumbering runs at the root");
+    assert(paused_head_ == paused_end_ && "a renumbering runs at quiescence");
+    assert(pivot_col_idxs_.empty() && retired_pairs_.empty() &&
+           "a renumbering follows the substitution's update");
+    assert(transform.old_num_vars() + 1 == num_cols_ && "the transform is over another numbering");
+    ClauseSelector::update_with_renumbering(transform, trail);
+
+    const std::size_t old_num_words = num_words_;
+    const std::uint32_t old_constant_key = constant_key();
+    num_cols_ = trail.span().cols();
+    num_words_ = (num_cols_ + word_mask) >> word_shift;
+    num_dropped_vars_ = 0;
+    const auto to_new = [&](const std::size_t col_idx) {
+        return col_idx == old_constant_key ? num_cols_ - 1 : transform.to_new(col_idx);
+    };
+
+    // The words below the first dropped column stay as they are.
+    std::size_t num_unmoved_words = 0;
+    while (num_unmoved_words < num_words_ &&
+           ((num_unmoved_words + 1) << word_shift) <= old_constant_key &&
+           transform.to_new(((num_unmoved_words + 1) << word_shift) - 1) ==
+               ((num_unmoved_words + 1) << word_shift) - 1) {
+        ++num_unmoved_words;
+    }
+    // No column moves up, so a cell's new words end before the next cell's old ones begin.
+    std::vector<Word> old_words(old_num_words);
+    const std::size_t num_cells = words_.size() / old_num_words;
+    for (std::size_t cell = 0; cell < num_cells; ++cell) {
+        std::memcpy(old_words.data(), words_.data() + cell * old_num_words,
+                    old_num_words * sizeof(Word));
+        Word* words = words_.data() + cell * num_words_;
+        std::memcpy(words, old_words.data(), num_unmoved_words * sizeof(Word));
+        std::fill(words + num_unmoved_words, words + num_words_, Word{0});
+        for (std::size_t w = num_unmoved_words; w < old_num_words; ++w) {
+            for (Word word = old_words[w]; word != 0; word &= word - 1) {
+                const std::size_t new_col_idx =
+                    to_new((w << word_shift) + static_cast<std::size_t>(std::countr_zero(word)));
+                // A free pair's cells may still carry a dropped column.
+                if (new_col_idx != CompactionTransform::npos) {
+                    words[new_col_idx >> word_shift] |= Word{1} << (new_col_idx & word_mask);
+                }
+            }
         }
     }
-    cleanup_threshold_ = 2 * bucket_entries_ + num_cols_;
+    words_.resize(num_cells * num_words_);
+    // With no save left, a watch copy is loaded again before a backjump reads it.
+    watch_words_.assign(words_.size(), 0);
+#ifndef NDEBUG
+    std::ranges::fill(debug_watch_loaded_, 0);
+#endif
+
+    for (std::uint32_t& key : key_) {
+        if (key != zero_key) {
+            assert(to_new(key) != CompactionTransform::npos && "a cell leads on a dropped column");
+            key = static_cast<std::uint32_t>(to_new(key));
+        }
+    }
+
+    // Each bucket moves to its column's new place with its entries in order.
+    for (std::size_t col_idx = 0; col_idx < buckets_.size(); ++col_idx) {
+        const std::size_t new_col_idx = to_new(col_idx);
+        if (new_col_idx == CompactionTransform::npos) {
+            assert(buckets_[col_idx].empty() && "a dropped column's bucket was not emptied");
+        } else if (new_col_idx != col_idx) {
+            buckets_[new_col_idx] = std::move(buckets_[col_idx]);
+            buckets_[col_idx].clear();
+        }
+    }
+    buckets_.resize(num_cols_);
+    pivot_row_.assign(num_cols_, nullptr);
 #ifndef NDEBUG
     debug_check_cells(trail);
 #endif
 }
 
 void ExactWatchlist::add_to_stats(RunStats& stats) const {
+    ClauseSelector::add_to_stats(stats);
     stats.exact_touches = counters_.touches;
     stats.exact_skips = counters_.skips;
     stats.exact_fixups = counters_.fixups;

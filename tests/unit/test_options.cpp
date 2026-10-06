@@ -99,12 +99,12 @@ TEST_CASE("options: --name=value sets each kind") {
 }
 
 TEST_CASE("options: a table name's underscores are dashes on the command line") {
-    CHECK(cli_spelling("compact_cadence") == "--compact-cadence");
-    CHECK(table_name_of("compact-cadence") == "compact_cadence");
-    CHECK(parse_with_input({"--compact-cadence=64"}).compact_cadence == 64);
+    CHECK(cli_spelling("deletion_cadence") == "--deletion-cadence");
+    CHECK(table_name_of("deletion-cadence") == "deletion_cadence");
+    CHECK(parse_with_input({"--deletion-cadence=64"}).deletion_cadence == 64);
     // Dashes and underscores are interchangeable in an option name, as in
     // CaDiCaL; the dashed form is the one `--help` and the errors show.
-    CHECK(parse_with_input({"--compact_cadence=64"}).compact_cadence == 64);
+    CHECK(parse_with_input({"--deletion_cadence=64"}).deletion_cadence == 64);
 }
 
 TEST_CASE("options: booleans accept on/off as well as true/false") {
@@ -116,7 +116,7 @@ TEST_CASE("options: booleans accept on/off as well as true/false") {
 
 TEST_CASE("options: values outside the table's bounds are rejected") {
     SUBCASE("a size below its minimum") {
-        CHECK(contains(rejection_message<CliError>({"--compact-cadence=0"}), "must be at least 1"));
+        CHECK(contains(rejection_message<CliError>({"--deletion-cadence=0"}), "must be at least 1"));
         CHECK(contains(rejection_message<CliError>({"--restart-lbd-min-conflicts=0"}), "must be at least 1"));
     }
     SUBCASE("a real below its minimum") {
@@ -193,8 +193,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--seed=N"));
     CHECK(contains(text, "[default: 0; minimum 0]"));
     CHECK(contains(text, "--compact=true|false"));
-    CHECK(contains(text, "--compact-cadence=N"));
-    CHECK(contains(text, "[default: " + std::to_string(Options{}.compact_cadence) +
+    CHECK(contains(text, "[default: " + std::to_string(Options{}.deletion_cadence) +
                              "; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
     CHECK(contains(text, "[default: " + format_real(Options{}.csids_decay) + "; range 0..1]"));
@@ -213,7 +212,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--deletion-key=lbd|activity"));
 
     // The requirement table feeds the help, so a refusal is never a surprise.
-    CHECK(contains(text, "number of conflicts between compactions; requires --compact=true"));
+    CHECK(contains(text, "conflicts between deletion passes; requires --deletion=true"));
     CHECK(contains(text, "fast/slow ratio needed for LBD restart; requires --restart=lbd"));
 
     CHECK(contains(text, "--restart=none|luby|lbd"));
@@ -306,10 +305,9 @@ TEST_CASE("options: the configuration projections carry the values across") {
     CHECK(luby.method == RestartMethod::luby);
     CHECK(luby.luby_unit_conflicts == 50);
 
-    const CompactionConfig interval =
-        compaction_config(parse_with_input({"--compact-cadence=8"}));
-    CHECK(interval.enabled == true);
-    CHECK(interval.cadence == 8);
+    CHECK(compaction_config(parse_with_input({})).enabled == true);
+    CHECK(compaction_config(parse_with_input({"--compact=false", "--implication-graph=false"}))
+              .enabled == false);
 }
 
 TEST_CASE("options: --report takes the progress group names") {
@@ -339,7 +337,7 @@ TEST_CASE("options: the recorded configuration is the whole table") {
         return std::string("<absent>");
     };
     CHECK(value_of("compact") == "true");
-    CHECK(value_of("compact_cadence") == std::to_string(Options{}.compact_cadence));
+    CHECK(value_of("deletion_cadence") == std::to_string(Options{}.deletion_cadence));
     CHECK(value_of("csids_decay") == format_real(Options{}.csids_decay));
     CHECK(value_of("decisions") == "csids");
     // An unset path records as empty, not as the help text's "unset".
@@ -366,7 +364,7 @@ TEST_CASE("options: a recorded value knows whether it is the default") {
         option_settings(parse_with_input({"--seed=7", "--minimize=false"}));
     CHECK(!entry_for(changed, "seed").is_default);
     CHECK(!entry_for(changed, "minimize").is_default);
-    CHECK(entry_for(changed, "compact_cadence").is_default);
+    CHECK(entry_for(changed, "deletion_cadence").is_default);
 }
 
 TEST_CASE("options: an option nothing would read is refused, not ignored") {
@@ -375,8 +373,8 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     const auto refusal = [](std::vector<std::string> arguments) {
         return rejection_message<CliError>(std::move(arguments));
     };
-    CHECK(refusal({"--compact=false", "--compact-cadence=8"}) ==
-          "--compact-cadence requires --compact=true; nothing would read it here");
+    CHECK(refusal({"--deletion=false", "--deletion-cadence=8"}) ==
+          "--deletion-cadence requires --deletion=true; nothing would read it here");
     CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--csids-decay=0.5"})
               .starts_with("--csids-decay requires --decisions=csids"));
     CHECK(refusal({"--restart-lbd-min-ratio=1.2"}).starts_with("--restart-lbd-min-ratio requires"));
@@ -431,7 +429,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK_NOTHROW(parse_with_input({"--implication-graph=true", "--proof-raw=p.raw"}));
 
     // Each of these is given where something does read it.
-    CHECK(parse_with_input({"--compact-cadence=8"}).compact_cadence == 8);
+    CHECK(parse_with_input({"--deletion-cadence=8"}).deletion_cadence == 8);
     CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-min-ratio=1.2"}).restart_lbd_min_ratio ==
           doctest::Approx(1.2));
     CHECK(refusal({"--selection=exact_watchlist", "--propagate-miss-rate=1"})

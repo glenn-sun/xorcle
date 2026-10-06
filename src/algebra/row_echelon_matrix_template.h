@@ -88,9 +88,8 @@ public:
 
     virtual void pop_last_row() = 0;
 
-    /// @brief Whether some row carries one of `col_idxs`.
-    virtual bool carries_any_col(std::span<const std::size_t> col_idxs) const = 0;
-    virtual bool carries_any_col(const IndexSet& col_idxs) const = 0;
+    /// @brief The columns some row carries.
+    virtual IndexSet carried_col_idxs() const = 0;
 
     /// @brief Renumber every row in place, reading the last column as the constant.
     virtual void compact(const CompactionTransform& transform) = 0;
@@ -343,25 +342,13 @@ public:
         debug_assert_valid_representation();
     }
 
-    bool carries_any_col(std::span<const std::size_t> col_idxs) const override {
+    IndexSet carried_col_idxs() const override {
+        IndexSet carried(cols_);
         for (const StoredRow& stored : rows_) {
-            const V& row = gf2_vector_of<V>(stored.row);
-            for (const std::size_t col_idx : col_idxs) {
-                if (row.get_bit(col_idx)) {
-                    return true;
-                }
-            }
+            gf2_vector_of<V>(stored.row).for_each_set_bit(
+                [&carried](std::size_t col_idx) { carried.set(col_idx); });
         }
-        return false;
-    }
-
-    bool carries_any_col(const IndexSet& col_idxs) const override {
-        for (const StoredRow& stored : rows_) {
-            if (gf2_vector_of<V>(stored.row).first_bit_in(col_idxs, 0)) {
-                return true;
-            }
-        }
-        return false;
+        return carried;
     }
 
     void compact(const CompactionTransform& transform) override {

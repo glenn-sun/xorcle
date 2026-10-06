@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "algebra/compaction_transform.h"
@@ -69,8 +70,14 @@ public:
 
     void update_with_backjump(std::size_t level, const Trail& trail) override;
 
-    /// @pre `trail` is empty.
-    void update_with_compaction(const CompactionTransform& transform, const Trail& trail) override;
+    /// @pre `trail` is empty, and the selector is at the root with nothing left to select.
+    void update_with_substitution(std::span<const ClauseId> rewritten_clause_ids,
+                                  const IndexSet& dropped_col_idxs, const Trail& trail) override;
+
+    /// @brief Relabel every cell, key and bucket; no watch moves and no bucket is reordered.
+    /// @pre `trail` is empty, and `update_with_substitution()` ran since the last
+    /// variable was dropped.
+    void update_with_renumbering(const CompactionTransform& transform, const Trail& trail) override;
 
     const ExactWatchlistCounters& counters() const noexcept { return counters_; }
 
@@ -84,6 +91,8 @@ protected:
     /// @pre `reduced_eqn` is the row `trail` stores for its last equation, and every
     /// earlier one was reported here too; a new level opens only at quiescence.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
+
+    void update_with_inactive_clause(ClauseId id) override;
 
 private:
     using Word = DenseGF2Vector::Word;
@@ -132,6 +141,10 @@ private:
     void open_level();
 
     void build_pair(ClauseId id);
+
+    /// @brief Build a pair's cells again, from its clause as it now stands.
+    /// @pre The selector is at the root, with no pivot.
+    void rebuild_pair(std::uint32_t pair);
     const Word* watch_row(std::uint32_t cell) const;
     void load_watch(std::uint32_t cell);
     void build_first(std::uint32_t cell, const Word* watch);
@@ -149,7 +162,8 @@ private:
     void place(std::uint32_t cell);
 
     /// @brief Drop every stale bucket entry once there are more than twice as
-    /// many entries as the last cleanup kept, plus one per column.
+    /// many entries as the last cleanup kept, plus one per column no substitution
+    /// has emptied.
     void maybe_clean_buckets();
 
     void save(std::uint32_t cell, std::size_t level);
@@ -186,6 +200,7 @@ private:
 
     std::size_t num_cols_ = 0;
     std::size_t num_words_ = 0;
+    std::size_t num_dropped_vars_ = 0; ///< Since the last renumbering.
 
     /// @brief Two cells per pair, `A` then `B`; a unit clause uses only `A`.
     std::vector<Word> words_;
@@ -196,7 +211,13 @@ private:
     std::vector<std::uint32_t> gen_; ///< Bumped whenever a cell's watch changes.
     std::vector<std::uint32_t> pair_clause_;
     std::vector<std::uint8_t> pair_is_unit_;
-    std::vector<std::uint32_t> clause_pair_; ///< `no_pair` for a clause that had none built.
+    /// @brief `no_pair` for a clause that had none built, or lost it to `free_pairs_`.
+    std::vector<std::uint32_t> clause_pair_;
+    /// @brief The pairs of the clauses gone inactive before the last substitution, for
+    /// `build_pair()`; a bucket may still hold their cells, under a key they have lost.
+    std::vector<std::uint32_t> free_pairs_;
+    /// @brief The pairs of the clauses gone inactive since, which a save may still name.
+    std::vector<std::uint32_t> retired_pairs_;
 
     std::vector<std::vector<std::uint32_t>> buckets_; ///< Per column, cells that may lead on it.
     std::size_t bucket_entries_ = 0;

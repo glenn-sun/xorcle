@@ -17,6 +17,7 @@
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "heuristics/decisions/phase.h"
+#include "util/index_set.h"
 #include "util/random.h"
 #include "util/stats.h"
 
@@ -116,12 +117,13 @@ public:
 
     virtual ~DecisionProcedure() = default;
 
-    /// @brief Reset for a fresh run, which the compaction remap is not.
+    /// @brief Reset for a fresh run, which a compaction is not.
     virtual void reinitialize() = 0;
 
     /// @brief Choose the next decision equation, of `num_vars() + 1` bits.
     /// @pre `trail_span.cols() == num_vars() + 1` and `trail_span.repr() == repr()`.
-    /// @pre At least one legal decision remains, i.e. `trail_span.rows() < num_vars()`.
+    /// @pre At least one legal decision remains: the trail leaves undetermined a
+    /// variable no substitution has dropped.
     /// @pre `clause_active.size() == clauses.size()`.
     /// @param known What propagation already found satisfied, which spares the
     /// procedures that pass satisfied clauses over from checking them again.
@@ -171,13 +173,18 @@ public:
                                         const std::vector<std::optional<ClauseId>>& decision_clauses,
                                         const SatisfactionRecord& known = {});
 
-    /// @brief Remap procedure state into a compacted variable numbering.
+    /// @brief Note that a substitution rewrote the clauses and emptied the root
+    /// trail, which the default ignores.
+    /// @param dropped_col_idxs Every variable dropped since the last renumbering,
+    /// over `num_vars() + 1` columns.
+    virtual void update_with_substitution(const IndexSet& dropped_col_idxs,
+                                          const std::vector<Clause>& clauses,
+                                          const std::vector<std::uint8_t>& clause_active);
+
+    /// @brief Remap procedure state into a renumbering of the variables.
     /// @pre `transform.old_num_vars() == num_vars()`.
-    /// @note The default adopts the new active variable count and nothing else.
-    virtual void update_with_compaction(const CompactionTransform& transform,
-                                        const RowSpace& trail_span,
-                                        const std::vector<Clause>& clauses,
-                                        const std::vector<std::uint8_t>& clause_active);
+    /// @note The default adopts the new variable count and nothing else.
+    virtual void update_with_renumbering(const CompactionTransform& transform);
 
     const DecisionCounters& counters() const noexcept { return counters_; }
 

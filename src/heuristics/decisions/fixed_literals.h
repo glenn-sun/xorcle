@@ -30,12 +30,14 @@ public:
                                  const std::vector<std::uint8_t>& clause_active,
                                  const SatisfactionRecord& known = {}) override;
 
-    void update_with_compaction(const CompactionTransform& transform, const RowSpace& trail_span,
-                                const std::vector<Clause>& clauses,
-                                const std::vector<std::uint8_t>& clause_active) override;
+    void update_with_substitution(const IndexSet& dropped_col_idxs,
+                                  const std::vector<Clause>& clauses,
+                                  const std::vector<std::uint8_t>& clause_active) override;
+
+    void update_with_renumbering(const CompactionTransform& transform) override;
 
 private:
-    std::vector<Equation> decision_basis_; ///< In variable order.
+    std::vector<Equation> decision_basis_; ///< In variable order, without the dropped ones.
 };
 
 } // namespace xorcle

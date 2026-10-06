@@ -334,17 +334,11 @@ std::size_t Csids::reusable_levels(
     return levels;
 }
 
-void Csids::update_with_compaction(const CompactionTransform& transform, const RowSpace&,
-                                   const std::vector<Clause>& clauses,
-                                   const std::vector<std::uint8_t>& clause_active) {
-    assert(transform.old_num_vars() == num_vars() &&
-           "the transform was built for a different active variable numbering");
-    set_num_vars(transform.new_num_vars());
-    clause_sat_workspace_.reconfigure(num_vars());
+void Csids::update_with_substitution(const IndexSet&, const std::vector<Clause>& clauses,
+                                     const std::vector<std::uint8_t>& clause_active) {
     state_.num_clauses = static_cast<ClauseId>(clauses.size());
 
-    // Every clause is rewritten, and the root trail rebuilt, so none is known
-    // satisfied any more.
+    // The root trail is rebuilt, so no clause is known satisfied any more.
     for (std::vector<ClauseId>& ids : satisfied_by_level_) {
         for (const ClauseId id : ids) {
             state_.activity.activity_heap.insert(id);
@@ -359,6 +353,13 @@ void Csids::update_with_compaction(const CompactionTransform& transform, const R
             state_.last_decision_clause.reset();
         }
     }
+}
+
+void Csids::update_with_renumbering(const CompactionTransform& transform) {
+    assert(transform.old_num_vars() == num_vars() &&
+           "the transform was built for a different active variable numbering");
+    set_num_vars(transform.new_num_vars());
+    clause_sat_workspace_.reconfigure(num_vars());
 }
 
 } // namespace xorcle

@@ -46,11 +46,11 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
     plan.unused_passes.resize(num_clauses);
     std::vector<ClauseId> candidates;
 
-    for (ClauseId id = 0; id < num_clauses; ++id) {
+    for (const ClauseId id : state.selector.active_clause_ids()) {
         plan.unused_passes[id] = state.selector.clause_unused_passes(id);
         // A starting clause is tiered and demoted like a learned one; only the
         // deletion candidates below are restricted to learned clauses.
-        if (!state.selector.is_clause_active(id) || is_locked[id] != 0) {
+        if (is_locked[id] != 0) {
             continue;
         }
         switch (state.selector.clause_tier(id)) {

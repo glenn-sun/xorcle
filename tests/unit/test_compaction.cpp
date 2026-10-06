@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <numeric>
 #include <vector>
 
 #include "algebra/compaction_transform.h"
@@ -24,55 +25,78 @@ std::vector<std::size_t> set_variables(const IndexSet& assignment) {
     return out;
 }
 
+std::vector<IndexSet> carried_col_idxs_of(const std::vector<Clause>& clauses) {
+    std::vector<IndexSet> out;
+    for (const Clause& clause : clauses) {
+        out.push_back(clause.carried_col_idxs());
+    }
+    return out;
+}
+
+std::vector<ClauseId> ids_of(const std::vector<Clause>& clauses) {
+    std::vector<ClauseId> out(clauses.size());
+    std::iota(out.begin(), out.end(), ClauseId{0});
+    return out;
+}
+
+/// @brief The history entry of a substitution by `trail` that a renumbering followed.
+CompactionHistoryEntry renumbered_entry(const Trail& trail) {
+    const std::vector<Clause> clauses;
+    const std::vector<IndexSet> carried;
+    const std::vector<ClauseId> ids;
+    const CompactionState state{trail, clauses, ids, carried,
+                                trail.num_vars()};
+    CompactionHistoryEntry entry = build_substitution_plan(state).history_entry;
+    entry.renumbering = CompactionTransform::from_dropped_columns(trail.num_vars(),
+                                                                  trail.span().pivot_col_idxs());
+    return entry;
+}
+
 } // namespace
 
 TEST_CASE_TEMPLATE("compaction: when it should run", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
     const std::vector<Clause> clauses;
-    const std::vector<std::uint8_t> active;
-    const std::vector<std::size_t> var_map{0, 1, 2, 3};
+    const std::vector<IndexSet> carried;
+    const std::vector<ClauseId> ids;
 
-    const auto state = [&](bool is_due) {
-        return CompactionState{trail, clauses, active, var_map, 4, is_due};
-    };
+    const CompactionState state{trail, clauses, ids, carried, 4};
 
     SUBCASE("an empty root trail has nothing to eliminate") {
-        CHECK_FALSE(should_compact_before_decision(state(true)));
+        CHECK_FALSE(should_compact_before_decision(state));
     }
 
     SUBCASE("a non-empty root trail is compactable") {
         trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0}, trail.level());
-        CHECK(should_compact_before_decision(state(true)));
+        CHECK(should_compact_before_decision(state));
     }
 
     SUBCASE("only the root level is compactable") {
         trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0}, trail.level());
         trail.learn(make_equation_with(repr, 4, {2}), std::nullopt, trail.level() + 1);
         REQUIRE(trail.level() == 1);
-        CHECK_FALSE(should_compact_before_decision(state(true)));
-    }
-
-    SUBCASE("a compaction that is not due does not run") {
-        trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{0}, trail.level());
-        CHECK_FALSE(should_compact_before_decision(state(false)));
+        CHECK_FALSE(should_compact_before_decision(state));
     }
 }
 
-TEST_CASE_TEMPLATE("compaction: building the transform", Tag, DenseTag, SparseTag) {
-    constexpr EquationRepr repr = Tag::value;
-    Trail trail(repr, 4);
-    trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level());
-    trail.learn(make_equation_with(repr, 4, {2, 3}), ClauseId{1}, trail.level());
+TEST_CASE("compaction: a renumbering waits until it frees a word and 5% of the words") {
+    // 63 variables and the constant fill one word; 64 need two.
+    CHECK_FALSE(renumbering_frees_enough_words(63, 0));
+    CHECK_FALSE(renumbering_frees_enough_words(63, 62));
+    CHECK_FALSE(renumbering_frees_enough_words(64, 0));
+    CHECK(renumbering_frees_enough_words(64, 1));
+    CHECK_FALSE(renumbering_frees_enough_words(130, 2));
+    CHECK(renumbering_frees_enough_words(130, 3));
+    CHECK(renumbering_frees_enough_words(130, 130));
 
-    const CompactionTransform transform = build_compaction_transform(trail, 4);
-    CHECK(transform.old_num_vars() == 4);
-    CHECK(transform.new_num_vars() == 2);
-    CHECK(transform.to_old(0) == 1);
-    CHECK(transform.to_old(1) == 3);
-    CHECK(transform.to_new(1) == 0);
-    CHECK(transform.to_new(3) == 1);
-    CHECK(transform.to_new(0) == CompactionTransform::npos);
+    // 1279 variables and the constant fill 20 words, of which one is 5%.
+    CHECK_FALSE(renumbering_frees_enough_words(1279, 63));
+    CHECK(renumbering_frees_enough_words(1279, 64));
+    // 1280 need 21, of which one is less than 5% and two are more.
+    CHECK_FALSE(renumbering_frees_enough_words(1280, 1));
+    CHECK_FALSE(renumbering_frees_enough_words(1280, 64));
+    CHECK(renumbering_frees_enough_words(1280, 65));
 }
 
 TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag) {
@@ -84,70 +108,44 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
     clauses.push_back(make_clause(repr, 4, {{0}}));           // [x0 = 1], already satisfied
     clauses.push_back(make_clause(repr, 4, {{1}, {2}}));      // [x1 = 1] v [x2 = 1]
     clauses.push_back(make_clause(repr, 4, {{0, 1}, {3}}));   // mentions the eliminated x0
-    const std::vector<std::uint8_t> active{1, 1, 1};
-    const std::vector<std::size_t> var_map{0, 1, 2, 3};
+    const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
+    const std::vector<ClauseId> ids = ids_of(clauses);
 
-    const CompactionState state{trail, clauses, active, var_map, 4, true};
-    const CompactionTransform transform = build_compaction_transform(trail, 4);
-    REQUIRE(transform.new_num_vars() == 3);
-
-    const CompactionPlan plan = build_compaction_plan(state, transform);
+    const CompactionState state{trail, clauses, ids, carried, 4};
+    const SubstitutionPlan plan = build_substitution_plan(state);
     REQUIRE(plan.rewritten_clause_ids == std::vector<ClauseId>{0, 2});
     REQUIRE(plan.rewritten_clauses.size() == 2);
-    REQUIRE(plan.clause_is_active.size() == 3);
+    REQUIRE(plan.rewritten_is_active == std::vector<std::uint8_t>{0, 1});
 
     SUBCASE("a satisfied clause becomes an inactive placeholder") {
-        CHECK(plan.clause_is_active[0] == 0);
         const Clause& rewritten = plan.rewritten_clauses[0];
         CHECK(rewritten.rows() == 1);
-        CHECK(rewritten.cols() == 4);
-        CHECK(bits_of(rewritten.row(0)) == std::vector<std::size_t>{3});
+        CHECK(rewritten.cols() == 5);
+        CHECK(bits_of(rewritten.row(0)) == std::vector<std::size_t>{4});
         CHECK(rewritten.watched0 == 0);
         CHECK(rewritten.watched1 == 0);
         CHECK(rewritten.next_watch_search_start == 0);
     }
 
-    SUBCASE("a clause without the dropped variable is renumbered in place") {
-        CHECK(plan.clause_is_active[1] == 1);
-        Clause renumbered = clauses[1];
-        renumbered.watched0 = 1;
-        renumbered.watched1 = 0;
-        renumbered.next_watch_search_start = 1;
-        renumbered.satisfied_level = 1;
-        renumbered.satisfied_stamp = 1;
-        renumber_clause(renumbered, transform);
-        REQUIRE(renumbered.rows() == 2);
-        CHECK(renumbered.cols() == 4);
-        CHECK(bits_of(renumbered.row(0)) == std::vector<std::size_t>{0});
-        CHECK(bits_of(renumbered.row(1)) == std::vector<std::size_t>{1});
-        CHECK(renumbered.pivot_col_idx(0) == 0);
-        CHECK(renumbered.pivot_col_idx(1) == 1);
-        CHECK(renumbered.watched0 == 0);
-        CHECK(renumbered.watched1 == 1);
-        CHECK(renumbered.next_watch_search_start == 0);
-        CHECK(renumbered.satisfied_level == 0);
-        CHECK(renumbered.satisfied_stamp == 0);
-    }
-
-    SUBCASE("rows are reduced by the trail before being compacted") {
-        // x0 + x1 reduces to x1 + 1 against x0 = 1, and x0 is then eliminated.
-        CHECK(plan.clause_is_active[2] == 1);
+    SUBCASE("rows are reduced by the trail, in the same numbering") {
+        // x0 + x1 reduces to x1 + 1 against x0 = 1, which leaves column 0 zero.
         const Clause& rewritten = plan.rewritten_clauses[1];
         REQUIRE(rewritten.rows() == 2);
-        CHECK(bits_of(rewritten.row(0)) == std::vector<std::size_t>{0, 3});
-        CHECK(bits_of(rewritten.row(1)) == std::vector<std::size_t>{2});
+        CHECK(rewritten.cols() == 5);
+        CHECK(bits_of(rewritten.row(0)) == std::vector<std::size_t>{1, 4});
+        CHECK(bits_of(rewritten.row(1)) == std::vector<std::size_t>{3});
     }
 
     SUBCASE("the history entry records the root trail in row-echelon order") {
         REQUIRE(plan.history_entry.trail_rows_before.size() == 1);
         CHECK(bits_of(plan.history_entry.trail_rows_before[0]) ==
               std::vector<std::size_t>{0, 4});
-        CHECK(plan.history_entry.transform.new_num_vars() == 3);
+        CHECK_FALSE(plan.history_entry.renumbering.has_value());
     }
 }
 
-TEST_CASE_TEMPLATE("compaction: an inactive clause is left out of the plan", Tag, DenseTag,
-                   SparseTag) {
+TEST_CASE_TEMPLATE("compaction: a clause that is no candidate is left out of the plan", Tag,
+                   DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Trail trail(repr, 4);
     trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
@@ -156,21 +154,17 @@ TEST_CASE_TEMPLATE("compaction: an inactive clause is left out of the plan", Tag
     clauses.push_back(make_clause(repr, 4, {{0, 1}, {2}}));
     clauses.push_back(make_clause(repr, 4, {{0, 2}, {3}}));
     clauses.push_back(make_clause(repr, 4, {{1}, {3}}));
-    const std::vector<std::uint8_t> active{1, 0, 1};
-    const std::vector<std::size_t> var_map{0, 1, 2, 3};
+    const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
+    const std::vector<ClauseId> ids{0, 2};
 
-    const CompactionState state{trail, clauses, active, var_map, 4, true};
-    const CompactionTransform transform = build_compaction_transform(trail, 4);
-    const CompactionPlan plan = build_compaction_plan(state, transform);
+    const CompactionState state{trail, clauses, ids, carried, 4};
+    const SubstitutionPlan plan = build_substitution_plan(state);
 
-    // Only the first clause is both active and mentions x0.
+    // Only the first clause is both a candidate and mentions x0.
     REQUIRE(plan.rewritten_clause_ids == std::vector<ClauseId>{0});
     REQUIRE(plan.rewritten_clauses.size() == 1);
-    CHECK(bits_of(plan.rewritten_clauses[0].row(0)) == std::vector<std::size_t>{0, 3});
-    REQUIRE(plan.clause_is_active.size() == 3);
-    CHECK(plan.clause_is_active[0] == 1);
-    CHECK(plan.clause_is_active[1] == 0);
-    CHECK(plan.clause_is_active[2] == 1);
+    CHECK(bits_of(plan.rewritten_clauses[0].row(0)) == std::vector<std::size_t>{1, 4});
+    CHECK(plan.rewritten_is_active == std::vector<std::uint8_t>{1});
 }
 
 TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, DenseTag,
@@ -182,12 +176,11 @@ TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, De
     // Both rows reduce to x2, so the rewritten clause has a single row.
     std::vector<Clause> clauses;
     clauses.push_back(make_clause(repr, 4, {{0, 1, 2}, {2}}));
-    const std::vector<std::uint8_t> active{1};
-    const std::vector<std::size_t> var_map{0, 1, 2, 3};
+    const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
+    const std::vector<ClauseId> ids = ids_of(clauses);
 
-    const CompactionState state{trail, clauses, active, var_map, 4, true};
-    const CompactionTransform transform = build_compaction_transform(trail, 4);
-    const CompactionPlan plan = build_compaction_plan(state, transform);
+    const CompactionState state{trail, clauses, ids, carried, 4};
+    const SubstitutionPlan plan = build_substitution_plan(state);
 
     const Clause& rewritten = plan.rewritten_clauses[0];
     CHECK(rewritten.rows() == 1);
@@ -209,19 +202,11 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         CHECK(set_variables(original) == std::vector<std::size_t>{2});
     }
 
-    SUBCASE("one compaction is undone by back-substitution") {
+    SUBCASE("a renumbered compaction is undone by back-substitution") {
         Trail trail(repr, 4);
         trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
-
-        const std::vector<Clause> clauses;
-        const std::vector<std::uint8_t> active;
-        const std::vector<std::size_t> var_map{0, 1, 2, 3};
-        const CompactionState state{trail, clauses, active, var_map, 4, true};
-        const CompactionTransform transform = build_compaction_transform(trail, 4);
-        const CompactionPlan plan = build_compaction_plan(state, transform);
-
-        std::vector<CompactionHistoryEntry> history;
-        history.push_back(plan.history_entry);
+        const std::vector<CompactionHistoryEntry> history{renumbered_entry(trail)};
+        const std::vector<std::size_t> var_map{1, 2, 3};
 
         // x1 and x3 are true in the compacted space; x0 comes back from the
         // trail row that eliminated it.
@@ -236,17 +221,8 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
     SUBCASE("back-substitution reads the other variables of the eliminated row") {
         Trail trail(repr, 4);
         trail.learn(make_equation_with(repr, 4, {0, 2}), ClauseId{0}, trail.level()); // x0 + x2 = 0
-
-        const std::vector<Clause> clauses;
-        const std::vector<std::uint8_t> active;
-        const std::vector<std::size_t> var_map{0, 1, 2, 3};
-        const CompactionState state{trail, clauses, active, var_map, 4, true};
-        const CompactionTransform transform = build_compaction_transform(trail, 4);
-        const CompactionPlan plan = build_compaction_plan(state, transform);
-        REQUIRE(transform.new_num_vars() == 3);
-
-        std::vector<CompactionHistoryEntry> history;
-        history.push_back(plan.history_entry);
+        const std::vector<CompactionHistoryEntry> history{renumbered_entry(trail)};
+        const std::vector<std::size_t> var_map{1, 2, 3};
 
         SUBCASE("x2 false leaves x0 false") {
             const IndexSet compacted(3);
@@ -262,33 +238,34 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         }
     }
 
-    SUBCASE("two compactions are undone newest first") {
+    SUBCASE("a substitution with no renumbering overwrites its dropped variable in place") {
+        Trail trail(repr, 4);
+        trail.learn(make_equation_with(repr, 4, {1, 3, 4}), ClauseId{0}, trail.level()); // x1 = x3 + 1
+        std::vector<CompactionHistoryEntry> history{renumbered_entry(trail)};
+        history.back().renumbering.reset();
+        const std::vector<std::size_t> var_map{0, 1, 2, 3};
+
+        // The dropped x1 is still in the numbering, and whatever it holds is ignored.
+        IndexSet active(4);
+        active.set(1);
+        active.set(3);
+        const IndexSet original = reconstruct_original_assignment(active, history, var_map, 4);
+        CHECK(set_variables(original) == std::vector<std::size_t>{3});
+    }
+
+    SUBCASE("two renumbered compactions are undone newest first") {
         Trail first_trail(repr, 4);
         // x0 = 1
         first_trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0},
                           first_trail.level());
-
-        const std::vector<Clause> clauses;
-        const std::vector<std::uint8_t> active;
-        const std::vector<std::size_t> first_map{0, 1, 2, 3};
-        const CompactionState first_state{first_trail, clauses, active, first_map, 4, true};
-        const CompactionTransform first_transform = build_compaction_transform(first_trail, 4);
-        const CompactionPlan first_plan = build_compaction_plan(first_state, first_transform);
-
         // After the first step the active variables are old x1, x2, x3.
-        const std::vector<std::size_t> second_map{1, 2, 3};
         Trail second_trail(repr, 3);
         // x1 + x2 = 0
         second_trail.learn(make_equation_with(repr, 3, {0, 1}), ClauseId{0},
                            second_trail.level());
-        const CompactionState second_state{second_trail, clauses, active, second_map, 3, true};
-        const CompactionTransform second_transform = build_compaction_transform(second_trail, 3);
-        const CompactionPlan second_plan = build_compaction_plan(second_state, second_transform);
-        REQUIRE(second_transform.new_num_vars() == 2);
-
-        std::vector<CompactionHistoryEntry> history;
-        history.push_back(first_plan.history_entry);
-        history.push_back(second_plan.history_entry);
+        const std::vector<CompactionHistoryEntry> history{renumbered_entry(first_trail),
+                                                          renumbered_entry(second_trail)};
+        const std::vector<std::size_t> second_map{2, 3};
 
         // Set old x2, which is index 0 of the twice-compacted space.
         IndexSet compacted(2);
@@ -296,6 +273,30 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         const IndexSet original = reconstruct_original_assignment(compacted, history, second_map, 4);
         CHECK(original.size() == 4);
         // x0 = 1 from the first step, x2 set directly, x1 = x2 from the second.
+        CHECK(set_variables(original) == std::vector<std::size_t>{0, 1, 2});
+    }
+
+    SUBCASE("one renumbering undoes the substitutions since the last") {
+        Trail first_trail(repr, 4);
+        // x0 = 1
+        first_trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0},
+                          first_trail.level());
+        Trail second_trail(repr, 4);
+        // x1 + x2 = 0, with x0 still in the numbering
+        second_trail.learn(make_equation_with(repr, 4, {1, 2}), ClauseId{0},
+                           second_trail.level());
+        std::vector<CompactionHistoryEntry> history{renumbered_entry(first_trail),
+                                                    renumbered_entry(second_trail)};
+        history[0].renumbering.reset();
+        IndexSet dropped(5);
+        dropped.set(0);
+        dropped.set(1);
+        history[1].renumbering = CompactionTransform::from_dropped_columns(4, dropped);
+        const std::vector<std::size_t> var_map{2, 3};
+
+        IndexSet compacted(2);
+        compacted.set(0);
+        const IndexSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
         CHECK(set_variables(original) == std::vector<std::size_t>{0, 1, 2});
     }
 }
@@ -308,10 +309,6 @@ TEST_CASE_TEMPLATE("compaction: a plan over three words finds every clause to re
     constexpr EquationRepr repr = Tag::value;
     constexpr std::size_t num_vars = 130;
     constexpr std::size_t constant = num_vars;
-    std::vector<std::size_t> var_map(num_vars);
-    for (std::size_t var = 0; var < num_vars; ++var) {
-        var_map[var] = var;
-    }
 
     SUBCASE("one root unit, tested variable by variable") {
         Trail trail(repr, num_vars);
@@ -322,19 +319,19 @@ TEST_CASE_TEMPLATE("compaction: a plan over three words finds every clause to re
         clauses.push_back(make_clause(repr, num_vars, {{5, 100}, {7}}));   // holds x100
         clauses.push_back(make_clause(repr, num_vars, {{5}, {120}}));      // untouched
         clauses.push_back(make_clause(repr, num_vars, {{64}, {129}}));     // untouched
-        const std::vector<std::uint8_t> active(clauses.size(), 1);
+        const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
+        const std::vector<ClauseId> ids = ids_of(clauses);
 
-        const CompactionState state{trail, clauses, active, var_map, num_vars, true};
-        const CompactionTransform transform = build_compaction_transform(trail, num_vars);
-        REQUIRE(transform.new_num_vars() == num_vars - 1);
-        const CompactionPlan plan = build_compaction_plan(state, transform);
+        const CompactionState state{trail, clauses, ids, carried,
+                                    num_vars};
+        const SubstitutionPlan plan = build_substitution_plan(state);
 
         CHECK(plan.rewritten_clause_ids == std::vector<ClauseId>{0, 1});
-        CHECK(plan.clause_is_active == std::vector<std::uint8_t>{0, 1, 1, 1});
-        // x5 + x100 reduced by x100 = 1 is x5 = 1, whose constant is now bit 129.
+        CHECK(plan.rewritten_is_active == std::vector<std::uint8_t>{0, 1});
+        // x5 + x100 reduced by x100 = 1 is x5 = 1.
         REQUIRE(plan.rewritten_clauses.size() == 2);
         CHECK(rows_of(plan.rewritten_clauses[1]) ==
-              std::vector<std::vector<std::size_t>>{{5, num_vars - 1}, {7}});
+              std::vector<std::vector<std::size_t>>{{5, constant}, {7}});
     }
 
     SUBCASE("three root units, tested a word at a time") {
@@ -347,15 +344,15 @@ TEST_CASE_TEMPLATE("compaction: a plan over three words finds every clause to re
         clauses.push_back(make_clause(repr, num_vars, {{69, 70}, {100}}));  // holds x70
         clauses.push_back(make_clause(repr, num_vars, {{127}, {129}}));     // untouched
         clauses.push_back(make_clause(repr, num_vars, {{0, 128}, {64}}));   // holds x128
-        const std::vector<std::uint8_t> active(clauses.size(), 1);
+        const std::vector<IndexSet> carried = carried_col_idxs_of(clauses);
+        const std::vector<ClauseId> ids = ids_of(clauses);
 
-        const CompactionState state{trail, clauses, active, var_map, num_vars, true};
-        const CompactionTransform transform = build_compaction_transform(trail, num_vars);
-        REQUIRE(transform.new_num_vars() == num_vars - 3);
-        const CompactionPlan plan = build_compaction_plan(state, transform);
+        const CompactionState state{trail, clauses, ids, carried,
+                                    num_vars};
+        const SubstitutionPlan plan = build_substitution_plan(state);
 
         CHECK(plan.rewritten_clause_ids == std::vector<ClauseId>{1, 3});
-        CHECK(plan.clause_is_active == std::vector<std::uint8_t>{1, 1, 1, 1});
+        CHECK(plan.rewritten_is_active == std::vector<std::uint8_t>{1, 1});
     }
 }
 

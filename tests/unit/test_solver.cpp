@@ -512,13 +512,37 @@ TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the ori
     CHECK(with_solution.assignment->test(2) != with_solution.assignment->test(3));
 }
 
+TEST_CASE_TEMPLATE("solver: a compaction renumbers once that frees enough words", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+
+    // Five variables and the constant fit one word whatever is dropped.
+    Run narrow = make_run(repr, compaction_sat_instance);
+    (void)narrow.solver->solve();
+    CHECK(narrow.solver->counters().num_compactions > 0);
+    CHECK(narrow.solver->counters().num_dropped_vars >= 3);
+    CHECK(narrow.solver->counters().num_renumberings == 0);
+    CHECK(narrow.solver->active_num_vars() == 5 - narrow.solver->counters().num_dropped_vars);
+
+    // 64 variables and the constant need two words, and 63 need one.
+    Run wide = make_run(repr, "p cnf 64 4\n1 0\n2+64 0\n63 64 0\n-63 -64 0\n");
+    const Solution solution = wide.solver->solve();
+    CHECK(wide.solver->counters().num_renumberings == 1);
+    CHECK(wide.solver->counters().num_dropped_vars >= 2);
+    CHECK(wide.solver->active_num_vars() == 64 - wide.solver->counters().num_dropped_vars);
+    check_satisfies(wide.clauses, solution, wide.num_vars);
+    CHECK(solution.assignment->test(0));
+    CHECK(solution.assignment->test(1) != solution.assignment->test(63));
+    CHECK(solution.assignment->test(62) != solution.assignment->test(63));
+}
+
 TEST_CASE_TEMPLATE("solver: compaction does not change an UNSAT verdict", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
     const std::vector<std::string> compaction_off = {"--compact=false"};
     Run without = make_run(repr, search_unsat_instance, compaction_off);
-    Run with = make_run(repr, search_unsat_instance, {"--compact-cadence=1"});
+    Run with = make_run(repr, search_unsat_instance);
 
     CHECK(without.solver->solve().result == SolveResult::unsat);
     CHECK(with.solver->solve().result == SolveResult::unsat);

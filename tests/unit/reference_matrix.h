@@ -73,7 +73,8 @@ public:
     /// @brief Bring the rows to reduced row-echelon form.
     void reduce_rows();
 
-    bool carries_any_col(const std::vector<std::size_t>& col_idxs) const;
+    /// @brief The columns some row carries, ascending.
+    std::vector<std::size_t> carried_col_idxs() const;
 
 private:
     /// @brief Rebuild the pivot tables from the rows' leading bits.

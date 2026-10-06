@@ -141,21 +141,8 @@ public:
         interface_->pop_last_row();
     }
 
-    /// @brief Whether some row carries one of `col_idxs`, testing each in each row.
-    /// @pre Every entry of `col_idxs` is below `cols()`.
-    bool carries_any_col(std::span<const std::size_t> col_idxs) const {
-        assert(std::ranges::all_of(col_idxs,
-                                   [&](std::size_t col_idx) { return col_idx < cols(); }) &&
-               "carries_any_col: a column is out of range");
-        return interface_->carries_any_col(col_idxs);
-    }
-
-    /// @brief Whether some row carries one of `col_idxs`, a word at a time.
-    /// @pre `col_idxs.size() == cols()`.
-    bool carries_any_col(const IndexSet& col_idxs) const {
-        assert(col_idxs.size() == cols() && "carries_any_col: the column set has the wrong size");
-        return interface_->carries_any_col(col_idxs);
-    }
+    /// @brief The columns some row carries, over `cols()` indices.
+    IndexSet carried_col_idxs() const { return interface_->carried_col_idxs(); }
 
     class iterator {
     public:

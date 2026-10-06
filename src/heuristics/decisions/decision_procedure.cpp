@@ -38,9 +38,10 @@ std::optional<ClauseId> DecisionProcedure::decision_clause_hint() const {
     return std::nullopt;
 }
 
-void DecisionProcedure::update_with_compaction(const CompactionTransform& transform,
-                                               const RowSpace&, const std::vector<Clause>&,
-                                               const std::vector<std::uint8_t>&) {
+void DecisionProcedure::update_with_substitution(const IndexSet&, const std::vector<Clause>&,
+                                                 const std::vector<std::uint8_t>&) {}
+
+void DecisionProcedure::update_with_renumbering(const CompactionTransform& transform) {
     assert(transform.old_num_vars() == num_vars_ &&
            "the transform was built for a different active variable numbering");
     set_num_vars(transform.new_num_vars());

@@ -239,7 +239,7 @@ TEST_CASE("fuzz: past one word, the exact watchlist's answers check") {
         const std::string text = random_wide_instance(random);
         CAPTURE(index);
         CAPTURE(text);
-        run_and_check(text, {"--compact-cadence=8", "--deletion-cadence=8"}, tally,
+        run_and_check(text, {"--deletion-cadence=8"}, tally,
                       std::nullopt);
     }
     CHECK(tally.sat > 0);
@@ -258,8 +258,8 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
         std::vector<std::string> flags;
         std::size_t SolverCounters::*exercised = nullptr;
     };
-    // Compaction, deletion passes and the graph are due every few conflicts.
-    const std::vector<std::string> often = {"--compact-cadence=2", "--deletion-cadence=2",
+    // Deletion passes and the graph are due every few conflicts.
+    const std::vector<std::string> often = {"--deletion-cadence=2",
                                             "--deletion-core-lbd=1", "--deletion-secondary-lbd=1",
                                             "--implication-graph-cadence=4"};
     std::vector<std::string> often_without_graph(often.begin(), often.end() - 1);
@@ -277,7 +277,7 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
           "--propagate-window=1"},
          &SolverCounters::num_undone_decisions},
         {"luby",
-         {"--restart=luby", "--restart-luby-unit=1", "--compact-cadence=3"},
+         {"--restart=luby", "--restart-luby-unit=1"},
          &SolverCounters::num_restarts},
         {"luby, reusing the trail",
          {"--restart=luby", "--restart-luby-unit=1", "--restart-reuse-trail=true",

@@ -101,7 +101,8 @@ void Cyclic::update_with_decision_clause(std::optional<ClauseId> clause_id) {
     }
 }
 
-void Cyclic::update_with_compaction(const CompactionTransform&, const Trail&) {
+void Cyclic::update_with_substitution(std::span<const ClauseId>, const IndexSet&,
+                                      const Trail&) {
     if (clauses_.empty()) {
         id_ = 0;
         pending_decision_clause_.reset();
@@ -113,13 +114,18 @@ void Cyclic::update_with_compaction(const CompactionTransform&, const Trail&) {
         id_ %= clauses_.size();
     }
     if (!is_clause_active(id_)) {
-        for (std::size_t offset = 0; offset < clauses_.size(); ++offset) {
-            const ClauseId candidate = (id_ + offset) % clauses_.size();
-            if (is_clause_active(candidate)) {
-                id_ = candidate;
+        // The next active clause from the cursor on, wrapping to the first.
+        std::optional<ClauseId> first;
+        for (const ClauseId candidate : active_clause_ids()) {
+            if (!first.has_value()) {
+                first = candidate;
+            }
+            if (candidate > id_) {
+                first = candidate;
                 break;
             }
         }
+        id_ = first.value_or(id_);
     }
     if (pending_decision_clause_.has_value() && (*pending_decision_clause_ >= clauses_.size() ||
                                                 !is_clause_active(*pending_decision_clause_))) {

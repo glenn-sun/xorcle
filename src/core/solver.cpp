@@ -30,6 +30,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
       original_num_vars_(num_vars),
       active_num_vars_(num_vars),
       active_var_to_original_(num_vars),
+      dropped_col_idxs_(num_vars + 1),
       compaction_(compaction),
       deletion_(deletion),
       trail_(repr, num_vars),
@@ -429,7 +430,8 @@ void Solver::handle_non_root_conflict() {
         if (proof_writer_ != nullptr) {
             proof_writer_->write_deleted({proof_id_of_clause_[record.clause_id]});
         }
-        selector_->clause(record.clause_id) = inactive_clause_placeholder(repr_, false_equation_);
+        selector_->replace_clause(record.clause_id,
+                                  inactive_clause_placeholder(repr_, false_equation_));
         selector_->set_clause_active(record.clause_id, false);
         --num_active_clauses_;
         ++counters_.num_subsumed_clauses;
@@ -705,7 +707,7 @@ ProgressSnapshot Solver::progress_snapshot() const {
             per_conflict(counters_.sum_conflict_level - sum_level_at_last_report_),
         .average_trail_length = per_conflict(counters_.sum_conflict_trail_length -
                                             sum_trail_length_at_last_report_),
-        .remaining_vars = active_num_vars_ - trail_.rows_at_level(0),
+        .remaining_vars = active_num_vars() - trail_.rows_at_level(0),
         .decisions = decisions_->counters().decisions,
         .decision_level = trail_.level(),
         .trail_length = trail_.span().rows(),
@@ -719,88 +721,67 @@ ProgressSnapshot Solver::progress_snapshot() const {
 }
 
 bool Solver::maybe_compact_before_decision() {
-    if (counters_.num_conflicts - conflicts_at_last_compaction_ >= compaction_.cadence) {
-        compaction_is_due_ = true;
-    }
-    const CompactionState state{
+    CompactionState state{
         .trail = trail_,
         .clauses = selector_->clauses(),
-        .clause_is_active = selector_->active_flags(),
-        .active_var_to_original = active_var_to_original_,
+        .candidate_clause_ids = {},
+        .clause_carried_col_idxs = selector_->carried_col_idxs(),
         .active_num_vars = active_num_vars_,
-        .is_due = compaction_is_due_,
     };
     if (!should_compact_before_decision(state)) {
         return false;
     }
+    const std::vector<ClauseId> candidate_clause_ids =
+        selector_->clause_ids_carrying(trail_.span().pivot_col_idxs());
+    state.candidate_clause_ids = candidate_clause_ids;
 
-    implication_graph_counters_.num_forced_compactions +=
-        counters_.num_compactions != 0 &&
-                counters_.num_conflicts - conflicts_at_last_compaction_ < compaction_.cadence
-            ? 1
-            : 0;
-
-    const CompactionTransform transform = build_compaction_transform(trail_, active_num_vars_);
-    assert(transform.new_num_vars() < active_num_vars_ &&
-           "the compaction trigger held but nothing can be dropped");
-
-    apply_compaction(build_compaction_plan(state, transform));
+    const bool renumbers =
+        renumbering_frees_enough_words(active_num_vars_, num_dropped_vars_ + trail_.span().rows());
+    apply_substitution(build_substitution_plan(state));
+    if (renumbers) {
+        apply_renumbering();
+    }
     return true;
 }
 
-void Solver::apply_compaction(CompactionPlan plan) {
+void Solver::apply_substitution(SubstitutionPlan plan) {
     // The root trail is about to go, and the proof needs to know its units.
     if (proof_writer_ != nullptr) {
         write_compaction_units();
     }
 
-    const std::size_t num_clauses = selector_->num_clauses();
-    assert(plan.clause_is_active.size() == num_clauses &&
-           "the compaction plan does not cover every clause");
-
-    num_active_clauses_ = 0;
-    std::size_t rewritten_idx = 0;
-    for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
-        if (!selector_->is_clause_active(clause_id)) {
-            assert(plan.clause_is_active[clause_id] == 0 &&
-                   "the plan activated a clause the compaction never rewrote");
-            continue;
-        }
-        if (rewritten_idx == plan.rewritten_clause_ids.size() ||
-            plan.rewritten_clause_ids[rewritten_idx] != clause_id) {
-            renumber_clause(selector_->clause(clause_id), plan.transform);
-            ++num_active_clauses_;
-            continue;
-        }
+    for (std::size_t i = 0; i < plan.rewritten_clause_ids.size(); ++i) {
+        const ClauseId clause_id = plan.rewritten_clause_ids[i];
+        assert(selector_->is_clause_active(clause_id) && "the plan rewrote an inactive clause");
         const std::size_t width_before = selector_->clause(clause_id).rows();
-        selector_->clause(clause_id) = std::move(plan.rewritten_clauses[rewritten_idx++]);
-        const bool active = plan.clause_is_active[clause_id] != 0;
-        selector_->set_clause_active(clause_id, active);
-        num_active_clauses_ += active ? 1 : 0;
-        if (active && width_before > 2 && selector_->clause(clause_id).rows() <= 2) {
+        selector_->replace_clause(clause_id, std::move(plan.rewritten_clauses[i]));
+        if (plan.rewritten_is_active[i] == 0) {
+            selector_->set_clause_active(clause_id, false);
+            --num_active_clauses_;
+        } else if (width_before > 2 && selector_->clause(clause_id).rows() <= 2) {
             ++counters_.num_compaction_narrowed_to_width_2;
         }
     }
-    assert(rewritten_idx == plan.rewritten_clauses.size() &&
-           "the plan rewrote a clause that was not active");
-
-    // Composed through the numbering being retired, not replaced.
-    const std::size_t new_num_vars = plan.transform.new_num_vars();
-    std::vector<std::size_t> compacted_var_to_original(new_num_vars);
-    for (std::size_t active_var = 0; active_var < new_num_vars; ++active_var) {
-        compacted_var_to_original[active_var] =
-            active_var_to_original_[plan.transform.to_old(active_var)];
+#ifndef NDEBUG
+    // A clause the root trail satisfied carries one of its pivots, so no record
+    // of that outlives the rewrite.
+    for (ClauseId clause_id = 0; clause_id < selector_->num_clauses(); ++clause_id) {
+        const Clause& clause = selector_->clause(clause_id);
+        assert((!selector_->is_clause_active(clause_id) || clause.satisfied_stamp == 0 ||
+                clause.satisfied_level != 0) &&
+               "a clause the substitution left alone is recorded satisfied at the root");
     }
+#endif
 
-    active_num_vars_ = new_num_vars;
-    active_var_to_original_ = std::move(compacted_var_to_original);
+    // The root trail does not span `0 = 1`, so each of its rows drops a variable.
+    dropped_col_idxs_.or_with(trail_.span().pivot_col_idxs());
+    num_dropped_vars_ += trail_.span().rows();
+    counters_.num_dropped_vars += trail_.span().rows();
+    counters_.num_substituted_clauses += plan.rewritten_clause_ids.size();
     compaction_history_.push_back(std::move(plan.history_entry));
 
-    propagator_.reconfigure(active_num_vars_);
+    // Its arcs are backed by clauses that may since have been rewritten.
     implication_graph_.reconfigure(active_num_vars_);
-    false_equation_ = Equation::eq_false(repr_, active_num_vars_);
-    propagated_row_eqn_.resize(active_num_vars_);
-    satisfied_probe_eqn_.resize(active_num_vars_);
 
     // The root trail is thrown away on purpose; see the warning on this method.
     trail_ = Trail(repr_, active_num_vars_);
@@ -808,12 +789,43 @@ void Solver::apply_compaction(CompactionPlan plan) {
     level_stamp_.assign(1, 1);
     decision_clause_of_level_.clear();
 
-    selector_->update_with_compaction(plan.transform, trail_);
-    decisions_->update_with_compaction(plan.transform, trail_.span(), selector_->clauses(),
-                                       selector_->active_flags());
-    compaction_is_due_ = false;
-    conflicts_at_last_compaction_ = counters_.num_conflicts;
+    selector_->update_with_substitution(plan.rewritten_clause_ids, dropped_col_idxs_, trail_);
+    decisions_->update_with_substitution(dropped_col_idxs_, selector_->clauses(),
+                                         selector_->active_flags());
     ++counters_.num_compactions;
+}
+
+void Solver::apply_renumbering() {
+    assert(trail_.span().rows() == 0 && "a renumbering does not follow a substitution");
+    const CompactionTransform transform =
+        CompactionTransform::from_dropped_columns(active_num_vars_, dropped_col_idxs_);
+    assert(transform.new_num_vars() + num_dropped_vars_ == active_num_vars_ &&
+           "the dropped variables were miscounted");
+
+    // Composed through the numbering being retired, not replaced.
+    const std::size_t new_num_vars = transform.new_num_vars();
+    std::vector<std::size_t> renumbered_var_to_original(new_num_vars);
+    for (std::size_t active_var = 0; active_var < new_num_vars; ++active_var) {
+        renumbered_var_to_original[active_var] =
+            active_var_to_original_[transform.to_old(active_var)];
+    }
+
+    active_num_vars_ = new_num_vars;
+    active_var_to_original_ = std::move(renumbered_var_to_original);
+    dropped_col_idxs_.resize(active_num_vars_ + 1);
+    num_dropped_vars_ = 0;
+
+    propagator_.reconfigure(active_num_vars_);
+    implication_graph_.reconfigure(active_num_vars_);
+    false_equation_ = Equation::eq_false(repr_, active_num_vars_);
+    propagated_row_eqn_.resize(active_num_vars_);
+    satisfied_probe_eqn_.resize(active_num_vars_);
+    trail_ = Trail(repr_, active_num_vars_);
+
+    selector_->update_with_renumbering(transform, trail_);
+    decisions_->update_with_renumbering(transform);
+    compaction_history_.back().renumbering = transform;
+    ++counters_.num_renumberings;
 }
 
 void Solver::note_reason_use(ClauseId id, std::size_t lbd) {
@@ -872,11 +884,10 @@ void Solver::maybe_delete_clauses() {
 }
 
 void Solver::apply_deletion(const DeletionPlan& plan) {
-    const std::size_t num_clauses = selector_->num_clauses();
-    assert(plan.unused_passes.size() == num_clauses &&
+    assert(plan.unused_passes.size() == selector_->num_clauses() &&
            "the deletion plan does not cover every clause");
 
-    for (ClauseId clause_id = 0; clause_id < num_clauses; ++clause_id) {
+    for (const ClauseId clause_id : selector_->active_clause_ids()) {
         selector_->set_clause_unused_passes(clause_id, plan.unused_passes[clause_id]);
         selector_->set_clause_used_since_deletion(clause_id, false);
     }
@@ -888,7 +899,7 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
         proof_writer_->write_deleted(proof_ids(plan.deleted));
     }
     for (const ClauseId clause_id : plan.deleted) {
-        selector_->clause(clause_id) = inactive_clause_placeholder(repr_, false_equation_);
+        selector_->replace_clause(clause_id, inactive_clause_placeholder(repr_, false_equation_));
         selector_->set_clause_active(clause_id, false);
     }
 
@@ -911,9 +922,9 @@ bool Solver::maybe_run_implication_graph() {
                                   implication_graph_config_.cadence;
         if (follow_up_is_pending_) {
             // The first call after the feeding run: its units have propagated and
-            // its forced compaction is done, and nothing has been decided since.
-            assert(trail_.level() == 0 && !compaction_is_due_ && !by_conflicts &&
-                   "the follow-up test ran after a decision or before the forced compaction");
+            // been compacted away, and nothing has been decided since.
+            assert(trail_.level() == 0 && trail_.span().rows() == 0 && !by_conflicts &&
+                   "the follow-up test ran after a decision or before the compaction");
             follow_up_is_pending_ = false;
             if (by_clauses) {
                 implication_graph_run_is_due_ = true;
@@ -945,7 +956,7 @@ bool Solver::maybe_run_implication_graph() {
     const auto start = std::chrono::steady_clock::now();
     // Every trail row is at the root level, so the trail's span is the root span.
     const ImplicationGraphRun summary = implication_graph_.run(
-        selector_->clauses(), selector_->active_flags(), trail_.span(),
+        selector_->clauses(), selector_->active_clause_ids(), trail_.span(),
         proof_writer_ != nullptr ? &implication_graph_proof_ : nullptr);
     const std::vector<Equation>& units = summary.units;
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
@@ -995,7 +1006,6 @@ bool Solver::maybe_run_implication_graph() {
         feed_unit(units[i], proof_writer_ != nullptr ? unit_lines[i] : 0);
     }
     implication_graph_counters_.num_units_fed += units.size();
-    compaction_is_due_ = true;
     conflicts_at_last_implication_graph_run_ = counters_.num_conflicts;
     clauses_at_last_implication_graph_run_ = clauses_reaching_width_at_most_2();
     follow_up_is_pending_ = true;
@@ -1057,7 +1067,7 @@ Solution Solver::solve() {
         }
 
         // Quiescent at full rank: the trail is a total assignment.
-        if (trail_.span().rows() == active_num_vars_) {
+        if (trail_.span().rows() == active_num_vars()) {
             if (did_complete_sweep_ || !last_run_stopped_on_budget()) {
                 return complete_satisfying_assignment();
             }
@@ -1070,7 +1080,7 @@ Solution Solver::solve() {
         }
 
         if (compaction_.enabled && maybe_compact_before_decision()) {
-            // The active numbering changed, so re-propagate rather than decide.
+            // The root trail was emptied, so re-propagate rather than decide.
             continue;
         }
 
@@ -1115,10 +1125,11 @@ Solution Solver::complete_satisfying_assignment() {
         unit.assign_bits(std::span<const std::size_t>(&var, 1));
         reduced.assign_from(unit);
         // Undetermined exactly when a variable still leads: `0 = 0` means the
-        // trail already fixes it one way, `0 = 1` the other.
+        // trail already fixes it one way, `0 = 1` the other. A dropped variable
+        // leads too, and takes its value from the compaction history instead.
         if (complete.partial_reduce(reduced).kind == ReduceResult::Kind::leading) {
             complete.add_row(unit);
-            ++num_filled;
+            num_filled += dropped_col_idxs_.test(var) ? 0U : 1U;
         }
     }
     decisions_->note_filled_decisions(num_filled);
@@ -1141,6 +1152,9 @@ void Solver::add_to_stats(RunStats& stats) const {
     stats.num_attempt_props = counters_.num_attempt_props;
     stats.num_watch_updates = counters_.num_watch_updates;
     stats.num_compactions = counters_.num_compactions;
+    stats.num_renumberings = counters_.num_renumberings;
+    stats.num_dropped_vars = counters_.num_dropped_vars;
+    stats.num_substituted_clauses = counters_.num_substituted_clauses;
     stats.num_deferred_runs = counters_.num_deferred_runs;
     stats.num_out_of_order_learns = counters_.num_out_of_order_learns;
     stats.num_undone_decisions = counters_.num_undone_decisions;
@@ -1202,7 +1216,6 @@ void Solver::add_to_stats(RunStats& stats) const {
     stats.implication_graph_max_conflicts_waited = graph.max_conflicts_waited;
     stats.implication_graph_width_2_clauses = implication_graph_.num_width_2_clauses();
     stats.implication_graph_vertex_pairs = implication_graph_.num_vertex_pairs();
-    stats.implication_graph_forced_compactions = graph.num_forced_compactions;
     stats.implication_graph_span_intersection_time_s = graph.span_intersection_time_s;
     stats.implication_graph_time_s = graph.time_s;
 

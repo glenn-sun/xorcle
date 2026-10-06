@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "algebra/compaction_transform.h"
@@ -15,6 +16,7 @@
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "core/watch.h"
+#include "util/index_set.h"
 #include "util/stats.h"
 
 namespace xorcle {
@@ -81,12 +83,29 @@ public:
 
     const std::vector<Clause>& clauses() const noexcept { return clauses_; }
 
+    /// @brief The clause, whose rows only `replace_clause()` and a renumbering change.
     Clause& clause(ClauseId id);
+
+    void replace_clause(ClauseId id, Clause clause);
+
+    /// @brief Per clause id, the columns its rows carry; empty for an inactive clause.
+    const std::vector<IndexSet>& carried_col_idxs() const noexcept {
+        return clause_carried_col_idxs_;
+    }
+
+    /// @brief The active clauses that carry a column of @p col_idxs or span `0 = 1`,
+    /// in ascending order.
+    /// @pre `col_idxs` is sized like a clause's columns and leaves the last one out.
+    std::vector<ClauseId> clause_ids_carrying(const IndexSet& col_idxs) const;
 
     bool is_clause_active(ClauseId id) const;
     void set_clause_active(ClauseId id, bool active);
 
     const std::vector<std::uint8_t>& active_flags() const noexcept { return clause_active_; }
+
+    ActiveClauseIds active_clause_ids() const noexcept {
+        return {listed_clause_ids_, clause_active_};
+    }
 
     /// @brief Whether the clause was learned rather than read from the instance.
     bool is_clause_learned(ClauseId id) const;
@@ -142,10 +161,19 @@ public:
     /// default ignores; `trail` already reflects it.
     virtual void update_with_backjump(std::size_t level, const Trail& trail);
 
-    /// @brief Note that every clause was rewritten into a compacted variable numbering.
-    virtual void update_with_compaction(const CompactionTransform& transform, const Trail& trail);
+    /// @brief Note that a substitution emptied the root trail.
+    /// @param rewritten_clause_ids The clauses it replaced or deactivated; every
+    /// other active clause carries no pivot of the trail it emptied.
+    /// @param dropped_col_idxs The variables dropped since the last renumbering.
+    virtual void update_with_substitution(std::span<const ClauseId> rewritten_clause_ids,
+                                          const IndexSet& dropped_col_idxs, const Trail& trail);
 
-    /// @brief Add this selector's own counters to `stats`; the default has none.
+    /// @brief Renumber every active clause, after `update_with_substitution()` told
+    /// of the last variable dropped; no watch moves.
+    /// @pre No dropped variable occurs in an active clause, and `trail` is empty.
+    virtual void update_with_renumbering(const CompactionTransform& transform, const Trail& trail);
+
+    /// @brief Add this selector's counters to `stats`.
     virtual void add_to_stats(RunStats& stats) const;
 
 protected:
@@ -155,7 +183,29 @@ protected:
     /// @brief React to a learned equation, propagated or decided alike.
     virtual void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail);
 
+    /// @brief Note that an active clause went inactive, which the default ignores.
+    virtual void update_with_inactive_clause(ClauseId id);
+
+    /// @brief Whether `col_idx_to_clause_ids_[col_idx]` is right to name the clause.
+    bool carries(ClauseId id, std::size_t col_idx) const {
+        return clause_active_[id] != 0 && clause_carried_col_idxs_[id].test(col_idx);
+    }
+
+    bool spans_eq_false(ClauseId id) const {
+        return clause_active_[id] != 0 && clause_spans_eq_false_[id] != 0;
+    }
+
+    /// @brief Enter an active clause under each column it carries and
+    /// @p entered_col_idxs lacks.
+    void enter_carried_col_idxs(ClauseId id, const IndexSet& entered_col_idxs);
+
+    /// @brief Drop the stale and repeated entries once they outnumber the rest.
+    void maybe_clean_carrier_entries();
+
 #ifndef NDEBUG
+    /// @brief What `clause_ids_carrying()` returns, read off every active clause.
+    std::vector<ClauseId> debug_scan_clause_ids_carrying(const IndexSet& col_idxs) const;
+
     void debug_assert_database_synchronized() const;
     void debug_assert_clause_id(ClauseId id) const;
 #endif
@@ -163,7 +213,21 @@ protected:
     ClauseTierConfig tier_config_;
 
     std::vector<Clause> clauses_; ///< A clause's id is its index.
+    std::vector<IndexSet> clause_carried_col_idxs_;
+    std::vector<std::uint8_t> clause_spans_eq_false_;
+
+    /// @brief Per variable column, the clauses that may carry it.
+    ///
+    /// `carries()` is the truth: an entry may be stale, and a clause may be entered twice.
+    std::vector<std::vector<ClauseId>> col_idx_to_clause_ids_;
+    std::vector<ClauseId> clause_ids_spanning_eq_false_; ///< Entries likewise.
+    std::size_t num_carrier_entries_ = 0; ///< Over both of the above.
+    std::size_t peak_carrier_entries_ = 0;
+    std::size_t carrier_cleanup_threshold_ = 0;
     std::vector<std::uint8_t> clause_active_;
+    /// @brief Ascending: every active id, and at most as many inactive ones.
+    std::vector<ClauseId> listed_clause_ids_;
+    std::size_t num_inactive_listed_ = 0; ///< Inactive ids still in `listed_clause_ids_`.
     std::vector<std::uint8_t> clause_learned_;
     std::vector<std::uint8_t> clause_used_since_deletion_;
     std::vector<ClauseTier> clause_tier_;

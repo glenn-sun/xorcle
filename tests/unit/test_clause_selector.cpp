@@ -145,10 +145,9 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
     }
 
     SUBCASE("compaction moves the cursor onto an active clause") {
-        const CompactionTransform transform;
         selector.set_clause_active(2, false);
         selector.set_clause_active(0, false);
-        selector.update_with_compaction(transform, trail);
+        selector.update_with_substitution({}, IndexSet(), trail);
         CHECK(next_id(selector) == std::optional<ClauseId>{1});
     }
 
@@ -355,6 +354,62 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
     }
 }
 
+TEST_CASE("exact watchlist: a substitution rebuilds only the clauses it rewrote") {
+    constexpr EquationRepr repr = EquationRepr::dense;
+    ExactWatchlist selector(5);
+    Trail trail(repr, 5);
+
+    selector.add_starting_clause(make_clause(repr, 5, {{0, 1}, {2}})); // carries x0
+    selector.add_starting_clause(make_clause(repr, 5, {{1}, {2}}));
+    selector.add_starting_clause(make_clause(repr, 5, {{3}}));
+    selector.add_starting_clause(make_clause(repr, 5, {{1}, {2}, {4}}));
+    REQUIRE(selector.next()->id == 2);
+    selector.clause(3).watched1 = 2;
+    selector.update_with_new_watch(3, 1, WatchType::one, trail);
+    learn(selector, trail, {3, 5}, false); // x3 = 1 satisfies the unit
+    learn(selector, trail, {0}, false);    // x0 = 0
+    REQUIRE(selector.next() == std::nullopt);
+
+    // What the solver does: the clause carrying x0 is rewritten, the satisfied one
+    // goes, the moved watch stays where it is, and the trail is emptied.
+    selector.replace_clause(0, make_clause(repr, 5, {{1}, {2}}));
+    selector.set_clause_active(2, false);
+    trail = Trail(repr, 5);
+    const std::vector<ClauseId> rewritten{0, 2};
+    IndexSet dropped_col_idxs(6);
+    dropped_col_idxs.set(0);
+    dropped_col_idxs.set(3);
+    selector.update_with_substitution(rewritten, dropped_col_idxs, trail);
+    CHECK(selector.next() == std::nullopt);
+    CHECK(selector.clause(3).watched1 == 2);
+
+    SUBCASE("kept cells stay in their buckets, and rebuilt ones go behind them") {
+        learn(selector, trail, {1}, false);
+        CHECK(drain(selector) == std::vector<ClauseId>{1, 3, 0});
+    }
+
+    SUBCASE("a clause added afterwards takes the cells the inactive one left") {
+        selector.add_starting_clause(make_clause(repr, 5, {{1, 2}}));
+        CHECK(selector.next()->id == 4);
+        // Clause 3 watches x1 and x4.
+        learn(selector, trail, {2}, false);
+        CHECK(drain(selector) == std::vector<ClauseId>{0, 1});
+    }
+
+    SUBCASE("a renumbering relabels the cells and keeps each bucket's order") {
+        const CompactionTransform transform =
+            CompactionTransform::from_dropped_columns(5, dropped_col_idxs);
+        trail = Trail(repr, 3);
+        selector.update_with_renumbering(transform, trail);
+        CHECK(rows_of(selector.clause(1)) == std::vector<std::vector<std::size_t>>{{0}, {1}});
+        CHECK(selector.next() == std::nullopt);
+        CHECK(selector.clause(3).watched1 == 2);
+        // x1 is now column 0, and its bucket is swept as before the renumbering.
+        learn(selector, trail, {0}, false);
+        CHECK(drain(selector) == std::vector<ClauseId>{1, 3, 0});
+    }
+}
+
 TEST_CASE("exact watchlist: watches past the first word") {
     constexpr EquationRepr repr = EquationRepr::dense;
     constexpr std::size_t num_vars = 130;
@@ -448,6 +503,92 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         CHECK(selector.clause_lbd(0) == unset_clause_lbd);
     }
 
+    SUBCASE("the carried columns follow a clause's rows") {
+        const auto carried = [&](ClauseId id) {
+            std::vector<std::size_t> out;
+            selector.carried_col_idxs()[id].for_each_set(
+                [&out](std::size_t col_idx) { out.push_back(col_idx); });
+            return out;
+        };
+        selector.add_starting_clause(make_clause(repr, 4, {{0, 1}, {2}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{3}}));
+        CHECK(carried(0) == std::vector<std::size_t>{0, 1, 2});
+
+        selector.replace_clause(0, make_clause(repr, 4, {{1, 4}, {2}}));
+        CHECK(carried(0) == std::vector<std::size_t>{1, 2, 4});
+
+        selector.set_clause_active(1, false);
+        CHECK(selector.carried_col_idxs()[1].size() == 0);
+
+        IndexSet dropped(5);
+        dropped.set(0);
+        const CompactionTransform transform = CompactionTransform::from_dropped_columns(4, dropped);
+        selector.update_with_renumbering(transform, Trail(repr, 3));
+        CHECK(rows_of(selector.clause(0)) == std::vector<std::vector<std::size_t>>{{0, 3}, {1}});
+        CHECK(carried(0) == std::vector<std::size_t>{0, 1, 3});
+    }
+
+    SUBCASE("the active ids are walked in ascending order") {
+        const auto active_ids = [&selector] {
+            std::vector<ClauseId> ids;
+            for (const ClauseId id : selector.active_clause_ids()) {
+                ids.push_back(id);
+            }
+            return ids;
+        };
+        for (std::size_t var = 0; var < 4; ++var) {
+            selector.add_starting_clause(make_clause(repr, 4, {{var}}));
+        }
+        CHECK(active_ids() == std::vector<ClauseId>{0, 1, 2, 3});
+        selector.set_clause_active(1, false);
+        CHECK(active_ids() == std::vector<ClauseId>{0, 2, 3});
+        selector.set_clause_active(3, false);
+        CHECK(active_ids() == std::vector<ClauseId>{0, 2});
+        selector.set_clause_active(0, false);
+        CHECK(active_ids() == std::vector<ClauseId>{2});
+        CHECK(selector.active_clause_ids().contains(2));
+        CHECK_FALSE(selector.active_clause_ids().contains(0));
+        selector.set_clause_active(2, false);
+        CHECK(active_ids().empty());
+    }
+
+    SUBCASE("the clauses carrying a column are found whatever replaced or retired them") {
+        const auto carrying = [&selector](std::initializer_list<std::size_t> col_idxs) {
+            IndexSet set(5);
+            for (const std::size_t col_idx : col_idxs) {
+                set.set(col_idx);
+            }
+            return selector.clause_ids_carrying(set);
+        };
+        selector.add_starting_clause(make_clause(repr, 4, {{0, 1}, {2}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{1, 3}}));
+        selector.add_starting_clause(make_clause(repr, 4, {{3}}));
+        CHECK(carrying({1}) == std::vector<ClauseId>{0, 1});
+        CHECK(carrying({0, 3}) == std::vector<ClauseId>{0, 1, 2});
+        CHECK(carrying({}).empty());
+
+        // Dropped, carried again, and dropped: one entry goes stale and comes back.
+        selector.replace_clause(0, make_clause(repr, 4, {{2}}));
+        CHECK(carrying({1}) == std::vector<ClauseId>{1});
+        selector.replace_clause(0, make_clause(repr, 4, {{1, 2}}));
+        CHECK(carrying({1, 2}) == std::vector<ClauseId>{0, 1});
+        selector.set_clause_active(1, false);
+        CHECK(carrying({1, 3}) == std::vector<ClauseId>{0, 2});
+
+        // A clause spanning `0 = 1` carries no variable and is found all the same.
+        selector.add_starting_clause(make_clause(repr, 4, {{4}}));
+        CHECK(carrying({}) == std::vector<ClauseId>{3});
+        CHECK(carrying({3}) == std::vector<ClauseId>{2, 3});
+
+        IndexSet dropped(5);
+        dropped.set(0);
+        selector.update_with_renumbering(CompactionTransform::from_dropped_columns(4, dropped),
+                                         Trail(repr, 3));
+        IndexSet renumbered(4);
+        renumbered.set(0);
+        CHECK(selector.clause_ids_carrying(renumbered) == std::vector<ClauseId>{0, 3});
+    }
+
     SUBCASE("metadata is id-indexed, so compaction leaves it alone") {
         selector.add_starting_clause(make_clause(repr, 4, {{0}}));
         selector.add_asserting_clause(make_clause(repr, 4, {{1}}), trail,
@@ -456,8 +597,7 @@ TEST_CASE_TEMPLATE("clause selector: per-clause metadata", Tag, DenseTag, Sparse
         selector.set_clause_unused_passes(1, 3);
         selector.set_clause_active(0, false);
 
-        const CompactionTransform transform;
-        selector.update_with_compaction(transform, trail);
+        selector.update_with_substitution({}, IndexSet(), trail);
 
         CHECK_FALSE(selector.is_clause_learned(0));
         CHECK(selector.is_clause_learned(1));

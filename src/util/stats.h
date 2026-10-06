@@ -60,7 +60,7 @@ struct StatValue<StatKind::Real> {
 
 /// @brief One option's effective value, as the statistics report it.
 struct ConfigEntry {
-    std::string name;  ///< The option's table name, e.g. `compact_cadence`.
+    std::string name;  ///< The option's table name, e.g. `deletion_cadence`.
     std::string value; ///< Its value as text, e.g. `16`.
     /// @brief Whether the value is the table's own default, which the console
     /// block leaves out.

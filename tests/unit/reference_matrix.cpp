@@ -185,15 +185,17 @@ void ReferenceMatrix::reduce_rows() {
     }
 }
 
-bool ReferenceMatrix::carries_any_col(const std::vector<std::size_t>& col_idxs) const {
-    for (const Bits& row : rows_) {
-        for (const std::size_t col_idx : col_idxs) {
+std::vector<std::size_t> ReferenceMatrix::carried_col_idxs() const {
+    std::vector<std::size_t> carried;
+    for (std::size_t col_idx = 0; col_idx <= num_vars_; ++col_idx) {
+        for (const Bits& row : rows_) {
             if (row[col_idx]) {
-                return true;
+                carried.push_back(col_idx);
+                break;
             }
         }
     }
-    return false;
+    return carried;
 }
 
 void ReferenceMatrix::index_pivots() {

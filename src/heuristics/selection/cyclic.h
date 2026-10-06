@@ -5,8 +5,8 @@
 
 #include <cstddef>
 #include <optional>
+#include <span>
 
-#include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
@@ -41,7 +41,8 @@ public:
     void update_with_decision_clause(std::optional<ClauseId> clause_id);
 
     /// @brief Move the cursor back into range and onto an active clause.
-    void update_with_compaction(const CompactionTransform& transform, const Trail& trail) override;
+    void update_with_substitution(std::span<const ClauseId> rewritten_clause_ids,
+                                  const IndexSet& dropped_col_idxs, const Trail& trail) override;
 
 protected:
     /// @brief Store a clause and make it the next one tried.
