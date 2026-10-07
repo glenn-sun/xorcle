@@ -405,7 +405,8 @@ TEST_CASE_TEMPLATE("solver: a decision a missed propagation forbids is undone", 
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Run run = make_run(repr, missed_unit_instance,
-                       {"--selection=cyclic", "--propagate-miss-rate=0.5", "--propagate-window=1"});
+                       {"--selection=cyclic", "--propagate-miss-rate=0.5", "--propagate-window=1",
+                        "--csids-intersection-depth=8"});
 
     check_satisfies(run.clauses, run.solver->solve(), run.num_vars);
     CHECK(run.solver->counters().num_undone_decisions > 0);

@@ -21,7 +21,7 @@ namespace {
 #ifndef NDEBUG
 /// @brief Vertices below which every descendant is also checked path by path,
 /// which costs a search of the whole graph per descendant.
-constexpr std::size_t path_check_vertices = 512;
+constexpr std::size_t path_check_vertices = 500;
 #endif
 
 } // namespace

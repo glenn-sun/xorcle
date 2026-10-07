@@ -59,8 +59,9 @@ void update_with_reason_use(ClauseSelector& selector, ClauseId id, std::size_t m
 
 std::size_t conflicts_between_deletion_passes(const DeletionConfig& config,
                                               std::size_t num_conflicts) {
-    const long gap =
-        std::lround(config.cadence_coefficient * std::sqrt(static_cast<double>(num_conflicts)));
+    const long gap = std::lround(config.cadence_coefficient *
+                                 std::sqrt(static_cast<double>(num_conflicts) +
+                                           static_cast<double>(config.cadence_offset)));
     return std::max<std::size_t>(1, static_cast<std::size_t>(gap));
 }
 

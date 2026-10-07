@@ -64,6 +64,8 @@ XORCLE_STAT(intersection, Count, intersection_decisions, "intersection_decisions
 XORCLE_STAT(intersection, Count, intersected_clauses, "intersected_clauses", "Clauses intersected below the top")
 XORCLE_STAT(intersection, Count, intersection_dimension_before, "intersection_dimension_before", "Dimension before intersecting")
 XORCLE_STAT(intersection, Count, intersection_dimension_after, "intersection_dimension_after", "Dimension after intersecting")
+XORCLE_STAT(intersection, Count, intersection_empty, "intersection_empty", "Clauses with an empty intersection")
+XORCLE_STAT(intersection, Count, intersection_skipped, "intersection_skipped", "Empty intersections found from the pivot columns alone")
 XORCLE_STAT(intersection, Count, intersection_passed_satisfied_clauses, "intersection_passed_satisfied_clauses", "Satisfied clauses passed while intersecting")
 XORCLE_STAT(intersection, Count, intersection_propagating_clauses, "intersection_propagating_clauses", "Propagating clauses found while intersecting")
 XORCLE_STAT(intersection, Real, intersection_time_s, "intersection_time_s", "Intersection time (s), also in the decision time")

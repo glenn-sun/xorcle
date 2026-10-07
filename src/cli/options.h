@@ -632,6 +632,7 @@ inline ImplicationGraphConfig implication_graph_config(const Options& options) {
 inline DeletionConfig deletion_config(const Options& options) {
     return DeletionConfig{.enabled = options.deletion,
                           .cadence_coefficient = options.deletion_cadence_coefficient,
+                          .cadence_offset = options.deletion_cadence_offset,
                           .wait = options.deletion_wait,
                           .lbd_window = options.deletion_lbd_window,
                           .eviction_rate = options.deletion_eviction_rate,

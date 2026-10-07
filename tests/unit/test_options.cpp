@@ -209,13 +209,14 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--deletion=true|false"));
     CHECK(contains(text, "periodically delete some learned clauses [default: true]"));
     CHECK(contains(text, "--deletion-cadence-coefficient=X"));
+    CHECK(contains(text, "--deletion-cadence-offset=N"));
     CHECK(contains(text, "--deletion-lbd-window=N"));
     CHECK(contains(text, "--deletion-eviction-rate=X"));
     CHECK(contains(text, "--deletion-wait=X"));
     CHECK(contains(text, "--deletion-key=lbd|activity"));
 
     // The requirement table feeds the help, so a refusal is never a surprise.
-    CHECK(contains(text, "conflicts so far (positive); requires --deletion=true"));
+    CHECK(contains(text, "plus --deletion-cadence-offset (positive); requires --deletion=true"));
     CHECK(contains(text, "fast/slow ratio needed for LBD restart; requires --restart=lbd"));
 
     CHECK(contains(text, "--restart=none|luby|lbd"));
@@ -291,6 +292,7 @@ TEST_CASE("options: the configuration projections carry the values across") {
                                               "--restart=lbd", "--restart-lbd-min-ratio=1.25",
                                               "--deletion=true",
                                               "--deletion-cadence-coefficient=0.75",
+                                              "--deletion-cadence-offset=250",
                                               "--deletion-lbd-window=4",
                                               "--deletion-eviction-rate=0.25",
                                               "--deletion-wait=7.5",
@@ -298,6 +300,7 @@ TEST_CASE("options: the configuration projections carry the values across") {
     const DeletionConfig deletion = deletion_config(options);
     CHECK(deletion.enabled == true);
     CHECK(deletion.cadence_coefficient == doctest::Approx(0.75));
+    CHECK(deletion.cadence_offset == 250);
     CHECK(deletion.lbd_window == 4);
     CHECK(deletion.eviction_rate == doctest::Approx(0.25));
     CHECK(deletion.wait == doctest::Approx(7.5));
@@ -392,6 +395,8 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(refusal({"--restart-luby-unit=50"}).starts_with("--restart-luby-unit requires"));
     CHECK(refusal({"--deletion=false", "--deletion-cadence-coefficient=0.5"})
               .starts_with("--deletion-cadence-coefficient requires"));
+    CHECK(refusal({"--deletion=false", "--deletion-cadence-offset=0"})
+              .starts_with("--deletion-cadence-offset requires"));
     // Only CSIDS scores clauses, so only CSIDS can bump the pivots.
     CHECK(refusal({"--decisions=fixed_literals", "--deletion=false",
                    "--bump-responsible-clauses=true"})
@@ -459,7 +464,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
 
 TEST_CASE("options: only the cyclic selector reads the miss rate") {
     const auto cyclic = std::vector<std::string>{"--selection=cyclic"};
-    CHECK(propagation_config(parse_with_input(cyclic)).miss_rate == doctest::Approx(0.04));
+    CHECK(propagation_config(parse_with_input(cyclic)).miss_rate == doctest::Approx(0.05));
     CHECK(propagation_config(parse_with_input({})).miss_rate == 0.0);
 
     std::vector<std::string> complete = cyclic;

@@ -89,7 +89,8 @@ bool contains(const std::vector<ClauseId>& ids, ClauseId id) {
 
 // --- Solver-level runs -----------------------------------------------------
 
-/// @brief A cadence coefficient whose gap between passes is one conflict for the first 22500.
+/// @brief A cadence coefficient whose gap between passes is one conflict for the first 22500
+/// with no cadence offset.
 constexpr double every_conflict = 0.01;
 
 /// @brief Solve the sign patterns over four variables once, deleting on the given cadence.
@@ -100,6 +101,7 @@ SolverCounters solve_deleting(EquationRepr repr, double cadence_coefficient, dou
     ParsedDimacs parsed = parse_dimacs_string(sign_pattern_instance(4), repr);
     const DeletionConfig deletion{.enabled = true,
                                   .cadence_coefficient = cadence_coefficient,
+                                  .cadence_offset = 0,
                                   .wait = wait,
                                   .key = DeletionKey::lbd};
 
@@ -138,10 +140,33 @@ TEST_CASE("deletion: the unused passes an LBD allows") {
 }
 
 TEST_CASE("deletion: the conflicts between passes") {
-    const DeletionConfig by_sqrt{.cadence_coefficient = 0.5};
-    CHECK(conflicts_between_deletion_passes(by_sqrt, 10000) == 50);
-    CHECK(conflicts_between_deletion_passes(by_sqrt, 30) == 3); // 2.74
-    CHECK(conflicts_between_deletion_passes(by_sqrt, 0) == 1);
+    SUBCASE("with no offset, the coefficient times the square root of the conflicts") {
+        const DeletionConfig by_sqrt{.cadence_coefficient = 0.5, .cadence_offset = 0};
+        CHECK(conflicts_between_deletion_passes(by_sqrt, 10000) == 50);
+        CHECK(conflicts_between_deletion_passes(by_sqrt, 30) == 3); // 2.74
+        CHECK(conflicts_between_deletion_passes(by_sqrt, 0) == 1);
+    }
+
+    SUBCASE("the offset is added to the conflicts under the square root") {
+        const DeletionConfig offset{.cadence_coefficient = 0.5, .cadence_offset = 400};
+        CHECK(conflicts_between_deletion_passes(offset, 0) == 10);
+        CHECK(conflicts_between_deletion_passes(offset, 9600) == 50);
+    }
+
+    SUBCASE("the defaults") {
+        const DeletionConfig defaults;
+        CHECK(conflicts_between_deletion_passes(defaults, 0) == 18);         // 17.68
+        CHECK(conflicts_between_deletion_passes(defaults, 100) == 18);       // 17.85
+        CHECK(conflicts_between_deletion_passes(defaults, 995000) == 250);
+        CHECK(conflicts_between_deletion_passes(defaults, 1000000) == 251);  // 250.62
+    }
+
+    SUBCASE("the default coefficient with no offset") {
+        const DeletionConfig no_offset{.cadence_offset = 0};
+        CHECK(conflicts_between_deletion_passes(no_offset, 0) == 1);
+        CHECK(conflicts_between_deletion_passes(no_offset, 100) == 3);
+        CHECK(conflicts_between_deletion_passes(no_offset, 1000000) == 250);
+    }
 }
 
 TEST_CASE_TEMPLATE("deletion: a use as a reason averages the measured LBD in", Tag, DenseTag,

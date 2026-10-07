@@ -351,6 +351,26 @@ TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decisi
         CHECK(counters.intersected_clauses == 1);
         CHECK(counters.dimension_before == 2);
         CHECK(counters.dimension_after == 1);
+        CHECK(counters.empty_intersections == 0);
+    }
+
+    SUBCASE("a clause sharing no pivot column is passed over") {
+        config.intersection_depth = 3;
+        Csids deeper(repr, 4, default_seed, config);
+        for (ClauseId id = 0; id < clauses.size(); ++id) {
+            deeper.update_with_new_clause(clauses[id], id);
+        }
+        deeper.update_with_resolved_clause(0);
+        deeper.update_with_resolved_clause(0);
+        deeper.update_with_resolved_clause(2);
+        const DecisionResult result = deeper.make_decision(empty, clauses, active);
+        REQUIRE(result.equation.has_value());
+        CHECK(bits_of(*result.equation) == std::vector<std::size_t>{1});
+
+        const IntersectionCounters counters = deeper.intersection_counters();
+        CHECK(counters.intersected_clauses == 1);
+        CHECK(counters.empty_intersections == 1);
+        CHECK(counters.skipped_intersections == 1);
     }
 
     SUBCASE("with nothing kept the draw is the top clause's alone") {

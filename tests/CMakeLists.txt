@@ -112,7 +112,7 @@ set_tests_properties(proof_roundtrip_cyclic PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_unused_passes
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
-            --deletion-cadence-coefficient=0.7 --deletion-wait=3)
+            --deletion-cadence-coefficient=0.7 --deletion-cadence-offset=0 --deletion-wait=3)
 set_tests_properties(proof_roundtrip_unused_passes PROPERTIES SKIP_RETURN_CODE 77)
 
 # The sparse representation, which runs only the cyclic selector.

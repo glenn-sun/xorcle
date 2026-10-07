@@ -25,7 +25,7 @@ struct ImplicationGraphConfig {
 
     /// @brief Clauses that reached width at most 2 since the last run, and, as a
     /// fallback, conflicts since it, either of which makes a run due.
-    std::size_t clause_cadence = 32;
+    std::size_t clause_cadence = 50;
     std::size_t cadence = 1000;
 
     /// @brief Vertex pairs one run examines, and descendants one side's search

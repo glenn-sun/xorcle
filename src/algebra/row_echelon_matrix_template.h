@@ -169,10 +169,8 @@ public:
             return std::nullopt; // `v` already belongs to the span
         }
 
-        // Row-echelon order means the insertion row_idx is the number of pivots
-        // strictly below the new leading column
         const std::size_t new_pivot_col_idx = *leading_col_idx;
-        const std::size_t insert_row_idx = pivot_col_idxs_.count_below(new_pivot_col_idx);
+        const std::size_t insert_row_idx = row_idx_for_col_idx(new_pivot_col_idx);
 
         rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_row_idx),
                      StoredRow{std::move(v), new_pivot_col_idx});
@@ -464,9 +462,15 @@ private:
         }
     }
 
-    /// @brief The row holding the pivot in `col_idx`.
+    /// @brief The row holding the pivot in `col_idx`, or where a row leading on it goes.
     std::size_t row_idx_for_col_idx(std::size_t col_idx) const noexcept {
-        return pivot_col_idxs_.count_below(col_idx);
+        // Counting the pivots below reads a word per 64 columns, which a binary
+        // search over the rows beats for 16 words or more.
+        if (cols_ <= 1024) [[likely]] {
+            return pivot_col_idxs_.count_below(col_idx);
+        }
+        const auto row = std::ranges::lower_bound(rows_, col_idx, {}, &StoredRow::pivot_col_idx);
+        return static_cast<std::size_t>(row - rows_.begin());
     }
 
     void build_col_idx_to_row() {

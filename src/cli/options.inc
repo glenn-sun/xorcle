@@ -59,7 +59,7 @@ XORCLE_ENUM_VALUE(decisions, "fixed_literals", DecisionProcedureName::fixed_lite
 XORCLE_OPTION(csids_initial, Real, 1.0, 0.0, INFINITY, "initial activity of asserting clauses")
 XORCLE_OPTION(csids_bump, Real, 1.0, 0.0, INFINITY, "activity bump per resolution step")
 XORCLE_OPTION(csids_decay, Real, 0.98, 0.0, 1.0, "activity decay per conflict")
-XORCLE_OPTION(csids_intersection_depth, Size, 8, 1, SIZE_MAX,
+XORCLE_OPTION(csids_intersection_depth, Size, 25, 1, SIZE_MAX,
               "decide from the intersection, modulo the trail, of the top clause's linear\n"
               "negation with those of the open clauses below it, trying this many clauses\n"
               "in all (1: the top clause alone)")
@@ -83,7 +83,7 @@ XORCLE_ENUM_VALUE(selection, "exact_watchlist", ClauseSelectorName::exact_watchl
 
 // --- Propagation -----------------------------------------------------------
 
-XORCLE_OPTION(propagate_miss_rate, Real, 0.04, 0.0, 1.0,
+XORCLE_OPTION(propagate_miss_rate, Real, 0.05, 0.0, 1.0,
               "target fraction of propagated equations learned out of order; 0 propagates\n"
               "to a fixed point")
 
@@ -130,9 +130,12 @@ XORCLE_OPTION(subsume, Bool, true, false, true,
 
 XORCLE_OPTION(deletion, Bool, true, false, true,
               "periodically delete some learned clauses")
-XORCLE_OPTION(deletion_cadence_coefficient, Real, 0.3, 0.0, INFINITY,
+XORCLE_OPTION(deletion_cadence_coefficient, Real, 0.25, 0.0, INFINITY,
               "conflicts between deletion passes are this times the square root of the "
-              "conflicts so far (positive)")
+              "conflicts so far plus --deletion-cadence-offset (positive)")
+XORCLE_OPTION(deletion_cadence_offset, Size, 5000, 0, SIZE_MAX,
+              "conflicts added to the conflicts so far under the square root of "
+              "--deletion-cadence-coefficient")
 XORCLE_OPTION(deletion_wait, Real, 6.0, 0.0, 62.0,
               "a learned clause may go unused for round(2^(wait - LBD)) consecutive deletion "
               "passes before it can be deleted")
@@ -153,7 +156,7 @@ XORCLE_OPTION(implication_graph, Bool, true, false, true,
               "add to the root trail the equations that hold on both sides of a vertex of\n"
               "the implication graph of the width-2 clauses; needs --compact=true, and the\n"
               "default is off without it")
-XORCLE_OPTION(implication_graph_clause_cadence, Size, 32, 1, SIZE_MAX,
+XORCLE_OPTION(implication_graph_clause_cadence, Size, 50, 1, SIZE_MAX,
               "clauses that became width at most 2 between implication graph runs")
 XORCLE_OPTION(implication_graph_cadence, Size, 1000, 1, SIZE_MAX,
               "conflicts between implication graph runs, the fallback when too few\n"
@@ -210,6 +213,7 @@ XORCLE_REQUIRES(restart_lbd_min_conflicts, options.restart == RestartMethod::lbd
 XORCLE_REQUIRES(restart_lbd_trail_ratio, options.restart == RestartMethod::lbd, "--restart=lbd")
 
 XORCLE_REQUIRES(deletion_cadence_coefficient, options.deletion, "--deletion=true")
+XORCLE_REQUIRES(deletion_cadence_offset, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_wait, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_lbd_window, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_eviction_rate, options.deletion, "--deletion=true")

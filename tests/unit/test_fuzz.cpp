@@ -239,7 +239,7 @@ TEST_CASE("fuzz: past one word, the exact watchlist's answers check") {
         const std::string text = random_wide_instance(random);
         CAPTURE(index);
         CAPTURE(text);
-        run_and_check(text, {"--deletion-cadence-coefficient=0.5"}, tally, std::nullopt);
+        run_and_check(text, {"--deletion-cadence-coefficient=0.5", "--deletion-cadence-offset=0"}, tally, std::nullopt);
     }
     CHECK(tally.sat > 0);
     CHECK(tally.unsat > 0);
@@ -259,6 +259,7 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
     };
     // Deletion passes and the graph are due every few conflicts.
     const std::vector<std::string> often = {"--deletion-cadence-coefficient=0.1",
+                                            "--deletion-cadence-offset=0",
                                             "--deletion-wait=0",
                                             "--implication-graph-cadence=4"};
     std::vector<std::string> often_without_graph(often.begin(), often.end() - 1);
@@ -268,12 +269,12 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
         {"defaults, often", often, &SolverCounters::num_deletion_passes},
         {"no graph, often", often_without_graph, &SolverCounters::num_deletion_passes},
         {"cyclic, complete", {"--selection=cyclic", "--propagate-miss-rate=0"}},
-        {"cyclic, miss rate 0.04",
+        {"cyclic, miss rate 0.05",
          {"--selection=cyclic", "--propagate-window=4"},
          &SolverCounters::num_decision_propagations},
         {"cyclic, sparse",
          {"--selection=cyclic", "--equation-repr=sparse", "--propagate-miss-rate=0.5",
-          "--propagate-window=1"},
+          "--propagate-window=1", "--csids-intersection-depth=8"},
          &SolverCounters::num_undone_decisions},
         {"luby",
          {"--restart=luby", "--restart-luby-unit=1"},

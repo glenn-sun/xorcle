@@ -25,8 +25,10 @@ struct DeletionConfig {
     bool enabled = true;
 
     /// @brief The conflicts between deletion passes are this times the square root of the
-    /// conflicts so far.
-    double cadence_coefficient = 0.3;
+    /// conflicts so far plus `cadence_offset`.
+    double cadence_coefficient = 0.25;
+
+    std::size_t cadence_offset = 5000;
 
     /// @brief The LBD allowed one unused deletion pass; see `allowed_unused_passes()`.
     double wait = 6.0;

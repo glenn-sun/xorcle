@@ -163,9 +163,18 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
             continue;
         }
 
-        std::vector<Equation> intersection =
-            span_intersection(space, clause_sat_workspace_.reduced_clause());
+        const RowSpace& reduced_clause = clause_sat_workspace_.reduced_clause();
+        // An equation of both spans leads in a pivot column of each.
+        if (!space.pivot_col_idxs().intersects(reduced_clause.pivot_col_idxs())) {
+            assert(span_intersection(space, reduced_clause).empty() &&
+                   "spans sharing no pivot column intersect");
+            ++intersection_counters_.empty_intersections;
+            ++intersection_counters_.skipped_intersections;
+            continue;
+        }
+        std::vector<Equation> intersection = span_intersection(space, reduced_clause);
         if (intersection.empty()) {
+            ++intersection_counters_.empty_intersections;
             continue;
         }
         space = RowSpace(repr(), num_vars());
@@ -282,6 +291,8 @@ void Csids::add_to_stats(RunStats& stats) const {
     stats.intersected_clauses = intersection_counters_.intersected_clauses;
     stats.intersection_dimension_before = intersection_counters_.dimension_before;
     stats.intersection_dimension_after = intersection_counters_.dimension_after;
+    stats.intersection_empty = intersection_counters_.empty_intersections;
+    stats.intersection_skipped = intersection_counters_.skipped_intersections;
     stats.intersection_passed_satisfied_clauses = intersection_counters_.passed_satisfied_clauses;
     stats.intersection_propagating_clauses = intersection_counters_.propagating_clauses;
     stats.intersection_time_s = intersection_counters_.time_s;

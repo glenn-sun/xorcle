@@ -78,6 +78,8 @@ struct IntersectionCounters {
     std::size_t intersected_clauses = 0; ///< Below the top, whose intersection was kept.
     std::size_t dimension_before = 0; ///< Of the top clause modulo the trail.
     std::size_t dimension_after = 0; ///< Of the intersection drawn from.
+    std::size_t empty_intersections = 0; ///< Open clauses below the top that were not kept.
+    std::size_t skipped_intersections = 0; ///< Of those, the ones sharing no pivot column.
     std::size_t passed_satisfied_clauses = 0;
     std::size_t propagating_clauses = 0; ///< Found below the top and handed back.
     double time_s = 0.0;

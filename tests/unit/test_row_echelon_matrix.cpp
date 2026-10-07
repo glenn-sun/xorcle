@@ -654,4 +654,98 @@ TEST_CASE_TEMPLATE("row echelon: span_intersection is a basis of the intersectio
     }
 }
 
+namespace {
+
+RowSpace make_space(EquationRepr repr, std::size_t num_vars,
+                    std::initializer_list<std::initializer_list<std::size_t>> rows) {
+    RowSpace space(repr, num_vars);
+    for (const std::initializer_list<std::size_t>& row : rows) {
+        space.add_row(make_equation_with(repr, num_vars, row));
+    }
+    return space;
+}
+
+bool share_pivot(const RowSpace& left, const RowSpace& right) {
+    return left.pivot_col_idxs().intersects(right.pivot_col_idxs());
+}
+
+} // namespace
+
+// Each equation of a span leads in one of its pivot columns, so two spans
+// sharing none intersect in nothing; sharing one decides nothing.
+TEST_CASE_TEMPLATE("row echelon: spans sharing no pivot column have an empty intersection", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    constexpr std::size_t n = 6;
+
+    SUBCASE("shared variables and constants after the pivots") {
+        const RowSpace left = make_space(repr, n, {{0, 2, 5, n}, {1, 5}});
+        const RowSpace right = make_space(repr, n, {{2, 5, n}, {3, 5, n}});
+        CHECK_FALSE(share_pivot(left, right));
+        CHECK(span_intersection(left, right).empty());
+    }
+
+    SUBCASE("a shared pivot and still an empty intersection") {
+        const RowSpace left = make_space(repr, n, {{0, 1}});
+        const RowSpace right = make_space(repr, n, {{0, 2, n}});
+        CHECK(share_pivot(left, right));
+        CHECK(span_intersection(left, right).empty());
+    }
+
+    SUBCASE("equations differing only in the constant") {
+        const RowSpace left = make_space(repr, n, {{0, 1}, {2}});
+        const RowSpace right = make_space(repr, n, {{0, 1, n}, {3}});
+        CHECK(share_pivot(left, right));
+        CHECK(span_intersection(left, right).empty());
+    }
+
+    SUBCASE("a shared equation") {
+        const RowSpace left = make_space(repr, n, {{0, 1, n}, {2}});
+        const RowSpace right = make_space(repr, n, {{0, 1, 2, n}, {3}});
+        CHECK(share_pivot(left, right));
+        CHECK(span_intersection(left, right).size() == 1);
+    }
+
+    SUBCASE("0 = 1 in both, over disjoint variables") {
+        const RowSpace left = make_space(repr, n, {{0}, {0, n}});
+        const RowSpace right = make_space(repr, n, {{1, n}, {1}});
+        CHECK(share_pivot(left, right));
+        const std::vector<Equation> basis = span_intersection(left, right);
+        REQUIRE(basis.size() == 1);
+        CHECK(basis[0].is_eq_false());
+    }
+
+    SUBCASE("0 = 1 in one") {
+        const RowSpace left = make_space(repr, n, {{0}, {0, n}});
+        const RowSpace right = make_space(repr, n, {{1, n}, {2}});
+        CHECK_FALSE(share_pivot(left, right));
+        CHECK(span_intersection(left, right).empty());
+    }
+
+    SUBCASE("random spans") {
+        TestRandom random(161803);
+        std::size_t disjoint = 0;
+        for (int trial = 0; trial < 300; ++trial) {
+            RowSpace left(repr, 12);
+            RowSpace right(repr, 12);
+            for (RowSpace* space : {&left, &right}) {
+                for (std::size_t count = 1 + random.next(3); count > 0; --count) {
+                    space->add_row(to_equation(repr, random_bits(random, 12, 4)));
+                }
+            }
+            IndexSet shared(13);
+            for (std::size_t col_idx = 0; col_idx <= 12; ++col_idx) {
+                if (left.pivot_col_idxs().test(col_idx) && right.pivot_col_idxs().test(col_idx)) {
+                    shared.set(col_idx);
+                }
+            }
+            if (shared.none()) {
+                ++disjoint;
+            }
+            CHECK(span_intersection(left, right).size() <= shared.count());
+        }
+        CHECK(disjoint > 30);
+    }
+}
+
 } // namespace xorcle
