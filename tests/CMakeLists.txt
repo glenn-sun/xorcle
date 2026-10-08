@@ -138,6 +138,19 @@ add_test(NAME proof_roundtrip_wide
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> tseitin "n=90;k=3" 1)
 set_tests_properties(proof_roundtrip_wide PROPERTIES SKIP_RETURN_CODE 77)
 
+# Half the declared variables are unused, and the proof is over all of them. The
+# second instance compacts as well.
+add_test(NAME proof_roundtrip_unused_vars
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --unused
+            --expect "^c Unused variables: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1)
+set_tests_properties(proof_roundtrip_unused_vars PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME proof_roundtrip_unused_vars_wide
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --unused
+            --expect "^c Compactions: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> tseitin "n=90;k=3" 1)
+set_tests_properties(proof_roundtrip_unused_vars_wide PROPERTIES SKIP_RETURN_CODE 77)
+
 # CNF-XOR input numbers its XOR lines among the clauses in file order, which the
 # proof's reasons cite.
 add_test(NAME proof_roundtrip_cnf_xor

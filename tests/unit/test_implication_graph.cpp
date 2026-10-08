@@ -525,7 +525,10 @@ std::vector<std::string> solver_raw_lines(const std::vector<Clause>& clauses,
     const std::filesystem::path path = scratch_path("implication_graph.raw");
     {
         RawProofWriter writer(path, num_vars, clauses.size());
-        const std::unique_ptr<Solver> solver = make_solver(*options, num_vars, &writer);
+        std::vector<std::size_t> every_var(num_vars);
+        std::iota(every_var.begin(), every_var.end(), std::size_t{0});
+        const std::unique_ptr<Solver> solver =
+            make_solver(*options, num_vars, std::move(every_var), &writer);
         for (const Clause& clause : clauses) {
             solver->add_starting_clause(clause);
         }

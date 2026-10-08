@@ -22,9 +22,14 @@ public:
 };
 
 struct ParsedDimacs {
+    /// @brief The variable count the header declares.
     std::size_t num_vars = 0;
 
-    /// @brief The clauses, in file order, each in its linear negation.
+    /// @brief The variables some clause uses, ascending.
+    std::vector<std::size_t> used_vars;
+
+    /// @brief The clauses, in file order, each in its linear negation, over
+    /// `used_vars` alone: bit `i` is variable `used_vars[i]`.
     std::vector<Clause> clauses;
 };
 

@@ -67,10 +67,12 @@ if expect_status 1 "$work/malformed.xnf"; then
     expect_line err '^Error: ' "a malformed instance printed no Error: line"
 fi
 
-# SAT: exit 10 and a model satisfying every clause of the instance.
-printf 'p xnf 4 4\n1 2 0\n-1+3 0\n2+3 4 0\n-2 -4 0\n' > "$work/sat.xnf"
+# SAT: exit 10 and a model satisfying every clause of the instance, in which the
+# unused variables 3 and 5 are false.
+printf 'p xnf 6 4\n1 2 0\n-1+4 0\n2+4 6 0\n-2 -6 0\n' > "$work/sat.xnf"
 if expect_status 10 "$work/sat.xnf"; then
     expect_line out '^s SATISFIABLE$' "a SAT run printed no 's SATISFIABLE'"
+    expect_line out '^c Unused variables: 2$' "a SAT run did not report its two unused variables"
     "$python" - "$root/tools" "$work/sat.xnf" "$work/out" <<'EOF' || fail "the model falsifies the instance"
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -80,6 +82,7 @@ num_vars, clauses = parse_xnf_file(sys.argv[2])
 values = [int(token) for line in open(sys.argv[3]) if line.startswith("v ")
           for token in line.split()[1:] if token != "0"]
 assert sorted(abs(v) for v in values) == list(range(1, num_vars + 1)), values
+assert -3 in values and -5 in values, values
 assignment = sum(1 << (v - 1) for v in values if v > 0)
 
 def row_fails(row):

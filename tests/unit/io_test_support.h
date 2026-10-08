@@ -10,6 +10,7 @@
 #include "algebra/equation.h"
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
+#include "io/dimacs.h"
 #include "io/proof_raw.h"
 
 namespace xorcle {
@@ -19,6 +20,9 @@ std::filesystem::path scratch_path(std::string_view name);
 
 /// @brief Each clause's rows, as `postprocess_raw_proof` and `LrupChecker` take them.
 std::vector<std::vector<RawRow>> clause_rows(const std::vector<Clause>& clauses);
+
+/// @brief Each clause's rows over the declared variables.
+std::vector<std::vector<RawRow>> clause_rows(const ParsedDimacs& parsed);
 
 /// @brief The LRUP(⊕) checker of `tools/check_lrup_parity.py`, over `RowSpace`.
 ///

@@ -121,12 +121,13 @@ struct Tally {
     std::size_t units_fed = 0;
 };
 
-/// @brief Whether an assignment over the original variables satisfies a clause.
-bool clause_holds(const Clause& clause, const IndexSet& assignment) {
-    for (const Equation& row : clause) {
+/// @brief Whether an assignment over the original variables satisfies a clause,
+/// given by its rows over them.
+bool clause_holds(const std::vector<RawRow>& rows, const IndexSet& assignment) {
+    for (const RawRow& row : rows) {
         bool parity = false;
-        for (const std::size_t bit : row.bits()) {
-            parity ^= bit == clause.num_vars() || assignment.test(bit);
+        for (const std::size_t bit : row) {
+            parity ^= bit == assignment.size() || assignment.test(bit);
         }
         if (parity) {
             return true;
@@ -159,13 +160,14 @@ SolveResult run_and_check(const std::string& text, const std::vector<std::string
 
     ParsedDimacs parsed = parse_dimacs_string(text, options->equation_repr);
     const std::size_t num_vars = parsed.num_vars;
-    const std::vector<Clause> inputs = parsed.clauses;
+    const std::vector<std::vector<RawRow>> rows = clause_rows(parsed);
 
     const std::filesystem::path path = scratch_path("fuzz.raw");
     Solution solution;
     {
-        RawProofWriter writer(path, num_vars, inputs.size());
-        const std::unique_ptr<Solver> solver = make_solver(*options, num_vars, &writer);
+        RawProofWriter writer(path, num_vars, rows.size());
+        const std::unique_ptr<Solver> solver =
+            make_solver(*options, num_vars, parsed.used_vars, &writer);
         for (Clause& clause : parsed.clauses) {
             solver->add_starting_clause(std::move(clause));
         }
@@ -188,14 +190,14 @@ SolveResult run_and_check(const std::string& text, const std::vector<std::string
     if (solution.result == SolveResult::sat) {
         ++tally.sat;
         REQUIRE(solution.assignment.has_value());
-        for (const Clause& clause : inputs) {
+        REQUIRE(solution.assignment->size() == num_vars);
+        for (const std::vector<RawRow>& clause : rows) {
             CHECK(clause_holds(clause, *solution.assignment));
         }
         return solution.result;
     }
 
     ++tally.unsat;
-    const std::vector<std::vector<RawRow>> rows = clause_rows(inputs);
     RawProofFileSource source(path);
     std::ostringstream proof;
     postprocess_raw_proof(source, num_vars, rows.size(), options->equation_repr, proof, rows);

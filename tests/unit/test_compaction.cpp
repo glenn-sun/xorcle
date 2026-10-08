@@ -183,12 +183,15 @@ TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, De
 TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    SUBCASE("with no compaction the active space is the original space") {
+    const std::vector<std::size_t> every_var{0, 1, 2, 3};
+
+    SUBCASE("with no compaction the unused variables are false") {
         IndexSet assignment(2);
         assignment.set(0);
         const std::vector<CompactionHistoryEntry> history;
-        const std::vector<std::size_t> var_map{2, 5};
-        const IndexSet original = reconstruct_original_assignment(assignment, history, var_map, 6);
+        const std::vector<std::size_t> used_vars{2, 5};
+        const IndexSet original =
+            reconstruct_original_assignment(assignment, history, used_vars, 6);
         CHECK(original.size() == 6);
         CHECK(set_variables(original) == std::vector<std::size_t>{2});
     }
@@ -197,34 +200,49 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         Trail trail(repr, 4);
         trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
         const std::vector<CompactionHistoryEntry> history{renumbered_entry(trail)};
-        const std::vector<std::size_t> var_map{1, 2, 3};
 
         // x1 and x3 are true in the compacted space; x0 comes back from the
         // trail row that eliminated it.
         IndexSet compacted(3);
         compacted.set(0);
         compacted.set(2);
-        const IndexSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
+        const IndexSet original = reconstruct_original_assignment(compacted, history, every_var, 4);
         CHECK(original.size() == 4);
         CHECK(set_variables(original) == std::vector<std::size_t>{0, 1, 3});
+    }
+
+    SUBCASE("a compaction is undone before the unused variables are filled in") {
+        Trail trail(repr, 4);
+        trail.learn(make_equation_with(repr, 4, {0, 4}), ClauseId{0}, trail.level()); // x0 = 1
+        const std::vector<CompactionHistoryEntry> history{renumbered_entry(trail)};
+        const std::vector<std::size_t> used_vars{1, 3, 4, 6};
+
+        IndexSet compacted(3);
+        compacted.set(0);
+        compacted.set(2);
+        const IndexSet original =
+            reconstruct_original_assignment(compacted, history, used_vars, 7);
+        CHECK(original.size() == 7);
+        CHECK(set_variables(original) == std::vector<std::size_t>{1, 3, 6});
     }
 
     SUBCASE("back-substitution reads the other variables of the eliminated row") {
         Trail trail(repr, 4);
         trail.learn(make_equation_with(repr, 4, {0, 2}), ClauseId{0}, trail.level()); // x0 + x2 = 0
         const std::vector<CompactionHistoryEntry> history{renumbered_entry(trail)};
-        const std::vector<std::size_t> var_map{1, 2, 3};
 
         SUBCASE("x2 false leaves x0 false") {
             const IndexSet compacted(3);
-            const IndexSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
+            const IndexSet original =
+                reconstruct_original_assignment(compacted, history, every_var, 4);
             CHECK(set_variables(original).empty());
         }
 
         SUBCASE("x2 true forces x0 true") {
             IndexSet compacted(3);
             compacted.set(1); // new index 1 is old x2
-            const IndexSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
+            const IndexSet original =
+                reconstruct_original_assignment(compacted, history, every_var, 4);
             CHECK(set_variables(original) == std::vector<std::size_t>{0, 2});
         }
     }
@@ -234,13 +252,12 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         trail.learn(make_equation_with(repr, 4, {1, 3, 4}), ClauseId{0}, trail.level()); // x1 = x3 + 1
         std::vector<CompactionHistoryEntry> history{renumbered_entry(trail)};
         history.back().renumbering.reset();
-        const std::vector<std::size_t> var_map{0, 1, 2, 3};
 
         // The dropped x1 is still in the numbering, and whatever it holds is ignored.
         IndexSet active(4);
         active.set(1);
         active.set(3);
-        const IndexSet original = reconstruct_original_assignment(active, history, var_map, 4);
+        const IndexSet original = reconstruct_original_assignment(active, history, every_var, 4);
         CHECK(set_variables(original) == std::vector<std::size_t>{3});
     }
 
@@ -256,12 +273,11 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
                            second_trail.level());
         const std::vector<CompactionHistoryEntry> history{renumbered_entry(first_trail),
                                                           renumbered_entry(second_trail)};
-        const std::vector<std::size_t> second_map{2, 3};
 
         // Set old x2, which is index 0 of the twice-compacted space.
         IndexSet compacted(2);
         compacted.set(0);
-        const IndexSet original = reconstruct_original_assignment(compacted, history, second_map, 4);
+        const IndexSet original = reconstruct_original_assignment(compacted, history, every_var, 4);
         CHECK(original.size() == 4);
         // x0 = 1 from the first step, x2 set directly, x1 = x2 from the second.
         CHECK(set_variables(original) == std::vector<std::size_t>{0, 1, 2});
@@ -283,11 +299,10 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
         dropped.set(0);
         dropped.set(1);
         history[1].renumbering = CompactionTransform::from_dropped_columns(4, dropped);
-        const std::vector<std::size_t> var_map{2, 3};
 
         IndexSet compacted(2);
         compacted.set(0);
-        const IndexSet original = reconstruct_original_assignment(compacted, history, var_map, 4);
+        const IndexSet original = reconstruct_original_assignment(compacted, history, every_var, 4);
         CHECK(set_variables(original) == std::vector<std::size_t>{0, 1, 2});
     }
 }

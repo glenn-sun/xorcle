@@ -2,13 +2,16 @@
 # Solve an UNSAT instance with --proof and verify the proof with the
 # independently written LRUP(⊕) checker.
 #
-# Usage: check_proof_roundtrip.sh [--cnf-xor] [--insert <clause line>] [--expect <regex>]
+# Usage: check_proof_roundtrip.sh [--cnf-xor] [--insert <clause line>] [--unused]
+#        [--expect <regex>]
 #        <repository root> <xorcle binary> <family> <params> <seed> [solver option...]
 # Exit:  0 pass, 1 fail, 77 skipped (no usable python3)
 #
 # --cnf-xor solves and checks the instance as `tools/xnf_convert.py cnf-xor` writes it.
 # --insert puts the clause line after the instance's first clause and rewrites the
 # header to count every clause line, as `p xnf` unless --cnf-xor is given.
+# --unused doubles every variable's number and the header's count, so that the odd
+# variables are unused.
 # --expect fails the run unless some line of the solver's output matches the
 # extended regex, so a test can require the path it is there for.
 
@@ -16,11 +19,13 @@ set -eu
 
 cnf_xor=false
 insert=""
+unused=false
 expect=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --cnf-xor) cnf_xor=true; shift ;;
         --insert) insert="$2"; shift 2 ;;
+        --unused) unused=true; shift ;;
         --expect) expect="$2"; shift 2 ;;
         *) break ;;
     esac
@@ -72,6 +77,22 @@ if [ -n "$insert" ]; then
             for (i = 1; i <= n; ++i) print clauses[i]
         }' "$instance" > "$work/inserted"
     instance="$work/inserted"
+fi
+
+if [ "$unused" = true ]; then
+    awk '
+        /^[ \t]*c/ { print; next }
+        /^[ \t]*p/ { print $1, $2, 2 * $3, $4; next }
+        {
+            rest = $0
+            doubled = ""
+            while (match(rest, /[0-9]+/)) {
+                doubled = doubled substr(rest, 1, RSTART - 1) (2 * substr(rest, RSTART, RLENGTH))
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+            print doubled rest
+        }' "$instance" > "$work/unused"
+    instance="$work/unused"
 fi
 
 # 20 is the solver's UNSAT exit code; anything else here is a real failure.

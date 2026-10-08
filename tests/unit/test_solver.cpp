@@ -95,22 +95,18 @@ constexpr std::string_view compaction_sat_instance = "p cnf 5 5\n"
 
 // --- Checking an answer ----------------------------------------------------
 
-/// @brief Whether an assignment satisfies one stored clause row.
-bool row_holds(const Equation& row, const IndexSet& assignment) {
-    bool parity = false;
-    for (const std::size_t bit : bits_of(row)) {
-        parity ^= bit == assignment.size() ? true : assignment.test(bit);
-    }
-    return !parity;
-}
-
-/// @brief Whether an assignment satisfies a clause.
+/// @brief Whether an assignment satisfies a clause, given by its rows over the
+/// declared variables.
 ///
 /// The rows are the clause's linear negation, so an equation of the clause
 /// holds exactly where its row does *not*.
-bool clause_is_satisfied(const Clause& clause, const IndexSet& assignment) {
-    for (const Equation& row : clause) {
-        if (!row_holds(row, assignment)) {
+bool clause_is_satisfied(const std::vector<RawRow>& rows, const IndexSet& assignment) {
+    for (const RawRow& row : rows) {
+        bool parity = false;
+        for (const std::size_t bit : row) {
+            parity ^= bit == assignment.size() ? true : assignment.test(bit);
+        }
+        if (parity) {
             return true;
         }
     }
@@ -119,7 +115,7 @@ bool clause_is_satisfied(const Clause& clause, const IndexSet& assignment) {
 
 /// @brief Assert that a reported assignment satisfies every input clause,
 /// re-evaluated over the original instance.
-void check_satisfies(const std::vector<Clause>& clauses, const Solution& solution,
+void check_satisfies(const std::vector<std::vector<RawRow>>& clauses, const Solution& solution,
                      std::size_t num_vars) {
     REQUIRE(solution.result == SolveResult::sat);
     REQUIRE(solution.assignment.has_value());
@@ -135,7 +131,8 @@ void check_satisfies(const std::vector<Clause>& clauses, const Solution& solutio
 /// @brief One configured solver together with the instance it was built from.
 struct Run {
     std::size_t num_vars = 0;
-    std::vector<Clause> clauses; ///< The input clauses, kept for checking answers.
+    std::vector<Clause> clauses; ///< The input clauses, over the used variables.
+    std::vector<std::vector<RawRow>> rows; ///< The same over the declared variables.
     std::unique_ptr<Solver> solver; ///< The solver, already loaded with `clauses`.
 };
 
@@ -177,8 +174,10 @@ Run make_run(EquationRepr repr, std::string_view instance,
     Run run;
     run.num_vars = parsed.num_vars;
     run.clauses = parsed.clauses;
+    run.rows = clause_rows(parsed);
     run.solver =
-        make_solver(*options, parsed.num_vars, proof_writer, nullptr, std::move(selector));
+        make_solver(*options, parsed.num_vars, parsed.used_vars, proof_writer, nullptr,
+                    std::move(selector));
     for (Clause& clause : parsed.clauses) {
         run.solver->add_starting_clause(std::move(clause));
     }
@@ -330,7 +329,7 @@ TEST_CASE_TEMPLATE("solver: SAT decided entirely by root propagation", Tag, Dens
     Run run = make_run(repr, unit_sat_instance);
 
     const Solution solution = run.solver->solve();
-    check_satisfies(run.clauses, solution, run.num_vars);
+    check_satisfies(run.rows, solution, run.num_vars);
 
     // The unique solution: x1 = 1, x2 = 0, and x3 = x1 + 1 = 0.
     CHECK(solution.assignment->test(0));
@@ -347,7 +346,7 @@ TEST_CASE_TEMPLATE("solver: SAT found by search", Tag, DenseTag, SparseTag) {
     Run run = make_run(repr, search_sat_instance);
 
     const Solution solution = run.solver->solve();
-    check_satisfies(run.clauses, solution, run.num_vars);
+    check_satisfies(run.rows, solution, run.num_vars);
 
     // The first two clauses force exactly one of x1, x2, and no clause is unit
     // at the root, so the answer cannot be reached without deciding.
@@ -408,7 +407,7 @@ TEST_CASE_TEMPLATE("solver: a decision a missed propagation forbids is undone", 
                        {"--selection=cyclic", "--propagate-miss-rate=0.5", "--propagate-window=1",
                         "--csids-intersection-depth=8"});
 
-    check_satisfies(run.clauses, run.solver->solve(), run.num_vars);
+    check_satisfies(run.rows, run.solver->solve(), run.num_vars);
     CHECK(run.solver->counters().num_undone_decisions > 0);
 }
 
@@ -422,7 +421,7 @@ TEST_CASE_TEMPLATE("solver: a budget leaves the verdicts alone", Tag, DenseTag, 
     CHECK(unsat.solver->solve().result == SolveResult::unsat);
 
     Run sat = make_run(repr, compaction_sat_instance, budgeted);
-    check_satisfies(sat.clauses, sat.solver->solve(), sat.num_vars);
+    check_satisfies(sat.rows, sat.solver->solve(), sat.num_vars);
 }
 
 TEST_CASE_TEMPLATE("solver: bumping the learned clause's pivots leaves the answers alone", Tag,
@@ -437,7 +436,7 @@ TEST_CASE_TEMPLATE("solver: bumping the learned clause's pivots leaves the answe
     CHECK(unsat.solver->solve().result == SolveResult::unsat);
 
     Run sat = bumping(compaction_sat_instance);
-    check_satisfies(sat.clauses, sat.solver->solve(), sat.num_vars);
+    check_satisfies(sat.rows, sat.solver->solve(), sat.num_vars);
 }
 
 TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTag, SparseTag) {
@@ -490,7 +489,7 @@ TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the ori
     const std::vector<std::string> compaction_off = {"--compact=false"};
     Run without = make_run(repr, compaction_sat_instance, compaction_off);
     const Solution without_solution = without.solver->solve();
-    check_satisfies(without.clauses, without_solution, without.num_vars);
+    check_satisfies(without.rows, without_solution, without.num_vars);
 
     Run with = make_run(repr, compaction_sat_instance);
     const Solution with_solution = with.solver->solve();
@@ -503,7 +502,7 @@ TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the ori
 
     // Same verdict, and an assignment over the *original* five variables.
     CHECK(with_solution.result == without_solution.result);
-    check_satisfies(with.clauses, with_solution, with.num_vars);
+    check_satisfies(with.rows, with_solution, with.num_vars);
 
     // The back-substituted variables, checked against the instance by hand:
     // x1 = 1 and x2 = 0 are the root units, and x4 = x5 + 1.
@@ -526,15 +525,81 @@ TEST_CASE_TEMPLATE("solver: a compaction renumbers once that frees enough words"
     CHECK(narrow.solver->active_num_vars() == 5 - narrow.solver->counters().num_dropped_vars);
 
     // 64 variables and the constant need two words, and 63 need one.
-    Run wide = make_run(repr, "p cnf 64 4\n1 0\n2+64 0\n63 64 0\n-63 -64 0\n");
+    // The fifth clause uses the variables the others do not.
+    std::string wide_instance = "p cnf 64 5\n1 0\n2+64 0\n63 64 0\n-63 -64 0\n";
+    for (std::size_t var = 3; var <= 62; ++var) {
+        wide_instance += std::to_string(var) + " ";
+    }
+    wide_instance += "0\n";
+    Run wide = make_run(repr, wide_instance);
     const Solution solution = wide.solver->solve();
     CHECK(wide.solver->counters().num_renumberings == 1);
     CHECK(wide.solver->counters().num_dropped_vars >= 2);
     CHECK(wide.solver->active_num_vars() == 64 - wide.solver->counters().num_dropped_vars);
-    check_satisfies(wide.clauses, solution, wide.num_vars);
+    check_satisfies(wide.rows, solution, wide.num_vars);
     CHECK(solution.assignment->test(0));
     CHECK(solution.assignment->test(1) != solution.assignment->test(63));
     CHECK(solution.assignment->test(62) != solution.assignment->test(63));
+}
+
+TEST_CASE_TEMPLATE("solver: a model covers the unused variables", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+
+    // `compaction_sat_instance` on variables 2, 4, 70, 131 and 133 of 140.
+    const std::string instance = "p cnf 140 5\n2 0\n-4 0\n131+133 0\n70 131 0\n-70 -131 0\n";
+    const std::vector<std::size_t> used_vars{1, 3, 69, 130, 132};
+    REQUIRE(parse_dimacs_string(instance, repr).used_vars == used_vars);
+
+    for (const std::string compact : {"--compact=false", "--compact=true"}) {
+        CAPTURE(compact);
+        Run run = make_run(repr, instance, {compact});
+        CHECK(run.solver->num_vars() == 140);
+        CHECK(run.solver->active_num_vars() == 5);
+
+        const Solution solution = run.solver->solve();
+        check_satisfies(run.rows, solution, 140);
+        CHECK(run.solver->active_num_vars() == 5 - run.solver->counters().num_dropped_vars);
+        const IndexSet& assignment = *solution.assignment;
+        CHECK(assignment.test(1));
+        CHECK_FALSE(assignment.test(3));
+        CHECK(assignment.test(130) != assignment.test(132));
+        CHECK(assignment.test(69) != assignment.test(130));
+        std::size_t num_true_used = 0;
+        for (const std::size_t var : used_vars) {
+            num_true_used += assignment.test(var) ? 1U : 0U;
+        }
+        CHECK(assignment.count() == num_true_used);
+    }
+}
+
+TEST_CASE_TEMPLATE("solver: a proof is over the unused variables too", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    const std::filesystem::path path =
+        scratch_path(repr == EquationRepr::dense ? "unused_dense.raw" : "unused_sparse.raw");
+
+    // `search_unsat_instance` on variables 2, 5 and 8 of 9.
+    const std::string instance = "p cnf 9 8\n2 5 8 0\n2 5 -8 0\n2 -5 8 0\n2 -5 -8 0\n"
+                                 "-2 5 8 0\n-2 5 -8 0\n-2 -5 8 0\n-2 -5 -8 0\n";
+    const std::vector<std::vector<RawRow>> inputs =
+        clause_rows(parse_dimacs_string(instance, repr));
+    CHECK(inputs[1] == std::vector<RawRow>{{1}, {4}, {7, 9}});
+
+    {
+        RawProofWriter writer(path, 9, inputs.size());
+        Run run = make_run(repr, instance, {}, nullptr, &writer);
+        CHECK(run.solver->solve().result == SolveResult::unsat);
+        CHECK(run.solver->counters().num_conflicts > 0);
+        writer.finalize(true);
+    }
+
+    RawProofFileSource source(path);
+    std::ostringstream proof;
+    postprocess_raw_proof(source, 9, inputs.size(), repr, proof, inputs);
+    LrupChecker checker(repr, 9, inputs);
+    CHECK(checker.check(proof.str()) == "");
+    std::filesystem::remove(path);
 }
 
 TEST_CASE_TEMPLATE("solver: compaction does not change an UNSAT verdict", Tag, DenseTag,
@@ -559,7 +624,7 @@ TEST_CASE_TEMPLATE("solver: restarting does not change the verdict", Tag, DenseT
 
     Run satisfiable = make_run(repr, search_sat_instance, tiny_luby_restarts());
     const Solution solution = satisfiable.solver->solve();
-    check_satisfies(satisfiable.clauses, solution, satisfiable.num_vars);
+    check_satisfies(satisfiable.rows, solution, satisfiable.num_vars);
 }
 
 TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", Tag, DenseTag,

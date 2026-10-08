@@ -661,22 +661,25 @@ inline RestartConfig restart_config(const Options& options) {
 
 // --- Building the solver -----------------------------------------------------
 
-/// @brief The solver `xorcle` runs for @p options over @p num_vars variables,
-/// with no clauses yet.
+/// @brief The solver `xorcle` runs for @p options over the variables
+/// @p used_vars of @p num_vars, with no clauses yet.
 /// @param proof_writer Not owned; null for no proof.
 /// @param progress_reporter Not owned; null reports nothing.
 /// @param selector Replaces the selector @p options names, when non-null.
+/// @pre `used_vars` is strictly ascending and below `num_vars`.
 inline std::unique_ptr<Solver> make_solver(const Options& options, std::size_t num_vars,
+                                           std::vector<std::size_t> used_vars,
                                            RawProofWriter* proof_writer = nullptr,
                                            ProgressReporter* progress_reporter = nullptr,
                                            std::unique_ptr<ClauseSelector> selector = nullptr) {
+    const std::size_t num_used_vars = used_vars.size();
     if (selector == nullptr) {
-        selector = make_clause_selector(options.selection, num_vars);
+        selector = make_clause_selector(options.selection, num_used_vars);
     }
     return std::make_unique<Solver>(
-        options.equation_repr, num_vars, std::move(selector),
-        make_decision_procedure(options.decisions, options.equation_repr, num_vars, options.seed,
-                                options.phase, csids_config(options)),
+        options.equation_repr, num_vars, std::move(used_vars), std::move(selector),
+        make_decision_procedure(options.decisions, options.equation_repr, num_used_vars,
+                                options.seed, options.phase, csids_config(options)),
         make_restart_policy(restart_config(options)), proof_writer, compaction_config(options),
         ProgressConfig{.reporter = progress_reporter, .cadence = options.report_cadence},
         options.minimize, deletion_config(options), options.bump_responsible_clauses, options.subsume,

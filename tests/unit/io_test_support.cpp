@@ -7,6 +7,8 @@
 
 #include <unistd.h>
 
+#include "io/proof_raw_file.h"
+
 namespace xorcle {
 
 std::filesystem::path scratch_path(std::string_view name) {
@@ -21,6 +23,18 @@ std::vector<std::vector<RawRow>> clause_rows(const std::vector<Clause>& clauses)
         std::vector<RawRow>& out = rows.emplace_back();
         for (const Equation& row : clause) {
             out.push_back(row.bits());
+        }
+    }
+    return rows;
+}
+
+std::vector<std::vector<RawRow>> clause_rows(const ParsedDimacs& parsed) {
+    std::vector<std::vector<RawRow>> rows;
+    rows.reserve(parsed.clauses.size());
+    for (const Clause& clause : parsed.clauses) {
+        std::vector<RawRow>& out = rows.emplace_back();
+        for (const Equation& row : clause) {
+            out.push_back(lift_row(row, parsed.used_vars, parsed.num_vars));
         }
     }
     return rows;

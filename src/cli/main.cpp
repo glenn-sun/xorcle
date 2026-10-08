@@ -44,13 +44,13 @@ std::filesystem::path raw_proof_path(const Options& options) {
                                      : std::filesystem::path(options.proof_raw);
 }
 
-/// @brief The input clauses' rows, indexed by clause id, as post-processing
-/// wants them: already in the original numbering, so no lifting is needed.
-std::vector<std::vector<RawRow>> input_clause_rows(const std::vector<Clause>& clauses) {
-    std::vector<std::vector<RawRow>> rows(clauses.size());
-    for (std::size_t id = 0; id < clauses.size(); ++id) {
-        for (const Equation& row : clauses[id]) {
-            rows[id].push_back(row.bits());
+/// @brief The input clauses' rows in the original numbering, indexed by clause
+/// id, as post-processing wants them.
+std::vector<std::vector<RawRow>> input_clause_rows(const ParsedDimacs& parsed) {
+    std::vector<std::vector<RawRow>> rows(parsed.clauses.size());
+    for (std::size_t id = 0; id < parsed.clauses.size(); ++id) {
+        for (const Equation& row : parsed.clauses[id]) {
+            rows[id].push_back(lift_row(row, parsed.used_vars, parsed.num_vars));
         }
     }
     return rows;
@@ -134,7 +134,7 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     }
     if (wants_proof) {
         // The solver takes the clauses over, so their rows are kept beforehand.
-        input_rows = input_clause_rows(parsed.clauses);
+        input_rows = input_clause_rows(parsed);
     }
 
     // Progress goes to stdout beside the DIMACS output, so a run writing its
@@ -147,7 +147,8 @@ RunStats run_once(const Options& options, PendingProof& pending) {
     }
 
     const std::unique_ptr<Solver> solver =
-        make_solver(options, parsed.num_vars, proof_writer.get(), progress_reporter.get());
+        make_solver(options, parsed.num_vars, std::move(parsed.used_vars), proof_writer.get(),
+                    progress_reporter.get());
     for (Clause& clause : parsed.clauses) {
         solver->add_starting_clause(std::move(clause));
     }

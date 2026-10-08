@@ -29,6 +29,44 @@ TEST_CASE_TEMPLATE("dimacs: a plain CNF instance", Tag, DenseTag, SparseTag) {
     CHECK(rows_of(parsed.clauses[1]) == std::vector<std::vector<std::size_t>>{{2}});
 }
 
+TEST_CASE_TEMPLATE("dimacs: the clauses are over the used variables alone", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+
+    SUBCASE("every variable used keeps the declared numbering") {
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 2\n1 -2 0\n3 0\n", repr);
+        CHECK(parsed.used_vars == std::vector<std::size_t>{0, 1, 2});
+    }
+
+    SUBCASE("a variable no clause uses is dropped, and the rest keep their order") {
+        const ParsedDimacs parsed =
+            parse_dimacs_string("p cnf 9 3\n8 -2 0\n2+5 0\nx5 -8 0\n", repr);
+        CHECK(parsed.num_vars == 9);
+        CHECK(parsed.used_vars == std::vector<std::size_t>{1, 4, 7});
+        REQUIRE(parsed.clauses.size() == 3);
+        CHECK(parsed.clauses[0].num_vars() == 3);
+        // The constant bit follows the used variables.
+        CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0, 3}, {2}});
+        CHECK(rows_of(parsed.clauses[1]) == std::vector<std::vector<std::size_t>>{{0, 1}});
+        CHECK(rows_of(parsed.clauses[2]) == std::vector<std::vector<std::size_t>>{{1, 2, 3}});
+    }
+
+    SUBCASE("a variable that cancels out of its token is unused") {
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 4 1\n2+2+3 4 0\n", repr);
+        CHECK(parsed.used_vars == std::vector<std::size_t>{2, 3});
+        CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0}, {1}});
+    }
+
+    SUBCASE("no used variable leaves only the constant bit") {
+        const ParsedDimacs parsed = parse_dimacs_string("p cnf 4 2\n0\nx 0\n", repr);
+        CHECK(parsed.used_vars.empty());
+        REQUIRE(parsed.clauses.size() == 2);
+        CHECK(parsed.clauses[0].num_vars() == 0);
+        CHECK(parsed.clauses[0].rows() == 0);
+        CHECK(parsed.clauses[1].rows() == 0);
+    }
+}
+
 TEST_CASE_TEMPLATE("dimacs: XOR tokens and the xnf header", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const ParsedDimacs parsed = parse_dimacs_string("p xnf 4 1\n1+2 -3+4 0\n", repr);
@@ -60,7 +98,7 @@ TEST_CASE_TEMPLATE("dimacs: rows are echelonized, not stored verbatim", Tag, Den
     SUBCASE("a repeated literal collapses") {
         const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\n2 2 0\n", repr);
         REQUIRE(parsed.clauses.size() == 1);
-        CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{1}});
+        CHECK(clause_rows(parsed)[0] == std::vector<std::vector<std::size_t>>{{1}});
     }
 
     SUBCASE("a dependent literal collapses") {
@@ -72,7 +110,7 @@ TEST_CASE_TEMPLATE("dimacs: rows are echelonized, not stored verbatim", Tag, Den
     SUBCASE("source order does not survive") {
         const ParsedDimacs parsed = parse_dimacs_string("p cnf 3 1\n3 1 0\n", repr);
         REQUIRE(parsed.clauses.size() == 1);
-        CHECK(rows_of(parsed.clauses[0]) == std::vector<std::vector<std::size_t>>{{0}, {2}});
+        CHECK(clause_rows(parsed)[0] == std::vector<std::vector<std::size_t>>{{0}, {2}});
     }
 
     SUBCASE("a variable repeated inside one XOR token cancels") {
@@ -182,30 +220,30 @@ TEST_CASE_TEMPLATE("dimacs: CNF-XOR lines", Tag, DenseTag, SparseTag) {
     SUBCASE("a single literal is a unit") {
         const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 2\nx2 0\nx-2 0\n", repr);
         REQUIRE(parsed.clauses.size() == 2);
-        CHECK(rows_of(parsed.clauses[0]) == Rows{{1}});
-        CHECK(rows_of(parsed.clauses[1]) == Rows{{1, 2}});
+        CHECK(clause_rows(parsed)[0] == Rows{{1}});
+        CHECK(clause_rows(parsed)[1] == Rows{{1, 2}});
     }
 
     SUBCASE("whitespace after and before the x is allowed") {
         const ParsedDimacs parsed =
             parse_dimacs_string("p cnf 3 2\nx -1 2 0\n  x-1 2 0\n", repr);
         REQUIRE(parsed.clauses.size() == 2);
-        CHECK(rows_of(parsed.clauses[0]) == Rows{{0, 1, 3}});
-        CHECK(rows_of(parsed.clauses[1]) == Rows{{0, 1, 3}});
+        CHECK(clause_rows(parsed)[0] == Rows{{0, 1, 3}});
+        CHECK(clause_rows(parsed)[1] == Rows{{0, 1, 3}});
     }
 
     SUBCASE("a repeated variable cancels, and its negations still count") {
         const ParsedDimacs parsed =
             parse_dimacs_string("p cnf 3 2\nx1 2 1 0\nx1 2 -1 0\n", repr);
         REQUIRE(parsed.clauses.size() == 2);
-        CHECK(rows_of(parsed.clauses[0]) == Rows{{1}});
-        CHECK(rows_of(parsed.clauses[1]) == Rows{{1, 3}});
+        CHECK(clause_rows(parsed)[0] == Rows{{1}});
+        CHECK(clause_rows(parsed)[1] == Rows{{1, 3}});
     }
 
     SUBCASE("x1 -1 is 0 = 0, stored as 0 = 1") {
         const ParsedDimacs parsed = parse_dimacs_string("p cnf 2 1\nx1 -1 0\n", repr);
         REQUIRE(parsed.clauses.size() == 1);
-        CHECK(rows_of(parsed.clauses[0]) == Rows{{2}});
+        CHECK(clause_rows(parsed)[0] == Rows{{2}});
     }
 
     SUBCASE("an empty XOR is 0 = 1, the empty clause") {

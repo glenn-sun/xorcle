@@ -105,7 +105,8 @@ SolverCounters solve_deleting(EquationRepr repr, double cadence_coefficient, dou
                                   .wait = wait,
                                   .key = DeletionKey::lbd};
 
-    Solver solver(repr, parsed.num_vars, std::make_unique<Cyclic>(parsed.num_vars),
+    Solver solver(repr, parsed.num_vars, parsed.used_vars,
+                  std::make_unique<Cyclic>(parsed.num_vars),
                   std::make_unique<Csids>(repr, parsed.num_vars, default_seed),
                   std::make_unique<NoRestarts>(), nullptr, CompactionConfig{}, ProgressConfig{},
                   true, deletion, false, false, PropagationConfig{},

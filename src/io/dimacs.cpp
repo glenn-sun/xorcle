@@ -6,13 +6,16 @@
 #include <fstream>
 #include <istream>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "algebra/equation.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -204,9 +207,23 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
     return bits;
 }
 
-Clause parse_clause_line(const std::string& line, std::size_t num_vars, EquationRepr repr,
-                         std::string_view origin, std::size_t line_number) {
-    Clause clause(repr, num_vars);
+/// @brief The clause lines' equations as set bits over the declared variables.
+struct ClauseLines {
+    std::vector<std::size_t> bits;          ///< Every equation's set bits, concatenated.
+    std::vector<std::size_t> equation_ends; ///< Into `bits`.
+    std::vector<std::size_t> clause_ends;   ///< Into `equation_ends`.
+    std::size_t num_xor_lines = 0;
+
+    void end_equation(const std::vector<std::size_t>& equation_bits) {
+        bits.insert(bits.end(), equation_bits.begin(), equation_bits.end());
+        equation_ends.push_back(bits.size());
+    }
+
+    void end_clause() { clause_ends.push_back(equation_ends.size()); }
+};
+
+void parse_clause_line(const std::string& line, std::size_t num_vars, ClauseLines& lines,
+                       std::string_view origin, std::size_t line_number) {
     std::istringstream stream{line};
     std::string token;
     bool terminated = false;
@@ -216,9 +233,7 @@ Clause parse_clause_line(const std::string& line, std::size_t num_vars, Equation
             terminated = true;
             break;
         }
-        const std::vector<std::size_t> bits =
-            parse_clause_token(token, num_vars, origin, line_number);
-        clause.add_row(Equation::from_bits(repr, num_vars, bits));
+        lines.end_equation(parse_clause_token(token, num_vars, origin, line_number));
     }
 
     if (!terminated) {
@@ -227,7 +242,7 @@ Clause parse_clause_line(const std::string& line, std::size_t num_vars, Equation
     if (stream >> token) {
         fail(origin, line_number, "unexpected token after the clause terminator: " + token);
     }
-    return clause;
+    lines.end_clause();
 }
 
 /// @brief Parse a CNF-XOR line, its leading `x` removed, into a clause of one equation.
@@ -235,8 +250,8 @@ Clause parse_clause_line(const std::string& line, std::size_t num_vars, Equation
 /// The literals XOR to 1, so each negated literal flips the constant, and `x 0` is
 /// `0 = 1`. The stored row is the linear negation, whose constant bit is the parity
 /// of the negated literals.
-Clause parse_xor_line(std::string_view body, const std::string& line, std::size_t num_vars,
-                      EquationRepr repr, std::string_view origin, std::size_t line_number) {
+void parse_xor_line(std::string_view body, const std::string& line, std::size_t num_vars,
+                    ClauseLines& lines, std::string_view origin, std::size_t line_number) {
     std::istringstream stream{std::string{body}};
     std::string token;
     std::vector<std::size_t> bits;
@@ -267,9 +282,56 @@ Clause parse_xor_line(std::string_view body, const std::string& line, std::size_
     if (odd_negations) {
         bits.push_back(num_vars);
     }
-    Clause clause(repr, num_vars);
-    clause.add_row(Equation::from_bits(repr, num_vars, bits));
-    return clause;
+    lines.end_equation(bits);
+    lines.end_clause();
+    ++lines.num_xor_lines;
+}
+
+/// @brief The variables some equation of `lines` uses, ascending.
+std::vector<std::size_t> used_vars(const ClauseLines& lines, std::size_t num_vars) {
+    IndexSet used(num_vars + 1);
+    for (const std::size_t bit : lines.bits) {
+        used.set(bit);
+    }
+    used.reset(num_vars);
+    std::vector<std::size_t> vars;
+    vars.reserve(used.count());
+    used.for_each_set([&](std::size_t var) { vars.push_back(var); });
+    return vars;
+}
+
+/// @brief Build the clauses over the used variables alone, renumbered in ascending order.
+std::vector<Clause> build_clauses(ClauseLines lines, std::size_t num_vars,
+                                  const std::vector<std::size_t>& used_vars,
+                                  EquationRepr repr) {
+    const std::size_t num_used_vars = used_vars.size();
+    if (num_used_vars != num_vars) {
+        std::vector<std::size_t> bit_to_used_bit(num_vars + 1);
+        for (std::size_t used_bit = 0; used_bit < num_used_vars; ++used_bit) {
+            bit_to_used_bit[used_vars[used_bit]] = used_bit;
+        }
+        bit_to_used_bit[num_vars] = num_used_vars;
+        for (std::size_t& bit : lines.bits) {
+            bit = bit_to_used_bit[bit];
+        }
+    }
+
+    std::vector<Clause> clauses;
+    clauses.reserve(lines.clause_ends.size());
+    const std::span<const std::size_t> bits{lines.bits};
+    std::size_t equation_idx = 0;
+    std::size_t bit_idx = 0;
+    for (const std::size_t clause_end : lines.clause_ends) {
+        Clause clause(repr, num_used_vars);
+        for (; equation_idx < clause_end; ++equation_idx) {
+            const std::size_t equation_end = lines.equation_ends[equation_idx];
+            clause.add_row(Equation::from_bits(repr, num_used_vars,
+                                               bits.subspan(bit_idx, equation_end - bit_idx)));
+            bit_idx = equation_end;
+        }
+        clauses.push_back(std::move(clause));
+    }
+    return clauses;
 }
 
 } // namespace
@@ -300,11 +362,7 @@ ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_vi
 
     const ParsedHeader header = parse_header_line(line, origin, line_number);
 
-    ParsedDimacs parsed;
-    parsed.num_vars = header.num_vars;
-    parsed.clauses.reserve(std::min<std::size_t>(header.num_clauses, 1u << 16));
-
-    std::size_t num_xor_lines = 0;
+    ClauseLines lines;
     while (std::getline(input, line)) {
         ++line_number;
         trim_trailing_cr(line);
@@ -313,16 +371,15 @@ ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_vi
         }
         const std::size_t start = line.find_first_not_of(" \t");
         if (line[start] == 'x') {
-            parsed.clauses.push_back(parse_xor_line(std::string_view{line}.substr(start + 1), line,
-                                                    header.num_vars, repr, origin, line_number));
-            ++num_xor_lines;
+            parse_xor_line(std::string_view{line}.substr(start + 1), line, header.num_vars, lines,
+                           origin, line_number);
         } else {
-            parsed.clauses.push_back(
-                parse_clause_line(line, header.num_vars, repr, origin, line_number));
+            parse_clause_line(line, header.num_vars, lines, origin, line_number);
         }
     }
 
-    const std::size_t num_clauses = parsed.clauses.size();
+    const std::size_t num_clauses = lines.clause_ends.size();
+    const std::size_t num_xor_lines = lines.num_xor_lines;
     if (header.num_clauses != num_clauses && header.num_clauses != num_clauses - num_xor_lines) {
         std::string message = "clause count mismatch: header declares " +
                               std::to_string(header.num_clauses) + ", found " +
@@ -332,6 +389,11 @@ ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_vi
         }
         fail(origin, 0, message);
     }
+
+    ParsedDimacs parsed;
+    parsed.num_vars = header.num_vars;
+    parsed.used_vars = used_vars(lines, header.num_vars);
+    parsed.clauses = build_clauses(std::move(lines), header.num_vars, parsed.used_vars, repr);
     return parsed;
 }
 

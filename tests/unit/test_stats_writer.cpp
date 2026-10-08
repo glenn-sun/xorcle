@@ -59,6 +59,7 @@ RunStats sample_stats() {
     stats.result = SolveResult::unsat;
 
     stats.num_vars = 12;
+    stats.unused_vars = 1;
     stats.active_vars = 9;
     stats.start_clauses = 30;
 
@@ -199,6 +200,7 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
     const std::string expected =
         "c File: benchmarks/generated/random_kxnf/random_kxnf_n12_k2_s1.xnf\n"
         "c Variables: 12\n"
+        "c Unused variables: 1\n"
         "c Active variables: 9\n"
         "c Start clauses: 30\n"
         "c Configuration (3 further options at their defaults):\n"

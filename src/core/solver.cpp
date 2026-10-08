@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <numeric>
+#include <functional>
 #include <optional>
 #include <span>
 #include <utility>
@@ -19,7 +19,8 @@
 
 namespace xorcle {
 
-Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
+Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t> used_vars,
+               std::unique_ptr<ClauseSelector> selector,
                std::unique_ptr<DecisionProcedure> decisions,
                std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer,
                const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize,
@@ -28,29 +29,33 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
                const ImplicationGraphConfig& implication_graph)
     : repr_(repr),
       original_num_vars_(num_vars),
-      active_num_vars_(num_vars),
-      active_var_to_original_(num_vars),
-      dropped_col_idxs_(num_vars + 1),
+      used_vars_(std::move(used_vars)),
+      active_num_vars_(used_vars_.size()),
+      active_var_to_original_(used_vars_),
+      dropped_col_idxs_(active_num_vars_ + 1),
       compaction_(compaction),
       deletion_(deletion),
-      trail_(repr, num_vars),
+      trail_(repr, active_num_vars_),
       selector_(std::move(selector)),
       decisions_(std::move(decisions)),
       restarts_(std::move(restarts)),
-      propagator_(repr, num_vars),
+      propagator_(repr, active_num_vars_),
       proof_writer_(proof_writer),
       proof_root_span_(repr, num_vars),
       propagate_miss_rate_(propagation.miss_rate),
       propagate_window_(propagation.window),
-      propagated_row_eqn_(repr, num_vars),
-      false_equation_(Equation::eq_false(repr, num_vars)),
-      satisfied_probe_eqn_(repr, num_vars),
+      propagated_row_eqn_(repr, active_num_vars_),
+      false_equation_(Equation::eq_false(repr, active_num_vars_)),
+      satisfied_probe_eqn_(repr, active_num_vars_),
       progress_(progress),
       minimize_(minimize),
       bump_responsible_clauses_(bump_responsible_clauses),
       subsume_(subsume),
       implication_graph_config_(implication_graph),
-      implication_graph_(repr, num_vars, implication_graph) {
+      implication_graph_(repr, active_num_vars_, implication_graph) {
+    assert(std::ranges::is_sorted(used_vars_, std::less_equal<>{}) &&
+           (used_vars_.empty() || used_vars_.back() < num_vars) &&
+           "the used variables must be strictly ascending and below num_vars");
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
@@ -72,7 +77,6 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSe
     // The run's seed lives on the decision procedure, so these wait for its null check.
     representative_rng_ = make_rng(decisions_->base_seed(), RngComponent::minimize_representative);
     implication_graph_.set_base_seed(decisions_->base_seed());
-    std::iota(active_var_to_original_.begin(), active_var_to_original_.end(), std::size_t{0});
     if (proof_writer_ != nullptr) {
         proof_col_idx_to_unit_id_.resize(num_vars);
     }
@@ -82,7 +86,7 @@ void Solver::add_starting_clause(Clause clause) {
     assert(!has_solved_ && "input clauses must be added before solving");
     assert(compaction_history_.empty() && "input clauses must be added before any compaction");
     assert(clause.cols() == active_num_vars_ + 1 &&
-           "a starting clause must be over the solver's variable count");
+           "a starting clause must be over the used variables");
     assert(clause.repr() == repr_ &&
            "a starting clause must use the solver's representation");
 
@@ -1115,13 +1119,13 @@ Solution Solver::complete_satisfying_assignment() {
            "the model reported as satisfying falsifies an active clause");
 
     IndexSet original_assignment = reconstruct_original_assignment(
-        complete.unique_solution(), compaction_history_, active_var_to_original_,
-        original_num_vars_);
+        complete.unique_solution(), compaction_history_, used_vars_, original_num_vars_);
     return Solution{SolveResult::sat, std::move(original_assignment)};
 }
 
 void Solver::add_to_stats(RunStats& stats) const {
     stats.num_vars = num_vars();
+    stats.unused_vars = original_num_vars_ - used_vars_.size();
     stats.active_vars = active_num_vars();
 
     stats.num_conflicts = counters_.num_conflicts;

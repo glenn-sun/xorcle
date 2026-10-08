@@ -181,7 +181,8 @@ struct Outcome {
 Outcome solve_with(EquationRepr repr, std::string_view instance, bool minimize,
                    RawProofWriter* proof_writer = nullptr) {
     ParsedDimacs parsed = parse_dimacs_string(instance, repr);
-    Solver solver(repr, parsed.num_vars, std::make_unique<Cyclic>(parsed.num_vars),
+    Solver solver(repr, parsed.num_vars, parsed.used_vars,
+                  std::make_unique<Cyclic>(parsed.num_vars),
                   default_decisions(repr, parsed.num_vars), std::make_unique<NoRestarts>(),
                   proof_writer, CompactionConfig{.enabled = false}, ProgressConfig{}, minimize,
                   DeletionConfig{.enabled = false}, false, false, PropagationConfig{},

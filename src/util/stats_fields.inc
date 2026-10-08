@@ -21,6 +21,7 @@
 // --- The instance ----------------------------------------------------------
 
 XORCLE_STAT(instance, Count, num_vars, "num_vars", "Variables")
+XORCLE_STAT(instance, Count, unused_vars, "unused_vars", "Unused variables")
 XORCLE_STAT(instance, Count, active_vars, "active_vars", "Active variables")
 XORCLE_STAT(instance, Count, start_clauses, "start_clauses", "Start clauses")
 

@@ -1,6 +1,7 @@
 #include "heuristics/compaction/original_variables.h"
 
 #include <cassert>
+#include <span>
 #include <utility>
 
 #include "algebra/equation.h"
@@ -8,21 +9,6 @@
 namespace xorcle {
 
 namespace {
-
-IndexSet scatter_through_map(const IndexSet& source, const std::vector<std::size_t>& index_map,
-                             std::size_t destination_num_vars) {
-    assert(source.size() == index_map.size() &&
-           "the variable map is not sized by the assignment's variable count");
-    IndexSet destination(destination_num_vars);
-    for (std::size_t index = 0; index < index_map.size(); ++index) {
-        if (source.test(index)) {
-            assert(index_map[index] < destination_num_vars &&
-                   "the variable map points outside the original numbering");
-            destination.set(index_map[index]);
-        }
-    }
-    return destination;
-}
 
 /// @brief Undo one compaction step in place.
 void undo_one_compaction(IndexSet& assignment, const CompactionHistoryEntry& entry) {
@@ -67,24 +53,21 @@ void undo_one_compaction(IndexSet& assignment, const CompactionHistoryEntry& ent
 IndexSet reconstruct_original_assignment(
     const IndexSet& active_assignment,
     const std::vector<CompactionHistoryEntry>& compaction_history,
-    const std::vector<std::size_t>& active_var_to_original, std::size_t original_num_vars) {
-    assert(active_assignment.size() == active_var_to_original.size() &&
-           "the assignment is not indexed by the current active variable numbering");
-
+    std::span<const std::size_t> used_vars, std::size_t original_num_vars) {
     IndexSet assignment = active_assignment;
-
     for (auto entry = compaction_history.rbegin(); entry != compaction_history.rend(); ++entry) {
         undo_one_compaction(assignment, *entry);
     }
+    assert(assignment.size() == used_vars.size() &&
+           "the compaction history does not lead back to the used variables");
 
-    if (assignment.size() == original_num_vars) {
-        return assignment;
-    }
-    // No compaction ever ran, so the active variable numbering is the original
-    // one up to the variable map the solver has been carrying.
-    assert(assignment.size() == active_var_to_original.size() &&
-           "failed to recover the original assignment's variable count");
-    return scatter_through_map(assignment, active_var_to_original, original_num_vars);
+    IndexSet original_assignment(original_num_vars);
+    assignment.for_each_set([&](std::size_t used_var) {
+        assert(used_vars[used_var] < original_num_vars &&
+               "a used variable is outside the original numbering");
+        original_assignment.set(used_vars[used_var]);
+    });
+    return original_assignment;
 }
 
 } // namespace xorcle

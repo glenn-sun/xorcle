@@ -185,23 +185,30 @@ struct ImplicationGraphCounters {
 /// run the implication graph, or decide. The `ClauseSelector` is also the authoritative clause store.
 class Solver {
 public:
-    /// @brief Construct a solver over an empty clause database.
+    /// @brief Construct a solver over the variables `used_vars` of `num_vars`, with
+    /// an empty clause database.
+    ///
+    /// Clauses, `selector` and `decisions` are over `used_vars.size()` variables, bit
+    /// `i` being variable `used_vars[i]`. Models and proofs are over `num_vars`, the
+    /// unused variables false in a model.
     ///
     /// `proof_writer` is null for no proof and is not owned, so it must outlive
     /// the solver, and the caller finalizes it.
     ///
+    /// @pre `used_vars` is strictly ascending and below `num_vars`.
     /// @pre `selector`, `decisions` and `restarts` are all non-null; use
     /// `NoRestarts` to disable restarts.
     /// @pre A nonzero `propagation.miss_rate` comes with a `Cyclic` selector.
     /// @pre If `proof_writer` is non-null then `proof_writer->num_vars() == num_vars`.
     /// @pre If deletion is enabled with `DeletionKey::activity` then `decisions`
     /// is a `ClauseActivitySource`.
-    Solver(EquationRepr repr, std::size_t num_vars, std::unique_ptr<ClauseSelector> selector,
-           std::unique_ptr<DecisionProcedure> decisions, std::unique_ptr<RestartPolicy> restarts,
-           RawProofWriter* proof_writer = nullptr, const CompactionConfig& compaction = {},
-           const ProgressConfig& progress = {}, bool minimize = true,
-           const DeletionConfig& deletion = {}, bool bump_responsible_clauses = false,
-           bool subsume = true, const PropagationConfig& propagation = {},
+    Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t> used_vars,
+           std::unique_ptr<ClauseSelector> selector, std::unique_ptr<DecisionProcedure> decisions,
+           std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer = nullptr,
+           const CompactionConfig& compaction = {}, const ProgressConfig& progress = {},
+           bool minimize = true, const DeletionConfig& deletion = {},
+           bool bump_responsible_clauses = false, bool subsume = true,
+           const PropagationConfig& propagation = {},
            const ImplicationGraphConfig& implication_graph = {});
 
     Solver(const Solver&) = delete;
@@ -212,7 +219,7 @@ public:
     /// A clause with no rows is the empty clause: it stays out of the database,
     /// and `solve()` answers UNSAT citing it.
     /// @pre No solving has happened yet and no compaction has run.
-    /// @pre `clause.cols() == num_vars() + 1` and `clause` uses the solver's
+    /// @pre `clause` is over the used variables and uses the solver's
     /// representation.
     /// @note The decision procedure is told about the clause *before* the
     /// selector stores it, so every input clause enters at activity zero.
@@ -220,7 +227,7 @@ public:
 
     Solution solve();
 
-    /// @brief Original variable count, before compaction.
+    /// @brief Original variable count, the unused variables included.
     std::size_t num_vars() const noexcept { return original_num_vars_; }
 
     /// @brief Clause ids ever handed out, which only grows: deletion deactivates
@@ -231,7 +238,7 @@ public:
     /// compaction.
     std::size_t num_active_clauses() const noexcept { return num_active_clauses_; }
 
-    /// @brief Variables left after compaction, which is `num_vars()` until one runs.
+    /// @brief Used variables left after compaction.
     std::size_t active_num_vars() const noexcept { return active_num_vars_ - num_dropped_vars_; }
 
     std::size_t level() const noexcept { return trail_.level(); }
@@ -434,6 +441,7 @@ private:
     EquationRepr repr_;
 
     const std::size_t original_num_vars_;
+    const std::vector<std::size_t> used_vars_; ///< Ascending, in the original numbering.
     /// @brief The variables of the active numbering, the dropped ones included.
     std::size_t active_num_vars_;
 
