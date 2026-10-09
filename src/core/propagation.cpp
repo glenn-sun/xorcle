@@ -24,6 +24,20 @@ ReduceResult unreduced_result(std::size_t leading_col_idx, std::size_t num_vars)
                                        : ReduceResult::leading(leading_col_idx);
 }
 
+/// @brief The leading column of an equation partially reduced to `reduced`, empty for `0 = 0`.
+std::optional<std::size_t> leading_col_idx_of(const ReduceResult& reduced,
+                                              std::size_t num_vars) noexcept {
+    switch (reduced.kind) {
+        case ReduceResult::Kind::eq_true:
+            return std::nullopt;
+        case ReduceResult::Kind::eq_false:
+            return num_vars;
+        case ReduceResult::Kind::leading:
+            return reduced.bit;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 Propagator::Propagator(EquationRepr repr, std::size_t num_vars)
@@ -118,24 +132,36 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
     assert(clause.next_watch_search_start < clause.rows() &&
            "the watch search start is out of range");
 
-    // Overwrites `scratch`. `distinct_from` is already reduced, so a replacement
-    // must be nonzero *and* independent of it modulo the span.
+    const IndexSet& span_pivot_col_idxs = trail.span().pivot_col_idxs();
+    const std::size_t num_rows = clause.rows();
+
+    // Overwrites `scratch`. `distinct_from` is already reduced and leads in
+    // `distinct_from_leading_col_idx`, so a replacement must be nonzero *and*
+    // independent of it modulo the span.
     const auto find_replacement_cyclic =
-        [&](Equation& scratch, const Equation& distinct_from) -> std::optional<std::size_t> {
-        assert(clause.rows() > 1 && "cyclic watch search on a unit clause");
-        const std::size_t start = clause.next_watch_search_start % clause.rows();
-        for (std::size_t step = 0; step < clause.rows(); ++step) {
-            const std::size_t i = (start + step) % clause.rows();
+        [&](Equation& scratch, const Equation& distinct_from,
+            std::optional<std::size_t> distinct_from_leading_col_idx)
+        -> std::optional<std::size_t> {
+        assert(num_rows > 1 && "cyclic watch search on a unit clause");
+        std::size_t i = clause.next_watch_search_start % num_rows;
+        for (std::size_t step = 0; step < num_rows; ++step, i = i + 1 == num_rows ? 0 : i + 1) {
             if (i == clause.watched0 || i == clause.watched1) {
                 continue;
             }
-            scratch.assign_from(clause.row(i));
-            const ReduceResult candidate = trail.span().partial_reduce_with_extra(scratch,
-                                                                                  distinct_from);
-            if (candidate.kind != ReduceResult::Kind::eq_true) {
-                clause.next_watch_search_start = (i + 1) % clause.rows();
-                return i;
+            // A row no reduction step is due on is its own partial reduction,
+            // and no stored row is `0 = 0`.
+            const std::size_t leading_col_idx = clause.pivot_col_idx(i);
+            if (span_pivot_col_idxs.test(leading_col_idx) ||
+                distinct_from_leading_col_idx == leading_col_idx) {
+                scratch.assign_from(clause.row(i));
+                const ReduceResult candidate = trail.span().partial_reduce_with_extra(
+                    scratch, leading_col_idx, distinct_from, distinct_from_leading_col_idx);
+                if (candidate.kind == ReduceResult::Kind::eq_true) {
+                    continue;
+                }
             }
+            clause.next_watch_search_start = i + 1 == num_rows ? 0 : i + 1;
+            return i;
         }
         return std::nullopt;
     };
@@ -162,8 +188,6 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
     } else {
         // A row is copied into scratch only when a reduction step is due; until
         // then it is its own partial reduction.
-        const IndexSet& span_pivot_col_idxs = trail.span().pivot_col_idxs();
-
         const std::size_t leading_col_idx0 = clause.pivot_col_idx(clause.watched0);
         if (span_pivot_col_idxs.test(leading_col_idx0)) {
             working_eqn_.assign_from(clause.row(clause.watched0));
@@ -218,13 +242,20 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
                 complement_eqn = &clause.row(clause.watched0);
             }
         } else {
-            // Overwrites the second watch's reduction on purpose.
-            working_eqn2_.assign_from(clause.row(*task.complement_ptr));
-            complement = trail.span().partial_reduce(working_eqn2_);
+            const std::size_t complement_row_idx = *task.complement_ptr;
+            const std::size_t leading_col_idx = clause.pivot_col_idx(complement_row_idx);
+            if (span_pivot_col_idxs.test(leading_col_idx)) {
+                // Overwrites the second watch's reduction on purpose.
+                working_eqn2_.assign_from(clause.row(complement_row_idx));
+                complement = trail.span().partial_reduce(working_eqn2_, leading_col_idx);
+            } else {
+                complement = unreduced_result(leading_col_idx, num_vars_);
+                complement_eqn = &clause.row(complement_row_idx);
+            }
         }
 
-        if (const std::optional<std::size_t> replacement =
-                find_replacement_cyclic(working_eqn_, *complement_eqn)) {
+        if (const std::optional<std::size_t> replacement = find_replacement_cyclic(
+                working_eqn_, *complement_eqn, leading_col_idx_of(complement, num_vars_))) {
             const ClauseRowIdx old_watch_row_idx = *task.update_ptr;
             *task.update_ptr = *replacement;
             ++num_watch_updates;

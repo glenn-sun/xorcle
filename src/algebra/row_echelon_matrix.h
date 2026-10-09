@@ -125,11 +125,12 @@ public:
         return interface_->pop_row(row_idx);
     }
 
-    /// @brief Remove every row whose entry in `is_popped` is nonzero, in one pass.
+    /// @brief Remove every row whose entry in `is_popped` is nonzero, in one pass,
+    /// returning them in row order.
     /// @pre `is_popped.size() == rows()`.
-    void pop_rows(std::span<const std::uint8_t> is_popped) {
+    std::vector<Equation> pop_rows(std::span<const std::uint8_t> is_popped) {
         assert(is_popped.size() == rows() && "pop_rows needs one entry per row");
-        interface_->pop_rows(is_popped);
+        return interface_->pop_rows(is_popped);
     }
 
     /// @pre `rows() > 0`.

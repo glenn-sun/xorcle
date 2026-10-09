@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <vector>
 
 #include "algebra/equation.h"
 #include "algebra/row_echelon_matrix.h"
@@ -52,6 +53,11 @@ public:
     /// @pre The trail has not been learned into or backjumped since.
     RowSpace to_RowSpace() const;
 
+    /// @brief Add each row to `row_space`, converted as `to_RowSpace()` converts it.
+    /// @pre As `to_RowSpace()`, and `row_space` is over the trail's variables and
+    /// in its representation.
+    void add_rows_to(RowSpace& row_space) const;
+
     /// @brief The level to backjump to, in `[0, trail.level()]`: `0` is the root,
     /// `trail.level()` means nothing can be discarded.
     /// @pre `rows() > 0`.
@@ -88,6 +94,11 @@ private:
 
     /// @brief The levels above the root holding a pivot column or `extra_col_idx`.
     std::size_t levels_reached(std::optional<std::size_t> extra_col_idx) const;
+
+    /// @brief `coordinates_row()` with `mapped_bits` as its scratch, overwritten.
+    Equation coordinates_row(const TrailCoordinates& coordinates, std::size_t row_idx,
+                             std::size_t last_trail_idx,
+                             std::vector<std::size_t>& mapped_bits) const;
 
     /// @brief Each row of `rs` as the trail indices of the span rows summing to it.
     static TrailCoordinates coordinates_of(const RowSpace& rs, const Trail& trail);

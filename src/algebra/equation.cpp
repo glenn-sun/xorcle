@@ -62,26 +62,6 @@ void Equation::set_eq_false() noexcept {
     interface_->set_eq_false();
 }
 
-void Equation::plus_assign(const Equation& other) {
-    assert(interface_ != nullptr && other.interface_ != nullptr &&
-           "plus_assign on a null equation handle");
-    assert(interface_->repr() == other.interface_->repr() &&
-           "representation mismatch in plus_assign");
-    assert(interface_->num_bits() == other.interface_->num_bits() &&
-           "bit count mismatch in plus_assign");
-    interface_->plus_assign(*other.interface_);
-}
-
-void Equation::assign_from(const Equation& other) {
-    assert(interface_ != nullptr && other.interface_ != nullptr &&
-           "assign_from on a null equation handle");
-    assert(interface_->repr() == other.interface_->repr() &&
-           "representation mismatch in assign_from");
-    assert(interface_->num_bits() == other.interface_->num_bits() &&
-           "bit count mismatch in assign_from");
-    interface_->assign_from(*other.interface_);
-}
-
 Equation Equation::compact(const CompactionTransform& transform) const {
     assert(interface_ != nullptr && "compact on a null equation handle");
     assert(interface_->num_bits() == transform.old_num_vars() + 1 &&

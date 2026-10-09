@@ -92,12 +92,28 @@ public:
     /// @brief Add `other` into this equation over GF(2).
     /// @pre Neither handle is null, and `other` shares this equation's
     /// representation and bit count.
-    void plus_assign(const Equation& other);
+    void plus_assign(const Equation& other) {
+        assert(interface_ != nullptr && other.interface_ != nullptr &&
+               "plus_assign on a null equation handle");
+        assert(interface_->repr() == other.interface_->repr() &&
+               "representation mismatch in plus_assign");
+        assert(interface_->num_bits() == other.interface_->num_bits() &&
+               "bit count mismatch in plus_assign");
+        interface_->plus_assign(*other.interface_);
+    }
 
     /// @brief Overwrite this equation's contents from `other`, reusing its buffer.
     /// @pre Neither handle is null, and `other` shares this equation's
     /// representation and bit count.
-    void assign_from(const Equation& other);
+    void assign_from(const Equation& other) {
+        assert(interface_ != nullptr && other.interface_ != nullptr &&
+               "assign_from on a null equation handle");
+        assert(interface_->repr() == other.interface_->repr() &&
+               "representation mismatch in assign_from");
+        assert(interface_->num_bits() == other.interface_->num_bits() &&
+               "bit count mismatch in assign_from");
+        interface_->assign_from(*other.interface_);
+    }
 
     /// @brief Overwrite this equation to have exactly the given bits set, reusing
     /// its buffer.

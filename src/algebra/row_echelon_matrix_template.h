@@ -84,8 +84,9 @@ public:
     /// @brief Remove the row at `row_idx`, returning it.
     virtual Equation pop_row(std::size_t row_idx) = 0;
 
-    /// @brief Remove every row whose entry in `is_popped` is nonzero.
-    virtual void pop_rows(std::span<const std::uint8_t> is_popped) = 0;
+    /// @brief Remove every row whose entry in `is_popped` is nonzero, returning
+    /// them in row order.
+    virtual std::vector<Equation> pop_rows(std::span<const std::uint8_t> is_popped) = 0;
 
     virtual void pop_last_row() = 0;
 
@@ -172,8 +173,13 @@ public:
         const std::size_t new_pivot_col_idx = *leading_col_idx;
         const std::size_t insert_row_idx = row_idx_for_col_idx(new_pivot_col_idx);
 
-        rows_.insert(rows_.begin() + static_cast<std::ptrdiff_t>(insert_row_idx),
-                     StoredRow{std::move(v), new_pivot_col_idx});
+        // Each later row moves up a place through a swap, which, unlike a move
+        // assignment, has no handle to release.
+        StoredRow inserted{std::move(v), new_pivot_col_idx};
+        for (std::size_t row_idx = insert_row_idx; row_idx < rows_.size(); ++row_idx) {
+            std::swap(inserted, rows_[row_idx]);
+        }
+        rows_.push_back(std::move(inserted));
         pivot_col_idxs_.set(new_pivot_col_idx);
         // Inserting moves handles, never the equations they own, so the entries
         // for the other pivot columns stay valid.
@@ -189,11 +195,13 @@ public:
 
     void reduce(Equation& v) const override {
         V& vec = gf2_vector_of<V>(v);
+        AscendingWalk walk;
         // `v` is mutated while its set pivot columns are being walked, so each
         // step reads the live vector.
         for (auto col_idx = vec.first_bit_in(pivot_col_idxs_, 0); col_idx;
              col_idx = vec.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
-            vec.plus_assign(gf2_vector_of<V>(rows_[row_idx_for_col_idx(*col_idx)].row));
+            vec.plus_assign_from_bit(gf2_vector_of<V>(rows_[next_row_idx(walk, *col_idx)].row),
+                                     *col_idx);
         }
     }
 
@@ -206,10 +214,11 @@ public:
     void reduce_get_coefficients(Equation& v, IndexSet& coefficients) const override {
         coefficients.resize(rows_.size());
         V& vec = gf2_vector_of<V>(v);
+        AscendingWalk walk;
         for (auto col_idx = vec.first_bit_in(pivot_col_idxs_, 0); col_idx;
              col_idx = vec.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
-            const std::size_t row_idx = row_idx_for_col_idx(*col_idx);
-            vec.plus_assign(gf2_vector_of<V>(rows_[row_idx].row));
+            const std::size_t row_idx = next_row_idx(walk, *col_idx);
+            vec.plus_assign_from_bit(gf2_vector_of<V>(rows_[row_idx].row), *col_idx);
             coefficients.set(row_idx);
         }
     }
@@ -251,6 +260,7 @@ public:
         // The order table is indexed by row, so `col_idx_to_row_` saves nothing.
         V& vec = gf2_vector_of<V>(v);
         std::optional<std::size_t> col_idx = vec.leading_bit();
+        AscendingWalk walk;
         while (true) {
             if (!col_idx) {
                 return ReduceResult::eq_true();
@@ -258,7 +268,7 @@ public:
             if (!pivot_col_idxs_.test(*col_idx)) {
                 return classify_col_idx(*col_idx);
             }
-            const std::size_t row_idx = row_idx_for_col_idx(*col_idx);
+            const std::size_t row_idx = next_row_idx(walk, *col_idx);
             if (row_idx_to_order[row_idx] >= bound) {
                 return classify_col_idx(*col_idx);
             }
@@ -281,8 +291,10 @@ public:
             for (auto col_idx = row.next_bit(rows_[row_idx].pivot_col_idx); col_idx;
                  col_idx = row.next_bit(*col_idx)) {
                 if (pivot_col_idxs_.test(*col_idx)) {
-                    row.plus_assign(col_idx_to_row_.empty() ? row_for_col_idx<false>(*col_idx)
-                                                            : row_for_col_idx<true>(*col_idx));
+                    row.plus_assign_from_bit(col_idx_to_row_.empty()
+                                                 ? row_for_col_idx<false>(*col_idx)
+                                                 : row_for_col_idx<true>(*col_idx),
+                                             *col_idx);
                 }
             }
         }
@@ -291,22 +303,20 @@ public:
 
     Equation pop_row(std::size_t row_idx) override {
         Equation popped_row = std::move(rows_[row_idx].row);
-        const std::optional<std::size_t> leading_col_idx =
-            gf2_vector_of<V>(popped_row).leading_bit();
-        // A structural invariant: a stored row is never zero.
-        assert(leading_col_idx && "stored row has no pivot");
+        const std::size_t leading_col_idx = rows_[row_idx].pivot_col_idx;
 
         rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(row_idx));
-        pivot_col_idxs_.reset(*leading_col_idx);
+        pivot_col_idxs_.reset(leading_col_idx);
         if (!col_idx_to_row_.empty()) {
-            col_idx_to_row_[*leading_col_idx] = nullptr;
+            col_idx_to_row_[leading_col_idx] = nullptr;
         }
 
         debug_assert_valid_representation();
         return popped_row;
     }
 
-    void pop_rows(std::span<const std::uint8_t> is_popped) override {
+    std::vector<Equation> pop_rows(std::span<const std::uint8_t> is_popped) override {
+        std::vector<Equation> popped;
         // Moving handles never moves the equations they own, so the entries for
         // the kept pivot columns stay valid.
         std::size_t kept = 0;
@@ -316,6 +326,7 @@ public:
                 if (!col_idx_to_row_.empty()) {
                     col_idx_to_row_[rows_[row_idx].pivot_col_idx] = nullptr;
                 }
+                popped.push_back(std::move(rows_[row_idx].row));
             } else {
                 if (kept != row_idx) {
                     rows_[kept] = std::move(rows_[row_idx]);
@@ -326,18 +337,16 @@ public:
         rows_.erase(rows_.begin() + static_cast<std::ptrdiff_t>(kept), rows_.end());
 
         debug_assert_valid_representation();
+        return popped;
     }
 
     void pop_last_row() override {
-        const std::optional<std::size_t> leading_col_idx =
-            gf2_vector_of<V>(rows_.back().row).leading_bit();
-        // A structural invariant: a stored row is never zero.
-        assert(leading_col_idx && "stored row has no pivot");
+        const std::size_t leading_col_idx = rows_.back().pivot_col_idx;
 
         rows_.pop_back();
-        pivot_col_idxs_.reset(*leading_col_idx);
+        pivot_col_idxs_.reset(leading_col_idx);
         if (!col_idx_to_row_.empty()) {
-            col_idx_to_row_[*leading_col_idx] = nullptr;
+            col_idx_to_row_[leading_col_idx] = nullptr;
         }
 
         debug_assert_valid_representation();
@@ -460,6 +469,24 @@ private:
             col_idx = vec.plus_assign_and_next_bit(row_for_col_idx<FromColIdxToRow>(*col_idx),
                                                    *col_idx);
         }
+    }
+
+    /// @brief Where a walk over ascending columns stands: the last column asked
+    /// for, and the number of pivots below it.
+    struct AscendingWalk {
+        std::size_t col_idx = 0;
+        std::size_t row_idx = 0;
+    };
+
+    /// @brief `row_idx_for_col_idx(col_idx)` for a `col_idx` at or after the last one
+    /// `walk` was asked for, counting only the pivots passed since.
+    std::size_t next_row_idx(AscendingWalk& walk, std::size_t col_idx) const noexcept {
+        if (cols_ <= 1024) [[likely]] {
+            walk.row_idx += pivot_col_idxs_.count_between(walk.col_idx, col_idx);
+            walk.col_idx = col_idx;
+            return walk.row_idx;
+        }
+        return row_idx_for_col_idx(col_idx);
     }
 
     /// @brief The row holding the pivot in `col_idx`, or where a row leading on it goes.

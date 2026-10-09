@@ -30,13 +30,6 @@ void ClauseSelector::debug_assert_clause_id(ClauseId id) const {
 }
 #endif
 
-Clause& ClauseSelector::clause(ClauseId id) {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    return clauses_[id];
-}
-
 void ClauseSelector::replace_clause(ClauseId id, Clause clause) {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
@@ -89,6 +82,20 @@ void ClauseSelector::maybe_clean_carrier_entries() {
     if (num_carrier_entries_ <= carrier_cleanup_threshold_) {
         return;
     }
+    // Testing an entry reads one word of each row and entering a clause reads
+    // every word of each, so entering every clause again pays once the entries
+    // outnumber the words of the active clauses' rows.
+    const std::size_t num_words = (col_idx_to_clause_ids_.size() + DenseGF2Vector::bits_per_word) >>
+                                  DenseGF2Vector::word_shift;
+    const std::size_t num_active_clauses = listed_clause_ids_.size() - num_inactive_listed_;
+    const std::size_t kept = num_carrier_entries_ > num_active_clauses * num_words
+                                 ? enter_every_clause_again()
+                                 : drop_wrong_carrier_entries();
+    num_carrier_entries_ = kept;
+    carrier_cleanup_threshold_ = 2 * kept + col_idx_to_clause_ids_.size();
+}
+
+std::size_t ClauseSelector::drop_wrong_carrier_entries() {
     IndexSet kept_ids(clauses_.size()); // over clause ids; empty between lists
     const auto clean = [&kept_ids](std::vector<ClauseId>& ids, const auto& is_right) {
         std::erase_if(ids, [&](ClauseId id) {
@@ -109,8 +116,34 @@ void ClauseSelector::maybe_clean_carrier_entries() {
         kept += clean(col_idx_to_clause_ids_[col_idx],
                       [this, col_idx](ClauseId id) { return carries(id, col_idx); });
     }
-    num_carrier_entries_ = kept;
-    carrier_cleanup_threshold_ = 2 * kept + col_idx_to_clause_ids_.size();
+    return kept;
+}
+
+std::size_t ClauseSelector::enter_every_clause_again() {
+    // Every right entry is of an entered active clause and a column it carries.
+    for (std::vector<ClauseId>& ids : col_idx_to_clause_ids_) {
+        ids.clear();
+    }
+    clause_ids_spanning_eq_false_.clear();
+    std::size_t kept = 0;
+    for (const ClauseId id : active_clause_ids()) {
+        if (clause_entered_[id] == 0) {
+            continue;
+        }
+        const IndexSet carried = clauses_[id].carried_col_idxs();
+        const std::size_t constant_col_idx = carried.size() - 1;
+        carried.for_each_set([&](const std::size_t col_idx) {
+            if (col_idx != constant_col_idx) {
+                col_idx_to_clause_ids_[col_idx].push_back(id);
+                ++kept;
+            }
+        });
+        if (clause_spans_eq_false_[id] != 0) {
+            clause_ids_spanning_eq_false_.push_back(id);
+            ++kept;
+        }
+    }
+    return kept;
 }
 
 std::vector<ClauseId> ClauseSelector::clause_ids_carrying(const IndexSet& col_idxs) {
@@ -161,13 +194,6 @@ std::vector<ClauseId> ClauseSelector::debug_scan_clause_ids_carrying(
 }
 #endif
 
-bool ClauseSelector::is_clause_active(ClauseId id) const {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    return clause_active_[id] != 0;
-}
-
 void ClauseSelector::set_clause_active(ClauseId id, bool active) {
 #ifndef NDEBUG
     debug_assert_clause_id(id);
@@ -183,78 +209,6 @@ void ClauseSelector::set_clause_active(ClauseId id, bool active) {
         num_inactive_listed_ = 0;
     }
     update_with_inactive_clause(id);
-}
-
-void ClauseSelector::set_clause_learned(ClauseId id, bool learned) {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    clause_learned_[id] = learned ? 1 : 0;
-}
-
-bool ClauseSelector::is_clause_learned(ClauseId id) const {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    return clause_learned_[id] != 0;
-}
-
-double ClauseSelector::clause_lbd(ClauseId id) const {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    assert(clause_learned_[id] != 0 && "only a learned clause has an LBD");
-    return clause_lbd_[id];
-}
-
-void ClauseSelector::set_clause_lbd(ClauseId id, double lbd) {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    assert(clause_learned_[id] != 0 && "only a learned clause has an LBD");
-    clause_lbd_[id] = lbd;
-}
-
-bool ClauseSelector::is_clause_used_since_deletion(ClauseId id) const {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    return clause_used_since_deletion_[id] != 0;
-}
-
-void ClauseSelector::set_clause_used_since_deletion(ClauseId id, bool used) {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    clause_used_since_deletion_[id] = used ? 1 : 0;
-}
-
-std::size_t ClauseSelector::clause_unused_passes(ClauseId id) const {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    return clause_unused_passes_[id];
-}
-
-void ClauseSelector::set_clause_unused_passes(ClauseId id, std::size_t num_passes) {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    clause_unused_passes_[id] = num_passes;
-}
-
-bool ClauseSelector::is_clause_out_of_unused_passes(ClauseId id) const {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    return clause_out_of_unused_passes_[id] != 0;
-}
-
-void ClauseSelector::set_clause_out_of_unused_passes(ClauseId id, bool out) {
-#ifndef NDEBUG
-    debug_assert_clause_id(id);
-#endif
-    clause_out_of_unused_passes_[id] = out ? 1 : 0;
 }
 
 void ClauseSelector::add_starting_clause(Clause clause) {

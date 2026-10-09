@@ -138,7 +138,6 @@ XORCLE_STAT(exact_watchlist, Count, exact_touches_ahead, "exact_touches_ahead", 
 XORCLE_STAT(exact_watchlist, Count, exact_sweeps_started, "exact_sweeps_started", "Sweeps started")
 XORCLE_STAT(exact_watchlist, Count, exact_sweeps_finished, "exact_sweeps_finished", "Sweeps finished")
 XORCLE_STAT(exact_watchlist, Count, exact_sweeps_dropped, "exact_sweeps_dropped", "Paused sweeps dropped at backjumps")
-XORCLE_STAT(exact_watchlist, Count, exact_sweeps_dropped_unreached, "exact_sweeps_dropped_unreached", "Cells the dropped sweeps never reached")
 
 // --- Timing ----------------------------------------------------------------
 

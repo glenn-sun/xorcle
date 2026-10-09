@@ -3,6 +3,7 @@
 /// @file clause_selector.h
 /// @brief Choosing which clause to propagate from next, and owning the clause database.
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -65,7 +66,12 @@ public:
     const std::vector<Clause>& clauses() const noexcept { return clauses_; }
 
     /// @brief The clause, whose rows only `replace_clause()` and a renumbering change.
-    Clause& clause(ClauseId id);
+    Clause& clause(ClauseId id) {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        return clauses_[id];
+    }
 
     void replace_clause(ClauseId id, Clause clause);
 
@@ -74,7 +80,12 @@ public:
     /// @pre `col_idxs` is sized like a clause's columns and leaves the last one out.
     std::vector<ClauseId> clause_ids_carrying(const IndexSet& col_idxs);
 
-    bool is_clause_active(ClauseId id) const;
+    bool is_clause_active(ClauseId id) const {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        return clause_active_[id] != 0;
+    }
     void set_clause_active(ClauseId id, bool active);
 
     const std::vector<std::uint8_t>& active_flags() const noexcept { return clause_active_; }
@@ -84,28 +95,80 @@ public:
     }
 
     /// @brief Whether the clause was learned rather than read from the instance.
-    bool is_clause_learned(ClauseId id) const;
+    bool is_clause_learned(ClauseId id) const {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        return clause_learned_[id] != 0;
+    }
 
     /// @brief Mark a clause learned or not; what replaces an input clause takes
     /// its standing, so it is never a deletion candidate either.
-    void set_clause_learned(ClauseId id, bool learned);
+    void set_clause_learned(ClauseId id, bool learned) {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        clause_learned_[id] = learned ? 1 : 0;
+    }
 
     /// @brief The LBD deletion reads, which a use as a reason moves toward the LBD measured there.
     /// @pre `is_clause_learned(id)`.
-    double clause_lbd(ClauseId id) const;
+    double clause_lbd(ClauseId id) const {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        assert(clause_learned_[id] != 0 && "only a learned clause has an LBD");
+        return clause_lbd_[id];
+    }
     /// @pre `is_clause_learned(id)`.
-    void set_clause_lbd(ClauseId id, double lbd);
+    void set_clause_lbd(ClauseId id, double lbd) {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        assert(clause_learned_[id] != 0 && "only a learned clause has an LBD");
+        clause_lbd_[id] = lbd;
+    }
 
-    bool is_clause_used_since_deletion(ClauseId id) const;
-    void set_clause_used_since_deletion(ClauseId id, bool used);
+    bool is_clause_used_since_deletion(ClauseId id) const {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        return clause_used_since_deletion_[id] != 0;
+    }
+    void set_clause_used_since_deletion(ClauseId id, bool used) {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        clause_used_since_deletion_[id] = used ? 1 : 0;
+    }
 
     /// @brief Consecutive deletion passes the clause has sat through unlocked and unused.
-    std::size_t clause_unused_passes(ClauseId id) const;
-    void set_clause_unused_passes(ClauseId id, std::size_t num_passes);
+    std::size_t clause_unused_passes(ClauseId id) const {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        return clause_unused_passes_[id];
+    }
+    void set_clause_unused_passes(ClauseId id, std::size_t num_passes) {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        clause_unused_passes_[id] = num_passes;
+    }
 
     /// @brief Whether the clause has gone unused for as many deletion passes as its LBD allowed.
-    bool is_clause_out_of_unused_passes(ClauseId id) const;
-    void set_clause_out_of_unused_passes(ClauseId id, bool out);
+    bool is_clause_out_of_unused_passes(ClauseId id) const {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        return clause_out_of_unused_passes_[id] != 0;
+    }
+    void set_clause_out_of_unused_passes(ClauseId id, bool out) {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        clause_out_of_unused_passes_[id] = out ? 1 : 0;
+    }
 
     /// @brief The next clause to try, with the trigger when the selector knows it;
     /// `std::nullopt` once the propagation run is over.
@@ -172,6 +235,12 @@ protected:
 
     /// @brief Drop the stale and repeated entries once they outnumber the rest.
     void maybe_clean_carrier_entries();
+
+    /// @brief Test every entry against its clause; the number left.
+    std::size_t drop_wrong_carrier_entries();
+
+    /// @brief Clear every entry and enter each entered clause; the number of entries.
+    std::size_t enter_every_clause_again();
 
 #ifndef NDEBUG
     /// @brief What `clause_ids_carrying()` returns, read off every active clause.

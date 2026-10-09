@@ -126,9 +126,10 @@ ResolvedReason resolve_asserting_basis(
     // not terminate.
     asserting_row.plus_assign(reason_row);
     asserting_row.plus_assign(trail_basis_one);
-    asserting_basis.add_row(asserting_row);
-    for (const Equation& extra_reason_row : reason_basis) {
-        asserting_basis.add_row(extra_reason_row);
+    asserting_basis.add_row(std::move(asserting_row));
+    const std::size_t num_extra_reason_rows = reason_basis.rows();
+    while (reason_basis.rows() != 0) {
+        asserting_basis.add_row(reason_basis.pop_first_row());
     }
 
     // The rows before the pivot keep their leading columns; everything the step
@@ -140,7 +141,7 @@ ResolvedReason resolve_asserting_basis(
     // The resolvent always spans the reason's remaining rows, so rank equal to
     // their count means equality of spans: the resolvent subsumes the reason.
     return ResolvedReason{*reason_clause_id, reason_lbd,
-                          asserting_basis.rows() == reason_basis.rows()};
+                          asserting_basis.rows() == num_extra_reason_rows};
 }
 
 std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
@@ -200,13 +201,9 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 
     const Equation trail_basis_one = make_trail_basis_one(trail);
 
-    // Copied row by row so the clause gets the watches of a freshly built clause.
     const auto to_clause = [&trail](const TrailBasisSpace& basis) {
-        const RowSpace rows = basis.to_RowSpace();
         Clause clause(trail.repr(), trail.num_vars());
-        for (const Equation& row : rows) {
-            clause.add_row(row);
-        }
+        basis.add_rows_to(clause);
         return clause;
     };
 

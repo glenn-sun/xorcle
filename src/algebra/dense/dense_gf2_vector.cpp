@@ -5,21 +5,6 @@
 
 namespace xorcle {
 
-void DenseGF2Vector::assign_from(const DenseGF2Vector& other) noexcept {
-    assert(num_bits_ == other.num_bits_ && "bit count mismatch in assign_from");
-    const std::size_t num_words = word_count(num_bits_);
-    // Below 8 words a plain word loop beats `std::memcpy`.
-    if (num_words < 8) {
-        Word* destination = words_;
-        const Word* source = other.words_;
-        for (std::size_t i = 0; i < num_words; ++i) {
-            destination[i] = source[i];
-        }
-    } else {
-        std::memcpy(words_, other.words_, num_words * sizeof(Word));
-    }
-}
-
 void DenseGF2Vector::resize(std::size_t num_bits) {
     const std::size_t old_num_words = num_words();
     const std::size_t new_num_words = word_count(num_bits);

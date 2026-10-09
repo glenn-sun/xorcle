@@ -113,7 +113,16 @@ std::size_t Trail::learn(const Equation& eqn, std::optional<ClauseId> reason, st
 
 std::size_t Trail::learn_in_order(const Equation& eqn, std::optional<ClauseId> reason,
                                   std::size_t level) {
-    const std::optional<std::size_t> maybe_inserted_row_idx = span_.add_row_get_row_idx(eqn);
+    Equation row;
+    if (spare_rows_.empty()) {
+        row = eqn;
+    } else {
+        row = std::move(spare_rows_.back());
+        spare_rows_.pop_back();
+        row.assign_from(eqn);
+    }
+    const std::optional<std::size_t> maybe_inserted_row_idx =
+        span_.add_row_get_row_idx(std::move(row));
     assert(maybe_inserted_row_idx.has_value() && "learned an equation already in the span");
 
     const std::size_t inserted_row_idx = *maybe_inserted_row_idx;
@@ -211,7 +220,9 @@ void Trail::resize(std::size_t num_levels) {
     for (std::size_t t = kept; t < old_rows; ++t) {
         is_dropped[trail_idx_to_row_idx_[t]] = 1;
     }
-    span_.pop_rows(is_dropped);
+    for (Equation& row : span_.pop_rows(is_dropped)) {
+        spare_rows_.push_back(std::move(row));
+    }
 
     trail_idx_to_row_idx_.resize(kept);
     reasons_.resize(kept);

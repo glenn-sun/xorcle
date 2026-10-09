@@ -143,15 +143,12 @@ public:
 
     std::vector<std::size_t> bits() const override {
         std::vector<std::size_t> out;
+        out.reserve(vector_.num_set_bits());
         vector_.for_each_set_bit([&](std::size_t bit) { out.push_back(bit); });
         return out;
     }
 
-    std::size_t num_set_bits() const noexcept override {
-        std::size_t count = 0;
-        vector_.for_each_set_bit([&](std::size_t) { ++count; });
-        return count;
-    }
+    std::size_t num_set_bits() const noexcept override { return vector_.num_set_bits(); }
 
     bool equals(const EquationInterface& other) const noexcept override {
         return vector_.equals(cast(other).vector_);

@@ -30,11 +30,13 @@ concept GF2Vector = requires(V v, const V cv, std::size_t i, std::span<const std
     { cv.next_bit(i) } -> std::same_as<std::optional<std::size_t>>; // strictly after `i`
     { cv.first_bit_in(indices, i) } -> std::same_as<std::optional<std::size_t>>; // at or after `i`
     { v.plus_assign(cv) } -> std::same_as<void>;
+    { v.plus_assign_from_bit(cv, i) } -> std::same_as<void>; // `cv` has no set bit below `i`
     { v.plus_assign_and_next_bit(cv, i) } -> std::same_as<std::optional<std::size_t>>;
     { v.assign_from(cv) } -> std::same_as<void>; // reuses the buffer
     { cv.equals(cv) } -> std::same_as<bool>;
     { cv.hash() } -> std::same_as<std::size_t>;
     { cv.for_each_set_bit([](std::size_t) {}) } -> std::same_as<void>;
+    { cv.num_set_bits() } -> std::same_as<std::size_t>;
     { cv.add_set_bits_to(mutable_indices) } -> std::same_as<void>;
 };
 

@@ -194,6 +194,21 @@ public:
         }
     }
 
+    /// @brief Add `other` in, reading only its words from bit `i` on.
+    /// @pre `other` has no set bit below `i`, `other.num_bits() == num_bits()`, and
+    /// `i < num_bits()`.
+    void plus_assign_from_bit(const DenseGF2Vector& other, std::size_t i) noexcept {
+        assert(num_bits_ == other.num_bits_ && "bit count mismatch in plus_assign_from_bit");
+        assert(i < num_bits_ && "plus_assign_from_bit index is out of range");
+        assert(other.no_set_bit_below(i) && "plus_assign_from_bit starts above a set bit");
+        Word* lhs = words_;
+        const Word* rhs = other.words_;
+        const std::size_t num_words = word_count(num_bits_);
+        for (std::size_t w = i >> word_shift; w < num_words; ++w) {
+            lhs[w] ^= rhs[w];
+        }
+    }
+
     /// @brief Add `other` in and return the first set bit after `i`, in one pass
     /// over the words.
     /// @pre Neither vector has a set bit below `i`, `other.num_bits() ==
@@ -227,7 +242,20 @@ public:
 
     /// @brief Overwrite from `other` without allocating.
     /// @pre `other.num_bits() == num_bits()`.
-    void assign_from(const DenseGF2Vector& other) noexcept;
+    void assign_from(const DenseGF2Vector& other) noexcept {
+        assert(num_bits_ == other.num_bits_ && "bit count mismatch in assign_from");
+        const std::size_t num_words = word_count(num_bits_);
+        // Below 8 words a plain word loop beats `std::memcpy`.
+        if (num_words < 8) {
+            Word* destination = words_;
+            const Word* source = other.words_;
+            for (std::size_t i = 0; i < num_words; ++i) {
+                destination[i] = source[i];
+            }
+        } else {
+            std::memcpy(words_, other.words_, num_words * sizeof(Word));
+        }
+    }
 
     bool equals(const DenseGF2Vector& other) const noexcept {
         return num_bits_ == other.num_bits_ &&
@@ -237,11 +265,26 @@ public:
     std::size_t hash() const noexcept;
 
     /// @brief Call `f(bit)` for each set bit, in ascending order.
+    /// @pre `f` does not change this vector.
     template <class F>
     void for_each_set_bit(F&& f) const {
-        for (auto bit = leading_bit(); bit; bit = next_bit(*bit)) {
-            f(*bit);
+        const Word* words = words_;
+        const std::size_t num_words = word_count(num_bits_);
+        for (std::size_t w = 0; w < num_words; ++w) {
+            for (Word word = words[w]; word != 0; word &= word - 1) {
+                f((w << word_shift) + static_cast<std::size_t>(std::countr_zero(word)));
+            }
         }
+    }
+
+    std::size_t num_set_bits() const noexcept {
+        const Word* words = words_;
+        const std::size_t num_words = word_count(num_bits_);
+        std::size_t count = 0;
+        for (std::size_t w = 0; w < num_words; ++w) {
+            count += static_cast<std::size_t>(std::popcount(words[w]));
+        }
+        return count;
     }
 
     /// @brief Add each set bit to `indices`.

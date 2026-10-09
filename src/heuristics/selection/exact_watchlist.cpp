@@ -90,7 +90,7 @@ void ExactWatchlist::reset(std::size_t num_cols) {
     paused_head_ = 0;
     paused_end_ = 0;
     saves_.clear();
-    save_words_.clear();
+    num_save_words_ = 0;
     level_save_mark_.assign(1, 0);
     level_save_word_mark_.assign(1, 0);
     level_stamp_.assign(1, 0);
@@ -104,11 +104,11 @@ void ExactWatchlist::reset(std::size_t num_cols) {
 void ExactWatchlist::open_level() {
     level_pivot_mark_.push_back(pivot_col_idxs_.size());
     level_save_mark_.push_back(saves_.size());
-    level_save_word_mark_.push_back(save_words_.size());
+    level_save_word_mark_.push_back(num_save_words_);
     level_stamp_.push_back(next_stamp_++);
 }
 
-std::uint32_t ExactWatchlist::reduce_by_span(Word* words, std::size_t lead,
+inline std::uint32_t ExactWatchlist::reduce_by_span(Word* words, std::size_t lead,
                                              std::size_t& row_additions) const {
     while (lead != npos) {
         const Word* row = pivot_row_[lead];
@@ -121,7 +121,7 @@ std::uint32_t ExactWatchlist::reduce_by_span(Word* words, std::size_t lead,
     return lead == npos ? zero_key : static_cast<std::uint32_t>(lead);
 }
 
-std::uint32_t ExactWatchlist::reduce_by_span_and_first(Word* words, std::size_t lead,
+inline std::uint32_t ExactWatchlist::reduce_by_span_and_first(Word* words, std::size_t lead,
                                                        const Word* first,
                                                        std::uint32_t first_key,
                                                        std::size_t& row_additions) const {
@@ -138,7 +138,7 @@ std::uint32_t ExactWatchlist::reduce_by_span_and_first(Word* words, std::size_t 
     return lead == npos ? zero_key : static_cast<std::uint32_t>(lead);
 }
 
-const ExactWatchlist::Word* ExactWatchlist::watch_row(std::uint32_t cell) const {
+inline const ExactWatchlist::Word* ExactWatchlist::watch_row(std::uint32_t cell) const {
     const std::uint32_t pair = cell >> 1;
     const Clause& clause = clauses_[pair_clause_[pair]];
     const std::size_t row_idx =
@@ -146,21 +146,21 @@ const ExactWatchlist::Word* ExactWatchlist::watch_row(std::uint32_t cell) const 
     return words_of(clause.row(row_idx));
 }
 
-void ExactWatchlist::load_watch(std::uint32_t cell) {
+inline void ExactWatchlist::load_watch(std::uint32_t cell) {
     copy_words(watch_words_.data() + cell * num_words_, watch_row(cell), num_words_);
 #ifndef NDEBUG
     debug_watch_loaded_[cell] = 1;
 #endif
 }
 
-void ExactWatchlist::build_first(std::uint32_t cell, const Word* watch) {
+inline void ExactWatchlist::build_first(std::uint32_t cell, const Word* watch) {
     Word* words = cell_words(cell);
     copy_words(words, watch, num_words_);
     std::size_t row_additions = 0;
     key_[cell] = reduce_by_span(words, leading_bit(words, num_words_), row_additions);
 }
 
-void ExactWatchlist::build_second(std::uint32_t cell, const Word* watch) {
+inline void ExactWatchlist::build_second(std::uint32_t cell, const Word* watch) {
     Word* words = cell_words(cell);
     copy_words(words, watch, num_words_);
     std::size_t row_additions = 0;
@@ -246,19 +246,7 @@ void ExactWatchlist::rebuild_pair(std::uint32_t pair) {
     }
 }
 
-void ExactWatchlist::place(std::uint32_t cell) {
-    const std::uint32_t key = key_[cell];
-    if (key != zero_key && key != constant_key()) {
-        buckets_[key].push_back(cell);
-        ++bucket_entries_;
-    }
-}
-
-void ExactWatchlist::maybe_clean_buckets() {
-    counters_.peak_bucket_entries = std::max(counters_.peak_bucket_entries, bucket_entries_);
-    if (bucket_entries_ <= cleanup_threshold_) {
-        return;
-    }
+void ExactWatchlist::clean_buckets() {
     ++counters_.cleanups;
     counters_.cleanup_entries += bucket_entries_;
     cleanup_kept_.resize(key_.size(), 0);
@@ -287,20 +275,22 @@ void ExactWatchlist::maybe_clean_buckets() {
     cleanup_threshold_ = 2 * kept + num_cols_ - num_dropped_vars_;
 }
 
-void ExactWatchlist::save(std::uint32_t cell, std::size_t level) {
+inline void ExactWatchlist::save(std::uint32_t cell, std::size_t level) {
     if (level == 0 || save_stamp_[cell] == level_stamp_[level]) {
         return;
     }
-    saves_.push_back(
-        SaveEntry{cell, gen_[cell], key_[cell], save_stamp_[cell], save_words_.size()});
-    const std::size_t offset = save_words_.size();
-    save_words_.resize(offset + num_words_);
+    const std::size_t offset = num_save_words_;
+    saves_.push_back(SaveEntry{cell, gen_[cell], key_[cell], save_stamp_[cell], offset});
+    if (save_words_.size() - offset < num_words_) {
+        save_words_.resize(std::max(2 * save_words_.size(), offset + num_words_));
+    }
     copy_words(save_words_.data() + offset, cell_words(cell), num_words_);
+    num_save_words_ = offset + num_words_;
     save_stamp_[cell] = level_stamp_[level];
     ++counters_.saves;
 }
 
-void ExactWatchlist::push_rebuild_entry(std::uint32_t cell, std::size_t level) {
+inline void ExactWatchlist::push_rebuild_entry(std::uint32_t cell, std::size_t level) {
     // An entry already at this level rebuilds once `gen_` has moved past it.
     if (level == 0 || save_stamp_[cell] == level_stamp_[level]) {
         return;
@@ -309,7 +299,7 @@ void ExactWatchlist::push_rebuild_entry(std::uint32_t cell, std::size_t level) {
     save_stamp_[cell] = level_stamp_[level];
 }
 
-bool ExactWatchlist::advance(std::uint32_t cell, std::size_t level) {
+inline bool ExactWatchlist::advance(std::uint32_t cell, std::size_t level) {
     ++counters_.touches;
     save(cell, level);
     Word* words = cell_words(cell);
@@ -401,9 +391,6 @@ void ExactWatchlist::drop_paused_sweeps() {
         PausedSweep& sweep = paused_sweeps_[i];
         std::vector<std::uint32_t>& bucket = buckets_[sweep.col_idx];
         const auto unreached = sweep.cells.begin() + static_cast<std::ptrdiff_t>(sweep.cursor);
-        for (auto it = unreached; it != sweep.cells.end(); ++it) {
-            counters_.sweeps_dropped_unreached += key_[*it] == sweep.col_idx ? 1U : 0U;
-        }
         bucket.insert(bucket.end(), unreached, sweep.cells.end());
         bucket_entries_ += sweep.cells.size() - sweep.cursor;
         sweep.cells.clear();
@@ -425,7 +412,7 @@ void ExactWatchlist::bring_current(std::uint32_t pair) {
     }
 }
 
-ExactWatchlist::Trigger ExactWatchlist::trigger(std::uint32_t pair) const {
+inline ExactWatchlist::Trigger ExactWatchlist::trigger(std::uint32_t pair) const {
     const std::uint32_t first_key = key_[2 * pair];
     if (pair_is_unit_[pair] != 0) {
         return first_key == constant_key() ? Trigger::none : Trigger::unit;
@@ -441,7 +428,7 @@ ExactWatchlist::Trigger ExactWatchlist::trigger(std::uint32_t pair) const {
     return second_key == zero_key ? Trigger::one : Trigger::none;
 }
 
-std::optional<ClauseSelection> ExactWatchlist::selection_of(ClauseId id, Trigger trigger) {
+inline std::optional<ClauseSelection> ExactWatchlist::selection_of(ClauseId id, Trigger trigger) {
     switch (trigger) {
         case Trigger::none:
             return std::nullopt;
@@ -455,7 +442,7 @@ std::optional<ClauseSelection> ExactWatchlist::selection_of(ClauseId id, Trigger
     return std::nullopt;
 }
 
-void ExactWatchlist::maybe_queue(std::uint32_t pair) {
+inline void ExactWatchlist::maybe_queue(std::uint32_t pair) {
     const ClauseId id = pair_clause_[pair];
     if (in_side_queue_[id] != 0 || trigger(pair) == Trigger::none) {
         return;
@@ -607,12 +594,10 @@ void ExactWatchlist::update_with_new_watch(ClauseId id, ClauseRowIdx, WatchType 
 void ExactWatchlist::restore(std::size_t level) {
     for (std::uint32_t kind = 0; kind < 2; ++kind) {
         restored_by_kind_[kind].clear();
-        rebuild_by_kind_[kind].clear();
     }
     rebuilt_cells_.clear();
     const auto note = [&](std::uint32_t cell, bool rebuild) {
-        restored_by_kind_[cell & 1].push_back(cell);
-        rebuild_by_kind_[cell & 1].push_back(rebuild ? 1 : 0);
+        restored_by_kind_[cell & 1].push_back((cell & ~std::uint32_t{1}) | (rebuild ? 1U : 0U));
         if (rebuild) {
             rebuilt_cells_.push_back(cell);
         }
@@ -660,7 +645,7 @@ void ExactWatchlist::restore(std::size_t level) {
         }
     }
     saves_.resize(mark);
-    save_words_.resize(level_save_word_mark_[level + 1]);
+    num_save_words_ = level_save_word_mark_[level + 1];
 
     const std::size_t pivot_mark = level_pivot_mark_[level + 1];
     for (std::size_t i = pivot_mark; i < pivot_col_idxs_.size(); ++i) {
@@ -675,13 +660,12 @@ void ExactWatchlist::restore(std::size_t level) {
 
     // Every `A` first, since a rebuilt `B` is reduced by its `A`.
     for (std::uint32_t kind = 0; kind < 2; ++kind) {
-        const std::vector<std::uint32_t>& cells = restored_by_kind_[kind];
-        for (std::size_t j = 0; j < cells.size(); ++j) {
-            const std::uint32_t cell = cells[j];
+        for (const std::uint32_t restored : restored_by_kind_[kind]) {
+            const std::uint32_t cell = (restored & ~std::uint32_t{1}) | kind;
             if (clause_active_[pair_clause_[cell >> 1]] == 0) {
                 continue;
             }
-            if (rebuild_by_kind_[kind][j] != 0) {
+            if ((restored & 1) != 0) {
                 assert(debug_watch_loaded_[cell] != 0 && "a rebuilt cell has no watch copy");
                 if (kind == 0) {
                     build_first(cell, watch_words(cell));
@@ -892,7 +876,6 @@ void ExactWatchlist::add_to_stats(RunStats& stats) const {
     stats.exact_sweeps_started = counters_.sweeps_started;
     stats.exact_sweeps_finished = counters_.sweeps_finished;
     stats.exact_sweeps_dropped = counters_.sweeps_dropped;
-    stats.exact_sweeps_dropped_unreached = counters_.sweeps_dropped_unreached;
 }
 
 #ifndef NDEBUG

@@ -141,6 +141,9 @@ private:
 
     RowSpace span_;
 
+    /// @brief The rows a backjump dropped, which the next in-order learns store into.
+    std::vector<Equation> spare_rows_;
+
     /// @brief Rebuilt from `row_idx_to_trail_idx_` on the first read after an in-order learn.
     mutable std::vector<std::size_t> trail_idx_to_row_idx_;
     mutable bool trail_idx_to_row_idx_is_stale_ = false;

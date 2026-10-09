@@ -102,6 +102,10 @@ public:
     /// @pre `other.num_bits() == num_bits()`.
     void plus_assign(const SparseGF2Vector& other);
 
+    /// @brief `plus_assign(other)`.
+    /// @pre `other` has no set bit below `i`, and `other.num_bits() == num_bits()`.
+    void plus_assign_from_bit(const SparseGF2Vector& other, std::size_t) { plus_assign(other); }
+
     /// @brief Add `other` in and return the first set bit after `i`.
     /// @pre Neither vector has a set bit below `i`, `other.num_bits() ==
     /// num_bits()`, and `i < num_bits()`.
@@ -128,6 +132,8 @@ public:
             f(bit);
         }
     }
+
+    std::size_t num_set_bits() const noexcept { return bits_.size(); }
 
     /// @brief Add each set bit to `indices`.
     /// @pre `indices.size() == num_bits()`.

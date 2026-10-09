@@ -3,6 +3,7 @@
 /// @file exact_watchlist.h
 /// @brief The selector that queues exactly the clauses whose watch pair became dependent.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -37,7 +38,6 @@ struct ExactWatchlistCounters {
     std::size_t sweeps_started = 0;
     std::size_t sweeps_finished = 0;
     std::size_t sweeps_dropped = 0; ///< Paused sweeps a backjump dropped.
-    std::size_t sweeps_dropped_unreached = 0; ///< Cells the dropped sweeps never reached.
 };
 
 /// @brief Queues a clause exactly when its watch pair becomes dependent modulo the
@@ -159,12 +159,25 @@ private:
                                            std::uint32_t first_key,
                                            std::size_t& row_additions) const;
 
-    void place(std::uint32_t cell);
+    void place(std::uint32_t cell) {
+        const std::uint32_t key = key_[cell];
+        if (key != zero_key && key != constant_key()) {
+            buckets_[key].push_back(cell);
+            ++bucket_entries_;
+        }
+    }
 
     /// @brief Drop every stale bucket entry once there are more than twice as
     /// many entries as the last cleanup kept, plus one per column no substitution
     /// has emptied.
-    void maybe_clean_buckets();
+    void maybe_clean_buckets() {
+        counters_.peak_bucket_entries = std::max(counters_.peak_bucket_entries, bucket_entries_);
+        if (bucket_entries_ > cleanup_threshold_) {
+            clean_buckets();
+        }
+    }
+
+    void clean_buckets();
 
     void save(std::uint32_t cell, std::size_t level);
     void push_rebuild_entry(std::uint32_t cell, std::size_t level);
@@ -234,7 +247,8 @@ private:
     std::size_t paused_end_ = 0;
 
     std::vector<SaveEntry> saves_;
-    std::vector<Word> save_words_;
+    std::vector<Word> save_words_; ///< The saved cells' words are its first `num_save_words_`.
+    std::size_t num_save_words_ = 0;
     std::vector<std::size_t> level_save_mark_;
     std::vector<std::size_t> level_save_word_mark_;
     std::vector<std::uint32_t> level_stamp_; ///< Fresh at every opening of a level.
@@ -244,9 +258,9 @@ private:
     std::vector<std::uint8_t> restore_rebuild_;
     std::uint32_t restore_epoch_ = 0;
     std::vector<std::uint32_t> restored_cells_;
-    /// @brief The cells a backjump restores, `A`s then `B`s, each in the order restored.
+    /// @brief The cells a backjump restores, `A`s then `B`s, each in the order restored:
+    /// twice the cell's pair, plus one if the cell is rebuilt.
     std::vector<std::uint32_t> restored_by_kind_[2];
-    std::vector<std::uint8_t> rebuild_by_kind_[2];
     std::vector<std::uint32_t> rebuilt_cells_;
 
     /// @brief Triggers found by building a pair rather than by a sweep.

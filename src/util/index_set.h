@@ -70,6 +70,28 @@ public:
     /// @pre `i <= size()`.
     std::size_t count_below(std::size_t i) const noexcept;
 
+    /// @brief Number of set indices in `[begin, end)`.
+    /// @pre `begin <= end <= size()`.
+    std::size_t count_between(std::size_t begin, std::size_t end) const noexcept {
+        assert(begin <= end && end <= size_ && "IndexSet::count_between range is out of range");
+        if (begin == end) {
+            return 0;
+        }
+        const std::uint64_t* const words = words_.data();
+        const std::size_t first_word = begin >> 6;
+        const std::size_t last_word = (end - 1) >> 6;
+        const std::uint64_t first_mask = ~std::uint64_t{0} << (begin & 63);
+        const std::uint64_t last_mask = ~std::uint64_t{0} >> (63 - ((end - 1) & 63));
+        if (first_word == last_word) {
+            return static_cast<std::size_t>(std::popcount(words[first_word] & first_mask & last_mask));
+        }
+        auto total = static_cast<std::size_t>(std::popcount(words[first_word] & first_mask));
+        for (std::size_t w = first_word + 1; w < last_word; ++w) {
+            total += static_cast<std::size_t>(std::popcount(words[w]));
+        }
+        return total + static_cast<std::size_t>(std::popcount(words[last_word] & last_mask));
+    }
+
     std::size_t count() const noexcept;
 
     /// @brief The word holding indices `[64 w, 64 w + 64)`, lowest index in the

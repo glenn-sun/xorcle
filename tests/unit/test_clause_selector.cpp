@@ -227,7 +227,6 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
         trail.resize(1);
         selector.update_with_backjump(0, trail);
         CHECK(selector.counters().sweeps_dropped > 0);
-        CHECK(selector.counters().sweeps_dropped_unreached > 0);
         CHECK(selector.next() == std::nullopt);
 
         learn(selector, trail, {0}, true);
