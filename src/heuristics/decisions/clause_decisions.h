@@ -39,11 +39,6 @@ private:
     EquationRepr repr_;
     std::size_t num_vars_;
 
-    Equation false_equation_;
-
-    /// @brief `0 = 1` reduced by each row added to the local basis.
-    Equation scratch_false_;
-
     RowSpace local_basis_;
 
     /// @brief Rows popped from the local basis, reused so a check allocates nothing.

@@ -39,19 +39,10 @@ bool clause_is_open_by_trail(const Clause& clause, const RowSpace& trail_span) {
 ClauseSatisfactionWorkspace::ClauseSatisfactionWorkspace(EquationRepr repr, std::size_t num_vars)
     : repr_(repr),
       num_vars_(num_vars),
-      false_equation_(Equation::eq_false(repr, num_vars)),
-      scratch_false_(repr, num_vars),
       local_basis_(repr, num_vars) {}
 
 void ClauseSatisfactionWorkspace::reconfigure(std::size_t num_vars) {
     num_vars_ = num_vars;
-
-    false_equation_.resize(num_vars);
-    false_equation_.set_eq_false();
-
-    scratch_false_.resize(num_vars);
-    scratch_false_.set_eq_true();
-
     local_basis_ = RowSpace(repr_, num_vars);
     spare_rows_.clear();
 }
@@ -97,9 +88,9 @@ ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& cl
         // `0 = 1` is already in the trail span, so every clause is vacuously satisfied.
         return ClauseStatus::satisfied;
     }
-    // Otherwise the trail span leaves `0 = 1` alone, having no pivot in the
-    // constant column; the local basis then reduces it incrementally as it grows.
-    workspace.scratch_false_.assign_from(workspace.false_equation_);
+    // Otherwise the trail span leaves `0 = 1` alone, and the local basis holds it
+    // exactly when a row of its own leads on the constant column.
+    const std::size_t constant_col_idx = trail_span.cols() - 1;
 
     for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
         Equation row;
@@ -118,8 +109,7 @@ ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& cl
             // Dependent on the rows already in the local basis; it adds nothing.
             continue;
         }
-        if (workspace.local_basis_.partial_reduce(workspace.scratch_false_).kind ==
-            ReduceResult::Kind::eq_true) {
+        if (workspace.local_basis_.pivot_col_idxs().test(constant_col_idx)) {
             return ClauseStatus::satisfied;
         }
     }
