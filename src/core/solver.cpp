@@ -866,11 +866,12 @@ void Solver::maybe_delete_clauses() {
 }
 
 void Solver::apply_deletion(const DeletionPlan& plan) {
-    assert(plan.unused_passes.size() == selector_->num_clauses() &&
-           "the deletion plan does not cover every clause");
+    assert(plan.unused_passes.size() == num_active_clauses_ &&
+           "the deletion plan does not cover the active clauses");
 
+    std::size_t num_planned = 0;
     for (const ClauseId clause_id : selector_->active_clause_ids()) {
-        selector_->set_clause_unused_passes(clause_id, plan.unused_passes[clause_id]);
+        selector_->set_clause_unused_passes(clause_id, plan.unused_passes[num_planned++]);
         selector_->set_clause_used_since_deletion(clause_id, false);
     }
     for (const ClauseId clause_id : plan.out_of_unused_passes) {

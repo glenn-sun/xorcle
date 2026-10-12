@@ -236,6 +236,18 @@ TEST_CASE_TEMPLATE("deletion: a locked clause is neither deleted nor counted", T
         CHECK(plan.unused_passes[2] == 1);
         CHECK(plan.out_of_unused_passes.empty());
     }
+
+    SUBCASE("the counts follow the active ids, whatever order the trail names its reasons in") {
+        const std::unique_ptr<Cyclic> allowed = make_selector(repr, 8, {5, 5, 5, 5, 5});
+        allowed->set_clause_active(2, false);
+        const Trail trail = make_trail_with_reasons(repr, 8, {ClauseId{5}, ClauseId{1}});
+
+        // Ids 0, 1, 3, 4, 5: the starting clause, then 1 and 5 locked, 3 and 4 aging.
+        const DeletionPlan plan = plan_for(*allowed, trail, DeletionKey::lbd);
+        CHECK(plan.unused_passes == std::vector<std::size_t>{0, 0, 1, 1, 0});
+        CHECK(plan.out_of_unused_passes.empty());
+        CHECK(plan.deleted.empty());
+    }
 }
 
 TEST_CASE_TEMPLATE("deletion: running out of unused passes", Tag, DenseTag, SparseTag) {

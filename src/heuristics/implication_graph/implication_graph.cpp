@@ -18,7 +18,6 @@ ImplicationGraph::ImplicationGraph(const EquationRepr repr, const std::size_t nu
       rng_(make_rng(default_seed, RngComponent::implication_graph_sample)),
       lookup_scratch_(repr, num_vars),
       reduced_(repr, num_vars),
-      row_scratch_(repr, num_vars),
       triple_{Equation(repr, num_vars), Equation(repr, num_vars), Equation(repr, num_vars)} {
     assert(max_pairs_ != 0 && max_descendants_ != 0 && "a run must be allowed one of each");
 }
@@ -32,7 +31,6 @@ void ImplicationGraph::reconfigure(const std::size_t num_vars) {
     false_eqn_ = Equation::eq_false(repr_, num_vars);
     lookup_scratch_.resize(num_vars);
     reduced_ = RowSpace(repr_, num_vars);
-    row_scratch_.resize(num_vars);
     for (Equation& row : triple_) {
         row.resize(num_vars);
     }
@@ -67,13 +65,12 @@ bool ImplicationGraph::reduce_triple(const Clause& clause, const RowSpace& root_
     if (clause.rows() != 2) {
         return false;
     }
-    while (reduced_.rows() != 0) {
-        reduced_.pop_last_row();
-    }
+    clear_span(reduced_);
     for (const Equation& stored : clause) {
-        row_scratch_.assign_from(stored);
-        root_span.reduce(row_scratch_);
-        reduced_.add_row(row_scratch_);
+        Equation row = spare_row(num_vars_);
+        row.assign_from(stored);
+        root_span.reduce(row);
+        reduced_.add_row(std::move(row));
     }
     // The root trail either narrows the clause or, once `0 = 1` is in the
     // linear negation, satisfies it.

@@ -1,5 +1,6 @@
 #include "algebra/row_echelon_matrix.h"
 
+#include <algorithm>
 #include <cassert>
 #include <sstream>
 #include <vector>
@@ -62,37 +63,62 @@ std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
     const EquationRepr repr = left.repr();
     const std::size_t cols = left.cols();
 
-    RowEchelonMatrix doubled(repr, 2 * cols);
-    std::vector<std::size_t> wide_bits;
+    // A row of the doubled matrix, kept as its two halves; `first` is null once
+    // it is zero. A row of `left` is both of its own halves.
+    struct DoubledRow {
+        std::size_t pivot_col_idx;
+        const Equation* first;
+        const Equation* second;
+    };
+    std::vector<DoubledRow> doubled; // ascending in `pivot_col_idx`
+    doubled.reserve(left.rows() + right.rows());
+    const auto find = [&doubled](const std::size_t col_idx) {
+        return std::lower_bound(doubled.begin(), doubled.end(), col_idx,
+                                [](const DoubledRow& row, const std::size_t wanted) {
+                                    return row.pivot_col_idx < wanted;
+                                });
+    };
+
     for (const Equation& row : left) {
-        wide_bits = row.bits();
-        const std::size_t half = wide_bits.size();
-        for (std::size_t i = 0; i < half; ++i) {
-            wide_bits.push_back(wide_bits[i] + cols);
-        }
-        Equation wide = Equation::with_num_bits(repr, 2 * cols);
-        wide.assign_bits(wide_bits);
-        doubled.add_row(std::move(wide));
+        doubled.push_back({*row.leading_bit(), &row, &row});
     }
+
+    // The halves of the rows `right` adds; reserved, so the pointers stay valid.
+    std::vector<Equation> firsts;
+    std::vector<Equation> seconds;
+    firsts.reserve(right.rows());
+    seconds.reserve(right.rows());
     for (const Equation& row : right) {
-        Equation wide = Equation::with_num_bits(repr, 2 * cols);
-        wide.assign_bits(row.bits());
-        doubled.add_row(std::move(wide));
+        Equation& first = firsts.emplace_back(row);
+        Equation& second = seconds.emplace_back(Equation::with_num_bits(repr, cols));
+        bool is_first_zero = false;
+        while (true) {
+            const std::optional<std::size_t> leading =
+                is_first_zero ? second.leading_bit() : first.leading_bit();
+            if (!leading.has_value()) {
+                if (is_first_zero) {
+                    break; // the row already belongs to the doubled span
+                }
+                is_first_zero = true;
+                continue;
+            }
+            const std::size_t col_idx = is_first_zero ? cols + *leading : *leading;
+            const auto found = find(col_idx);
+            if (found == doubled.end() || found->pivot_col_idx != col_idx) {
+                doubled.insert(found, {col_idx, is_first_zero ? nullptr : &first, &second});
+                break;
+            }
+            if (!is_first_zero) {
+                first.plus_assign(*found->first);
+            }
+            second.plus_assign(*found->second);
+        }
     }
 
     std::vector<Equation> basis;
-    for (const Equation& row : doubled) {
-        const std::optional<std::size_t> leading = row.leading_bit();
-        if (!leading.has_value() || *leading < cols) {
-            continue;
-        }
-        wide_bits = row.bits();
-        for (std::size_t& bit : wide_bits) {
-            bit -= cols;
-        }
-        Equation eqn = Equation::with_num_bits(repr, cols);
-        eqn.assign_bits(wide_bits);
-        basis.push_back(std::move(eqn));
+    for (auto row = find(cols); row != doubled.end(); ++row) {
+        // Only a row `right` added has a zero first half, so its second is in `seconds`.
+        basis.push_back(std::move(seconds[static_cast<std::size_t>(row->second - seconds.data())]));
     }
     return basis;
 }

@@ -79,8 +79,8 @@ struct DeletionPlan {
     /// @brief Clauses reaching their allowed unused passes at this pass, ascending.
     std::vector<ClauseId> out_of_unused_passes;
 
-    /// @brief The unused-pass count after the pass, by clause id; zero for an
-    /// inactive clause.
+    /// @brief The unused-pass count after the pass of each active clause, in the
+    /// order of `ClauseSelector::active_clause_ids()`.
     std::vector<std::size_t> unused_passes;
 };
 

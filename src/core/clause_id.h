@@ -64,6 +64,9 @@ public:
     /// @pre `id` is a clause id of the store.
     bool contains(ClauseId id) const noexcept { return (*is_active_)[id] != 0; }
 
+    /// @brief At least the number of active ids.
+    std::size_t max_size() const noexcept { return listed_ids_->size(); }
+
 private:
     const std::vector<ClauseId>* listed_ids_;
     const std::vector<std::uint8_t>* is_active_;

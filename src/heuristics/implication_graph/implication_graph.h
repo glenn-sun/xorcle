@@ -227,7 +227,6 @@ private:
     /// nothing but the key of a vertex the graph has not seen before.
     Equation lookup_scratch_;
     RowSpace reduced_;
-    Equation row_scratch_;
     std::array<Equation, 3> triple_;
 
     /// @brief The even vertex of each pair the walk is to examine.

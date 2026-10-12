@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <optional>
 
+#include "util/index_set.h"
+
 namespace xorcle {
 
 namespace {
@@ -71,21 +73,22 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
     assert(state.eviction_rate >= 0.0 && state.eviction_rate <= 1.0 &&
            "the eviction rate is not a fraction");
 
-    const std::size_t num_clauses = state.selector.num_clauses();
-    std::vector<std::uint8_t> is_locked(num_clauses, 0);
+    IndexSet is_locked(state.selector.num_clauses()); // over clause ids
     for (const std::optional<ClauseId>& reason : state.trail.reasons()) {
         if (reason.has_value()) {
-            is_locked[*reason] = 1;
+            is_locked.set(*reason);
         }
     }
 
     DeletionPlan plan;
-    plan.unused_passes.resize(num_clauses);
+    plan.unused_passes.resize(state.selector.active_clause_ids().max_size());
+    std::size_t num_planned = 0;
     std::vector<ClauseId> candidates;
 
     for (const ClauseId id : state.selector.active_clause_ids()) {
-        plan.unused_passes[id] = state.selector.clause_unused_passes(id);
-        if (!state.selector.is_clause_learned(id) || is_locked[id] != 0) {
+        std::size_t& unused_passes = plan.unused_passes[num_planned++];
+        unused_passes = state.selector.clause_unused_passes(id);
+        if (!state.selector.is_clause_learned(id) || is_locked.test(id)) {
             continue;
         }
         if (is_deletion_candidate(state.selector, id, state.wait)) {
@@ -93,16 +96,18 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
             continue;
         }
         if (state.selector.is_clause_used_since_deletion(id)) {
-            plan.unused_passes[id] = 0;
+            unused_passes = 0;
             continue;
         }
-        ++plan.unused_passes[id];
+        ++unused_passes;
         const std::size_t allowed =
             allowed_unused_passes(state.selector.clause_lbd(id), state.wait);
-        if (plan.unused_passes[id] >= allowed) {
+        if (unused_passes >= allowed) {
             plan.out_of_unused_passes.push_back(id);
         }
     }
+
+    plan.unused_passes.resize(num_planned);
 
     const auto delete_count = static_cast<std::size_t>(
         std::floor(static_cast<double>(candidates.size()) * state.eviction_rate));
