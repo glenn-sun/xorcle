@@ -36,10 +36,6 @@ bool trail_is_conflicting(const Trail& trail) {
     Equation one = Equation::eq_false(trail.repr(), trail.num_vars());
     return trail.span().partial_reduce(one).kind == ReduceResult::Kind::eq_true;
 }
-
-bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
-    return eqn.num_bits() == basis.cols() && eqn.bits() == std::vector<std::size_t>{0};
-}
 #endif
 
 /// @brief Whether resolving `basis` on the row at `pivot_row_idx` with the
@@ -50,43 +46,63 @@ bool is_trail_basis_one(const Equation& eqn, const TrailBasisSpace& basis) {
 /// in already lies in `basis`, and then it is narrower by the pivot row alone.
 bool resolution_narrows(const TrailBasisSpace& basis, std::size_t pivot_row_idx,
                         const TrailCoordinates& reason, std::size_t reason_trail_idx,
-                        const Equation& trail_basis_one) {
+                        ResolutionWorkspace& workspace) {
     // The step brings in the reason's rows without `0 = 1`, and the pivot row plus
     // `0 = 1` plus one reason row with it. Once the others lie in `basis`, any
     // reason row with `0 = 1` stands for the one echelonization would pick.
-    std::optional<Equation> with_one;
-    for (std::size_t reason_row_idx = 0; reason_row_idx < reason.rows(); ++reason_row_idx) {
-        Equation brought_in = basis.coordinates_row(reason, reason_row_idx, reason_trail_idx);
+    Equation brought_in = workspace.spare_row();
+    Equation with_one;
+    bool narrows = true;
+    for (std::size_t reason_row_idx = 0; narrows && reason_row_idx < reason.rows();
+         ++reason_row_idx) {
+        basis.assign_coordinates_row(brought_in, reason, reason_row_idx, reason_trail_idx);
         if (brought_in.leading_bit() == std::optional<std::size_t>{0}) {
-            if (with_one.has_value()) {
-                brought_in.plus_assign(*with_one);
+            if (!with_one.is_null()) {
+                brought_in.plus_assign(with_one);
             } else {
-                with_one = brought_in;
+                with_one = workspace.spare_row();
+                with_one.assign_from(brought_in);
                 brought_in.plus_assign(basis.row(pivot_row_idx));
-                brought_in.plus_assign(trail_basis_one);
+                brought_in.plus_assign(workspace.trail_basis_one);
             }
         }
         basis.reduce(brought_in);
-        if (brought_in.leading_bit().has_value()) {
-            return false;
-        }
+        narrows = !brought_in.leading_bit().has_value();
     }
-    assert(with_one.has_value() && "the reason does not reach the conflict's 0 = 1");
-    return true;
+    assert((!narrows || !with_one.is_null()) &&
+           "the reason does not reach the conflict's 0 = 1");
+    workspace.spare_rows.push_back(std::move(brought_in));
+    if (!with_one.is_null()) {
+        workspace.spare_rows.push_back(std::move(with_one));
+    }
+    return narrows;
 }
 
 } // namespace
 
+ResolutionWorkspace::ResolutionWorkspace(const Trail& trail)
+    : trail_basis_one(make_trail_basis_one(trail)), reason_basis(trail) {}
+
+Equation ResolutionWorkspace::spare_row() {
+    if (spare_rows.empty()) {
+        return Equation::with_num_bits(reason_basis.repr(), reason_basis.cols());
+    }
+    Equation row = std::move(spare_rows.back());
+    spare_rows.pop_back();
+    return row;
+}
+
 ResolvedReason resolve_asserting_basis(
     TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx, std::size_t pivot_col_idx,
-    const Trail& trail, const std::vector<Clause>& clauses, const Equation& trail_basis_one,
+    const Trail& trail, const std::vector<Clause>& clauses, ResolutionWorkspace& workspace,
     Rng& representative_rng, bool measure_lbd) {
     assert(pivot_row_idx < asserting_basis.rows() && "the pivot row is out of range");
     assert(asserting_basis.row(pivot_row_idx).leading_bit() ==
                std::optional<std::size_t>{pivot_col_idx} &&
            "the pivot column does not lead the pivot row");
-    assert(is_trail_basis_one(trail_basis_one, asserting_basis) &&
-           "trail_basis_one is not the unit vector at column 0");
+    assert(workspace.reason_basis.cols() == asserting_basis.cols() &&
+           workspace.reason_basis.rows() == 0 &&
+           "the workspace was built on another trail, or a step left rows in it");
     assert(trail_is_conflicting(trail) && "resolution step on a trail that does not contain 0 = 1");
 
     Equation asserting_row = asserting_basis.pop_row(pivot_row_idx);
@@ -110,8 +126,8 @@ ResolvedReason resolve_asserting_basis(
     assert(reason_clause_id.has_value() && "resolution step reached a decision, which has no reason");
     assert(*reason_clause_id < clauses.size() && "resolution reason id is out of range");
 
-    TrailBasisSpace reason_basis =
-        TrailBasisSpace::from_reason(clauses[*reason_clause_id], trail, trail_idx);
+    TrailBasisSpace& reason_basis = workspace.reason_basis;
+    reason_basis.add_reason_rows(clauses[*reason_clause_id], trail_idx, workspace.spare_rows);
     assert(reason_basis.rows() > 0 && "reason clause has no rows in the trail basis");
     Equation reason_row = reason_basis.pop_first_row();
     // The popped row leads at column 0, in the conflict's level; the equation
@@ -125,11 +141,17 @@ ResolvedReason resolve_asserting_basis(
     // conflicting trail column 0 is provably `0 = 1`. Without it the loop does
     // not terminate.
     asserting_row.plus_assign(reason_row);
-    asserting_row.plus_assign(trail_basis_one);
-    asserting_basis.add_row(std::move(asserting_row));
+    asserting_row.plus_assign(workspace.trail_basis_one);
+    workspace.spare_rows.push_back(std::move(reason_row));
+    if (!asserting_basis.add_row_or_keep(asserting_row).has_value()) {
+        workspace.spare_rows.push_back(std::move(asserting_row));
+    }
     const std::size_t num_extra_reason_rows = reason_basis.rows();
     while (reason_basis.rows() != 0) {
-        asserting_basis.add_row(reason_basis.pop_first_row());
+        Equation extra_row = reason_basis.pop_first_row();
+        if (!asserting_basis.add_row_or_keep(extra_row).has_value()) {
+            workspace.spare_rows.push_back(std::move(extra_row));
+        }
     }
 
     // The rows before the pivot keep their leading columns; everything the step
@@ -157,7 +179,7 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
 
     std::vector<ClauseId> reason_ids{conflict_clause_id};
     TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(clauses[conflict_clause_id], trail);
-    const Equation trail_basis_one = make_trail_basis_one(trail);
+    ResolutionWorkspace workspace(trail);
 
     // At the root every row has a reason, so the walk resolves the basis away.
     while (basis.rows() > 0) {
@@ -165,7 +187,7 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
         assert(pivot_col_idx.has_value() && "a stored row is zero");
         assert(reason_ids.size() <= basis.cols() && "the root conflict walk did not terminate");
         const ResolvedReason reason =
-            resolve_asserting_basis(basis, 0, *pivot_col_idx, trail, clauses, trail_basis_one,
+            resolve_asserting_basis(basis, 0, *pivot_col_idx, trail, clauses, workspace,
                                     representative_rng);
         reason_ids.push_back(reason.clause_id);
     }
@@ -199,7 +221,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         reason_lbds.push_back(asserting_basis.literal_block_distance());
     }
 
-    const Equation trail_basis_one = make_trail_basis_one(trail);
+    ResolutionWorkspace workspace(trail);
 
     const auto to_clause = [&trail](const TrailBasisSpace& basis) {
         Clause clause(trail.repr(), trail.num_vars());
@@ -271,7 +293,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         }
         const ResolvedReason reason =
             resolve_asserting_basis(asserting_basis, 0, *pivot_col_idx, trail, clauses,
-                                    trail_basis_one, representative_rng, measure_reason_lbds);
+                                    workspace, representative_rng, measure_reason_lbds);
         assert(asserting_basis.rows() > 0 && "resolution derived the empty clause below the root");
         accept_resolution(reason, asserting_basis.cols() - 1 - *pivot_col_idx);
     }
@@ -296,13 +318,13 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
             const TrailCoordinates& reason_coordinates =
                 TrailBasisSpace::reason_coordinates(clauses[reason_clause_id], trail, trail_idx);
             const bool narrows = resolution_narrows(asserting_basis, frozen, reason_coordinates,
-                                                    trail_idx, trail_basis_one);
+                                                    trail_idx, workspace);
 #ifndef NDEBUG
             {
                 Rng rng_copy = representative_rng;
                 TrailBasisSpace resolved = asserting_basis;
                 resolve_asserting_basis(resolved, frozen, *pivot_col_idx, trail, clauses,
-                                        trail_basis_one, rng_copy, false);
+                                        workspace, rng_copy, false);
                 assert(narrows == (resolved.rows() < asserting_basis.rows()) &&
                        "the narrowing test disagrees with the resolution");
             }
@@ -317,7 +339,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                     break;
                 }
                 const ResolvedReason reason = resolve_asserting_basis(
-                    asserting_basis, frozen, *pivot_col_idx, trail, clauses, trail_basis_one,
+                    asserting_basis, frozen, *pivot_col_idx, trail, clauses, workspace,
                     representative_rng, measure_reason_lbds);
                 accept_resolution(reason, trail_idx);
                 continue;
@@ -330,7 +352,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
             if (collect_subsumed && reason_coordinates.rows() > asserting_basis.rows()) {
                 TrailBasisSpace resolved = asserting_basis;
                 const ResolvedReason reason = resolve_asserting_basis(
-                    resolved, frozen, *pivot_col_idx, trail, clauses, trail_basis_one,
+                    resolved, frozen, *pivot_col_idx, trail, clauses, workspace,
                     representative_rng, measure_reason_lbds);
                 if (reason.subsumes_reason) {
                     record_replacement(resolved, reason.clause_id, trail_idx,

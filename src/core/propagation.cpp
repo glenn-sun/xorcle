@@ -44,6 +44,7 @@ Propagator::Propagator(EquationRepr repr, std::size_t num_vars)
     : num_vars_(num_vars),
       working_eqn_(repr, num_vars),
       working_eqn2_(repr, num_vars),
+      working_eqn3_(repr, num_vars),
       used_rows_eqn_(repr, num_vars),
       used_rows_eqn2_(repr, num_vars),
       false_equation_(Equation::eq_false(repr, num_vars)) {}
@@ -52,8 +53,10 @@ void Propagator::reconfigure(std::size_t num_vars) {
     num_vars_ = num_vars;
     working_eqn_.resize(num_vars);
     working_eqn2_.resize(num_vars);
+    working_eqn3_.resize(num_vars);
     working_eqn_.set_eq_true();
     working_eqn2_.set_eq_true();
+    working_eqn3_.set_eq_true();
     used_rows_eqn_.resize(num_vars);
     used_rows_eqn_.set_eq_true();
     used_rows_eqn2_.resize(num_vars);
@@ -87,6 +90,23 @@ void Propagator::debug_assert_watch_hint_holds(const Clause& clause, const Trail
                    "hinted one trigger: the second watch is not in the span plus the first");
             assert(!watch0_is_one && "hinted one trigger has companion 0 = 1");
             break;
+    }
+}
+
+void Propagator::debug_assert_is_held_reduction(const Equation& row, const Trail& trail,
+                                                const Equation& reduced,
+                                                const ReduceResult& result, HeldReduction held) {
+    Equation expected = row;
+    const ReduceResult expected_result = trail.span().partial_reduce(expected);
+    assert(expected_result == result && "the handler's reduction is misclassified");
+    assert(reduced.classify() == result &&
+           "the handler's reduction does not lead where it says");
+    if (held == HeldReduction::exact) {
+        assert(expected == reduced && "the handler's reduction is not the row's partial reduction");
+    } else {
+        expected.plus_assign(reduced);
+        trail.span().reduce(expected);
+        assert(expected.is_eq_true() && "the handler's reduction left the row's coset of the span");
     }
 }
 #endif
@@ -135,13 +155,22 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
     const IndexSet& span_pivot_col_idxs = trail.span().pivot_col_idxs();
     const std::size_t num_rows = clause.rows();
 
-    // Overwrites `scratch`. `distinct_from` is already reduced and leads in
-    // `distinct_from_leading_col_idx`, so a replacement must be nonzero *and*
-    // independent of it modulo the span.
+    // What the search below found: the replacement's partial reduction by the
+    // span, and, where that led as `distinct_from` does, the same reduced on by
+    // `distinct_from` and the span; null where it did not.
+    const Equation* replacement_eqn = nullptr;
+    ReduceResult replacement_result = ReduceResult::eq_true();
+    const Equation* continued_eqn = nullptr;
+    ReduceResult continued_result = ReduceResult::eq_true();
+
+    // `distinct_from` is already reduced and leads in `distinct_from_leading_col_idx`,
+    // so a replacement must be nonzero *and* independent of it modulo the span.
+    // Overwrites `working_eqn_`, and `working_eqn3_` if `keep_replacement_eqn`,
+    // which leaves `replacement_eqn` standing beside `continued_eqn`.
     const auto find_replacement_cyclic =
-        [&](Equation& scratch, const Equation& distinct_from,
-            std::optional<std::size_t> distinct_from_leading_col_idx)
-        -> std::optional<std::size_t> {
+        [&](const Equation& distinct_from,
+            std::optional<std::size_t> distinct_from_leading_col_idx,
+            bool keep_replacement_eqn) -> std::optional<std::size_t> {
         assert(num_rows > 1 && "cyclic watch search on a unit clause");
         std::size_t i = clause.next_watch_search_start % num_rows;
         for (std::size_t step = 0; step < num_rows; ++step, i = i + 1 == num_rows ? 0 : i + 1) {
@@ -151,14 +180,32 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
             // A row no reduction step is due on is its own partial reduction,
             // and no stored row is `0 = 0`.
             const std::size_t leading_col_idx = clause.pivot_col_idx(i);
-            if (span_pivot_col_idxs.test(leading_col_idx) ||
-                distinct_from_leading_col_idx == leading_col_idx) {
-                scratch.assign_from(clause.row(i));
-                const ReduceResult candidate = trail.span().partial_reduce_with_extra(
-                    scratch, leading_col_idx, distinct_from, distinct_from_leading_col_idx);
-                if (candidate.kind == ReduceResult::Kind::eq_true) {
+            replacement_eqn = &clause.row(i);
+            replacement_result = unreduced_result(leading_col_idx, num_vars_);
+            if (span_pivot_col_idxs.test(leading_col_idx)) {
+                working_eqn_.assign_from(clause.row(i));
+                replacement_result = trail.span().partial_reduce(working_eqn_, leading_col_idx);
+                if (replacement_result.kind == ReduceResult::Kind::eq_true) {
                     continue;
                 }
+                replacement_eqn = &working_eqn_;
+            }
+            continued_eqn = nullptr;
+            if (leading_col_idx_of(replacement_result, num_vars_) ==
+                distinct_from_leading_col_idx) {
+                Equation& continued = replacement_eqn == &working_eqn_ && keep_replacement_eqn
+                                          ? working_eqn3_
+                                          : working_eqn_;
+                if (&continued != replacement_eqn) {
+                    continued.assign_from(*replacement_eqn);
+                }
+                continued_result = trail.span().partial_reduce_with_extra(
+                    continued, *distinct_from_leading_col_idx, distinct_from,
+                    distinct_from_leading_col_idx);
+                if (continued_result.kind == ReduceResult::Kind::eq_true) {
+                    continue;
+                }
+                continued_eqn = &continued;
             }
             clause.next_watch_search_start = i + 1 == num_rows ? 0 : i + 1;
             return i;
@@ -233,6 +280,22 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
 
         const Equation* complement_eqn = &working_eqn2_;
         ReduceResult complement;
+        // Overwrites the second watch's reduction on purpose.
+        const auto reduce_complement = [&] {
+            const std::size_t complement_row_idx = *task.complement_ptr;
+            const std::size_t leading_col_idx = clause.pivot_col_idx(complement_row_idx);
+            if (span_pivot_col_idxs.test(leading_col_idx)) {
+                working_eqn2_.assign_from(clause.row(complement_row_idx));
+                complement = trail.span().partial_reduce(working_eqn2_, leading_col_idx);
+                complement_eqn = &working_eqn2_;
+            } else {
+                complement = unreduced_result(leading_col_idx, num_vars_);
+                complement_eqn = &clause.row(complement_row_idx);
+            }
+        };
+        // A congruent complement decides every replacement as the exact one does,
+        // but is not the equation to propagate.
+        HeldReduction held = HeldReduction::none;
         if (i == 0 && !trigger_hint.has_value() && task.type == WatchType::one) {
             // The complement is the first watch, whose reduction is still at hand.
             complement = reduced0;
@@ -242,30 +305,49 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
                 complement_eqn = &clause.row(clause.watched0);
             }
         } else {
-            const std::size_t complement_row_idx = *task.complement_ptr;
-            const std::size_t leading_col_idx = clause.pivot_col_idx(complement_row_idx);
-            if (span_pivot_col_idxs.test(leading_col_idx)) {
-                // Overwrites the second watch's reduction on purpose.
-                working_eqn2_.assign_from(clause.row(complement_row_idx));
-                complement = trail.span().partial_reduce(working_eqn2_, leading_col_idx);
-            } else {
-                complement = unreduced_result(leading_col_idx, num_vars_);
-                complement_eqn = &clause.row(complement_row_idx);
+            if (trigger_hint.has_value()) {
+                held = handler.copy_reduced_companion(id, task.type, working_eqn2_, complement);
             }
+            if (held == HeldReduction::none) {
+                reduce_complement();
+            }
+#ifndef NDEBUG
+            else {
+                debug_assert_is_held_reduction(clause.row(*task.complement_ptr), trail,
+                                               working_eqn2_, complement, held);
+            }
+#endif
         }
 
-        if (const std::optional<std::size_t> replacement = find_replacement_cyclic(
-                working_eqn_, *complement_eqn, leading_col_idx_of(complement, num_vars_))) {
+        if (const std::optional<std::size_t> replacement =
+                find_replacement_cyclic(*complement_eqn, leading_col_idx_of(complement, num_vars_),
+                                        task.type == WatchType::zero)) {
             const ClauseRowIdx old_watch_row_idx = *task.update_ptr;
             *task.update_ptr = *replacement;
             ++num_watch_updates;
-            handler.update_with_new_watch(id, old_watch_row_idx, task.type, trail);
+            const bool continued = continued_eqn != nullptr;
+            WatchReductions reductions;
+            if (task.type == WatchType::zero) {
+                // The second watch stands, and of two reductions that lead alike
+                // the sum is either one reduced by the other.
+                reductions.first = replacement_eqn;
+                reductions.first_result = replacement_result;
+                reductions.second = continued ? continued_eqn : complement_eqn;
+                reductions.second_result = continued ? continued_result : complement;
+            } else {
+                reductions.second = continued ? continued_eqn : replacement_eqn;
+                reductions.second_result = continued ? continued_result : replacement_result;
+            }
+            handler.update_with_new_watch(id, old_watch_row_idx, task.type, trail, reductions);
         } else {
             if (complement.kind == ReduceResult::Kind::eq_false) {
                 // Complement reduced to `0 = 1`: satisfied. A second task still runs.
                 found_satisfied_ = true;
                 satisfying_row_idx_ = *task.complement_ptr;
                 continue;
+            }
+            if (held == HeldReduction::congruent) {
+                reduce_complement();
             }
             if (complement_eqn != &working_eqn2_) {
                 working_eqn2_.assign_from(*complement_eqn);

@@ -11,6 +11,7 @@
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
 #include "core/clause_id.h"
+#include "core/propagation.h"
 #include "core/trail.h"
 #include "core/watch.h"
 #include "heuristics/compaction/compaction.h"
@@ -262,7 +263,7 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
         // The propagator writes the new watch first, then reports it.
         Clause& clause = selector.clause(0);
         clause.watched1 = 2;
-        selector.update_with_new_watch(0, 1, WatchType::one, trail);
+        report_new_watch(selector, 0, clause, 1, WatchType::one, trail);
         CHECK(selector.next() == std::nullopt);
 
         // Back at the root the new pair x0, x2 is independent: nothing triggers.
@@ -315,7 +316,7 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
         for (std::size_t move = 0; move < 20; ++move) {
             const ClauseRowIdx old_watch_row_idx = clause.watched1;
             clause.watched1 = 1 + (clause.watched1 % 3);
-            selector.update_with_new_watch(0, old_watch_row_idx, WatchType::one, trail);
+            report_new_watch(selector, 0, clause, old_watch_row_idx, WatchType::one, trail);
         }
         CHECK(selector.counters().cleanups >= 1);
         CHECK(selector.counters().cleanup_dropped >= 1);
@@ -356,6 +357,94 @@ TEST_CASE("exact watchlist: triggers, hints and snapshots") {
     }
 }
 
+TEST_CASE("exact watchlist: the propagator reads and writes the cells") {
+    constexpr EquationRepr repr = EquationRepr::dense;
+    constexpr std::size_t num_vars = 6;
+    ExactWatchlist selector(num_vars);
+    Trail trail(repr, num_vars);
+    Propagator propagator(repr, num_vars);
+    std::size_t num_watch_updates = 0;
+    Equation reduced(repr, num_vars);
+    ReduceResult result = ReduceResult::eq_true();
+
+    SUBCASE("a one trigger leaves `A` standing, which is exact") {
+        selector.add_starting_clause(make_clause(repr, num_vars, {{0, 2}, {1}}));
+        learn(selector, trail, {0, 3}, false); // `A` becomes x2 + x3
+        learn(selector, trail, {1}, false);    // `B` dies
+        const std::optional<ClauseSelection> selection = selector.next();
+        REQUIRE(selection.has_value());
+        REQUIRE(selection->trigger_hint == std::optional<WatchType>{WatchType::one});
+
+        CHECK(selector.copy_reduced_companion(0, WatchType::one, reduced, result) ==
+              HeldReduction::exact);
+        CHECK(bits_of(reduced) == std::vector<std::size_t>{2, 3});
+        CHECK(result == ReduceResult::leading(2));
+
+        Equation* implied = propagator.unit_propagate_one_clause(
+            0, selector.clause(0), trail, selection->trigger_hint, num_watch_updates, selector);
+        REQUIRE(implied != nullptr);
+        CHECK(bits_of(*implied) == std::vector<std::size_t>{2, 3, num_vars});
+    }
+
+    SUBCASE("a zero trigger leaves `B` standing, which is congruent and stays a cell") {
+        // `A` = x0 + x4 and `B` = x2 + x3. The first row moves `A` to x2 + x4 + x5,
+        // which is added into `B`: x3 + x4 + x5.
+        selector.add_starting_clause(make_clause(repr, num_vars, {{0, 4}, {2, 3}, {5}}));
+        learn(selector, trail, {0, 2, 5}, false);
+        CHECK(selector.next() == std::nullopt);
+        CHECK(selector.counters().fixups == 1);
+        // These two put `A` in the span, and reduce the second watch itself to x3.
+        learn(selector, trail, {4, 5}, false);
+        learn(selector, trail, {2}, false);
+        std::optional<ClauseSelection> selection = selector.next();
+        REQUIRE(selection.has_value());
+        REQUIRE(selection->trigger_hint == std::optional<WatchType>{WatchType::zero});
+
+        CHECK(selector.copy_reduced_companion(0, WatchType::zero, reduced, result) ==
+              HeldReduction::congruent);
+        CHECK(bits_of(reduced) == std::vector<std::size_t>{3, 4, 5});
+        CHECK(result == ReduceResult::leading(3));
+
+        // The first watch moves to x5, and `B` stays as it was read.
+        Clause& clause = selector.clause(0);
+        CHECK(propagator.unit_propagate_one_clause(0, clause, trail, selection->trigger_hint,
+                                                   num_watch_updates, selector) == nullptr);
+        CHECK(clause.watched0 == 2);
+        CHECK(num_watch_updates == 1);
+        CHECK(selector.next() == std::nullopt);
+
+        // With x5 in the span nothing is left to watch, and what the clause
+        // propagates is the second watch's own reduction.
+        learn(selector, trail, {5}, false);
+        selection = selector.next();
+        REQUIRE(selection.has_value());
+        REQUIRE(selection->trigger_hint == std::optional<WatchType>{WatchType::zero});
+        Equation* implied = propagator.unit_propagate_one_clause(
+            0, clause, trail, selection->trigger_hint, num_watch_updates, selector);
+        REQUIRE(implied != nullptr);
+        CHECK(bits_of(*implied) == std::vector<std::size_t>{3, num_vars});
+    }
+
+    SUBCASE("a moved second watch's cell wakes on its own column") {
+        selector.add_starting_clause(make_clause(repr, num_vars, {{0}, {1}, {2, 3}}));
+        learn(selector, trail, {2, 4}, false); // the third row will reduce to x3 + x4
+        learn(selector, trail, {1}, false);    // `B` dies
+        std::optional<ClauseSelection> selection = selector.next();
+        REQUIRE(selection.has_value());
+        REQUIRE(selection->trigger_hint == std::optional<WatchType>{WatchType::one});
+        Clause& clause = selector.clause(0);
+        CHECK(propagator.unit_propagate_one_clause(0, clause, trail, selection->trigger_hint,
+                                                   num_watch_updates, selector) == nullptr);
+        CHECK(clause.watched1 == 2);
+        CHECK(selector.next() == std::nullopt);
+
+        learn(selector, trail, {3, 4}, false); // the new `B`, keyed on x3, dies
+        selection = selector.next();
+        REQUIRE(selection.has_value());
+        CHECK(selection->trigger_hint == std::optional<WatchType>{WatchType::one});
+    }
+}
+
 TEST_CASE("exact watchlist: a substitution rebuilds only the clauses it rewrote") {
     constexpr EquationRepr repr = EquationRepr::dense;
     ExactWatchlist selector(5);
@@ -367,7 +456,7 @@ TEST_CASE("exact watchlist: a substitution rebuilds only the clauses it rewrote"
     selector.add_starting_clause(make_clause(repr, 5, {{1}, {2}, {4}}));
     REQUIRE(selector.next()->id == 2);
     selector.clause(3).watched1 = 2;
-    selector.update_with_new_watch(3, 1, WatchType::one, trail);
+    report_new_watch(selector, 3, selector.clause(3), 1, WatchType::one, trail);
     learn(selector, trail, {3, 5}, false); // x3 = 1 satisfies the unit
     learn(selector, trail, {0}, false);    // x0 = 0
     REQUIRE(selector.next() == std::nullopt);

@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <span>
@@ -42,7 +43,9 @@ public:
 
     virtual std::size_t pivot_col_idx(std::size_t row_idx) const noexcept = 0;
 
-    virtual std::optional<std::size_t> add_row_get_row_idx(Equation v) = 0;
+    /// @brief Store `v`, leaving it null, unless it is already in the span, which
+    /// leaves it `0 = 0`.
+    virtual std::optional<std::size_t> add_row_get_row_idx(Equation& v) = 0;
 
     virtual void reduce(Equation& v) const = 0;
 
@@ -157,8 +160,7 @@ public:
         return rows_[row_idx].pivot_col_idx;
     }
 
-    std::optional<std::size_t> add_row_get_row_idx(Equation v) override {
-        // `v` is the caller's own copy, so it is reduced in place and stored.
+    std::optional<std::size_t> add_row_get_row_idx(Equation& v) override {
         V& reduced_row = gf2_vector_of<V>(v);
         std::optional<std::size_t> leading_col_idx = reduced_row.leading_bit();
         while (leading_col_idx && pivot_col_idxs_.test(*leading_col_idx)) {
@@ -173,13 +175,17 @@ public:
         const std::size_t new_pivot_col_idx = *leading_col_idx;
         const std::size_t insert_row_idx = row_idx_for_col_idx(new_pivot_col_idx);
 
-        // Each later row moves up a place through a swap, which, unlike a move
-        // assignment, has no handle to release.
-        StoredRow inserted{std::move(v), new_pivot_col_idx};
-        for (std::size_t row_idx = insert_row_idx; row_idx < rows_.size(); ++row_idx) {
-            std::swap(inserted, rows_[row_idx]);
+        // A stored row is an owning pointer and an index, so the later rows move
+        // up a place as bytes, onto the null row appended for them; the place they
+        // leave is then built over without a handle to release.
+        rows_.emplace_back();
+        StoredRow* const inserted = rows_.data() + insert_row_idx;
+        const std::size_t later_rows = rows_.size() - 1 - insert_row_idx;
+        if (later_rows != 0) {
+            std::memmove(static_cast<void*>(inserted + 1), static_cast<const void*>(inserted),
+                         later_rows * sizeof(StoredRow));
         }
-        rows_.push_back(std::move(inserted));
+        std::construct_at(inserted, std::move(v), new_pivot_col_idx);
         pivot_col_idxs_.set(new_pivot_col_idx);
         // Inserting moves handles, never the equations they own, so the entries
         // for the other pivot columns stay valid.
@@ -317,6 +323,8 @@ public:
 
     std::vector<Equation> pop_rows(std::span<const std::uint8_t> is_popped) override {
         std::vector<Equation> popped;
+        popped.reserve(static_cast<std::size_t>(std::ranges::count_if(
+            is_popped, [](const std::uint8_t flag) { return flag != 0; })));
         // Moving handles never moves the equations they own, so the entries for
         // the kept pivot columns stay valid.
         std::size_t kept = 0;

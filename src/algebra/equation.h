@@ -139,6 +139,26 @@ public:
 
     std::size_t hash() const noexcept { return interface_ ? interface_->hash() : 0; }
 
+    /// @brief Whether `other` is this equation or its negation.
+    /// @pre Neither handle is null, and `other` shares this equation's
+    /// representation and bit count.
+    bool equal_variables(const Equation& other) const noexcept {
+        assert(interface_ != nullptr && other.interface_ != nullptr &&
+               "equal_variables on a null equation handle");
+        assert(interface_->repr() == other.interface_->repr() &&
+               "representation mismatch in equal_variables");
+        assert(interface_->num_bits() == other.interface_->num_bits() &&
+               "bit count mismatch in equal_variables");
+        return interface_->equal_variables(*other.interface_);
+    }
+
+    /// @brief A hash an equation shares with its negation.
+    /// @pre `!is_null()`.
+    std::size_t variables_hash() const noexcept {
+        assert(interface_ != nullptr && "variables_hash on a null equation handle");
+        return interface_->variables_hash();
+    }
+
     /// @brief Render as e.g. `[x1 + x3 = 1]`.
     std::string to_string(const PrintMode& mode = {}) const;
 
@@ -161,6 +181,20 @@ private:
 /// @brief Hash functor so `Equation` can key a `std::unordered_map`.
 struct EquationHash {
     std::size_t operator()(const Equation& equation) const noexcept { return equation.hash(); }
+};
+
+/// @brief Hash and equality functors under which an equation and its negation are
+/// one key.
+struct EquationVariablesHash {
+    std::size_t operator()(const Equation& equation) const noexcept {
+        return equation.variables_hash();
+    }
+};
+
+struct EquationVariablesEqual {
+    bool operator()(const Equation& a, const Equation& b) const noexcept {
+        return a.equal_variables(b);
+    }
 };
 
 std::unique_ptr<EquationInterface> make_equation_interface(EquationRepr repr,

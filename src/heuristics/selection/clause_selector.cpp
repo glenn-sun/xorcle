@@ -231,7 +231,13 @@ void ClauseSelector::update_with_decision(const Equation& reduced_eqn, const Tra
     update_with_new_equation(reduced_eqn, trail);
 }
 
-void ClauseSelector::update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&) {}
+HeldReduction ClauseSelector::copy_reduced_companion(ClauseId, WatchType, Equation&,
+                                                     ReduceResult&) {
+    return HeldReduction::none;
+}
+
+void ClauseSelector::update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&,
+                                           const WatchReductions&) {}
 
 void ClauseSelector::update_with_backjump(std::size_t, const Trail&) {}
 

@@ -55,7 +55,11 @@ public:
 
     virtual bool equals(const EquationInterface& other) const noexcept = 0;
 
+    virtual bool equal_variables(const EquationInterface& other) const noexcept = 0;
+
     virtual std::size_t hash() const noexcept = 0;
+
+    virtual std::size_t variables_hash() const noexcept = 0;
 
     virtual std::string to_string(const PrintMode& mode) const = 0;
 };
@@ -154,7 +158,13 @@ public:
         return vector_.equals(cast(other).vector_);
     }
 
+    bool equal_variables(const EquationInterface& other) const noexcept override {
+        return vector_.equals_except_last_bit(cast(other).vector_);
+    }
+
     std::size_t hash() const noexcept override { return vector_.hash(); }
+
+    std::size_t variables_hash() const noexcept override { return vector_.hash_except_last_bit(); }
 
     std::string to_string(const PrintMode& mode) const override {
         std::ostringstream oss;

@@ -36,16 +36,20 @@ public:
     static const TrailCoordinates& reason_coordinates(const RowSpace& reason, const Trail& trail,
                                                       std::size_t trail_idx);
 
-    /// @brief `from_RowSpace()` of the reason clause of the row at `trail_idx`.
-    /// @pre As `reason_coordinates()`.
-    static TrailBasisSpace from_reason(const RowSpace& reason, const Trail& trail,
-                                       std::size_t trail_idx);
+    /// @brief Add the rows of `from_RowSpace()` of the reason clause of the row at
+    /// `trail_idx`, each built in a row of `spare_rows` while it has one.
+    /// @pre As `reason_coordinates()`, with this space's trail, and every spare
+    /// row has `cols()` bits.
+    void add_reason_rows(const RowSpace& reason, std::size_t trail_idx,
+                         std::vector<Equation>& spare_rows);
 
-    /// @brief Row `row_idx` of `coordinates` in these columns, reading any index
-    /// past `last_trail_idx` as the conflict's `0 = 1` in column 0.
-    /// @pre `row_idx < coordinates.rows()`.
-    Equation coordinates_row(const TrailCoordinates& coordinates, std::size_t row_idx,
-                             std::size_t last_trail_idx) const;
+    /// @brief Overwrite `row` with row `row_idx` of `coordinates` in these columns,
+    /// reading any index past `last_trail_idx` as the conflict's `0 = 1` in column 0.
+    ///
+    /// Minimization calls it for each row of each reason it tries.
+    /// @pre `row_idx < coordinates.rows()` and `row` has `cols()` bits.
+    void assign_coordinates_row(Equation& row, const TrailCoordinates& coordinates,
+                                std::size_t row_idx, std::size_t last_trail_idx) const;
 
     /// @brief Convert back out of trail-basis coordinates.
     ///
@@ -95,15 +99,16 @@ private:
     /// @brief The levels above the root holding a pivot column or `extra_col_idx`.
     std::size_t levels_reached(std::optional<std::size_t> extra_col_idx) const;
 
-    /// @brief `coordinates_row()` with `mapped_bits` as its scratch, overwritten.
-    Equation coordinates_row(const TrailCoordinates& coordinates, std::size_t row_idx,
-                             std::size_t last_trail_idx,
-                             std::vector<std::size_t>& mapped_bits) const;
+    /// @brief Add each row of `coordinates`, read as `assign_coordinates_row()`
+    /// reads it and built in a row of `spare_rows` while it has one.
+    void add_coordinates_rows(const TrailCoordinates& coordinates, std::size_t last_trail_idx,
+                              std::vector<Equation>& spare_rows);
 
     /// @brief Each row of `rs` as the trail indices of the span rows summing to it.
     static TrailCoordinates coordinates_of(const RowSpace& rs, const Trail& trail);
 
-    /// @brief The trail-basis space of `coordinates`, read as `coordinates_row()` does.
+    /// @brief The trail-basis space of `coordinates`, read as
+    /// `assign_coordinates_row()` reads them.
     static TrailBasisSpace from_coordinates(const TrailCoordinates& coordinates,
                                             const Trail& trail, std::size_t last_trail_idx);
 

@@ -1,5 +1,7 @@
 #include "algebra/dense/dense_gf2_vector.h"
 
+#include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -26,17 +28,44 @@ void DenseGF2Vector::resize(std::size_t num_bits) {
     num_bits_ = num_bits;
 }
 
+namespace {
+
+using Word = DenseGF2Vector::Word;
+
+/// @brief Chain word `i` into a hash of nonzero words, each with its index, so a
+/// vector with few set bits hashes at the cost of scanning its words.
+inline std::uint64_t hash_word(std::uint64_t value, const std::size_t i, const Word word) noexcept {
+    // Fibonacci hash
+    value = (value ^ i) * 11400714819323198485ull;
+    return (value ^ word) * 11400714819323198485ull;
+}
+
+} // namespace
+
 std::size_t DenseGF2Vector::hash() const noexcept {
-    // Only nonzero words enter the chain, each with its index, so a vector with
-    // few set bits hashes at the cost of scanning its words.
     const Word* words = words_;
     std::uint64_t value = 0;
     for (std::size_t i = 0; i < num_words(); ++i) {
         if (words[i] != 0) {
-            // Fibonacci hash
-            value = (value ^ i) * 11400714819323198485ull;
-            value = (value ^ words[i]) * 11400714819323198485ull;
+            value = hash_word(value, i, words[i]);
         }
+    }
+    return static_cast<std::size_t>(value);
+}
+
+std::size_t DenseGF2Vector::hash_except_last_bit() const noexcept {
+    assert(num_bits_ != 0 && "hash_except_last_bit on a vector of no bits");
+    const Word* words = words_;
+    const std::size_t last = num_words() - 1;
+    std::uint64_t value = 0;
+    for (std::size_t i = 0; i < last; ++i) {
+        if (words[i] != 0) {
+            value = hash_word(value, i, words[i]);
+        }
+    }
+    const Word word = words[last] & ~(Word{1} << ((num_bits_ - 1) & word_mask));
+    if (word != 0) {
+        value = hash_word(value, last, word);
     }
     return static_cast<std::size_t>(value);
 }

@@ -53,6 +53,10 @@ struct ExactWatchlistCounters {
 /// cell may lead on a pivot while a paused sweep of that column has yet to reach it, or
 /// while its partner is `0 = 1` and the pair cannot trigger.
 ///
+/// The propagator reads the cell a trigger leaves standing and writes the cells of a
+/// watch it moves. A `B` it wrote after reading one may differ from the reduction of
+/// its watch by an element of the span, and leads where that does.
+///
 /// @pre Dense equations, and complete propagation: every learned equation is the last
 /// row of the trail, at its top level.
 class ExactWatchlist final : public ClauseSelector {
@@ -64,9 +68,16 @@ public:
     /// oldest paused sweep; `std::nullopt` once both are empty.
     std::optional<ClauseSelection> next() override;
 
+    /// @brief Copy out `A` for a `WatchType::one` trigger, which is exact, and `B` for a
+    /// `WatchType::zero` one, which is congruent.
+    /// @pre `next()` last returned `id` with this trigger, and nothing was reported since.
+    HeldReduction copy_reduced_companion(ClauseId id, WatchType type, Equation& reduced,
+                                         ReduceResult& result) override;
+
+    /// @brief Take the cells of the moved watch from `reductions`.
     /// @pre `id` names an active clause of at least two rows.
     void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch_row_idx, WatchType type,
-                               const Trail& trail) override;
+                               const Trail& trail, const WatchReductions& reductions) override;
 
     void update_with_backjump(std::size_t level, const Trail& trail) override;
 
@@ -150,6 +161,9 @@ private:
     void build_first(std::uint32_t cell, const Word* watch);
     void build_second(std::uint32_t cell, const Word* watch);
 
+    /// @brief Make `reduced` the cell, in place of building it from its watch.
+    void take_reduction(std::uint32_t cell, const Equation& reduced, const ReduceResult& result);
+
     /// @brief Reduce `words`, leading on `lead`, by the span until its lead is not a
     /// pivot; the key it ends on.
     std::uint32_t reduce_by_span(Word* words, std::size_t lead, std::size_t& row_additions) const;
@@ -209,6 +223,10 @@ private:
     /// as a check costs, relative to a small database.
     bool debug_check_due(std::size_t every);
     void debug_check_cells(const Trail& trail) const;
+
+    /// @brief Check a pair's cells against building them from their watch copies,
+    /// `A` only if `with_first`.
+    void debug_assert_cells_are_builds(std::uint32_t pair, bool with_first);
 #endif
 
     std::size_t num_cols_ = 0;

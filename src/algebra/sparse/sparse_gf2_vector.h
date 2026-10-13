@@ -123,7 +123,14 @@ public:
         return num_bits_ == other.num_bits_ && bits_ == other.bits_;
     }
 
+    /// @pre `other.num_bits() == num_bits() >= 1`.
+    bool equals_except_last_bit(const SparseGF2Vector& other) const noexcept;
+
     std::size_t hash() const noexcept;
+
+    /// @brief A hash that `equals_except_last_bit()` vectors share.
+    /// @pre `num_bits() >= 1`.
+    std::size_t hash_except_last_bit() const noexcept;
 
     /// @brief Call `f(bit)` for each set bit, in ascending order.
     template <class F>
@@ -145,6 +152,9 @@ public:
     }
 
 private:
+    /// @pre `num_bits() >= 1`.
+    std::span<const Bit> bits_except_last_bit() const noexcept;
+
     std::size_t num_bits_;
     std::vector<Bit> bits_;
     std::vector<Bit> scratch_; ///< Merge buffer for `plus_assign`, reused across calls.

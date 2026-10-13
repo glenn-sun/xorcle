@@ -5,6 +5,7 @@
 
 #include "algebra/equation.h"
 #include "algebra/equation_repr.h"
+#include "algebra/reduce_result.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
@@ -29,7 +30,8 @@ public:
     ///
     /// @param trigger_hint A trigger the selector already computed, or empty.
     /// @param num_watch_updates Incremented once per watch moved.
-    /// @param handler Notified once per watch moved.
+    /// @param handler Asked for the reduction a hinted trigger leaves standing, and
+    /// notified once per watch moved.
     /// @param used_row_idxs When non-null and the clause propagates, receives the
     /// trail-span rows the propagated equation's derivation uses, indexed by span
     /// row, resized to the span's row count. Filled by a pass of its own, which
@@ -79,12 +81,18 @@ private:
 #ifndef NDEBUG
     /// @brief Overwrites both scratch equations.
     void debug_assert_watch_hint_holds(const Clause& clause, const Trail& trail, WatchType hint);
+
+    /// @brief Check what a handler copied out against reducing `row` afresh.
+    static void debug_assert_is_held_reduction(const Equation& row, const Trail& trail,
+                                               const Equation& reduced, const ReduceResult& result,
+                                               HeldReduction held);
 #endif
 
     std::size_t num_vars_;
 
     Equation working_eqn_;  ///< First watch's reduction, then candidate rows.
     Equation working_eqn2_; ///< Second watch's reduction, then the complement's.
+    Equation working_eqn3_; ///< A candidate row reduced on by the complement.
     Equation used_rows_eqn_;  ///< Scratch for `collect_used_rows()`.
     Equation used_rows_eqn2_; ///< The propagating row's residue, for the same.
 

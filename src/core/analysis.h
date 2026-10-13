@@ -140,6 +140,19 @@ struct ResolvedReason {
     bool subsumes_reason = false;
 };
 
+/// @brief What the resolution steps on one conflicting trail share.
+struct ResolutionWorkspace {
+    /// @pre The trail is conflicting, and stays as it is while this is used.
+    explicit ResolutionWorkspace(const Trail& trail);
+
+    /// @brief A trail-basis row of any contents, out of `spare_rows` while it has one.
+    Equation spare_row();
+
+    Equation trail_basis_one; ///< The unit vector at column 0, which is `0 = 1`.
+    TrailBasisSpace reason_basis; ///< Empty between steps.
+    std::vector<Equation> spare_rows; ///< Trail-basis rows a step was left with.
+};
+
 /// @brief One resolution step, in trail-basis coordinates: removes the coordinate
 /// `pivot_col_idx` from row `pivot_row_idx` of `asserting_basis` against the reason
 /// clause it names, then merges in the reason's remaining rows.
@@ -155,11 +168,11 @@ struct ResolvedReason {
 /// @return The reason clause resolved against, measured when `measure_lbd`.
 /// @pre `pivot_col_idx` leads row `pivot_row_idx`, its trail step was propagated
 /// with a reason id in `clauses`, and the trail is conflicting.
-/// @pre `trail_basis_one` is the unit vector at column 0 of the basis.
+/// @pre `workspace` was built on `trail`.
 /// @post No row from `pivot_row_idx` on leads at or before `pivot_col_idx`.
 ResolvedReason resolve_asserting_basis(
     TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx, std::size_t pivot_col_idx,
-    const Trail& trail, const std::vector<Clause>& clauses, const Equation& trail_basis_one,
+    const Trail& trail, const std::vector<Clause>& clauses, ResolutionWorkspace& workspace,
     Rng& representative_rng, bool measure_lbd = false);
 
 } // namespace xorcle

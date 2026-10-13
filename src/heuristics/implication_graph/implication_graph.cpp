@@ -16,7 +16,6 @@ ImplicationGraph::ImplicationGraph(const EquationRepr repr, const std::size_t nu
       max_descendants_(config.max_descendants),
       false_eqn_(Equation::eq_false(repr, num_vars)),
       rng_(make_rng(default_seed, RngComponent::implication_graph_sample)),
-      lookup_scratch_(repr, num_vars),
       reduced_(repr, num_vars),
       triple_{Equation(repr, num_vars), Equation(repr, num_vars), Equation(repr, num_vars)} {
     assert(max_pairs_ != 0 && max_descendants_ != 0 && "a run must be allowed one of each");
@@ -29,7 +28,6 @@ void ImplicationGraph::set_base_seed(const Seed base_seed) {
 void ImplicationGraph::reconfigure(const std::size_t num_vars) {
     num_vars_ = num_vars;
     false_eqn_ = Equation::eq_false(repr_, num_vars);
-    lookup_scratch_.resize(num_vars);
     reduced_ = RowSpace(repr_, num_vars);
     for (Equation& row : triple_) {
         row.resize(num_vars);
@@ -88,23 +86,17 @@ std::size_t ImplicationGraph::vertex_of(const Equation& eqn) {
     assert(!eqn.is_eq_true() && !eqn.is_eq_false() &&
            "an implication graph vertex carries no variable");
 
-    if (const auto found = key_of_.find(eqn); found != key_of_.end()) {
-        return 2 * found->second;
+    const auto [found, is_new] = key_of_.try_emplace(eqn, key_eqn_.size());
+    if (!is_new) {
+        return 2 * found->second + (found->first == eqn ? 0 : 1);
     }
-    lookup_scratch_.assign_from(eqn);
-    lookup_scratch_.plus_assign(false_eqn_);
-    if (const auto found = key_of_.find(lookup_scratch_); found != key_of_.end()) {
-        return 2 * found->second + 1;
-    }
-
-    const std::size_t key = key_eqn_.size();
-    key_eqn_.push_back(&key_of_.emplace(eqn, key).first->first);
+    key_eqn_.push_back(&found->first);
     if (arcs_.size() < 2 * key_eqn_.size()) {
         arcs_.resize(2 * key_eqn_.size());
     }
     descendant_stamp_.resize(2 * key_eqn_.size(), 0);
     other_descendant_stamp_.resize(2 * key_eqn_.size(), 0);
-    return 2 * key;
+    return 2 * found->second;
 }
 
 Equation ImplicationGraph::equation_of(const std::size_t vertex) const {

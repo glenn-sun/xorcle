@@ -135,6 +135,9 @@ private:
     ClauseStatus candidate_status(ClauseId id, const Clause& clause, const RowSpace& trail_span,
                                   const SatisfactionRecord& known);
 
+    /// @brief Move every row of `intersection_` to `intersection_spare_rows_`.
+    void clear_intersection();
+
     CsidsState state_;
     ClauseSatisfactionWorkspace clause_sat_workspace_;
     std::size_t intersection_depth_;
@@ -148,6 +151,14 @@ private:
     std::size_t level_ = 0;
     IntersectionCounters intersection_counters_;
     std::vector<ClauseId> set_aside_ids_;
+
+    /// @brief What `decide_from_intersection()` has intersected down to; empty
+    /// between decisions.
+    RowSpace intersection_;
+
+    /// @brief Rows `decide_from_intersection()` is done with, which the next
+    /// intersection is built in.
+    std::vector<Equation> intersection_spare_rows_;
 
     Rng clause_equation_rng_; ///< Stream for sampling a combination of a clause's rows.
 };

@@ -57,15 +57,19 @@ public:
     }
 
     /// @brief Does nothing if `v` is already in the span.
-    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`, here and in
-    /// `add_row_get_row_idx()`.
+    /// @pre `v.num_bits() == cols()` and `v.repr() == repr()`, here, in
+    /// `add_row_get_row_idx()` and in `add_row_or_keep()`.
     void add_row(Equation v) { add_row_get_row_idx(std::move(v)); }
 
     /// @brief The inserted row_idx, or `std::nullopt` if `v` was already in the span.
-    std::optional<std::size_t> add_row_get_row_idx(Equation v) {
+    std::optional<std::size_t> add_row_get_row_idx(Equation v) { return add_row_or_keep(v); }
+
+    /// @brief `add_row_get_row_idx()` that leaves a `v` already in the span with
+    /// the caller, as `0 = 0`, and a `v` it stores null.
+    std::optional<std::size_t> add_row_or_keep(Equation& v) {
         assert(v.num_bits() == cols() && "add_row: bit count does not match the matrix");
         assert(v.repr() == repr() && "add_row: representation does not match the matrix");
-        return interface_->add_row_get_row_idx(std::move(v));
+        return interface_->add_row_get_row_idx(v);
     }
 
     /// @brief Reduce `v` in place by every stored row whose pivot it carries.
@@ -303,6 +307,16 @@ public:
 /// @pre `left.cols() == right.cols()` and `left.repr() == right.repr()`.
 std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
                                         const RowEchelonMatrix& right);
+
+/// @brief `span_intersection()` working in the rows of `spare_rows` while it has
+/// them, and leaving there the rows it does not return.
+///
+/// A CSIDS decision calls it for each clause it walks past that shares a pivot
+/// column, 5 a decision on tseitin and 9 on ascon (2026-10-13).
+/// @pre As `span_intersection()`, and every spare row has `left.cols()` bits.
+std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
+                                        const RowEchelonMatrix& right,
+                                        std::vector<Equation>& spare_rows);
 
 std::unique_ptr<RowEchelonMatrixInterface> make_row_echelon_matrix_interface(
     EquationRepr repr, std::size_t cols);

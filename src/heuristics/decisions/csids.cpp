@@ -43,6 +43,7 @@ Csids::Csids(EquationRepr repr, std::size_t num_vars, Seed seed, const CsidsConf
       state_(config),
       clause_sat_workspace_(repr, num_vars),
       intersection_depth_(config.intersection_depth),
+      intersection_(repr, num_vars),
       clause_equation_rng_(make_rng(seed, RngComponent::csids_equation)) {
     reinitialize();
 }
@@ -127,7 +128,20 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
     // Every reduced row is zero in the trail span's pivot columns, so a nonzero
     // combination of them lies outside the span; a clause is open only if `0 = 1`
     // is outside its span plus the trail's, so its negation lies outside too.
-    RowSpace space = clause_sat_workspace_.reduced_clause();
+    RowSpace& space = intersection_;
+    std::vector<Equation>& spare_rows = intersection_spare_rows_;
+    assert(space.rows() == 0 && "the last decision left rows in the intersection");
+    // Rows in row-echelon order are stored as they are.
+    for (const Equation& row : clause_sat_workspace_.reduced_clause()) {
+        if (spare_rows.empty()) {
+            space.add_row(row);
+        } else {
+            Equation copy = std::move(spare_rows.back());
+            spare_rows.pop_back();
+            copy.assign_from(row);
+            space.add_row(std::move(copy));
+        }
+    }
     const std::size_t dimension_before = space.rows();
 
     // Open clauses are set aside to surface the ones below, and all go back.
@@ -172,12 +186,13 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
             ++intersection_counters_.skipped_intersections;
             continue;
         }
-        std::vector<Equation> intersection = span_intersection(space, reduced_clause);
+        std::vector<Equation> intersection =
+            span_intersection(space, reduced_clause, spare_rows);
         if (intersection.empty()) {
             ++intersection_counters_.empty_intersections;
             continue;
         }
-        space = RowSpace(repr(), num_vars());
+        clear_intersection();
         for (Equation& row : intersection) {
             space.add_row(std::move(row));
         }
@@ -189,9 +204,11 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
 
     if (propagating_id.has_value()) {
         ++intersection_counters_.propagating_clauses;
+        clear_intersection();
         return DecisionResult{std::nullopt, propagating_id};
     }
     if (intersected_clauses == 0) {
+        clear_intersection();
         return std::nullopt;
     }
     ++intersection_counters_.decisions;
@@ -207,9 +224,16 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
     assert(trail_span.partial_reduce(reduced).is_leading() &&
            "a decision from an intersection is not legal");
 #endif
+    clear_intersection();
     record_decision();
     apply_decision_phase(decision);
     return DecisionResult{std::move(decision), std::nullopt};
+}
+
+void Csids::clear_intersection() {
+    while (intersection_.rows() != 0) {
+        intersection_spare_rows_.push_back(intersection_.pop_row(intersection_.rows() - 1));
+    }
 }
 
 void Csids::update_with_asserting_clause(const Clause&) {
@@ -371,6 +395,8 @@ void Csids::update_with_renumbering(const CompactionTransform& transform) {
            "the transform was built for a different active variable numbering");
     set_num_vars(transform.new_num_vars());
     clause_sat_workspace_.reconfigure(num_vars());
+    intersection_ = RowSpace(repr(), num_vars());
+    intersection_spare_rows_.clear();
 }
 
 } // namespace xorcle

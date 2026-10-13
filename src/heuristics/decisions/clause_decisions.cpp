@@ -105,8 +105,9 @@ ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& cl
         if (reduced_rows != nullptr) {
             reduced_rows->push_back(row);
         }
-        if (!workspace.local_basis_.add_row_get_row_idx(std::move(row)).has_value()) {
+        if (!workspace.local_basis_.add_row_or_keep(row).has_value()) {
             // Dependent on the rows already in the local basis; it adds nothing.
+            workspace.spare_rows_.push_back(std::move(row));
             continue;
         }
         if (workspace.local_basis_.pivot_col_idxs().test(constant_col_idx)) {

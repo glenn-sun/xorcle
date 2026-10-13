@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -10,6 +11,7 @@
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
+#include "util/index_set.h"
 
 namespace xorcle {
 
@@ -20,6 +22,15 @@ struct TrailCoordinates {
 
     std::vector<std::size_t> trail_idxs;
     std::vector<std::size_t> row_ends; ///< Where each row's indices end in `trail_idxs`.
+};
+
+/// @brief What writing a row space as `TrailCoordinates`, and reading a row of
+/// them back, works in.
+struct TrailCoordinatesWorkspace {
+    Equation reduced; ///< Null until first used.
+    IndexSet row_coefficients;
+    std::vector<std::size_t> trail_idxs;
+    std::vector<std::size_t> mapped_bits;
 };
 
 /// @brief The solver trail: every equation assumed or derived, ordered by
@@ -115,6 +126,10 @@ public:
         reason_coordinates_[trail_idx] = std::move(coordinates);
     }
 
+    TrailCoordinatesWorkspace& coordinates_workspace() const noexcept {
+        return coordinates_workspace_;
+    }
+
 private:
     /// @brief Learn at the level the trail is already at, where the equation's
     /// row goes straight in.
@@ -125,8 +140,6 @@ private:
     /// chain of pivot columns the new row displaces.
     std::size_t learn_out_of_order(const Equation& eqn, std::optional<ClauseId> reason,
                                    std::size_t level, std::size_t trail_idx);
-
-    void rebuild_row_idx_to_trail_idx();
 
     void rebuild_trail_idx_to_row_idx() const;
 
@@ -144,6 +157,9 @@ private:
     /// @brief The rows a backjump dropped, which the next in-order learns store into.
     std::vector<Equation> spare_rows_;
 
+    /// @brief Which rows the backjump under way drops, indexed by row.
+    std::vector<std::uint8_t> is_dropped_;
+
     /// @brief Rebuilt from `row_idx_to_trail_idx_` on the first read after an in-order learn.
     mutable std::vector<std::size_t> trail_idx_to_row_idx_;
     mutable bool trail_idx_to_row_idx_is_stale_ = false;
@@ -157,6 +173,7 @@ private:
 
     /// @brief A cache for conflict analysis, which reads it through a const trail.
     mutable std::vector<std::optional<TrailCoordinates>> reason_coordinates_;
+    mutable TrailCoordinatesWorkspace coordinates_workspace_;
 
     /// @brief How many equations lie at each level or below, indexed by level.
     std::vector<std::size_t> level_end_;

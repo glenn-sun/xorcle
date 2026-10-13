@@ -12,6 +12,7 @@ namespace xorcle {
 
 namespace {
 
+#ifndef NDEBUG
 /// @brief Where each row lands once the rows flagged in `is_dropped` are popped.
 std::vector<std::size_t> row_idxs_after_dropping(const std::vector<std::uint8_t>& is_dropped) {
     std::vector<std::size_t> after(is_dropped.size());
@@ -23,7 +24,6 @@ std::vector<std::size_t> row_idxs_after_dropping(const std::vector<std::uint8_t>
     return after;
 }
 
-#ifndef NDEBUG
 /// @brief A span and the trail order over it.
 struct SpanInTrailOrder {
     RowSpace span;
@@ -212,39 +212,27 @@ void Trail::resize(std::size_t num_levels) {
     if (kept == old_rows) {
         return;
     }
-    if (trail_idx_to_row_idx_is_stale_) {
-        rebuild_trail_idx_to_row_idx();
-    }
 
-    std::vector<std::uint8_t> is_dropped(old_rows, 0);
-    for (std::size_t t = kept; t < old_rows; ++t) {
-        is_dropped[trail_idx_to_row_idx_[t]] = 1;
+    // The dropped elements are the last in trail order, and the rows kept stay
+    // in row order.
+    is_dropped_.resize(old_rows);
+    for (std::size_t row_idx = 0; row_idx < old_rows; ++row_idx) {
+        is_dropped_[row_idx] = row_idx_to_trail_idx_[row_idx] >= kept ? 1 : 0;
     }
-    for (Equation& row : span_.pop_rows(is_dropped)) {
+    for (Equation& row : span_.pop_rows(is_dropped_)) {
         spare_rows_.push_back(std::move(row));
     }
+    std::erase_if(row_idx_to_trail_idx_,
+                  [kept](const std::size_t trail_idx) { return trail_idx >= kept; });
+    rebuild_trail_idx_to_row_idx();
 
-    trail_idx_to_row_idx_.resize(kept);
     reasons_.resize(kept);
     reason_coordinates_.resize(kept);
     levels_.resize(kept);
 
-    const std::vector<std::size_t> after_popping = row_idxs_after_dropping(is_dropped);
-    for (std::size_t& row_idx : trail_idx_to_row_idx_) {
-        row_idx = after_popping[row_idx];
-    }
-    rebuild_row_idx_to_trail_idx();
-
 #ifndef NDEBUG
     debug_assert_valid();
 #endif
-}
-
-void Trail::rebuild_row_idx_to_trail_idx() {
-    row_idx_to_trail_idx_.assign(trail_idx_to_row_idx_.size(), 0);
-    for (std::size_t t = 0; t < trail_idx_to_row_idx_.size(); ++t) {
-        row_idx_to_trail_idx_[trail_idx_to_row_idx_[t]] = t;
-    }
 }
 
 void Trail::rebuild_trail_idx_to_row_idx() const {

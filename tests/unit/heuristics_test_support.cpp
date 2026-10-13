@@ -33,6 +33,19 @@ std::size_t dimensions_outside_span(const Clause& clause, const RowSpace& span) 
     return added;
 }
 
+void report_new_watch(WatchUpdateHandler& handler, ClauseId id, const Clause& clause,
+                      ClauseRowIdx old_watch_row_idx, WatchType type, const Trail& trail) {
+    const RowSpace& span = trail.span();
+    Equation first = clause.row(clause.watched0);
+    Equation second = clause.row(clause.watched1);
+    WatchReductions reductions;
+    reductions.first_result = span.partial_reduce(first);
+    reductions.second_result = span.partial_reduce_with_extra(second, first);
+    reductions.first = type == WatchType::zero ? &first : nullptr;
+    reductions.second = &second;
+    handler.update_with_new_watch(id, old_watch_row_idx, type, trail, reductions);
+}
+
 std::string sign_pattern_instance(std::size_t num_vars) {
     const std::size_t num_clauses = std::size_t{1} << num_vars;
     std::string text =

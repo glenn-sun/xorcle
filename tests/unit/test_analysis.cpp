@@ -653,12 +653,12 @@ TEST_CASE_TEMPLATE("analysis: one resolution step in trail-basis coordinates", T
 
     // The coordinate vector of `0 = 1`: the unit vector at column 0, because the
     // most recently learned trail row is `0 = 1` itself on a conflicting trail.
-    const Equation trail_basis_one = make_equation_with_num_bits(repr, basis.cols(), {0});
-    REQUIRE(trail_basis_one.num_bits() == basis.cols());
+    ResolutionWorkspace workspace(trail);
+    REQUIRE(workspace.trail_basis_one == make_equation_with_num_bits(repr, basis.cols(), {0}));
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     const ResolvedReason reason = resolve_asserting_basis(
-        basis, 0, 1, trail, conflict.clauses, trail_basis_one, representative_rng);
+        basis, 0, 1, trail, conflict.clauses, workspace, representative_rng);
 
     // Column 1 is trail step 5, propagated by clause 3 = [x2 = 0] v [x4 = 1].
     // Its own basis rows are {0, 1} (the propagated row [x4 = 0], which carries
@@ -683,7 +683,7 @@ TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the cur
     // `asserting_level() == trail.level()`, not `== 0`: the initial basis
     // asserts at level 2 and the final one at level 1.
     TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(conflict.clauses[4], trail);
-    const Equation trail_basis_one = make_equation_with_num_bits(repr, basis.cols(), {0});
+    ResolutionWorkspace workspace(trail);
 
     Rng representative_rng = make_rng(default_seed, RngComponent::minimize_representative);
     std::vector<std::size_t> asserting_levels{basis.asserting_level()};
@@ -691,8 +691,8 @@ TEST_CASE_TEMPLATE("analysis: the loop runs while the asserting level is the cur
     while (basis.asserting_level() == trail.level()) {
         const std::optional<std::size_t> pivot_col_idx = basis.row(0).leading_bit();
         REQUIRE(pivot_col_idx.has_value());
-        resolve_asserting_basis(basis, 0, *pivot_col_idx, trail, conflict.clauses,
-                                trail_basis_one, representative_rng);
+        resolve_asserting_basis(basis, 0, *pivot_col_idx, trail, conflict.clauses, workspace,
+                                representative_rng);
         // Each step strictly advances the pivot column.
         REQUIRE(basis.row(0).leading_bit() > pivot_col_idx);
         asserting_levels.push_back(basis.asserting_level());

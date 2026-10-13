@@ -168,6 +168,22 @@ inline void ExactWatchlist::build_second(std::uint32_t cell, const Word* watch) 
                                           cell_words(cell - 1), key_[cell - 1], row_additions);
 }
 
+inline void ExactWatchlist::take_reduction(std::uint32_t cell, const Equation& reduced,
+                                           const ReduceResult& result) {
+    copy_words(cell_words(cell), words_of(reduced), num_words_);
+    switch (result.kind) {
+        case ReduceResult::Kind::eq_true:
+            key_[cell] = zero_key;
+            break;
+        case ReduceResult::Kind::eq_false:
+            key_[cell] = constant_key();
+            break;
+        case ReduceResult::Kind::leading:
+            key_[cell] = static_cast<std::uint32_t>(result.bit);
+            break;
+    }
+}
+
 void ExactWatchlist::build_pair(ClauseId id) {
     const Clause& clause = clauses_[id];
     assert(clause.repr() == EquationRepr::dense && "the exact watchlist needs dense equations");
@@ -556,8 +572,25 @@ void ExactWatchlist::update_with_new_equation(const Equation& reduced_eqn, const
 #endif
 }
 
+HeldReduction ExactWatchlist::copy_reduced_companion(ClauseId id, WatchType type,
+                                                     Equation& reduced, ReduceResult& result) {
+    const std::uint32_t pair = clause_pair_[id];
+    assert(pair != no_pair && "an active clause has no cells");
+    assert(trigger(pair) == (type == WatchType::zero ? Trigger::zero : Trigger::one) &&
+           "the trigger asked about does not hold on the cells");
+    const std::uint32_t cell = 2 * pair + (type == WatchType::zero ? 1U : 0U);
+    const std::uint32_t key = key_[cell];
+    assert(key != constant_key() && (key == zero_key || pivot_row_[key] == nullptr) &&
+           "a triggered pair's standing cell is `0 = 1` or was left lagging");
+    gf2_vector_of<DenseGF2Vector>(reduced).assign_from_words(cell_words(cell));
+    result = key == zero_key ? ReduceResult::eq_true() : ReduceResult::leading(key);
+    // `B` may hold an `A` added in, every one of them in the span now that `A` is `0 = 0`.
+    return type == WatchType::zero ? HeldReduction::congruent : HeldReduction::exact;
+}
+
 void ExactWatchlist::update_with_new_watch(ClauseId id, ClauseRowIdx, WatchType type,
-                                           const Trail& trail) {
+                                           const Trail& trail,
+                                           const WatchReductions& reductions) {
     assert(is_clause_active(id) && "a watch moved on an inactive clause");
     assert(clauses_[id].rows() >= 2 && "a watch moved on a unit clause");
     assert(trail.level() == top_level() && "a watch moved at a level the selector never saw");
@@ -572,21 +605,24 @@ void ExactWatchlist::update_with_new_watch(ClauseId id, ClauseRowIdx, WatchType 
                "a watch moved on a pair a sweep left lagging, which cannot trigger");
     }
 #endif
-    // `B` is reduced by `A`, so a new first watch rebuilds both.
+    // `B` is reduced by `A`, so a new first watch replaces both.
     if (type == WatchType::zero) {
         ++gen_[first];
         load_watch(first);
-        build_first(first, watch_words(first));
+        take_reduction(first, *reductions.first, reductions.first_result);
         place(first);
         push_rebuild_entry(first, level);
         ++counters_.rebuilds;
     }
     ++gen_[first + 1];
     load_watch(first + 1);
-    build_second(first + 1, watch_words(first + 1));
+    take_reduction(first + 1, *reductions.second, reductions.second_result);
     place(first + 1);
     push_rebuild_entry(first + 1, level);
     ++counters_.rebuilds;
+#ifndef NDEBUG
+    debug_assert_cells_are_builds(pair, type == WatchType::zero);
+#endif
     maybe_queue(pair);
     maybe_clean_buckets();
 }
@@ -879,6 +915,29 @@ void ExactWatchlist::add_to_stats(RunStats& stats) const {
 }
 
 #ifndef NDEBUG
+void ExactWatchlist::debug_assert_cells_are_builds(std::uint32_t pair, bool with_first) {
+    const std::uint32_t first = 2 * pair;
+    for (const std::uint32_t cell : {first, first + 1}) {
+        if (cell == first && !with_first) {
+            continue;
+        }
+        const std::vector<Word> taken(cell_words(cell), cell_words(cell) + num_words_);
+        const std::uint32_t taken_key = key_[cell];
+        if (cell == first) {
+            build_first(cell, watch_words(cell));
+        } else {
+            build_second(cell, watch_words(cell));
+        }
+        assert(taken_key == key_[cell] && "a reduction taken for a cell has another key");
+        // A `B` taken beside a new `A` need only be congruent to the one built,
+        // which `debug_check_cells()` checks.
+        assert(((cell != first && with_first) ||
+                std::equal(taken.begin(), taken.end(), cell_words(cell))) &&
+               "a reduction taken for a cell is not the cell built from its watch");
+        std::copy(taken.begin(), taken.end(), cell_words(cell));
+    }
+}
+
 bool ExactWatchlist::debug_check_due(std::size_t every) {
     // A reduction per cell, a row per pivot.
     const std::size_t stride = every * (1 + pair_clause_.size() * num_words_ * num_words_ / 2048);
@@ -983,6 +1042,8 @@ void ExactWatchlist::debug_check_cells(const Trail& trail) const {
         Equation reduced = base0;
         check_key(first, span.partial_reduce(reduced),
                   !unit && key_[first + 1] == constant_key());
+        assert((keyed_on_pivot(first) || first_eqn == reduced) &&
+               "`A` is not its watch's partial reduction by the span");
         if (unit) {
             continue;
         }

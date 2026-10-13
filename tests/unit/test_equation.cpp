@@ -184,6 +184,42 @@ TEST_CASE_TEMPLATE("equation: hash agrees with equality", Tag, DenseTag, SparseT
     CHECK_FALSE(make_equation_with(repr, 10, {1}) == make_equation_with(repr, 11, {1}));
 }
 
+TEST_CASE_TEMPLATE("equation: an equation and its negation are one key by their variables", Tag,
+                   DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+
+    // The constant bit is the last of a word, alone in a word, and inside one.
+    for (const std::size_t num_vars : {std::size_t{63}, std::size_t{64}, std::size_t{300}}) {
+        CAPTURE(num_vars);
+        const Equation a = make_equation_with(repr, num_vars, {5, 62});
+        const Equation not_a = make_equation_with(repr, num_vars, {5, 62, num_vars});
+        const Equation c = make_equation_with(repr, num_vars, {5, 61});
+        const Equation last_var = make_equation_with(repr, num_vars, {num_vars - 1});
+        const Equation not_last_var = make_equation_with(repr, num_vars, {num_vars - 1, num_vars});
+
+        CHECK(a.equal_variables(a));
+        CHECK(a.equal_variables(not_a));
+        CHECK(not_a.equal_variables(a));
+        CHECK(a.variables_hash() == not_a.variables_hash());
+        CHECK_FALSE(a.equal_variables(c));
+        CHECK_FALSE(not_a.equal_variables(c));
+        CHECK(last_var.equal_variables(not_last_var));
+        CHECK(last_var.variables_hash() == not_last_var.variables_hash());
+        CHECK_FALSE(last_var.equal_variables(a));
+        CHECK(Equation::eq_true(repr, num_vars).equal_variables(Equation::eq_false(repr, num_vars)));
+        CHECK(Equation::eq_true(repr, num_vars).variables_hash() ==
+              Equation::eq_false(repr, num_vars).variables_hash());
+
+        std::unordered_map<Equation, int, EquationVariablesHash, EquationVariablesEqual> seen;
+        seen.try_emplace(not_a, 1);
+        seen.try_emplace(c, 2);
+        seen.try_emplace(a, 3);
+        CHECK(seen.size() == 2);
+        CHECK(seen.at(a) == 1);
+        CHECK(seen.find(a)->first == not_a);
+    }
+}
+
 TEST_CASE_TEMPLATE("equation: copy and move semantics", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 

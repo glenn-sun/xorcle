@@ -50,60 +50,73 @@ TrailCoordinates TrailBasisSpace::coordinates_of(const RowSpace& rs, const Trail
     assert(rs.repr() == trail.repr() && "row space and trail use different representations");
     assert(trail_maps_are_consistent(trail) && "the trail's order maps are inconsistent");
 
-    TrailCoordinates coordinates;
-    Equation reduced_eqn(trail.repr(), trail.num_vars());
-    // Indexed by row-echelon order within the span, not trail order.
-    IndexSet row_coefficients;
-    for (const Equation& eqn : rs) {
-        reduced_eqn.assign_from(eqn);
-        trail.span().reduce_get_coefficients(reduced_eqn, row_coefficients);
-        assert(reduced_eqn.is_eq_true() && "row space contains a row outside the trail span");
-        row_coefficients.for_each_set([&](std::size_t row_idx) {
-            coordinates.trail_idxs.push_back(trail.row_idx_to_trail_idx()[row_idx]);
-        });
-        coordinates.row_ends.push_back(coordinates.trail_idxs.size());
+    TrailCoordinatesWorkspace& workspace = trail.coordinates_workspace();
+    if (workspace.reduced.is_null()) {
+        workspace.reduced = Equation(trail.repr(), trail.num_vars());
     }
+    workspace.trail_idxs.clear();
+
+    TrailCoordinates coordinates;
+    coordinates.row_ends.reserve(rs.rows());
+    for (const Equation& eqn : rs) {
+        workspace.reduced.assign_from(eqn);
+        // Indexed by row-echelon order within the span, not trail order.
+        trail.span().reduce_get_coefficients(workspace.reduced, workspace.row_coefficients);
+        assert(workspace.reduced.is_eq_true() &&
+               "row space contains a row outside the trail span");
+        workspace.row_coefficients.for_each_set([&](std::size_t row_idx) {
+            workspace.trail_idxs.push_back(trail.row_idx_to_trail_idx()[row_idx]);
+        });
+        coordinates.row_ends.push_back(workspace.trail_idxs.size());
+    }
+    coordinates.trail_idxs = workspace.trail_idxs;
     return coordinates;
 }
 
-Equation TrailBasisSpace::coordinates_row(const TrailCoordinates& coordinates,
-                                          std::size_t row_idx,
-                                          std::size_t last_trail_idx) const {
-    std::vector<std::size_t> mapped_bits;
-    return coordinates_row(coordinates, row_idx, last_trail_idx, mapped_bits);
-}
-
-Equation TrailBasisSpace::coordinates_row(const TrailCoordinates& coordinates,
-                                          std::size_t row_idx, std::size_t last_trail_idx,
-                                          std::vector<std::size_t>& mapped_bits) const {
+void TrailBasisSpace::assign_coordinates_row(Equation& row, const TrailCoordinates& coordinates,
+                                             std::size_t row_idx,
+                                             std::size_t last_trail_idx) const {
     assert(row_idx < coordinates.rows() && "coordinates row index is out of range");
+    assert(row.num_bits() == cols() && "the row is not over the trail basis");
     const std::size_t row_begin = row_idx == 0 ? 0 : coordinates.row_ends[row_idx - 1];
     const std::size_t row_end = coordinates.row_ends[row_idx];
 
     // Trail order reversed.
+    std::vector<std::size_t>& mapped_bits = trail_->coordinates_workspace().mapped_bits;
     mapped_bits.clear();
-    mapped_bits.reserve(row_end - row_begin);
     for (std::size_t i = row_begin; i < row_end; ++i) {
         const std::size_t trail_idx = coordinates.trail_idxs[i];
         mapped_bits.push_back(trail_idx > last_trail_idx ? 0 : cols() - trail_idx - 1);
     }
-    Equation row = Equation::with_num_bits(repr(), cols());
     row.assign_bits(mapped_bits);
-    return row;
+}
+
+void TrailBasisSpace::add_coordinates_rows(const TrailCoordinates& coordinates,
+                                           std::size_t last_trail_idx,
+                                           std::vector<Equation>& spare_rows) {
+    for (std::size_t row_idx = 0; row_idx < coordinates.rows(); ++row_idx) {
+        Equation row;
+        if (spare_rows.empty()) {
+            row = Equation::with_num_bits(repr(), cols());
+        } else {
+            row = std::move(spare_rows.back());
+            spare_rows.pop_back();
+        }
+        assign_coordinates_row(row, coordinates, row_idx, last_trail_idx);
+        // Echelonized into ascending leading-column order, i.e. most recent
+        // trail equation first.
+        if (!add_row_or_keep(row).has_value()) {
+            spare_rows.push_back(std::move(row));
+        }
+    }
 }
 
 TrailBasisSpace TrailBasisSpace::from_coordinates(const TrailCoordinates& coordinates,
                                                   const Trail& trail,
                                                   std::size_t last_trail_idx) {
     TrailBasisSpace trail_basis(trail);
-    std::vector<std::size_t> mapped_bits;
-    mapped_bits.reserve(coordinates.trail_idxs.size());
-    for (std::size_t row_idx = 0; row_idx < coordinates.rows(); ++row_idx) {
-        // Echelonized into ascending leading-column order, i.e. most recent
-        // trail equation first.
-        trail_basis.add_row(
-            trail_basis.coordinates_row(coordinates, row_idx, last_trail_idx, mapped_bits));
-    }
+    std::vector<Equation> no_spare_rows;
+    trail_basis.add_coordinates_rows(coordinates, last_trail_idx, no_spare_rows);
     return trail_basis;
 }
 
@@ -127,9 +140,9 @@ const TrailCoordinates& TrailBasisSpace::reason_coordinates(const RowSpace& reas
     return *stored;
 }
 
-TrailBasisSpace TrailBasisSpace::from_reason(const RowSpace& reason, const Trail& trail,
-                                             std::size_t trail_idx) {
-    return from_coordinates(reason_coordinates(reason, trail, trail_idx), trail, trail_idx);
+void TrailBasisSpace::add_reason_rows(const RowSpace& reason, std::size_t trail_idx,
+                                      std::vector<Equation>& spare_rows) {
+    add_coordinates_rows(reason_coordinates(reason, *trail_, trail_idx), trail_idx, spare_rows);
 }
 
 RowSpace TrailBasisSpace::to_RowSpace() const {

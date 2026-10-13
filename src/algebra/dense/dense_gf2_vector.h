@@ -257,12 +257,40 @@ public:
         }
     }
 
+    /// @brief Overwrite from `num_words()` words packed as `words()` is.
+    /// @pre The bits of `words` past `num_bits()` are zero. Not asserted.
+    void assign_from_words(const Word* words) noexcept {
+        const std::size_t num_words = word_count(num_bits_);
+        if (num_words < 8) {
+            Word* destination = words_;
+            for (std::size_t i = 0; i < num_words; ++i) {
+                destination[i] = words[i];
+            }
+        } else {
+            std::memcpy(words_, words, num_words * sizeof(Word));
+        }
+    }
+
     bool equals(const DenseGF2Vector& other) const noexcept {
         return num_bits_ == other.num_bits_ &&
                std::memcmp(words_, other.words_, num_words() * sizeof(Word)) == 0;
     }
 
+    /// @pre `other.num_bits() == num_bits() >= 1`.
+    bool equals_except_last_bit(const DenseGF2Vector& other) const noexcept {
+        assert(num_bits_ != 0 && num_bits_ == other.num_bits_ &&
+               "bit count mismatch in equals_except_last_bit");
+        const std::size_t last = num_words() - 1;
+        const Word differing = words_[last] ^ other.words_[last];
+        return (differing & ~(Word{1} << ((num_bits_ - 1) & word_mask))) == 0 &&
+               std::memcmp(words_, other.words_, last * sizeof(Word)) == 0;
+    }
+
     std::size_t hash() const noexcept;
+
+    /// @brief A hash that `equals_except_last_bit()` vectors share.
+    /// @pre `num_bits() >= 1`.
+    std::size_t hash_except_last_bit() const noexcept;
 
     /// @brief Call `f(bit)` for each set bit, in ascending order.
     /// @pre `f` does not change this vector.

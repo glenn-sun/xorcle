@@ -121,6 +121,27 @@ TEST_CASE_TEMPLATE("row echelon: add_row is idempotent on in-span rows", Tag, De
     check_echelon_invariant(matrix);
 }
 
+TEST_CASE_TEMPLATE("row echelon: add_row_or_keep takes only a row it stores", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    RowSpace matrix(repr, 5);
+
+    Equation a = make_equation_with(repr, 5, {0, 2});
+    Equation b = make_equation_with(repr, 5, {0, 1, 5});
+    CHECK(matrix.add_row_or_keep(a) == std::optional<std::size_t>(0));
+    CHECK(a.is_null());
+    CHECK(matrix.add_row_or_keep(b) == std::optional<std::size_t>(1));
+    CHECK(b.is_null());
+
+    // A sum of stored rows is left with the caller, reduced to `0 = 0`.
+    Equation sum = make_equation_with(repr, 5, {1, 2, 5});
+    CHECK(matrix.add_row_or_keep(sum) == std::nullopt);
+    REQUIRE_FALSE(sum.is_null());
+    CHECK(sum.is_eq_true());
+    CHECK(matrix.rows() == 2);
+    check_echelon_invariant(matrix);
+}
+
 TEST_CASE_TEMPLATE("row echelon: reduce and partial_reduce", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     RowSpace matrix(repr, 4);

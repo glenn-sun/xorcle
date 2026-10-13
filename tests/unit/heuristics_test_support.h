@@ -42,7 +42,16 @@ struct Conflict {
 
 class IgnoreWatchUpdates final : public WatchUpdateHandler {
 public:
-    void update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&) override {}
+    HeldReduction copy_reduced_companion(ClauseId, WatchType, Equation&, ReduceResult&) override {
+        return HeldReduction::none;
+    }
+    void update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&,
+                               const WatchReductions&) override {}
 };
+
+/// @brief Report to `handler` that a watch of `clause` moved, with the reductions
+/// of its watches by `trail` that the propagator would hand over.
+void report_new_watch(WatchUpdateHandler& handler, ClauseId id, const Clause& clause,
+                      ClauseRowIdx old_watch_row_idx, WatchType type, const Trail& trail);
 
 } // namespace xorcle

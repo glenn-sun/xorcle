@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -36,15 +37,64 @@ public:
     /// @brief Observe `clause`, so the recorded watches reflect the update order.
     explicit RecordingHandler(const Clause& clause) : clause_(&clause) {}
 
+    HeldReduction copy_reduced_companion(ClauseId, WatchType, Equation&, ReduceResult&) override {
+        return HeldReduction::none;
+    }
+
+    /// @brief Also checks `reductions` against the watches reduced afresh.
     void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch_row_idx, WatchType type,
-                               const Trail&) override {
+                               const Trail& trail, const WatchReductions& reductions) override {
         records.push_back({id, old_watch_row_idx, type, clause_->watched0, clause_->watched1});
+
+        const RowSpace& span = trail.span();
+        Equation first = clause_->row(clause_->watched0);
+        Equation second = clause_->row(clause_->watched1);
+        const ReduceResult first_result = span.partial_reduce(first);
+        const ReduceResult second_result = span.partial_reduce_with_extra(second, first);
+        if (type == WatchType::zero) {
+            REQUIRE(reductions.first != nullptr);
+            CHECK(*reductions.first == first);
+            CHECK(reductions.first_result == first_result);
+        } else {
+            CHECK(reductions.first == nullptr);
+        }
+        REQUIRE(reductions.second != nullptr);
+        CHECK(*reductions.second == second);
+        CHECK(reductions.second_result == second_result);
     }
 
     std::vector<Record> records; ///< Every notification, in order.
 
 private:
     const Clause* clause_;
+};
+
+/// @brief A `WatchUpdateHandler` that holds one reduction, congruent to the
+/// companion's, and keeps the reductions of the last watch move.
+class CongruentHandler final : public WatchUpdateHandler {
+public:
+    explicit CongruentHandler(Equation held) : held_(std::move(held)) {}
+
+    HeldReduction copy_reduced_companion(ClauseId, WatchType, Equation& reduced,
+                                         ReduceResult& result) override {
+        reduced.assign_from(held_);
+        result = held_.classify();
+        return HeldReduction::congruent;
+    }
+
+    void update_with_new_watch(ClauseId, ClauseRowIdx, WatchType, const Trail&,
+                               const WatchReductions& reductions) override {
+        if (reductions.first != nullptr) {
+            first = *reductions.first;
+        }
+        second = *reductions.second;
+    }
+
+    std::optional<Equation> first;
+    std::optional<Equation> second;
+
+private:
+    Equation held_;
 };
 
 /// @brief The deepest level among the trail rows `used_row_idxs` names, which is
@@ -218,6 +268,53 @@ TEST_CASE_TEMPLATE("propagation: a one hint moves the second watch when the watc
     CHECK(clause.watched1 == 2);
     REQUIRE(handler.records.size() == 1);
     CHECK(handler.records[0].type == WatchType::one);
+}
+
+TEST_CASE_TEMPLATE("propagation: a congruent held reduction", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    constexpr std::size_t num_vars = 6;
+    Propagator propagator(repr, num_vars);
+    Trail trail(repr, num_vars);
+    std::size_t num_watch_updates = 0;
+
+    // The first watch x0 + x4 is the sum of the first two rows. The second,
+    // x1 + x5, reduces to x2 + x5, and x2 + x4 differs from that by the row x4 + x5.
+    trail.learn(make_equation_with(repr, num_vars, {4, 5}), ClauseId{0}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {0, 5}), ClauseId{1}, trail.level());
+    trail.learn(make_equation_with(repr, num_vars, {1, 2}), ClauseId{2}, trail.level());
+    CongruentHandler handler(make_equation_with(repr, num_vars, {2, 4}));
+
+    SUBCASE("is not what the clause propagates") {
+        Clause clause = make_clause(repr, num_vars, {{0, 4}, {1, 5}});
+        Equation* implied = propagator.unit_propagate_one_clause(
+            3, clause, trail, WatchType::zero, num_watch_updates, handler);
+        REQUIRE(implied != nullptr);
+        CHECK(bits_of(*implied) == std::vector<std::size_t>{2, 5, num_vars});
+    }
+
+    SUBCASE("stands as the second watch's reduction when the first watch moves") {
+        Clause clause = make_clause(repr, num_vars, {{0, 4}, {1, 5}, {3}});
+        CHECK(propagator.unit_propagate_one_clause(3, clause, trail, WatchType::zero,
+                                                   num_watch_updates, handler) == nullptr);
+        CHECK(clause.watched0 == 2);
+        REQUIRE(handler.first.has_value());
+        CHECK(bits_of(*handler.first) == std::vector<std::size_t>{3});
+        REQUIRE(handler.second.has_value());
+        CHECK(bits_of(*handler.second) == std::vector<std::size_t>{2, 4});
+    }
+
+    SUBCASE("is added to a replacement that leads where it does") {
+        // x2 + x3 + x4 leads as the held reduction does, so it is the first watch's
+        // reduction and their sum the second's.
+        Clause clause = make_clause(repr, num_vars, {{0, 4}, {1, 5}, {2, 3, 4}});
+        CHECK(propagator.unit_propagate_one_clause(3, clause, trail, WatchType::zero,
+                                                   num_watch_updates, handler) == nullptr);
+        CHECK(clause.watched0 == 2);
+        REQUIRE(handler.first.has_value());
+        CHECK(bits_of(*handler.first) == std::vector<std::size_t>{2, 3, 4});
+        REQUIRE(handler.second.has_value());
+        CHECK(bits_of(*handler.second) == std::vector<std::size_t>{3});
+    }
 }
 
 TEST_CASE_TEMPLATE("propagation: two tasks run against the already-updated watch", Tag, DenseTag,

@@ -187,9 +187,13 @@ public:
 
     virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail);
 
+    /// @brief The default holds no reduction.
+    HeldReduction copy_reduced_companion(ClauseId id, WatchType type, Equation& reduced,
+                                         ReduceResult& result) override;
+
     /// @brief Note a watch move, which the default ignores.
     void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch_row_idx, WatchType type,
-                               const Trail& trail) override;
+                               const Trail& trail, const WatchReductions& reductions) override;
 
     /// @brief Note that the trail dropped every level above `level`, which the
     /// default ignores; `trail` already reflects it.

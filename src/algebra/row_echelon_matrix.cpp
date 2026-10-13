@@ -54,6 +54,13 @@ std::string Clause::to_string(const PrintMode& mode) const {
 
 std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
                                         const RowEchelonMatrix& right) {
+    std::vector<Equation> spare_rows;
+    return span_intersection(left, right, spare_rows);
+}
+
+std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
+                                        const RowEchelonMatrix& right,
+                                        std::vector<Equation>& spare_rows) {
     assert(left.cols() == right.cols() && "span_intersection: the column counts differ");
     assert(left.repr() == right.repr() && "span_intersection: the representations differ");
 
@@ -89,8 +96,22 @@ std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
     firsts.reserve(right.rows());
     seconds.reserve(right.rows());
     for (const Equation& row : right) {
-        Equation& first = firsts.emplace_back(row);
-        Equation& second = seconds.emplace_back(Equation::with_num_bits(repr, cols));
+        if (spare_rows.empty()) {
+            firsts.emplace_back(row);
+        } else {
+            firsts.push_back(std::move(spare_rows.back()));
+            spare_rows.pop_back();
+            firsts.back().assign_from(row);
+        }
+        if (spare_rows.empty()) {
+            seconds.push_back(Equation::with_num_bits(repr, cols));
+        } else {
+            seconds.push_back(std::move(spare_rows.back()));
+            spare_rows.pop_back();
+            seconds.back().set_eq_true();
+        }
+        Equation& first = firsts.back();
+        Equation& second = seconds.back();
         bool is_first_zero = false;
         while (true) {
             const std::optional<std::size_t> leading =
@@ -119,6 +140,14 @@ std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
     for (auto row = find(cols); row != doubled.end(); ++row) {
         // Only a row `right` added has a zero first half, so its second is in `seconds`.
         basis.push_back(std::move(seconds[static_cast<std::size_t>(row->second - seconds.data())]));
+    }
+    for (Equation& first : firsts) {
+        spare_rows.push_back(std::move(first));
+    }
+    for (Equation& second : seconds) {
+        if (!second.is_null()) {
+            spare_rows.push_back(std::move(second));
+        }
     }
     return basis;
 }

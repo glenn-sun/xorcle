@@ -70,15 +70,40 @@ void SparseGF2Vector::assign_from(const SparseGF2Vector& other) {
     bits_.assign(other.bits_.begin(), other.bits_.end());
 }
 
-std::size_t SparseGF2Vector::hash() const noexcept {
-    std::uint64_t value = num_bits_;
-    // Fibonacci hash
+namespace {
+
+/// @brief Fibonacci hash of `bits`, seeded with the bit count.
+std::uint64_t hash_bits(const std::size_t num_bits,
+                        const std::span<const SparseGF2Vector::Bit> bits) noexcept {
+    std::uint64_t value = num_bits;
     value *= 11400714819323198485ull;
-    for (const Bit bit : bits_) {
+    for (const SparseGF2Vector::Bit bit : bits) {
         value ^= bit;
         value *= 11400714819323198485ull;
     }
-    return static_cast<std::size_t>(value);
+    return value;
+}
+
+} // namespace
+
+std::span<const SparseGF2Vector::Bit> SparseGF2Vector::bits_except_last_bit() const noexcept {
+    const bool last_is_set = !bits_.empty() && bits_.back() + 1 == num_bits_;
+    return std::span<const Bit>(bits_.data(), bits_.size() - (last_is_set ? 1 : 0));
+}
+
+bool SparseGF2Vector::equals_except_last_bit(const SparseGF2Vector& other) const noexcept {
+    assert(num_bits_ != 0 && num_bits_ == other.num_bits_ &&
+           "bit count mismatch in equals_except_last_bit");
+    return std::ranges::equal(bits_except_last_bit(), other.bits_except_last_bit());
+}
+
+std::size_t SparseGF2Vector::hash() const noexcept {
+    return static_cast<std::size_t>(hash_bits(num_bits_, bits_));
+}
+
+std::size_t SparseGF2Vector::hash_except_last_bit() const noexcept {
+    assert(num_bits_ != 0 && "hash_except_last_bit on a vector of no bits");
+    return static_cast<std::size_t>(hash_bits(num_bits_, bits_except_last_bit()));
 }
 
 } // namespace xorcle

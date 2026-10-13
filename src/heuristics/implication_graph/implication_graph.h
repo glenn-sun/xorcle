@@ -147,8 +147,7 @@ private:
 
     /// @brief The vertex of @p eqn, added if it is new.
     ///
-    /// A key is whichever of an equation and its negation the graph saw first,
-    /// so a lookup that misses tries the other before allocating.
+    /// A key is whichever of an equation and its negation the graph saw first.
     /// @pre `eqn` is neither `0 = 0` nor `0 = 1`.
     std::size_t vertex_of(const Equation& eqn);
 
@@ -215,9 +214,10 @@ private:
     Equation false_eqn_;
     Rng rng_;
 
-    /// @brief Key to its index; the variable bits alone, so the map's nodes hold
-    /// the one copy of each equation `key_eqn_` then points at.
-    std::unordered_map<Equation, std::size_t, EquationHash> key_of_;
+    /// @brief Key to its index, found from either of an equation and its negation;
+    /// the map's nodes hold the one copy of each key, which `key_eqn_` points at.
+    std::unordered_map<Equation, std::size_t, EquationVariablesHash, EquationVariablesEqual>
+        key_of_;
     std::vector<const Equation*> key_eqn_;
     std::vector<std::vector<Arc>> arcs_; ///< Indexed by vertex.
 
@@ -225,7 +225,6 @@ private:
 
     /// @brief Reused across every clause a run reads, so reading one allocates
     /// nothing but the key of a vertex the graph has not seen before.
-    Equation lookup_scratch_;
     RowSpace reduced_;
     std::array<Equation, 3> triple_;
 
