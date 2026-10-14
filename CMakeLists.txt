@@ -33,6 +33,7 @@ add_library(xorcle_core
     src/core/trail_basis.cpp
     src/heuristics/compaction/compaction.cpp
     src/heuristics/compaction/original_variables.cpp
+    src/heuristics/equivalent_clauses/equivalent_clause_table.cpp
     src/heuristics/decisions/clause_decisions.cpp
     src/heuristics/decisions/csids.cpp
     src/heuristics/decisions/decision_procedure.cpp

@@ -122,6 +122,24 @@ public:
     /// every pivot as they are.
     void reduce_rows() { interface_->reduce_rows(); }
 
+    /// @brief A hash of each row's pivot column, by the name `col_idx_to_name`
+    /// gives it, and constant bit, which matrices with the same rows share.
+    ///
+    /// A column past the end of `col_idx_to_name` is named apart from every other.
+    /// Renumbering the columns in order and the names with them leaves the hash as it was.
+    std::size_t rows_hash(std::span<const std::size_t> col_idx_to_name) const noexcept {
+        return interface_->rows_hash(col_idx_to_name);
+    }
+
+    /// @brief Whether `other` has the same rows, which for two matrices in
+    /// reduced row-echelon form is having the same span.
+    /// @pre `other.cols() == cols()` and `other.repr() == repr()`.
+    bool has_rows_of(const RowEchelonMatrix& other) const noexcept {
+        assert(other.cols() == cols() && "has_rows_of: column counts differ");
+        assert(other.repr() == repr() && "has_rows_of: representations differ");
+        return interface_->has_rows_of(*other.interface_);
+    }
+
     /// @brief Remove the row at `row_idx`, returning it.
     /// @pre `row_idx < rows()`.
     Equation pop_row(std::size_t row_idx) {

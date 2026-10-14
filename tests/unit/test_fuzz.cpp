@@ -180,6 +180,9 @@ SolveResult run_and_check(const std::string& text, const std::vector<std::string
         tally.counters.num_deletion_passes += counters.num_deletion_passes;
         tally.counters.num_subsumed_clauses += counters.num_subsumed_clauses;
         tally.counters.num_subsume_replacements += counters.num_subsume_replacements;
+        tally.counters.num_equivalent_clauses_at_input += counters.num_equivalent_clauses_at_input;
+        tally.counters.num_equivalent_clauses_at_substitution +=
+            counters.num_equivalent_clauses_at_substitution;
         tally.counters.num_restarts += counters.num_restarts;
         tally.counters.num_decision_propagations += counters.num_decision_propagations;
         tally.counters.num_undone_decisions += counters.num_undone_decisions;
@@ -287,6 +290,9 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
          &SolverCounters::num_restarts},
     };
 
+    // Equivalent clauses are evicted at input and at a substitution; at a subsumption
+    // only on instances larger than these, which a roundtrip test covers.
+    SolverCounters evictions;
     for (const Configuration& configuration : configurations) {
         CAPTURE(configuration.name);
         TestRandom random(20260925);
@@ -313,7 +319,12 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
         if (configuration.exercised != nullptr) {
             CHECK(tally.counters.*configuration.exercised > 0);
         }
+        evictions.num_equivalent_clauses_at_input += tally.counters.num_equivalent_clauses_at_input;
+        evictions.num_equivalent_clauses_at_substitution +=
+            tally.counters.num_equivalent_clauses_at_substitution;
     }
+    CHECK(evictions.num_equivalent_clauses_at_input > 0);
+    CHECK(evictions.num_equivalent_clauses_at_substitution > 0);
 }
 
 } // namespace xorcle

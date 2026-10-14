@@ -17,6 +17,7 @@
 #include "heuristics/decisions/clause_activity.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/deletion/deletion.h"
+#include "heuristics/equivalent_clauses/equivalent_clause_table.h"
 #include "heuristics/implication_graph/implication_graph.h"
 #include "heuristics/propagation/attempt_budget.h"
 #include "heuristics/restarts/restart_policy.h"
@@ -80,6 +81,14 @@ struct SolverCounters {
     std::size_t num_renumberings = 0; ///< Compactions that also renumbered.
     std::size_t num_dropped_vars = 0;
     std::size_t num_substituted_clauses = 0; ///< Clauses a compaction rewrote or deactivated.
+
+    /// @brief Equivalent clauses evicted, by where the kept clause was found.
+    std::size_t num_equivalent_clauses_at_input = 0;
+    std::size_t num_equivalent_clauses_at_subsumption = 0;
+    std::size_t num_equivalent_clauses_at_substitution = 0;
+    /// @brief Of those, the pairs of a starting and a learned clause, and of two learned clauses.
+    std::size_t num_equivalent_starting_learned_pairs = 0;
+    std::size_t num_equivalent_learned_pairs = 0;
 
     /// @brief Summed LBD of the clauses learned, for their mean.
     std::size_t sum_learned_lbd = 0;
@@ -438,6 +447,31 @@ private:
     /// @brief Apply a prepared plan and clear the used flags.
     void apply_deletion(const DeletionPlan& plan);
 
+    /// @brief The deletion state of a clause, as its equivalent clause takes it over.
+    struct EvictedClauseState {
+        bool is_learned;
+        double lbd; ///< Read only of a learned clause.
+        std::size_t unused_passes;
+        bool is_out_of_unused_passes;
+        bool is_used_since_deletion;
+    };
+
+    EvictedClauseState evicted_clause_state(ClauseId id) const;
+
+    /// @brief Count an eviction at @p site and leave the kept clause the better
+    /// deletion state of the two.
+    void merge_into_equivalent_clause(ClauseId kept_id, const EvictedClauseState& evicted,
+                                      std::size_t SolverCounters::* site);
+
+#ifndef NDEBUG
+    /// @brief Whether the table holds exactly the active clauses.
+    bool debug_equivalent_clause_table_is_exact() const;
+
+    /// @brief Whether no two active clauses have one span, checked only without an
+    /// attempt budget and, on a large database, every so many calls.
+    bool debug_no_two_clauses_share_a_span();
+#endif
+
     EquationRepr repr_;
 
     const std::size_t original_num_vars_;
@@ -456,6 +490,8 @@ private:
     std::vector<CompactionHistoryEntry> compaction_history_; ///< Oldest first.
 
     CompactionConfig compaction_;
+    EquivalentClauseTable equivalent_clauses_; ///< The active clauses.
+    std::vector<ClauseId> evicted_clause_ids_; ///< Of the substitution under way.
     DeletionConfig deletion_;
     /// @brief `decisions_` as the score `DeletionKey::activity` reads; not owned.
     const ClauseActivitySource* clause_activity_ = nullptr;
@@ -463,6 +499,7 @@ private:
 #ifndef NDEBUG
     bool has_solved_ = false;
     std::size_t debug_quiescences_ = 0;
+    std::size_t debug_span_checks_ = 0;
 #endif
     std::size_t conflicts_at_last_deletion_ = 0;
     std::size_t num_active_clauses_ = 0;

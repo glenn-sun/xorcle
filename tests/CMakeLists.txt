@@ -26,6 +26,7 @@ add_executable(xorcle_tests
     unit/test_dimacs.cpp
     unit/test_ema.cpp
     unit/test_equation.cpp
+    unit/test_equivalent_clause_table.cpp
     unit/test_fuzz.cpp
     unit/test_implication_graph.cpp
     unit/test_index_set.cpp
@@ -137,6 +138,20 @@ add_test(NAME proof_roundtrip_wide
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect "^c Compactions: [1-9]"
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> tseitin "n=90;k=3" 1)
 set_tests_properties(proof_roundtrip_wide PROPERTIES SKIP_RETURN_CODE 77)
+
+# A clause evicted at a substitution is a deletion line; a subsumption
+# replacement that a kept clause already is, is never written.
+add_test(NAME proof_roundtrip_equivalent_clause_eviction
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect "^c Equivalent clauses evicted at a substitution: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> ctc "r=4;b=3;k=4;wrong=1" 1)
+set_tests_properties(proof_roundtrip_equivalent_clause_eviction PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME proof_roundtrip_equivalent_clause_eviction_subsumption
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect "^c Equivalent clauses evicted at a subsumption: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> tseitin "n=300;k=4" 1)
+set_tests_properties(proof_roundtrip_equivalent_clause_eviction_subsumption
+                     PROPERTIES SKIP_RETURN_CODE 77)
 
 # Half the declared variables are unused, and the proof is over all of them. The
 # second instance compacts as well.

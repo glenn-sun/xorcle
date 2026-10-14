@@ -84,6 +84,14 @@ public:
     /// @brief Clear every pivot column in every row but the one it leads.
     virtual void reduce_rows() = 0;
 
+    /// @brief A hash of each row's pivot column, by the name `col_idx_to_name`
+    /// gives it, and constant bit; a column past its end is named apart from every other.
+    virtual std::size_t rows_hash(
+        std::span<const std::size_t> col_idx_to_name) const noexcept = 0;
+
+    /// @brief Whether `other`, a matrix of this type, has the same rows.
+    virtual bool has_rows_of(const RowEchelonMatrixInterface& other) const noexcept = 0;
+
     /// @brief Remove the row at `row_idx`, returning it.
     virtual Equation pop_row(std::size_t row_idx) = 0;
 
@@ -294,17 +302,58 @@ public:
         // each pivot column costs one addition.
         for (std::size_t row_idx = rows_.size(); row_idx-- > 0;) {
             V& row = gf2_vector_of<V>(rows_[row_idx].row);
-            for (auto col_idx = row.next_bit(rows_[row_idx].pivot_col_idx); col_idx;
-                 col_idx = row.next_bit(*col_idx)) {
-                if (pivot_col_idxs_.test(*col_idx)) {
-                    row.plus_assign_from_bit(col_idx_to_row_.empty()
-                                                 ? row_for_col_idx<false>(*col_idx)
-                                                 : row_for_col_idx<true>(*col_idx),
-                                             *col_idx);
+            const std::size_t first_col_idx = rows_[row_idx].pivot_col_idx + 1;
+            // Testing the row's bit in each later pivot column beats scanning the
+            // row for them while the later rows are fewer than its words from there.
+            if (rows_.size() - 1 - row_idx <= (cols_ - first_col_idx) / 64) {
+                for (std::size_t later_idx = row_idx + 1; later_idx < rows_.size(); ++later_idx) {
+                    const std::size_t col_idx = rows_[later_idx].pivot_col_idx;
+                    if (row.get_bit(col_idx)) {
+                        row.plus_assign_from_bit(gf2_vector_of<V>(rows_[later_idx].row), col_idx);
+                    }
                 }
+                continue;
+            }
+            for (auto col_idx = row.first_bit_in(pivot_col_idxs_, first_col_idx); col_idx;
+                 col_idx = row.first_bit_in(pivot_col_idxs_, *col_idx + 1)) {
+                row.plus_assign_from_bit(col_idx_to_row_.empty()
+                                             ? row_for_col_idx<false>(*col_idx)
+                                             : row_for_col_idx<true>(*col_idx),
+                                         *col_idx);
             }
         }
         debug_assert_valid_representation();
+    }
+
+    std::size_t rows_hash(
+        const std::span<const std::size_t> col_idx_to_name) const noexcept override {
+        // A Fibonacci hash, so the high bits carry every row.
+        constexpr std::uint64_t multiplier = 11400714819323198485ULL;
+        constexpr std::uint64_t no_name = ~std::uint64_t{0};
+        std::uint64_t value = rows_.size();
+        for (const StoredRow& stored : rows_) {
+            const std::uint64_t name = stored.pivot_col_idx < col_idx_to_name.size()
+                                           ? col_idx_to_name[stored.pivot_col_idx]
+                                           : no_name;
+            const std::uint64_t constant = gf2_vector_of<V>(stored.row).get_bit(cols_ - 1) ? 1 : 0;
+            value = (value ^ (name << 1 | constant)) * multiplier;
+        }
+        return static_cast<std::size_t>(value);
+    }
+
+    bool has_rows_of(const RowEchelonMatrixInterface& other) const noexcept override {
+        const auto& that = static_cast<const RowEchelonMatrixTemplate&>(other);
+        if (rows_.size() != that.rows_.size()) {
+            return false;
+        }
+        for (std::size_t row_idx = 0; row_idx < rows_.size(); ++row_idx) {
+            if (rows_[row_idx].pivot_col_idx != that.rows_[row_idx].pivot_col_idx ||
+                !gf2_vector_of<V>(rows_[row_idx].row)
+                     .equals(gf2_vector_of<V>(that.rows_[row_idx].row))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     Equation pop_row(std::size_t row_idx) override {

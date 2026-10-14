@@ -19,6 +19,23 @@
 
 namespace xorcle {
 
+#ifndef NDEBUG
+namespace {
+
+bool debug_rows_are_reduced(const RowSpace& clause) {
+    RowSpace reduced = clause;
+    reduced.reduce_rows();
+    for (std::size_t row_idx = 0; row_idx < clause.rows(); ++row_idx) {
+        if (!(clause.row(row_idx) == reduced.row(row_idx))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+#endif
+
 Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t> used_vars,
                std::unique_ptr<ClauseSelector> selector,
                std::unique_ptr<DecisionProcedure> decisions,
@@ -100,7 +117,19 @@ void Solver::add_starting_clause(Clause clause) {
         return;
     }
 
+    clause.reduce_rows();
     const ClauseId new_clause_id = selector_->num_clauses();
+    if (equivalent_clauses_
+            .find_or_enter(clause, clause.rows_hash(active_var_to_original_), new_clause_id,
+                           selector_->clauses())
+            .has_value()) {
+        // The clause stays out of the database and keeps its place in the proof's numbering.
+        ++counters_.num_equivalent_clauses_at_input;
+        if (proof_writer_ != nullptr) {
+            ++next_proof_clause_id_;
+        }
+        return;
+    }
     decisions_->update_with_new_clause(clause, new_clause_id);
     selector_->add_starting_clause(std::move(clause));
     ++num_active_clauses_;
@@ -269,6 +298,20 @@ void Solver::handle_non_root_conflict() {
     AssertingClause learned = find_asserting_clause(
         trail_, selector_->clauses(), conflict_clause_id_, *decisions_, representative_rng_,
         minimize_, deletion_.enabled, bump_responsible_clauses_, subsume_);
+    learned.clause.reduce_rows();
+    for (SubsumedReason& record : learned.subsumed_reasons) {
+        if (record.replacement.has_value()) {
+            record.replacement->reduce_rows();
+        }
+    }
+    // Entered unlooked for: after propagation to a fixed point a kept clause with
+    // its span would have asserted at the asserting level, and the clause learned
+    // would be satisfied rather than falsified. With an attempt budget it can.
+    const std::size_t learned_key = learned.clause.rows_hash(active_var_to_original_);
+    assert((budget_.has_value() ||
+            !equivalent_clauses_.find(learned.clause, learned_key, selector_->clauses())
+                 .has_value()) &&
+           "a kept clause has the learned clause's span after propagation to a fixed point");
     if (minimize_) {
         counters_.minimize_width_before += learned.width_before_minimize;
         counters_.minimize_width_after += learned.clause.rows();
@@ -373,6 +416,7 @@ void Solver::handle_non_root_conflict() {
     counters_.num_learned_width_2 += learned.clause.rows() == 2 ? 1U : 0U;
     selector_->add_asserting_clause(std::move(learned.clause), trail_, learned_info);
     ++num_active_clauses_;
+    equivalent_clauses_.enter(new_clause_id, learned_key);
 
     // A reason a trail row still names is left as is, replacement included.
     const auto reason_still_named = [this](const SubsumedReason& record) {
@@ -399,7 +443,34 @@ void Solver::handle_non_root_conflict() {
         // input clause was, and so on along chains of replacements.
         const bool replaces_input = !selector_->is_clause_learned(record.clause_id);
         ClauseId replacement_id = new_clause_id;
+        std::optional<ClauseId> kept_id;
         if (record.replacement.has_value()) {
+            kept_id = equivalent_clauses_.find_or_enter(
+                *record.replacement, record.replacement->rows_hash(active_var_to_original_),
+                selector_->num_clauses(), selector_->clauses());
+            // A replacement is falsified by the trail below the conflict and a subsumed
+            // reason satisfied by it; the subsumed conflicting clause uses a trail row
+            // that no replacement uses.
+            assert((!kept_id.has_value() ||
+                    std::ranges::none_of(learned.subsumed_reasons,
+                                         [&](const SubsumedReason& other) {
+                                             return other.clause_id == *kept_id &&
+                                                    !reason_still_named(other);
+                                         })) &&
+                   "a clause this conflict's subsumption removes has a replacement's span");
+        }
+        if (kept_id.has_value()) {
+            // The kept clause is the replacement, so none is added.
+            replacement_id = *kept_id;
+            merge_into_equivalent_clause(
+                *kept_id,
+                EvictedClauseState{.is_learned = !replaces_input,
+                                   .lbd = static_cast<double>(record.lbd),
+                                   .unused_passes = 0,
+                                   .is_out_of_unused_passes = false,
+                                   .is_used_since_deletion = false},
+                &SolverCounters::num_equivalent_clauses_at_subsumption);
+        } else if (record.replacement.has_value()) {
             replacement_id = selector_->num_clauses();
             decisions_->update_with_new_clause(*record.replacement, replacement_id);
             if (proof_writer_ != nullptr) {
@@ -430,6 +501,7 @@ void Solver::handle_non_root_conflict() {
         if (proof_writer_ != nullptr) {
             proof_writer_->write_deleted({proof_id_of_clause_[record.clause_id]});
         }
+        equivalent_clauses_.remove(record.clause_id);
         selector_->set_clause_active(record.clause_id, false);
         selector_->replace_clause(record.clause_id,
                                   inactive_clause_placeholder(repr_, false_equation_));
@@ -437,6 +509,7 @@ void Solver::handle_non_root_conflict() {
         ++counters_.num_subsumed_clauses;
         counters_.num_subsumed_conflicting_clauses += record.subsumed_conflicting_clause ? 1 : 0;
     }
+    assert(debug_no_two_clauses_share_a_span() && "two active clauses have one span");
 }
 
 void Solver::write_root_unsat_proof() {
@@ -747,9 +820,29 @@ void Solver::apply_substitution(SubstitutionPlan plan) {
         write_compaction_units();
     }
 
+    // A clause is looked for among the clauses as they will stand, so every
+    // rewritten one leaves the table before the first is looked for.
+    for (const ClauseId clause_id : plan.rewritten_clause_ids) {
+        equivalent_clauses_.remove(clause_id);
+    }
     for (std::size_t i = 0; i < plan.rewritten_clause_ids.size(); ++i) {
         const ClauseId clause_id = plan.rewritten_clause_ids[i];
         assert(selector_->is_clause_active(clause_id) && "the plan rewrote an inactive clause");
+        std::optional<ClauseId> kept_id;
+        if (plan.rewritten_is_active[i] != 0) {
+            kept_id = equivalent_clauses_.find_or_enter(
+                plan.rewritten_clauses[i],
+                plan.rewritten_clauses[i].rows_hash(active_var_to_original_), clause_id,
+                selector_->clauses());
+        }
+        if (kept_id.has_value()) {
+            merge_into_equivalent_clause(*kept_id, evicted_clause_state(clause_id),
+                                         &SolverCounters::num_equivalent_clauses_at_substitution);
+            decisions_->update_with_subsumed_clause(clause_id, *kept_id);
+            evicted_clause_ids_.push_back(clause_id);
+            plan.rewritten_is_active[i] = 0;
+            plan.rewritten_clauses[i] = inactive_clause_placeholder(repr_, false_equation_);
+        }
         const std::size_t width_before = selector_->clause(clause_id).rows();
         if (plan.rewritten_is_active[i] == 0) {
             selector_->set_clause_active(clause_id, false);
@@ -770,8 +863,18 @@ void Solver::apply_substitution(SubstitutionPlan plan) {
         assert((!selector_->is_clause_active(clause_id) || clause.satisfied_stamp == 0 ||
                 clause.satisfied_level != 0) &&
                "a clause the substitution left alone is recorded satisfied at the root");
+        assert((!selector_->is_clause_active(clause_id) || debug_rows_are_reduced(clause)) &&
+               "a clause is not stored in reduced row-echelon form");
     }
 #endif
+
+    if (proof_writer_ != nullptr && !evicted_clause_ids_.empty()) {
+        proof_writer_->write_deleted(proof_ids(evicted_clause_ids_));
+    }
+    evicted_clause_ids_.clear();
+    assert(debug_equivalent_clause_table_is_exact() &&
+           "the equivalent clause table is out of step with the active clauses");
+    assert(debug_no_two_clauses_share_a_span() && "two active clauses have one span");
 
     // The root trail does not span `0 = 1`, so each of its rows drops a variable.
     dropped_col_idxs_.or_with(trail_.span().pivot_col_idxs());
@@ -883,6 +986,7 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
         proof_writer_->write_deleted(proof_ids(plan.deleted));
     }
     for (const ClauseId clause_id : plan.deleted) {
+        equivalent_clauses_.remove(clause_id);
         selector_->set_clause_active(clause_id, false);
         selector_->replace_clause(clause_id, inactive_clause_placeholder(repr_, false_equation_));
     }
@@ -1012,10 +1116,99 @@ void Solver::feed_unit(const Equation& unit, const ClauseId proof_line) {
         proof_id_of_clause_.push_back(proof_line);
     }
     decisions_->update_with_new_clause(clause, new_clause_id);
+    // Entered unlooked for: the unit is not in the root span, which holds the
+    // equation of every active width-1 clause once the root is propagated.
+    const std::size_t key = clause.rows_hash(active_var_to_original_);
+    assert(!equivalent_clauses_.find(clause, key, selector_->clauses()).has_value() &&
+           "a fed unit has the span of a kept clause");
     selector_->add_asserting_clause(std::move(clause), trail_,
                                     AssertingClauseInfo{.lbd = 0, .removed_levels = 0});
     ++num_active_clauses_;
+    equivalent_clauses_.enter(new_clause_id, key);
 }
+
+Solver::EvictedClauseState Solver::evicted_clause_state(const ClauseId id) const {
+    const bool is_learned = selector_->is_clause_learned(id);
+    return EvictedClauseState{
+        .is_learned = is_learned,
+        .lbd = is_learned ? selector_->clause_lbd(id) : 0.0,
+        .unused_passes = selector_->clause_unused_passes(id),
+        .is_out_of_unused_passes = selector_->is_clause_out_of_unused_passes(id),
+        .is_used_since_deletion = selector_->is_clause_used_since_deletion(id)};
+}
+
+void Solver::merge_into_equivalent_clause(const ClauseId kept_id,
+                                          const EvictedClauseState& evicted,
+                                          std::size_t SolverCounters::* const site) {
+    const bool kept_is_learned = selector_->is_clause_learned(kept_id);
+    ++(counters_.*site);
+    if (kept_is_learned && evicted.is_learned) {
+        ++counters_.num_equivalent_learned_pairs;
+    } else if (kept_is_learned || evicted.is_learned) {
+        ++counters_.num_equivalent_starting_learned_pairs;
+    }
+
+    if (!evicted.is_learned) {
+        // Standing for a starting clause, the kept clause is never deleted.
+        selector_->set_clause_learned(kept_id, false);
+    } else if (kept_is_learned) {
+        selector_->set_clause_lbd(kept_id, std::min(selector_->clause_lbd(kept_id), evicted.lbd));
+        selector_->set_clause_unused_passes(
+            kept_id, std::min(selector_->clause_unused_passes(kept_id), evicted.unused_passes));
+        if (!evicted.is_out_of_unused_passes) {
+            selector_->set_clause_out_of_unused_passes(kept_id, false);
+        }
+        if (evicted.is_used_since_deletion) {
+            selector_->set_clause_used_since_deletion(kept_id, true);
+        }
+    }
+}
+
+#ifndef NDEBUG
+bool Solver::debug_equivalent_clause_table_is_exact() const {
+    if (equivalent_clauses_.size() != num_active_clauses_) {
+        return false;
+    }
+    for (const ClauseId clause_id : selector_->active_clause_ids()) {
+        if (!equivalent_clauses_.is_entered(clause_id)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Solver::debug_no_two_clauses_share_a_span() {
+    // A clause learned short of a fixed point is kept unlooked for.
+    if (budget_.has_value() || ++debug_span_checks_ % (1 + num_active_clauses_ / 256) != 0) {
+        return true;
+    }
+    // Read off reductions made here, not off the rows as stored.
+    std::vector<RowSpace> spans;
+    std::vector<std::pair<std::size_t, std::size_t>> hash_to_span_idx;
+    for (const ClauseId clause_id : selector_->active_clause_ids()) {
+        const RowSpace& stored = selector_->clause(clause_id);
+        RowSpace span = stored;
+        span.reduce_rows();
+        std::size_t hash = span.rows();
+        for (const Equation& row : span) {
+            hash = hash * 31 + row.hash();
+        }
+        hash_to_span_idx.emplace_back(hash, spans.size());
+        spans.push_back(std::move(span));
+    }
+    std::ranges::sort(hash_to_span_idx);
+    for (std::size_t i = 0; i < hash_to_span_idx.size(); ++i) {
+        for (std::size_t j = i + 1;
+             j < hash_to_span_idx.size() && hash_to_span_idx[j].first == hash_to_span_idx[i].first;
+             ++j) {
+            if (spans[hash_to_span_idx[i].second].has_rows_of(spans[hash_to_span_idx[j].second])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+#endif
 
 Solution Solver::solve() {
 #ifndef NDEBUG
@@ -1138,6 +1331,15 @@ void Solver::add_to_stats(RunStats& stats) const {
     stats.num_renumberings = counters_.num_renumberings;
     stats.num_dropped_vars = counters_.num_dropped_vars;
     stats.num_substituted_clauses = counters_.num_substituted_clauses;
+    stats.num_equivalent_clauses = counters_.num_equivalent_clauses_at_input +
+                                   counters_.num_equivalent_clauses_at_subsumption +
+                                   counters_.num_equivalent_clauses_at_substitution;
+    stats.num_equivalent_clauses_at_input = counters_.num_equivalent_clauses_at_input;
+    stats.num_equivalent_clauses_at_subsumption = counters_.num_equivalent_clauses_at_subsumption;
+    stats.num_equivalent_clauses_at_substitution =
+        counters_.num_equivalent_clauses_at_substitution;
+    stats.num_equivalent_starting_learned_pairs = counters_.num_equivalent_starting_learned_pairs;
+    stats.num_equivalent_learned_pairs = counters_.num_equivalent_learned_pairs;
     stats.num_deferred_runs = counters_.num_deferred_runs;
     stats.num_out_of_order_learns = counters_.num_out_of_order_learns;
     stats.num_undone_decisions = counters_.num_undone_decisions;

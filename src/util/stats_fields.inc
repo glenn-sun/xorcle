@@ -37,6 +37,12 @@ XORCLE_STAT(search, Count, num_compactions, "compactions", "Compactions")
 XORCLE_STAT(search, Count, num_renumberings, "renumberings", "Compactions that renumbered")
 XORCLE_STAT(search, Count, num_dropped_vars, "dropped_vars", "Variables dropped")
 XORCLE_STAT(search, Count, num_substituted_clauses, "substituted_clauses", "Clauses rewritten by a compaction")
+XORCLE_STAT(search, Count, num_equivalent_clauses, "equivalent_clauses", "Equivalent clauses evicted")
+XORCLE_STAT(search, Count, num_equivalent_clauses_at_input, "equivalent_clauses_at_input", "Equivalent clauses evicted at input")
+XORCLE_STAT(search, Count, num_equivalent_clauses_at_subsumption, "equivalent_clauses_at_subsumption", "Equivalent clauses evicted at a subsumption")
+XORCLE_STAT(search, Count, num_equivalent_clauses_at_substitution, "equivalent_clauses_at_substitution", "Equivalent clauses evicted at a substitution")
+XORCLE_STAT(search, Count, num_equivalent_starting_learned_pairs, "equivalent_starting_learned_pairs", "Equivalent pairs of a starting and a learned clause")
+XORCLE_STAT(search, Count, num_equivalent_learned_pairs, "equivalent_learned_pairs", "Equivalent pairs of learned clauses")
 XORCLE_STAT(search, Count, peak_carrier_entries, "peak_carrier_entries", "Peak column-to-clause entries")
 
 // --- Restarts, reported only when a schedule is in force --------------------

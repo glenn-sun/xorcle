@@ -71,6 +71,7 @@ SubstitutionPlan build_substitution_plan(const CompactionState& state) {
         for (const Equation& reduced_row : reduced_rows) {
             rewritten.add_row(reduced_row);
         }
+        rewritten.reduce_rows();
         assert(rewritten.rows() != 0 && "an active clause was rewritten to zero rows");
         assert(!rewritten.carried_col_idxs().intersects(state.trail.span().pivot_col_idxs()) &&
                "a dropped variable occurs in a rewritten clause");
