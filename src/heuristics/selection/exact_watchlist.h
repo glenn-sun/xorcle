@@ -122,9 +122,9 @@ private:
         std::vector<std::uint32_t> cells;
     };
 
-    /// @brief A cell's words and key as they stood before its first change at a level,
-    /// or, with `word_offset == rebuild_entry`, a mark that it has no such state to
-    /// return to and must be rebuilt.
+    /// @brief A cell's words from its leading word on, and its key, as they stood before
+    /// its first change at a level, or, with `word_offset == rebuild_entry`, a mark that it
+    /// has no such state to return to and must be rebuilt.
     struct SaveEntry {
         std::uint32_t cell;
         std::uint32_t gen;
@@ -137,11 +137,16 @@ private:
     static constexpr std::uint32_t no_pair = UINT32_MAX;
     static constexpr std::size_t rebuild_entry = static_cast<std::size_t>(-1);
 
+    /// @brief What a save and a restore read and write of a cell, in one place.
+    struct CellUndo {
+        std::uint32_t gen = 0; ///< Bumped whenever the cell's watch changes.
+        std::uint32_t save_stamp = 0; ///< The stamp of the level it last saved at.
+        std::uint32_t restore_stamp = 0;
+        std::uint32_t restore_rebuild = 0;
+    };
+
     Word* cell_words(std::uint32_t cell) { return words_.data() + cell * num_words_; }
     const Word* cell_words(std::uint32_t cell) const { return words_.data() + cell * num_words_; }
-    const Word* watch_words(std::uint32_t cell) const {
-        return watch_words_.data() + cell * num_words_;
-    }
 
     std::uint32_t constant_key() const { return static_cast<std::uint32_t>(num_cols_ - 1); }
     std::size_t top_level() const { return level_stamp_.size() - 1; }
@@ -157,7 +162,6 @@ private:
     /// @pre The selector is at the root, with no pivot.
     void rebuild_pair(std::uint32_t pair);
     const Word* watch_row(std::uint32_t cell) const;
-    void load_watch(std::uint32_t cell);
     void build_first(std::uint32_t cell, const Word* watch);
     void build_second(std::uint32_t cell, const Word* watch);
 
@@ -193,7 +197,16 @@ private:
 
     void clean_buckets();
 
+    /// @brief The first word a save keeps of a cell with `key`: the words below its lead
+    /// are zero, and stay zero while its watch stands.
+    std::size_t saved_first_word(std::uint32_t key) const {
+        return key == zero_key ? 0 : static_cast<std::size_t>(key) >> DenseGF2Vector::word_shift;
+    }
+
     void save(std::uint32_t cell, std::size_t level);
+
+    /// @brief Put a cell back as `entry` saved it.
+    void copy_back(const SaveEntry& entry);
     void push_rebuild_entry(std::uint32_t cell, std::size_t level);
 
     /// @brief Reduce a cell leading on a pivot until it does not, fixing up `B` after
@@ -224,7 +237,7 @@ private:
     bool debug_check_due(std::size_t every);
     void debug_check_cells(const Trail& trail) const;
 
-    /// @brief Check a pair's cells against building them from their watch copies,
+    /// @brief Check a pair's cells against building them from their watches,
     /// `A` only if `with_first`.
     void debug_assert_cells_are_builds(std::uint32_t pair, bool with_first);
 #endif
@@ -235,11 +248,9 @@ private:
 
     /// @brief Two cells per pair, `A` then `B`; a unit clause uses only `A`.
     std::vector<Word> words_;
-    /// @brief Per cell, a copy of its watch, so a rebuild reads no clause; kept only once
-    /// a backjump could rebuild the cell: built above the root, or its watch moved.
-    std::vector<Word> watch_words_;
     std::vector<std::uint32_t> key_;
-    std::vector<std::uint32_t> gen_; ///< Bumped whenever a cell's watch changes.
+    std::vector<CellUndo> undo_;
+    std::vector<std::uint8_t> in_active_clause_; ///< Per cell.
     std::vector<std::uint32_t> pair_clause_;
     std::vector<std::uint8_t> pair_is_unit_;
     /// @brief `no_pair` for a clause that had none built, or lost it to `free_pairs_`.
@@ -253,7 +264,9 @@ private:
     std::vector<std::vector<std::uint32_t>> buckets_; ///< Per column, cells that may lead on it.
     std::size_t bucket_entries_ = 0;
     std::size_t cleanup_threshold_ = 0;
-    std::vector<std::uint8_t> cleanup_kept_; ///< Per cell, whether this cleanup kept an entry.
+    /// @brief Per cell, the epoch of the last cleanup that kept an entry of it.
+    std::vector<std::uint32_t> cleanup_stamp_;
+    std::uint32_t cleanup_epoch_ = 0;
 
     std::vector<const Word*> pivot_row_; ///< Per column, the trail row pivoting on it.
     std::vector<std::uint32_t> pivot_col_idxs_; ///< In trail order, with the constant's omitted.
@@ -271,9 +284,6 @@ private:
     std::vector<std::size_t> level_save_word_mark_;
     std::vector<std::uint32_t> level_stamp_; ///< Fresh at every opening of a level.
     std::uint32_t next_stamp_ = 1;
-    std::vector<std::uint32_t> save_stamp_; ///< Per cell, the stamp of the level it last saved at.
-    std::vector<std::uint32_t> restore_stamp_;
-    std::vector<std::uint8_t> restore_rebuild_;
     std::uint32_t restore_epoch_ = 0;
     std::vector<std::uint32_t> restored_cells_;
     /// @brief The cells a backjump restores, `A`s then `B`s, each in the order restored:
@@ -290,7 +300,6 @@ private:
 
 #ifndef NDEBUG
     std::size_t debug_events_ = 0;
-    std::vector<std::uint8_t> debug_watch_loaded_;
 #endif
 };
 
