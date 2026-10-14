@@ -32,7 +32,7 @@ struct CsidsConfig {
     /// @brief The open clauses, from the top of the heap down, whose linear
     /// negations a decision is drawn from the intersection of; `1` is the top
     /// clause alone.
-    std::size_t intersection_depth = 25;
+    std::size_t intersection_depth = 50;
 
     bool operator==(const CsidsConfig&) const = default;
 };
