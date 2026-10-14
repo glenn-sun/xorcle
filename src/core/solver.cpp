@@ -756,6 +756,7 @@ void Solver::apply_substitution(SubstitutionPlan plan) {
             --num_active_clauses_;
         }
         selector_->replace_clause(clause_id, std::move(plan.rewritten_clauses[i]));
+        implication_graph_.clause_was_rewritten(clause_id);
         if (plan.rewritten_is_active[i] != 0 && width_before > 2 &&
             selector_->clause(clause_id).rows() <= 2) {
             ++counters_.num_compaction_narrowed_to_width_2;

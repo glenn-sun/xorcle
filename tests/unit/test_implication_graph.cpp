@@ -295,6 +295,147 @@ TEST_CASE("implication graph: the caps bound one run and keep its units sound") 
     }
 }
 
+// x1 -> x2 and x4 -> x5 share no variable and yield nothing, so the first run
+// examines their six pairs and the second, with no clause read since, none.
+TEST_CASE("implication graph: a pair reaching no clause read since it was examined is clean") {
+    const std::size_t num_vars = 6;
+    const RowSpace root_span(repr, num_vars);
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{0, 6}, {1}}));
+    clauses.push_back(make_clause(repr, num_vars, {{3, 6}, {4}}));
+
+    ImplicationGraph graph(repr, num_vars);
+    const ImplicationGraphRun first = graph.run(clauses, all_active(clauses), root_span);
+    CHECK(first.pairs_eligible == 6);
+    CHECK(first.pairs_examined == 6);
+    REQUIRE(first.units.empty());
+
+    const ImplicationGraphRun second = graph.run(clauses, all_active(clauses), root_span);
+    CHECK(second.pairs_eligible == 6);
+    CHECK(second.pairs_examined == 0);
+    CHECK(second.edges_visited == 0);
+
+    SUBCASE("a new clause makes dirty the pairs that reach it and no other") {
+        // x2 -> x3 is reached from the three pairs of x1 -> x2 and its own.
+        clauses.push_back(make_clause(repr, num_vars, {{1, 6}, {2}}));
+        const ImplicationGraphRun third = graph.run(clauses, all_active(clauses), root_span);
+        CHECK(third.pairs_eligible == 8);
+        CHECK(third.pairs_examined == 5);
+        CHECK(third.units.empty());
+        CHECK(graph.run(clauses, all_active(clauses), root_span).pairs_examined == 0);
+    }
+
+    SUBCASE("a new variable numbering keeps the pairs clean") {
+        graph.reconfigure(num_vars);
+        CHECK(graph.run(clauses, all_active(clauses), root_span).pairs_examined == 0);
+    }
+
+    SUBCASE("a deleted clause makes no pair dirty") {
+        StoreIds ids = all_active(clauses);
+        ids.is_active[1] = 0;
+        const ImplicationGraphRun third = graph.run(clauses, ids, root_span);
+        CHECK(third.pairs_eligible == 3);
+        CHECK(third.pairs_examined == 0);
+    }
+}
+
+// x1 -> x2, x2 -> x3 and x5 -> x6 yield nothing. Rewriting the last into
+// `x3 -> not x1` under its id refutes `[x1 = 1]`, which only a run told of the
+// rewrite looks for; the pairs of a fourth clause over x7 and x8 stay clean.
+TEST_CASE("implication graph: a rewritten clause makes the pairs that reach it dirty") {
+    const std::size_t num_vars = 8;
+    const RowSpace root_span(repr, num_vars);
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{0, 8}, {1}}));
+    clauses.push_back(make_clause(repr, num_vars, {{1, 8}, {2}}));
+    clauses.push_back(make_clause(repr, num_vars, {{4, 8}, {5}}));
+    clauses.push_back(make_clause(repr, num_vars, {{6, 8}, {7}}));
+
+    ImplicationGraph graph(repr, num_vars);
+    const ImplicationGraphRun first = graph.run(clauses, all_active(clauses), root_span);
+    CHECK(first.pairs_examined == first.pairs_eligible);
+    REQUIRE(first.units.empty());
+
+    clauses[2] = make_clause(repr, num_vars, {{2, 8}, {0, 8}});
+    graph.clause_was_rewritten(2);
+    const ImplicationGraphRun second = graph.run(clauses, all_active(clauses), root_span);
+    CHECK(second.pairs_examined == second.pairs_eligible - 3);
+    const RowSpace found = span_of(num_vars, second.units);
+    CHECK(holds(found, num_vars, {0}));
+    CHECK(!holds(found, num_vars, {6}));
+}
+
+// x2 -> x3 and x1 -> x2 yield nothing. `x3 -> not x2` then refutes `[x2 = 1]`
+// at the first pair of the second run, and `[x1 = 1]`, whose pair comes later,
+// is refuted through its arc to it.
+TEST_CASE("implication graph: a dirty pair is refuted through a vertex refuted in the same run") {
+    const std::size_t num_vars = 6;
+    const RowSpace root_span(repr, num_vars);
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{1, 6}, {2}}));
+    clauses.push_back(make_clause(repr, num_vars, {{0, 6}, {1}}));
+    clauses.push_back(make_clause(repr, num_vars, {{3, 6}, {4}}));
+
+    ImplicationGraph graph(repr, num_vars);
+    ImplicationGraphProofRecord record;
+    const ImplicationGraphRun first =
+        graph.run(clauses, all_active(clauses), root_span, &record);
+    CHECK(first.pairs_examined == first.pairs_eligible);
+    REQUIRE(first.units.empty());
+
+    clauses.push_back(make_clause(repr, num_vars, {{2, 6}, {1, 6}}));
+    const ImplicationGraphRun second =
+        graph.run(clauses, all_active(clauses), root_span, &record);
+    // The three pairs of x4 -> x5 reach nothing new.
+    CHECK(second.pairs_examined == second.pairs_eligible - 3);
+    const RowSpace found = span_of(num_vars, second.units);
+    CHECK(holds(found, num_vars, {0}));
+    CHECK(holds(found, num_vars, {1}));
+    const std::vector<std::size_t> x1_is_zero{0};
+    CHECK(std::ranges::any_of(record.steps, [&](const ImplicationGraphProofStep& step) {
+        return step.kind == ImplicationGraphProofStep::Kind::reaches_refuted &&
+               step.equation == Equation::from_bits(repr, num_vars, x1_is_zero);
+    }));
+}
+
+// The refuted `[x1 = 1]` above. Its unit is found once; left as a width-1
+// clause that nothing has propagated, it is not found again, the pairs being clean.
+TEST_CASE("implication graph: a unit still a width-1 clause is not offered again") {
+    const std::size_t num_vars = 3;
+    const RowSpace root_span(repr, num_vars);
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{0, 3}, {1}}));
+    clauses.push_back(make_clause(repr, num_vars, {{1, 3}, {2}}));
+    clauses.push_back(make_clause(repr, num_vars, {{2, 3}, {0, 3}}));
+
+    ImplicationGraph graph(repr, num_vars);
+    REQUIRE(graph.run(clauses, all_active(clauses), root_span).units.size() == 1);
+
+    clauses.push_back(make_clause(repr, num_vars, {{0, 3}}));
+    const ImplicationGraphRun second = graph.run(clauses, all_active(clauses), root_span);
+    CHECK(second.pairs_examined == 0);
+    CHECK(second.units.empty());
+}
+
+// Nine pairs with nothing to find and room for two a run: the pairs a run did
+// not draw stay dirty, so five runs examine each pair once and a sixth none.
+TEST_CASE("implication graph: a pair the pair cap left out stays dirty") {
+    const std::size_t num_vars = 6;
+    const RowSpace root_span(repr, num_vars);
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{0, 6}, {1}}));
+    clauses.push_back(make_clause(repr, num_vars, {{2, 6}, {3}}));
+    clauses.push_back(make_clause(repr, num_vars, {{4, 6}, {5}}));
+
+    ImplicationGraph graph(repr, num_vars, ImplicationGraphConfig{.max_pairs = 2});
+    for (const std::size_t expected : {2U, 2U, 2U, 2U, 1U, 0U}) {
+        const ImplicationGraphRun summary = graph.run(clauses, all_active(clauses), root_span);
+        CHECK(summary.pairs_eligible == 9);
+        CHECK(summary.pairs_examined == expected);
+        CHECK(summary.at_the_pair_cap == (expected == 2));
+    }
+}
+
 // The refuted side above, read again for what a proof of its unit would replay.
 TEST_CASE("implication graph: a refuted side records the arcs it was refuted through") {
     const std::size_t num_vars = 3;

@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <chrono>
 #include <cstddef>
 #include <vector>
 
@@ -31,13 +30,7 @@ void ImplicationGraph::walk_span_intersections(
     [[maybe_unused]] ActiveClauseIds active_clause_ids,
     ImplicationGraphRun& summary, ImplicationGraphProofRecord* const proof) {
     using Kind = ImplicationGraphProofStep::Kind;
-    const auto start = std::chrono::steady_clock::now();
-    const std::size_t num_vertices = 2 * key_eqn_.size();
-
-    assert(all_arcs_are_clause_backed(clauses, active_clause_ids, root_span) &&
-           "an arc of the implication graph is not witnessed by its clause");
-
-    sample_pairs(summary);
+    const std::size_t num_vertices = 2 * num_keys_;
 
     // Everything below is modulo the root trail span, against which the vertex
     // equations are already reduced.
@@ -48,23 +41,28 @@ void ImplicationGraph::walk_span_intersections(
     // over only the columns its descendants use, kept in order, which leaves
     // every echelon form and intersection as it is over all of them.
     std::size_t num_key_bits = 0;
-    for (const Equation* key_eqn : key_eqn_) {
-        num_key_bits += key_eqn->num_set_bits();
+    for (std::size_t key = 0; key < num_keys_; ++key) {
+        num_key_bits += key_eqn_[key].num_set_bits();
     }
     const bool local_columns =
-        num_key_bits < key_eqn_.size() * ((num_vars_ + DenseGF2Vector::bits_per_word) /
+        num_key_bits < num_keys_ * ((num_vars_ + DenseGF2Vector::bits_per_word) /
                                           DenseGF2Vector::bits_per_word);
+    // The set bits of each key a descendant search has reached, listed when
+    // it first does.
     std::vector<std::size_t> key_bits;
-    std::vector<std::size_t> key_bits_begin;
-    if (local_columns) {
-        key_bits.reserve(num_key_bits);
-        key_bits_begin.assign(key_eqn_.size() + 1, 0);
-        for (std::size_t key = 0; key < key_eqn_.size(); ++key) {
-            const std::vector<std::size_t> key_eqn_bits = key_eqn_[key]->bits();
-            key_bits.insert(key_bits.end(), key_eqn_bits.begin(), key_eqn_bits.end());
-            key_bits_begin[key + 1] = key_bits.size();
+    std::vector<std::size_t> key_bits_begin(local_columns ? num_keys_ : 0, no_index);
+    std::vector<std::size_t> key_bits_end(local_columns ? num_keys_ : 0);
+    const auto list_key_bits = [&](const std::vector<std::size_t>& reached) {
+        for (const std::size_t vertex : reached) {
+            const std::size_t key = vertex / 2;
+            if (key_bits_begin[key] == no_index) {
+                key_bits_begin[key] = key_bits.size();
+                const std::vector<std::size_t> key_eqn_bits = key_eqn_[key].bits();
+                key_bits.insert(key_bits.end(), key_eqn_bits.begin(), key_eqn_bits.end());
+                key_bits_end[key] = key_bits.size();
+            }
         }
-    }
+    };
     std::vector<std::size_t> col_idx_to_local_col_idx(local_columns ? num_vars_ + 1 : 0, no_index);
     std::vector<std::size_t> local_col_idx_to_col_idx;
     std::vector<std::size_t> bits;
@@ -87,9 +85,9 @@ void ImplicationGraph::walk_span_intersections(
         }
         local_col_idx_to_col_idx.clear();
         const auto collect = [&](const std::vector<std::size_t>& reached) {
+            list_key_bits(reached);
             for (const std::size_t vertex : reached) {
-                for (std::size_t i = key_bits_begin[vertex / 2]; i < key_bits_begin[vertex / 2 + 1];
-                     ++i) {
+                for (std::size_t i = key_bits_begin[vertex / 2]; i < key_bits_end[vertex / 2]; ++i) {
                     const std::size_t col_idx = key_bits[i];
                     if (col_idx != num_vars_ && col_idx_to_local_col_idx[col_idx] == no_index) {
                         col_idx_to_local_col_idx[col_idx] = 0;
@@ -131,8 +129,8 @@ void ImplicationGraph::walk_span_intersections(
             Equation row = spare_row(num_span_vars);
             if (local_columns) {
                 bits.clear();
-                for (std::size_t i = key_bits_begin[vertex / 2];
-                     i < key_bits_begin[vertex / 2 + 1]; ++i) {
+                for (std::size_t i = key_bits_begin[vertex / 2]; i < key_bits_end[vertex / 2];
+                     ++i) {
                     bits.push_back(col_idx_to_local_col_idx[key_bits[i]]);
                 }
                 if ((vertex & 1) != 0) {
@@ -144,7 +142,7 @@ void ImplicationGraph::walk_span_intersections(
                 }
                 row.assign_bits(bits);
             } else {
-                row.assign_from(*key_eqn_[vertex / 2]);
+                row.assign_from(key_eqn_[vertex / 2]);
                 if ((vertex & 1) != 0) {
                     row.plus_assign(false_eqn_);
                 }
@@ -409,19 +407,53 @@ void ImplicationGraph::walk_span_intersections(
             summary.units.push_back(eqn);
         }
     }
-
-    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
-    summary.span_intersection_time_s += elapsed.count();
 }
 
 #ifndef NDEBUG
+bool ImplicationGraph::full_examination_yields(const ImplicationGraphRun& run,
+                                               const RowSpace& root_span,
+                                               const std::vector<Clause>& clauses,
+                                               ActiveClauseIds active_clause_ids) {
+    const Rng rng = rng_;
+    sampled_pairs_.clear();
+    for (std::size_t vertex = 0; vertex < 2 * num_keys_; vertex += 2) {
+        sampled_pairs_.push_back(vertex);
+    }
+    ImplicationGraphRun full;
+    walk_span_intersections(root_span, clauses, active_clause_ids, full, nullptr);
+    rng_ = rng;
+    a_side_was_truncated_ = a_side_was_truncated_ || full.truncated_sides != 0;
+    if (a_side_was_truncated_ || run.at_the_pair_cap || full.units == run.units) {
+        return true;
+    }
+    // A unit of an earlier run that propagation has yet to reach is still a
+    // width-1 clause, and the clean pair it came from yields it again.
+    RowSpace known = root_span;
+    for (const ClauseId clause_id : active_clause_ids) {
+        if (clauses[clause_id].rows() == 1) {
+            Equation unit = clauses[clause_id].row(0);
+            unit.plus_assign(false_eqn_);
+            known.add_row(std::move(unit));
+        }
+    }
+    const std::size_t num_known = known.rows();
+    for (const Equation& unit : run.units) {
+        known.add_row(unit);
+    }
+    return num_known != root_span.rows() &&
+           std::ranges::all_of(full.units, [&known](Equation unit) {
+               known.reduce(unit);
+               return unit.is_eq_true();
+           });
+}
+
 bool ImplicationGraph::all_arcs_are_clause_backed(
     const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
     const RowSpace& root_span) {
     const auto holds = [this](const Equation& eqn) {
-        return std::find(triple_.begin(), triple_.end(), eqn) != triple_.end();
+        return std::ranges::any_of(triple_, [&eqn](const Equation* row) { return *row == eqn; });
     };
-    for (std::size_t from = 0; from < 2 * key_eqn_.size(); ++from) {
+    for (std::size_t from = 0; from < 2 * num_keys_; ++from) {
         for (const Arc& arc : arcs_[from]) {
             if (!active_clause_ids.contains(arc.clause_id) ||
                 !reduce_triple(clauses[arc.clause_id], root_span)) {

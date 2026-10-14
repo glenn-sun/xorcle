@@ -7,7 +7,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -86,7 +85,7 @@ struct ImplicationGraphRun {
     bool did_work = false;         ///< False when there was no graph to read.
     std::size_t edges_visited = 0; ///< Arcs the descendant searches traversed.
     std::size_t pairs_eligible = 0; ///< Vertex pairs with an out-arc on either side.
-    std::size_t pairs_examined = 0; ///< Of those, the ones the pair cap left room for.
+    std::size_t pairs_examined = 0; ///< Of those, the dirty ones the pair cap left room for.
     std::size_t refuted_sides = 0;  ///< Sides of the examined pairs whose span holds `0 = 1`.
     bool at_the_pair_cap = false;
     std::size_t truncated_sides = 0; ///< Sides the descendant cap cut a level short.
@@ -102,8 +101,12 @@ struct ImplicationGraphRun {
 /// and its negation share a key, so `vertex ^ 1` is the negation and the arcs
 /// are closed under negating both ends.
 ///
-/// A run builds the graph from the clause database and reads it; nothing but
-/// scratch survives to the next one.
+/// A run builds the graph from the clause database and examines its dirty
+/// pairs. A pair is dirty when a side of it reaches an arc of a clause first
+/// read after the run that last examined the pair; a clause is read by the
+/// first run that takes it, and is unread again once rewritten. Between runs
+/// only that survives: per clause, the run that first read it and the runs
+/// that last examined its three pairs.
 class ImplicationGraph {
 public:
     ImplicationGraph(EquationRepr repr, std::size_t num_vars,
@@ -118,18 +121,22 @@ public:
     /// @brief Width-2 clauses, and the pairs of an equation and its negation the
     /// vertices make, as the last run held them.
     std::size_t num_width_2_clauses() const noexcept { return num_width_2_clauses_; }
-    std::size_t num_vertex_pairs() const noexcept { return key_eqn_.size(); }
+    std::size_t num_vertex_pairs() const noexcept { return num_keys_; }
 
     /// @brief Look for units the root trail does not already have.
     ///
     /// A non-null `proof` is cleared and filled with a step per equation the run
-    /// proved, and the step proving each of the run's `units`.
+    /// proved, and the step proving each of the run's `units`. A unit is offered
+    /// by the run that finds it and by no later one.
     ///
     /// @pre `active_clause_ids` are ids of `clauses`, and every clause shares
     /// `root_span`'s representation and column count.
     ImplicationGraphRun run(const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
                             const RowSpace& root_span,
                             ImplicationGraphProofRecord* proof = nullptr);
+
+    /// @brief Make @p clause_id unread, its rows having changed.
+    void clause_was_rewritten(ClauseId clause_id);
 
 private:
     static constexpr std::size_t no_index = static_cast<std::size_t>(-1);
@@ -145,11 +152,17 @@ private:
     /// @return Whether the clause is one the graph takes at all.
     bool reduce_triple(const Clause& clause, const RowSpace& root_span);
 
+    /// @brief Fill `reduced_` with the rows of @p clause reduced by the root trail.
+    void reduce_into_reduced(const Clause& clause, const RowSpace& root_span);
+
     /// @brief The vertex of @p eqn, added if it is new.
     ///
     /// A key is whichever of an equation and its negation the graph saw first.
-    /// @pre `eqn` is neither `0 = 0` nor `0 = 1`.
-    std::size_t vertex_of(const Equation& eqn);
+    /// @pre `eqn` is neither `0 = 0` nor `0 = 1`, and `hash` is `key_hash(eqn)`.
+    std::size_t vertex_of(const Equation& eqn, std::uint32_t hash);
+
+    /// @brief A hash an equation shares with its negation.
+    static std::uint32_t key_hash(const Equation& eqn) noexcept;
 
     Equation equation_of(std::size_t vertex) const;
 
@@ -160,8 +173,16 @@ private:
     /// @brief Empty @p span, keeping its rows in `spare_rows_`.
     void clear_span(RowSpace& span);
 
-    /// @brief The three vertices of `triple_`, with its six arcs added.
+    /// @brief Add the three vertices of `triple_` and its six arcs, reading the
+    /// clause if it is unread.
     void add_clause(ClauseId clause_id);
+
+    /// @brief Fill `key_is_dirty_`, in one search that visits every arc once.
+    void mark_dirty_pairs();
+
+    /// @brief Record this run as the one that last examined the sampled pairs,
+    /// those with a side cut short included.
+    void stamp_examined_pairs();
 
     /// @brief Stamp @p from and everything it reaches with @p mark, listing them
     /// in @p reached in breadth-first order.
@@ -175,8 +196,8 @@ private:
                           std::vector<std::size_t>& reached, std::size_t& edges_visited,
                           std::vector<ClauseId>* parent_clause);
 
-    /// @brief A uniform sample of the vertex pairs with an out-arc on either side,
-    /// at most `max_pairs` of them, for one run to examine.
+    /// @brief A uniform sample of the dirty vertex pairs, at most `max_pairs` of
+    /// them, for one run to examine.
     void sample_pairs(ImplicationGraphRun& summary);
 
     /// @brief Intersect the spans of the two sides of every sampled vertex pair,
@@ -192,6 +213,14 @@ private:
                                  ImplicationGraphProofRecord* proof);
 
 #ifndef NDEBUG
+    /// @brief Whether examining every pair yields the units of @p run, in its
+    /// order, or, where a width-1 clause is active, nothing outside the span of
+    /// those units and such clauses; true also when `run` was at the pair cap or
+    /// the descendant cap has cut a side in this run or an earlier one.
+    bool full_examination_yields(const ImplicationGraphRun& run, const RowSpace& root_span,
+                                 const std::vector<Clause>& clauses,
+                                 ActiveClauseIds active_clause_ids);
+
     /// @brief Whether some path from @p from to @p to has every arc backed by
     /// the width-2 clause it was built from.
     ///
@@ -214,19 +243,67 @@ private:
     Equation false_eqn_;
     Rng rng_;
 
-    /// @brief Key to its index, found from either of an equation and its negation;
-    /// the map's nodes hold the one copy of each key, which `key_eqn_` points at.
-    std::unordered_map<Equation, std::size_t, EquationVariablesHash, EquationVariablesEqual>
-        key_of_;
-    std::vector<const Equation*> key_eqn_;
+    /// @brief The keys in `[0, num_keys_)`; the equations past them are kept for
+    /// the next run to overwrite.
+    std::vector<Equation> key_eqn_;
+    std::size_t num_keys_ = 0;
+    std::vector<std::uint32_t> key_hash_; ///< `key_hash()` of each key.
+
+    /// @brief An open-addressing table of key index plus one, 0 for an empty
+    /// slot, a power of two in size and probed linearly from `slot_of()`.
+    std::vector<std::uint32_t> key_slots_;
+    unsigned key_slot_shift_ = 0;
+    std::size_t slot_of(std::uint32_t hash) const noexcept;
+
+    /// @brief Forget every key, keeping the equations.
+    void clear_keys();
     std::vector<std::vector<Arc>> arcs_; ///< Indexed by vertex.
 
     std::size_t num_width_2_clauses_ = 0;
 
+    /// @brief What a clause keeps between runs; a run is named by its count from
+    /// 1, and 0 is no run.
+    ///
+    /// A renumbering keeps the variables in order, so a clause not rewritten
+    /// keeps its `triple_`.
+    struct ClauseRuns {
+        std::uint32_t first_read = 0;
+        std::array<std::uint32_t, 3> last_examined{}; ///< The pair of each of `triple_`.
+        /// @brief `key_hash()` of each of `triple_` under the variable numbering
+        /// `hash_numbering`; 0 is no numbering.
+        std::array<std::uint32_t, 3> hash{};
+        std::uint32_t hash_numbering = 0;
+    };
+    std::vector<ClauseRuns> clause_runs_; ///< Indexed by clause id.
+    std::uint32_t num_runs_ = 0;
+    std::uint32_t numbering_ = 1; ///< Counts the variable numberings adopted.
+
+    /// @brief A clause of the graph, with the vertices of its `triple_`.
+    struct GraphClause {
+        ClauseId clause_id;
+        std::array<std::size_t, 3> vertices;
+    };
+    std::vector<GraphClause> graph_clauses_;
+    std::vector<std::uint32_t> key_last_examined_;
+    std::vector<std::uint8_t> key_is_dirty_;
+
+    /// @brief By vertex, the latest first read among the clauses whose arcs its
+    /// negation reaches.
+    std::vector<std::uint32_t> latest_first_read_;
+    std::vector<std::size_t> graph_clause_order_;
+    std::vector<std::size_t> order_begin_;
+    std::vector<std::size_t> search_queue_;
+#ifndef NDEBUG
+    bool a_side_was_truncated_ = false;
+#endif
+
     /// @brief Reused across every clause a run reads, so reading one allocates
-    /// nothing but the key of a vertex the graph has not seen before.
+    /// nothing.
     RowSpace reduced_;
-    std::array<Equation, 3> triple_;
+    /// @brief The rows `reduce_triple()` last took, in the clause or in
+    /// `reduced_`, and their sum.
+    std::array<const Equation*, 3> triple_{};
+    Equation row_sum_;
 
     /// @brief The even vertex of each pair the walk is to examine.
     std::vector<std::size_t> sampled_pairs_;
