@@ -1,37 +1,30 @@
 #include "algebra/equation_repr.h"
 
-#include <cassert>
-#include <utility>
+#include <memory>
+#include <type_traits>
 
-#include "algebra/dense/dense_repr.h"
 #include "algebra/equation.h"
+#include "algebra/equation_template.h"
+#include "algebra/gf2_vector_of_repr.h"
 #include "algebra/row_echelon_matrix.h"
-#include "algebra/sparse/sparse_repr.h"
+#include "algebra/row_echelon_matrix_template.h"
 
 namespace xorcle {
 
 std::unique_ptr<EquationInterface> make_equation_interface(EquationRepr repr,
                                                            std::size_t num_bits) {
-    switch (repr) {
-        case EquationRepr::dense:
-            return make_dense_equation_interface(num_bits);
-        case EquationRepr::sparse:
-            return make_sparse_equation_interface(num_bits);
-    }
-    assert(false && "make_equation_interface: not a representation");
-    std::unreachable();
+    return with_gf2_vector_of(
+        repr, [num_bits]<GF2Vector V>(std::type_identity<V>) -> std::unique_ptr<EquationInterface> {
+            return EquationTemplate<V>::create(num_bits);
+        });
 }
 
 std::unique_ptr<RowEchelonMatrixInterface> make_row_echelon_matrix_interface(
     EquationRepr repr, std::size_t cols) {
-    switch (repr) {
-        case EquationRepr::dense:
-            return make_dense_row_echelon_matrix_interface(cols);
-        case EquationRepr::sparse:
-            return make_sparse_row_echelon_matrix_interface(cols);
-    }
-    assert(false && "make_row_echelon_matrix_interface: not a representation");
-    std::unreachable();
+    return with_gf2_vector_of(
+        repr, [cols]<GF2Vector V>(std::type_identity<V>) -> std::unique_ptr<RowEchelonMatrixInterface> {
+            return std::make_unique<RowEchelonMatrixTemplate<V>>(cols);
+        });
 }
 
 Equation make_equation(EquationRepr repr, std::size_t num_vars) {

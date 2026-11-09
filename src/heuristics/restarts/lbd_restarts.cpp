@@ -5,8 +5,7 @@
 namespace xorcle {
 
 LbdRestarts::LbdRestarts(const RestartConfig& config)
-    : RestartPolicy(config.reuse_trail),
-      fast_lbd_(config.lbd_fast_window), slow_lbd_(config.lbd_slow_window),
+    : fast_lbd_(config.lbd_fast_window), slow_lbd_(config.lbd_slow_window),
       trail_length_(config.lbd_slow_window),
       min_ratio_(config.lbd_min_ratio),
       trail_ratio_(config.lbd_trail_ratio), min_conflicts_(config.lbd_min_conflicts) {

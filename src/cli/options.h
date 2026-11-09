@@ -509,22 +509,14 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     }
 #include "cli/options.inc"
 
-    // Trail reuse is a switch rather than a parameter, so it is checked against
-    // its value, however it came to be `true`.
-    if (options.restart_reuse_trail && options.restart == RestartMethod::none) {
-        throw CliError("--restart-reuse-trail requires a restart schedule; pass --restart=luby "
-                       "or --restart=lbd");
-    }
-    // Only CSIDS ranks the levels a restart could keep.
-    if (options.restart != RestartMethod::none && options.restart_reuse_trail &&
-        options.decisions != DecisionProcedureName::csids) {
-        throw CliError("--restart-reuse-trail requires --decisions=csids, the only procedure that "
-                       "ranks the levels a restart could keep; pass --restart-reuse-trail=false "
-                       "to restart to the root instead");
-    }
     if (!parse_progress_groups(options.report).has_value()) {
         throw CliError("--report='" + options.report +
                        "' is not a comma-joined list of: " + progress_group_names());
+    }
+    if (options.vivify && options.selection == ClauseSelectorName::cyclic &&
+        options.propagate_miss_rate != 0.0) {
+        throw CliError("--vivify requires --propagate-miss-rate=0: it assumes on a trail "
+                       "propagated to a fixed point");
     }
     if (options.deletion_cadence_coefficient == 0.0) {
         throw CliError("--deletion-cadence-coefficient must be positive");
@@ -540,6 +532,9 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     }
     // A switch rather than a parameter, so it is checked against its value,
     // which the default has already resolved to false under --compact=false.
+    if (options.bve && !options.compact) {
+        throw CliError("--bve requires --compact=true, which drops the variables it eliminates");
+    }
     if (options.implication_graph && !options.compact) {
         throw CliError("--implication-graph requires --compact=true: without a compaction after "
                        "each feed, which basis of the fed units the rule happened to pick would "
@@ -602,6 +597,17 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     if (!seen.implication_graph && !options.compact) {
         options.implication_graph = false;
     }
+    // BVE drops the variables it eliminates, so without compaction it resolves
+    // to off unless it was given.
+    if (!seen.bve && !options.compact) {
+        options.bve = false;
+    }
+    // Vivification assumes on a trail propagated to a fixed point, so under the
+    // cyclic selector with a miss rate it resolves to off unless it was given.
+    if (!seen.vivify && options.selection == ClauseSelectorName::cyclic &&
+        options.propagate_miss_rate != 0.0) {
+        options.vivify = false;
+    }
 
     validate_options(options, seen);
     return options;
@@ -614,7 +620,13 @@ inline CsidsConfig csids_config(const Options& options) {
     return CsidsConfig{.initial_activity = options.csids_initial,
                        .decay = options.csids_decay,
                        .bump = options.csids_bump,
-                       .intersection_depth = options.csids_intersection_depth};
+                       .intersection_depth = options.csids_intersection_depth,
+                       .span = options.csids_span,
+                       .phase_saving = {.recent_trails = options.phase_saving_recent,
+                                        .target = options.phase_saving_target,
+                                        .target_reset_conflicts =
+                                            options.phase_saving_target_reset,
+                                        .target_on_ties = options.phase_saving_target_on_ties}};
 }
 
 inline CompactionConfig compaction_config(const Options& options) {
@@ -627,6 +639,13 @@ inline ImplicationGraphConfig implication_graph_config(const Options& options) {
                                   .cadence = options.implication_graph_cadence,
                                   .max_pairs = options.implication_graph_max_pairs,
                                   .max_descendants = options.implication_graph_max_descendants};
+}
+
+inline BveConfig bve_config(const Options& options) {
+    return BveConfig{.enabled = options.bve,
+                     .try_from = options.bve_try_from,
+                     .tail_group_cap = options.bve_tail_group_cap,
+                     .success_rate = options.bve_success_rate};
 }
 
 inline DeletionConfig deletion_config(const Options& options) {
@@ -655,8 +674,7 @@ inline RestartConfig restart_config(const Options& options) {
                          .lbd_slow_window = options.restart_lbd_slow,
                          .lbd_min_ratio = options.restart_lbd_min_ratio,
                          .lbd_min_conflicts = options.restart_lbd_min_conflicts,
-                         .lbd_trail_ratio = options.restart_lbd_trail_ratio,
-                         .reuse_trail = options.restart_reuse_trail};
+                         .lbd_trail_ratio = options.restart_lbd_trail_ratio};
 }
 
 // --- Building the solver -----------------------------------------------------
@@ -683,7 +701,13 @@ inline std::unique_ptr<Solver> make_solver(const Options& options, std::size_t n
         make_restart_policy(restart_config(options)), proof_writer, compaction_config(options),
         ProgressConfig{.reporter = progress_reporter, .cadence = options.report_cadence},
         options.minimize, deletion_config(options), options.bump_responsible_clauses, options.subsume,
-        propagation_config(options), implication_graph_config(options));
+        propagation_config(options), implication_graph_config(options),
+        VivifyConfig{.enabled = options.vivify,
+                     .rounds = options.vivify_rounds,
+                     .cadence = options.vivify_cadence,
+                     .force_root_visit = options.vivify_force_root_visit,
+                     .effort = options.vivify_effort},
+        bve_config(options));
 }
 
 } // namespace xorcle

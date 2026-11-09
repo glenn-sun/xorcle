@@ -2,16 +2,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
 #include "algebra/row_echelon_matrix.h"
+#include "core/trail.h"
 #include "algebra_test_support.h"
 #include "heuristics/decisions/csids.h"
 #include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/decisions/fixed_literals.h"
 #include "heuristics/decisions/phase.h"
+#include "heuristics/decisions/saved_trails.h"
 #include "heuristics_test_support.h"
 #include "util/index_set.h"
 #include "util/random.h"
@@ -112,6 +115,7 @@ TEST_CASE_TEMPLATE("fixed literals: decides variables in order", Tag, DenseTag, 
 TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Csids procedure(repr, 4, default_seed);
+    procedure.set_decision_phase(DecisionPhase::falsify);
     const RowSpace empty(repr, 4);
 
     // Two rows apiece, so the trail leaves each clause open and the procedure
@@ -300,6 +304,7 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
 TEST_CASE_TEMPLATE("csids: decay makes later bumps worth more", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Csids procedure(repr, 4, default_seed);
+    procedure.set_decision_phase(DecisionPhase::falsify);
     const RowSpace empty(repr, 4);
 
     std::vector<Clause> clauses;
@@ -328,6 +333,7 @@ TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decisi
     CsidsConfig config;
     config.intersection_depth = 2;
     Csids procedure(repr, 4, default_seed, config);
+    procedure.set_decision_phase(DecisionPhase::falsify);
     const RowSpace empty(repr, 4);
 
     std::vector<Clause> clauses;
@@ -357,6 +363,7 @@ TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decisi
     SUBCASE("a clause sharing no pivot column is passed over") {
         config.intersection_depth = 3;
         Csids deeper(repr, 4, default_seed, config);
+        deeper.set_decision_phase(DecisionPhase::falsify);
         for (ClauseId id = 0; id < clauses.size(); ++id) {
             deeper.update_with_new_clause(clauses[id], id);
         }
@@ -377,6 +384,7 @@ TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decisi
         CsidsConfig top_alone;
         top_alone.intersection_depth = 1;
         Csids plain(repr, 4, default_seed, top_alone);
+        plain.set_decision_phase(DecisionPhase::falsify);
         for (ClauseId id = 0; id < clauses.size(); ++id) {
             plain.update_with_new_clause(clauses[id], id);
         }
@@ -408,70 +416,140 @@ TEST_CASE_TEMPLATE("csids: a deeper intersection narrows the top clause's decisi
     }
 }
 
-TEST_CASE_TEMPLATE("decision procedure: the default keeps no levels on a restart", Tag, DenseTag,
+TEST_CASE_TEMPLATE("csids: span^± intersects directions and draws the side", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const std::vector<Clause> clauses{make_clause(repr, 4, {{0}})};
-    const std::vector<std::uint8_t> active(clauses.size(), 1);
-    const RowSpace span = make_row_space(repr, 4, {});
+    constexpr std::size_t num_vars = 4;
+    const RowSpace empty(repr, num_vars);
 
-    FixedLiterals decisions(repr, 4, Seed{1});
-    CHECK(decisions.reusable_levels(span, clauses, active, {ClauseId{0}}) == 0);
+    // `span(x0, x1)` and `span(x0 + 1, x2)` meet only in `0 = 0`; with `0 = 1`
+    // added to both they share the direction `x0`.
+    std::vector<Clause> clauses;
+    clauses.push_back(make_clause(repr, num_vars, {{0}, {1}}));
+    clauses.push_back(make_clause(repr, num_vars, {{0, num_vars}, {2}}));
+    const std::vector<std::uint8_t> active(clauses.size(), 1);
+
+    CsidsConfig config;
+    config.intersection_depth = 2;
+    const auto decide = [&](const CsidsConfig& with, Seed seed, IntersectionCounters& counters,
+                            DecisionPhase phase = DecisionPhase::random) {
+        Csids procedure(repr, num_vars, seed, with);
+        procedure.set_decision_phase(phase);
+        for (ClauseId id = 0; id < clauses.size(); ++id) {
+            procedure.update_with_new_clause(clauses[id], id);
+        }
+        procedure.update_with_resolved_clause(0);
+        const DecisionResult result = procedure.make_decision(empty, clauses, active);
+        REQUIRE(result.equation.has_value());
+        CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
+        counters = procedure.intersection_counters();
+        return bits_of(*result.equation);
+    };
+
+    SUBCASE("the plain form keeps nothing") {
+        IntersectionCounters counters;
+        (void)decide(config, default_seed, counters);
+        CHECK(counters.decisions == 0);
+        CHECK(counters.empty_intersections == 1);
+    }
+
+    SUBCASE("span^± keeps the shared direction, on either side") {
+        config.span = CsidsSpan::plus_minus;
+        std::size_t positive = 0;
+        std::size_t negative = 0;
+        for (std::uint64_t seed = 0; seed < 32; ++seed) {
+            IntersectionCounters counters;
+            const std::vector<std::size_t> bits = decide(config, Seed{seed}, counters);
+            CHECK(counters.decisions == 1);
+            CHECK(counters.intersected_clauses == 1);
+            CHECK(counters.dimension_before == 2);
+            CHECK(counters.dimension_after == 1);
+            CHECK(counters.dimension_one == 1);
+            if (bits == std::vector<std::size_t>{0}) {
+                ++positive;
+            } else {
+                CHECK(bits == std::vector<std::size_t>{0, num_vars});
+                ++negative;
+            }
+        }
+        CHECK(positive > 0);
+        CHECK(negative > 0);
+    }
+
+    SUBCASE("span^± puts falsify on the top clause's side, and satisfy on the other") {
+        config.span = CsidsSpan::plus_minus;
+        for (std::uint64_t seed = 0; seed < 8; ++seed) {
+            IntersectionCounters counters;
+            CHECK(decide(config, Seed{seed}, counters, DecisionPhase::falsify) ==
+                  std::vector<std::size_t>{0});
+            CHECK(decide(config, Seed{seed}, counters, DecisionPhase::satisfy) ==
+                  std::vector<std::size_t>{0, num_vars});
+        }
+    }
 }
 
-TEST_CASE_TEMPLATE("csids: trail reuse keeps the levels outranking the next decision", Tag,
-                   DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("saved trails: the clause step chooses a side consistent with the trail",
+                   Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     constexpr std::size_t num_vars = 4;
+    const PhaseSavingConfig config{.recent_trails = 1, .target = false};
+    SavedTrails saved(repr, num_vars, config);
 
-    // Clause `i` is `[x_i = 1] v [x_(i+1) = 1]`, so a trail row `x_i + 1 = 0`
-    // satisfies it while leaving the clauses after it open.
+    // The saved trail S: `x0 = 0` decided at level 1, then `x1 = 0` propagated, then
+    // `0 = 1`, the conflict, which S leaves out. The search goes back to the root and decides `x0 = 1` instead, so U = span(x0 = 1).
+    Trail current(repr, num_vars);
+    current.learn(make_equation_with(repr, num_vars, {0}), std::nullopt, 1);
+    current.learn(make_equation_with(repr, num_vars, {1}), ClauseId{0}, 1);
+    current.learn(make_equation_with(repr, num_vars, {num_vars}), ClauseId{1}, 1);
+    saved.update_with_conflict(current, std::vector<std::size_t>{1, 2});
+    current.resize(1);
+    current.learn(make_equation_with(repr, num_vars, {0, num_vars}), std::nullopt, 1);
+    const std::vector<std::size_t> stamps{1, 3};
+
+    // `neg(C)` mentions x0, which S and U set apart; `neg(D)` does not.
     std::vector<Clause> clauses;
-    for (std::size_t var = 0; var < 3; ++var) {
-        clauses.push_back(make_clause(repr, num_vars, {{var}, {var + 1}}));
+    clauses.push_back(make_clause(repr, num_vars, {{0, num_vars}, {1}, {2}}));
+    clauses.push_back(make_clause(repr, num_vars, {{1}, {3}}));
+    const auto space_of = [&](const std::vector<std::vector<std::size_t>>& rows) {
+        RowSpace space(repr, num_vars);
+        for (const std::vector<std::size_t>& bits : rows) {
+            space.add_row(Equation::from_bits(repr, num_vars, std::span<const std::size_t>(bits)));
+        }
+        return space;
+    };
+
+    SUBCASE("a clause not mentioning x0 decides x1 = 0") {
+        RowSpace space = space_of({{1}, {3}});
+        saved.narrow(space, std::vector<ClauseId>{1}, clauses, current.span(), stamps);
+        REQUIRE(space.rows() == 1);
+        CHECK(bits_of(space.row(0)) == std::vector<std::size_t>{1});
+        CHECK(saved.counters().recent_clause_step.accepted == 1);
+        CHECK(saved.counters().clause_step_top_clause == 1);
+        CHECK(saved.counters().uniform_sides == 0);
+        CHECK(saved.counters().dimension_before == 2);
+        CHECK(saved.counters().dimension_after == 1);
     }
 
-    const std::vector<std::uint8_t> active(clauses.size(), 1);
-
-    Csids decisions(repr, num_vars, Seed{1});
-    for (ClauseId id = 0; id < clauses.size(); ++id) {
-        decisions.update_with_new_clause(clauses[id], id);
-    }
-    // Activity 3, 2 and 0 respectively, all at the same increment.
-    decisions.update_with_resolved_clause(0);
-    decisions.update_with_resolved_clause(0);
-    decisions.update_with_resolved_clause(0);
-    decisions.update_with_resolved_clause(1);
-    decisions.update_with_resolved_clause(1);
-
-    // The trail satisfies clause 0 at level 1, so clause 1 is what the next
-    // decision comes from and only a level decided from clause 0 outranks it.
-    const RowSpace empty = make_row_space(repr, num_vars, {});
-    (void)decisions.make_decision(empty, clauses, active);
-    const RowSpace span = make_row_space(repr, num_vars, {{0, num_vars}});
-
-    CHECK(decisions.reusable_levels(span, clauses, active, {ClauseId{0}}) == 1);
-    CHECK(decisions.reusable_levels(span, clauses, active, {ClauseId{0}, ClauseId{1}}) == 1);
-    CHECK(decisions.reusable_levels(span, clauses, active, {ClauseId{1}}) == 0);
-    CHECK(decisions.reusable_levels(span, clauses, active, {ClauseId{2}}) == 0);
-
-    SUBCASE("a level decided from a deleted clause ends the run of kept levels") {
-        std::vector<std::uint8_t> deleted = active;
-        deleted[0] = 0;
-        CHECK(decisions.reusable_levels(span, clauses, deleted, {ClauseId{0}}) == 0);
+    SUBCASE("a clause mentioning x0 holds both sides of x1, and narrowing leaves the side open") {
+        // `x0 = 0` and `x0 + x1 = 0` of S are `0 = 1` and `x1 = 1` modulo U.
+        RowSpace space = space_of({{1}, {2}});
+        saved.narrow(space, std::vector<ClauseId>{0}, clauses, current.span(), stamps);
+        CHECK(saved.counters().recent_clause_step.inconsistent == 1);
+        CHECK(saved.counters().recent_clause_step.accepted == 0);
+        CHECK(saved.counters().recent_narrowing == 1);
+        REQUIRE(space.rows() == 2);
+        CHECK(bits_of(space.row(0)) == std::vector<std::size_t>{1});
+        CHECK(bits_of(space.row(1)) == std::vector<std::size_t>{num_vars});
+        CHECK(saved.counters().uniform_sides == 1);
     }
 
-    SUBCASE("a level the fallback basis decided ends the run of kept levels") {
-        CHECK(decisions.reusable_levels(span, clauses, active, {std::nullopt}) == 0);
-        CHECK(decisions.reusable_levels(span, clauses, active, {ClauseId{0}, std::nullopt}) == 1);
-    }
-
-    SUBCASE("the restart's backjump leaves the choice of clause where it was") {
-        // Clause 0 was walked past on the satisfying trail; once the restart
-        // discards level 1, it must again be the clause with the most activity.
-        decisions.update_with_backjump(0);
-        (void)decisions.make_decision(empty, clauses, active);
-        CHECK(decisions.decision_clause_hint() == std::optional<ClauseId>{0});
+    SUBCASE("past an inconsistent top clause a partner decides") {
+        RowSpace space = space_of({{1}});
+        saved.narrow(space, std::vector<ClauseId>{0, 1}, clauses, current.span(), stamps);
+        REQUIRE(space.rows() == 1);
+        CHECK(bits_of(space.row(0)) == std::vector<std::size_t>{1});
+        CHECK(saved.counters().recent_clause_step.inconsistent == 1);
+        CHECK(saved.counters().clause_step_partner == 1);
     }
 }
 

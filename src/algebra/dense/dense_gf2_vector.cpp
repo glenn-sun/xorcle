@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace xorcle {
 
@@ -12,7 +13,9 @@ void DenseGF2Vector::resize(std::size_t num_bits) {
     const std::size_t new_num_words = word_count(num_bits);
     if (new_num_words > capacity_) {
         Word* words = new Word[new_num_words];
-        std::memcpy(words, words_, old_num_words * sizeof(Word));
+        if (old_num_words != 0) {
+            std::memcpy(words, words_, old_num_words * sizeof(Word));
+        }
         if (owns_words_) {
             delete[] words_;
         }
@@ -51,6 +54,26 @@ std::size_t DenseGF2Vector::hash() const noexcept {
         }
     }
     return static_cast<std::size_t>(value);
+}
+
+void DenseGF2Vector::append_key_except_last_bit(std::string& key) const {
+    assert(num_bits_ != 0 && "append_key_except_last_bit on a vector of no bits");
+    const Word* words = words_;
+    const std::size_t last = num_words() - 1;
+    const auto append = [&key](const std::size_t i, const Word word) {
+        const auto idx = static_cast<std::uint32_t>(i);
+        key.append(reinterpret_cast<const char*>(&idx), sizeof(idx));
+        key.append(reinterpret_cast<const char*>(&word), sizeof(word));
+    };
+    for (std::size_t i = 0; i < last; ++i) {
+        if (words[i] != 0) {
+            append(i, words[i]);
+        }
+    }
+    const Word word = words[last] & ~(Word{1} << ((num_bits_ - 1) & word_mask));
+    if (word != 0) {
+        append(last, word);
+    }
 }
 
 std::size_t DenseGF2Vector::hash_except_last_bit() const noexcept {

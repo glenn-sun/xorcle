@@ -12,6 +12,7 @@
 
 #include "algebra/equation.h"
 #include "algebra/equation_repr.h"
+#include "algebra/reduce_result.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
 #include "cli/options.h"
@@ -154,16 +155,17 @@ std::vector<std::string> operator+(std::vector<std::string> a, const std::vector
 /// @p flags, so that a run here is the run `xorcle <flags> <file>` performs.
 ///
 /// The sparse representation runs the cyclic selector, the only one it supports,
-/// unless @p flags choose.
+/// unless @p flags choose. BVE is off unless @p flags choose: it solves most of
+/// these instances before the first decision.
 /// @param selector Replaces the selector @p flags name, when non-null.
 /// @param proof_writer Not owned; null for no proof.
 Run make_run(EquationRepr repr, std::string_view instance,
              const std::vector<std::string>& flags = {},
              std::unique_ptr<ClauseSelector> selector = nullptr,
              RawProofWriter* proof_writer = nullptr) {
-    std::vector<std::string> arguments;
+    std::vector<std::string> arguments = {"--bve=false"};
     if (repr == EquationRepr::sparse) {
-        arguments = {"--equation-repr=sparse", "--selection=cyclic"};
+        arguments.insert(arguments.end(), {"--equation-repr=sparse", "--selection=cyclic"});
     }
     arguments = arguments + flags + std::vector<std::string>{"instance.xnf"};
     std::ostringstream help;
@@ -352,6 +354,40 @@ TEST_CASE_TEMPLATE("solver: SAT found by search", Tag, DenseTag, SparseTag) {
     // at the root, so the answer cannot be reached without deciding.
     CHECK(solution.assignment->test(0) != solution.assignment->test(1));
     CHECK(run.solver->decision_procedure().counters().decisions > 0);
+}
+
+TEST_CASE_TEMPLATE("solver: a model is completed over what BVE eliminated", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    // x1 = x2 and x3, read by two clauses, beside clauses of equations over the rest.
+    constexpr std::string_view instance = "p xnf 7 9\n"
+                                          "-1 2 0\n"
+                                          "-1 3 0\n"
+                                          "1 -2 -3 0\n"
+                                          "1 4 0\n"
+                                          "-1 5 0\n"
+                                          "4+5 6+7 0\n"
+                                          "-4+6 2+7 0\n"
+                                          "2+3+5 -6 0\n"
+                                          "3+4+7 5+6 0\n";
+    Run run = make_run(repr, instance, {"--bve=true"});
+
+    const Solution solution = run.solver->solve();
+    check_satisfies(run.rows, solution, run.num_vars);
+    RunStats stats;
+    run.solver->add_to_stats(stats);
+    CHECK(stats.bve_eliminated > 0);
+    CHECK(stats.bve_passes > 0);
+}
+
+TEST_CASE_TEMPLATE("solver: BVE does not change an UNSAT verdict", Tag, DenseTag, SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    Run run = make_run(repr, search_unsat_instance, {"--bve=true"});
+
+    CHECK(run.solver->solve().result == SolveResult::unsat);
+    RunStats stats;
+    run.solver->add_to_stats(stats);
+    CHECK(stats.bve_passes > 0);
 }
 
 TEST_CASE_TEMPLATE("solver: UNSAT found by search", Tag, DenseTag, SparseTag) {
@@ -653,7 +689,7 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
         }
     }
 
-    SUBCASE("with restarts and no trail reuse it is every non-root level") {
+    SUBCASE("with restarts it is every non-root level") {
         const std::vector<Backjump> backjumps = record(tiny_luby_restarts());
         REQUIRE_FALSE(backjumps.empty());
 
@@ -672,19 +708,6 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
         }
         // The case that tells the two formulas apart really did occur.
         CHECK(discriminating > 0);
-    }
-
-    SUBCASE("trail reuse stops a restart short of the root, never above the clause") {
-        const std::vector<Backjump> backjumps =
-            record(tiny_luby_restarts() + std::vector<std::string>{"--restart-reuse-trail=true"});
-        REQUIRE_FALSE(backjumps.empty());
-
-        for (const Backjump& backjump : backjumps) {
-            CHECK(backjump.level_after + backjump.removed_levels == backjump.level_before);
-            // Reuse chooses within what the conflict already allows, so a
-            // restart still lands at or below the asserting level.
-            CHECK(backjump.level_after <= backjump.asserting_level);
-        }
     }
 }
 
@@ -749,6 +772,100 @@ TEST_CASE_TEMPLATE("solver: what makes an implication graph run due", Tag, Dense
     // Off, nothing is read however many clauses narrow.
     const ImplicationGraphCounters off = counters({"--implication-graph=false"});
     CHECK(off.num_runs == 0);
+}
+
+// A row of the clause's linear negation that the trail already implies is not
+// assumed, and the replacement is the clause of the rows assumed, so the implied
+// row leaves the clause. Here `x1 = 0` is implied: at the root by a unit, or by
+// propagation from any assumed row other than `x1 = 0` itself. A pass runs at the
+// first root visit, its budget a hundredth of the root's one propagation: one order.
+TEST_CASE("solver: vivification removes a row the trail implies from the clause") {
+    const std::vector<std::string> flags = {"--vivify=true", "--vivify-rounds=1",
+                                            "--vivify-cadence=0",
+                                            "--compact=false", "--implication-graph=false"};
+    const auto narrowings = [&flags](std::string_view instance, std::size_t seed) {
+        Run run = make_run(EquationRepr::dense, instance,
+                           flags + std::vector<std::string>{"--seed=" + std::to_string(seed)});
+        CHECK(run.solver->solve().result == SolveResult::sat);
+        const VivifyCounters& counters = run.solver->vivify_counters();
+        REQUIRE(counters.num_orders == 1);
+        return std::pair{counters.num_narrowed, counters.narrowed_width_after};
+    };
+
+    SUBCASE("implied at the root") {
+        // [x1 = 0] ^ (x1 v x2 v x3): every order narrows to two rows.
+        constexpr std::string_view instance = "p cnf 3 2\n"
+                                              "-1 0\n"
+                                              "1 2 3 0\n";
+        for (std::size_t seed = 0; seed < 20; ++seed) {
+            CAPTURE(seed);
+            CHECK(narrowings(instance, seed) == std::pair<std::size_t, std::size_t>{1, 2});
+        }
+    }
+
+    SUBCASE("implied by propagation") {
+        // (x1 v x2 v x3), and for each other nonzero v in the span of x1, x2, x3,
+        // [v = 1] v [x1 = 0]. An order whose first row is not `x1 = 0` assumes it,
+        // propagates `x1 = 0`, and ends with two rows that do not span `x1 = 0`;
+        // one whose first row is `x1 = 0` assumes all three and narrows nothing.
+        // The unit [x4 = 1] is the root's propagation.
+        constexpr std::string_view instance = "p xnf 4 8\n"
+                                              "4 0\n"
+                                              "1 2 3 0\n"
+                                              "2 -1 0\n"
+                                              "3 -1 0\n"
+                                              "1+2 -1 0\n"
+                                              "1+3 -1 0\n"
+                                              "2+3 -1 0\n"
+                                              "1+2+3 -1 0\n";
+        std::size_t num_narrowed = 0;
+        for (std::size_t seed = 0; seed < 40; ++seed) {
+            CAPTURE(seed);
+            Run run = make_run(EquationRepr::dense, instance,
+                               flags + std::vector<std::string>{"--seed=" + std::to_string(seed)});
+            CHECK(run.solver->solve().result == SolveResult::sat);
+            const VivifyCounters& counters = run.solver->vivify_counters();
+            REQUIRE(counters.num_orders == 1);
+            if (counters.num_narrowed == 0) {
+                continue;
+            }
+            ++num_narrowed;
+            CHECK(counters.narrowed_width_after == 2);
+            // The replacement takes the first id after the eight starting clauses.
+            const Clause& replacement = run.solver->selector().clauses()[8];
+            REQUIRE(replacement.rows() == 2);
+            Equation x1 = make_equation_with(EquationRepr::dense, 4, {0});
+            CHECK(replacement.partial_reduce(x1).kind != ReduceResult::Kind::eq_true);
+        }
+        // An order starts with `x1 = 0` one time in seven.
+        CHECK(num_narrowed >= 25);
+    }
+}
+
+// A clause another subsumes can narrow to exactly the other's span, through that
+// clause's own propagation; the kept clause stands for it and nothing is added.
+TEST_CASE("solver: a vivification narrowing a kept clause already has adds no clause") {
+    // (x1 v x2) subsumes (x1 v x2 v x3); the unit [x4 = 1] is the root's propagation.
+    constexpr std::string_view instance = "p cnf 4 3\n"
+                                          "4 0\n"
+                                          "1 2 0\n"
+                                          "1 2 3 0\n";
+    std::size_t num_kept = 0;
+    for (std::size_t seed = 0; seed < 40; ++seed) {
+        CAPTURE(seed);
+        Run run = make_run(EquationRepr::dense, instance,
+                           {"--vivify=true", "--vivify-rounds=1", "--vivify-cadence=0",
+                            "--compact=false",
+                            "--seed=" + std::to_string(seed)});
+        CHECK(run.solver->solve().result == SolveResult::sat);
+        const std::size_t kept = run.solver->counters().num_equivalent_clauses_at_vivification;
+        if (kept != 0) {
+            ++num_kept;
+            CHECK(run.solver->num_active_clauses() == 2);
+            CHECK(run.solver->selector().num_clauses() == 3);
+        }
+    }
+    CHECK(num_kept > 0);
 }
 
 } // namespace xorcle

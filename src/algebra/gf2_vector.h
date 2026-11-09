@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <optional>
 #include <span>
+#include <string>
 
 #include "algebra/equation_repr.h"
 #include "util/index_set.h"
@@ -13,7 +14,8 @@ namespace xorcle {
 /// @brief Required features of various implementations of vectors over GF(2).
 template <class V>
 concept GF2Vector = requires(V v, const V cv, std::size_t i, std::span<const std::size_t> bits,
-                            const IndexSet& indices, IndexSet& mutable_indices, void* buffer) {
+                            const IndexSet& indices, IndexSet& mutable_indices, void* buffer,
+                            std::string& key) {
     { V::repr } -> std::convertible_to<EquationRepr>;
     { V(i) }; // zero vector of `i` bits
     { V::buffer_bytes(i) } -> std::same_as<std::size_t>; // of the buffer the next two use
@@ -37,6 +39,7 @@ concept GF2Vector = requires(V v, const V cv, std::size_t i, std::span<const std
     { cv.equals_except_last_bit(cv) } -> std::same_as<bool>;
     { cv.hash() } -> std::same_as<std::size_t>;
     { cv.hash_except_last_bit() } -> std::same_as<std::size_t>; // agrees with `equals_except_last_bit`
+    { cv.append_key_except_last_bit(key) } -> std::same_as<void>; // agrees with `equals_except_last_bit`
     { cv.for_each_set_bit([](std::size_t) {}) } -> std::same_as<void>;
     { cv.num_set_bits() } -> std::same_as<std::size_t>;
     { cv.add_set_bits_to(mutable_indices) } -> std::same_as<void>;

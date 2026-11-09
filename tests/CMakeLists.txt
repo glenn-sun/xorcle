@@ -18,6 +18,7 @@ add_executable(xorcle_tests
     unit/reference_matrix.cpp
     unit/test_analysis.cpp
     unit/test_attempt_budget.cpp
+    unit/test_bve.cpp
     unit/test_clause_decisions.cpp
     unit/test_clause_selector.cpp
     unit/test_compaction.cpp
@@ -98,6 +99,18 @@ add_test(NAME proof_roundtrip_no_compact
             --compact=false)
 set_tests_properties(proof_roundtrip_no_compact PROPERTIES SKIP_RETURN_CODE 77)
 
+# BVE is off by default. Here it eliminates 133 times by gates, each resolvent a
+# line of the proof, and on the second instance it runs and eliminates nothing.
+add_test(NAME proof_roundtrip_bve
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect "^c BVE eliminations: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> bivium "r=531;k=51;wrong=1" 1 --bve=true)
+set_tests_properties(proof_roundtrip_bve PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME proof_roundtrip_bve_nothing
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect "^c BVE passes: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1 --bve=true)
+set_tests_properties(proof_roundtrip_bve_nothing PROPERTIES SKIP_RETURN_CODE 77)
+
 # The default exact watchlist hands the propagator a trigger hint; the cyclic
 # selector does not, so its attempts reach their reasons by a path of their own,
 # and its default miss rate leaves propagation short of a fixed point.
@@ -153,6 +166,23 @@ add_test(NAME proof_roundtrip_equivalent_clause_eviction_subsumption
 set_tests_properties(proof_roundtrip_equivalent_clause_eviction_subsumption
                      PROPERTIES SKIP_RETURN_CODE 77)
 
+# Vivification narrows clauses at root visits ten conflicts apart, within its
+# budget; each narrowing is a line derived by the trial's propagation, and the
+# clause it replaces is deleted.
+add_test(NAME proof_roundtrip_vivify
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect "^c Clauses narrowed: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> tseitin "n=90;k=3" 1
+            --vivify=true --vivify-cadence=10)
+set_tests_properties(proof_roundtrip_vivify PROPERTIES SKIP_RETURN_CODE 77)
+# A pass due above the root goes to the root for it and replays the decisions, so
+# narrowings are written from passes the search did not come back to the root for.
+add_test(NAME proof_roundtrip_vivify_force_root_visit
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect "^c Root visits forced for a pass: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --vivify=true --vivify-cadence=10 --vivify-force-root-visit=true)
+set_tests_properties(proof_roundtrip_vivify_force_root_visit PROPERTIES SKIP_RETURN_CODE 77)
 # Half the declared variables are unused, and the proof is over all of them. The
 # second instance compacts as well.
 add_test(NAME proof_roundtrip_unused_vars

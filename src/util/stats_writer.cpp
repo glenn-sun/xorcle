@@ -131,10 +131,13 @@ ConsoleStatsWriter::log(const RunStats& stats) {
     append_section(StatsSection::restart);
     append_section(StatsSection::clauses);
     append_section(StatsSection::intersection);
+    append_section(StatsSection::phase_saving);
     append_section(StatsSection::minimize);
     append_section(StatsSection::subsume);
+    append_section(StatsSection::vivify);
     append_section(StatsSection::deletion);
     append_section(StatsSection::propagate_budget);
+    append_section(StatsSection::bve);
     append_section(StatsSection::implication_graph);
     append_section(StatsSection::exact_watchlist);
     append_section(StatsSection::timing);

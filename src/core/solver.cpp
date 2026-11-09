@@ -43,7 +43,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
                const CompactionConfig& compaction, const ProgressConfig& progress, bool minimize,
                const DeletionConfig& deletion, bool bump_responsible_clauses, bool subsume,
                const PropagationConfig& propagation,
-               const ImplicationGraphConfig& implication_graph)
+               const ImplicationGraphConfig& implication_graph, const VivifyConfig& vivify,
+               const BveConfig& bve)
     : repr_(repr),
       original_num_vars_(num_vars),
       used_vars_(std::move(used_vars)),
@@ -68,8 +69,11 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
       minimize_(minimize),
       bump_responsible_clauses_(bump_responsible_clauses),
       subsume_(subsume),
+      bve_config_(bve),
+      bve_is_due_(bve.enabled),
       implication_graph_config_(implication_graph),
-      implication_graph_(repr, active_num_vars_, implication_graph) {
+      implication_graph_(repr, active_num_vars_, implication_graph),
+      vivify_(vivify) {
     assert(std::ranges::is_sorted(used_vars_, std::less_equal<>{}) &&
            (used_vars_.empty() || used_vars_.back() < num_vars) &&
            "the used variables must be strictly ascending and below num_vars");
@@ -81,6 +85,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
            "an attempt budget needs the cyclic selector");
     assert((proof_writer_ == nullptr || proof_writer_->num_vars() == original_num_vars_) &&
            "the proof writer's variable numbering must be the instance's");
+    assert((!bve_config_.enabled || compaction_.enabled) && "BVE needs compaction");
     clause_activity_ = dynamic_cast<const ClauseActivitySource*>(decisions_.get());
     assert((!deletion_.enabled || deletion_.key != DeletionKey::activity ||
             clause_activity_ != nullptr) &&
@@ -94,8 +99,15 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
     // The run's seed lives on the decision procedure, so these wait for its null check.
     representative_rng_ = make_rng(decisions_->base_seed(), RngComponent::minimize_representative);
     implication_graph_.set_base_seed(decisions_->base_seed());
+    bve_rng_ = make_rng(decisions_->base_seed(), RngComponent::bve_draw);
     if (proof_writer_ != nullptr) {
         proof_col_idx_to_unit_id_.resize(num_vars);
+    }
+    assert(vivify_.rounds >= 1 && vivify_.effort >= 0.0 &&
+           "a vivification pass has no round, or its effort is negative");
+    if (vivify_.enabled) {
+        assert(propagate_miss_rate_ == 0.0 && "vivification assumes on a quiescent trail");
+        vivify_rng_ = make_rng(decisions_->base_seed(), RngComponent::vivify_basis);
     }
 }
 
@@ -282,6 +294,8 @@ std::size_t Solver::attempt_budget() {
 
 std::optional<Solution> Solver::handle_conflict() {
     ++counters_.num_conflicts;
+    vivify_replay_.clear();
+    vivify_replay_next_ = 0;
     assert(trail_.level() == conflict_level_ &&
            "the conflicting propagation left the trail above the level the conflict holds at");
     if (level() == 0) {
@@ -295,6 +309,8 @@ std::optional<Solution> Solver::handle_conflict() {
 }
 
 void Solver::handle_non_root_conflict() {
+    decisions_->update_with_conflict(
+        trail_, std::span<const std::size_t>(level_stamp_).first(trail_.level() + 1));
     AssertingClause learned = find_asserting_clause(
         trail_, selector_->clauses(), conflict_clause_id_, *decisions_, representative_rng_,
         minimize_, deletion_.enabled, bump_responsible_clauses_, subsume_);
@@ -329,6 +345,12 @@ void Solver::handle_non_root_conflict() {
                                    deletion_);
         }
     }
+    if (vivify_.enabled) {
+        for (const ClauseId reason_id : learned.reason_ids) {
+            vivify_counters_.num_replacement_uses +=
+                reason_id < is_vivify_replacement_.size() ? is_vivify_replacement_[reason_id] : 0U;
+        }
+    }
     // With the resolved-clause bumps, before the decay below.
     if (bump_responsible_clauses_) {
         bump_responsible_clauses(learned.responsible_trail_idxs);
@@ -355,24 +377,12 @@ void Solver::handle_non_root_conflict() {
         ConflictSummary{.lbd = learned.lbd, .trail_length = trail_.span().rows()});
 
     // How many levels the *solver* discards. Without a restart that is the
-    // complement of the asserting level; with one it is everything below the
-    // levels trail reuse keeps.
+    // complement of the asserting level; with one it is every non-root level.
     std::size_t removed_levels = level_before_backjump - learned.asserting_level;
     backjump_to(learned.asserting_level);
     if (restart_now) {
-        // Asked on the backjumped trail: it is not conflicting, and a restart
-        // can only discard further than the conflict already has.
-        std::size_t kept_levels = 0;
-        if (restarts_->reuses_trail()) {
-            kept_levels = decisions_->reusable_levels(trail_.span(), selector_->clauses(),
-                                                      selector_->active_flags(),
-                                                      decision_clause_of_level_,
-                                                      satisfaction_record());
-            assert(kept_levels <= learned.asserting_level && "reuse kept a discarded level");
-        }
-        counters_.num_reused_levels += kept_levels;
-        removed_levels = level_before_backjump - kept_levels;
-        backjump_to(kept_levels);
+        removed_levels = level_before_backjump;
+        backjump_to(0);
         restarts_->note_restart();
         ++counters_.num_restarts;
     }
@@ -785,7 +795,6 @@ ProgressSnapshot Solver::progress_snapshot() const {
         .decision_level = trail_.level(),
         .trail_length = trail_.span().rows(),
         .num_restarts = counters_.num_restarts,
-        .num_reused_levels = counters_.num_reused_levels,
         .num_deleted_clauses = counters_.num_deleted_clauses,
         .num_attempt_props = counters_.num_attempt_props,
         .num_watch_updates = counters_.num_watch_updates};
@@ -1099,6 +1108,150 @@ bool Solver::maybe_run_implication_graph() {
     return true;
 }
 
+bool Solver::run_bve() {
+    assert(trail_.level() == 0 && trail_.span().rows() == 0 &&
+           "BVE runs on an empty trail, after the substitution of the root units");
+    assert(counters_.num_conflicts == 0 && "BVE runs before any clause is learned");
+    bve_is_due_ = false;
+
+    BvePlan plan = build_bve_plan(selector_->clauses(), selector_->active_clause_ids(),
+                                  active_num_vars_, repr_, bve_config_, bve_rng_);
+    bve_totals_.add_pass(plan.counters);
+    std::vector<ClauseId> resolvent_lines;
+    if (proof_writer_ != nullptr) {
+        resolvent_lines = write_bve_lines(plan);
+    }
+    if (plan.found_empty_clause) {
+        return false;
+    }
+    if (plan.eliminations.empty()) {
+        return true;
+    }
+
+    if (proof_writer_ != nullptr) {
+        std::vector<ClauseId> deleted;
+        for (std::size_t i = 0; i < plan.resolvents.size(); ++i) {
+            if (!plan.resolvents[i].clause.has_value()) {
+                deleted.push_back(resolvent_lines[i]);
+            }
+        }
+        for (const ClauseId clause_id : plan.removed_ids) {
+            deleted.push_back(proof_id_of_clause_[clause_id]);
+        }
+        if (!deleted.empty()) {
+            proof_writer_->write_deleted(deleted);
+        }
+    }
+    // A clause the pass left stays under its id. The resolvents take the
+    // removed clauses' ids in ascending order, and past them new ones.
+    std::vector<ClauseId> rewritten_clause_ids;
+    for (const ClauseId clause_id : plan.removed_ids) {
+        equivalent_clauses_.remove(clause_id);
+    }
+    std::size_t num_ids_taken = 0;
+    for (std::size_t i = 0; i < plan.resolvents.size(); ++i) {
+        std::optional<Clause>& resolvent = plan.resolvents[i].clause;
+        if (!resolvent.has_value()) {
+            continue;
+        }
+        resolvent->reduce_rows();
+        // Entered unlooked for: the pass keeps no resolvent with the span of a
+        // clause it read or of another resolvent.
+        const std::size_t key = resolvent->rows_hash(active_var_to_original_);
+        assert(!equivalent_clauses_.find(*resolvent, key, selector_->clauses()).has_value() &&
+               "a resolvent has the span of a kept clause");
+        if (num_ids_taken < plan.removed_ids.size()) {
+            const ClauseId clause_id = plan.removed_ids[num_ids_taken++];
+            equivalent_clauses_.enter(clause_id, key);
+            selector_->replace_clause(clause_id, std::move(*resolvent));
+            rewritten_clause_ids.push_back(clause_id);
+            if (proof_writer_ != nullptr) {
+                proof_id_of_clause_[clause_id] = resolvent_lines[i];
+            }
+        } else {
+            equivalent_clauses_.enter(selector_->num_clauses(), key);
+            decisions_->update_with_new_clause(*resolvent, selector_->num_clauses());
+            selector_->add_starting_clause(std::move(*resolvent));
+            ++num_active_clauses_;
+            if (proof_writer_ != nullptr) {
+                proof_id_of_clause_.push_back(resolvent_lines[i]);
+            }
+        }
+    }
+    for (; num_ids_taken < plan.removed_ids.size(); ++num_ids_taken) {
+        selector_->set_clause_active(plan.removed_ids[num_ids_taken], false);
+        selector_->replace_clause(plan.removed_ids[num_ids_taken],
+                                  inactive_clause_placeholder(repr_, false_equation_));
+        --num_active_clauses_;
+    }
+    assert(debug_equivalent_clause_table_is_exact() &&
+           "the equivalent clause table is out of step with the active clauses");
+
+    // No clause carries a variable the pass took out of every clause, so its
+    // column is dropped as a substitution's is.
+    const std::size_t num_dropped_vars = plan.dropped_col_idxs.count();
+    dropped_col_idxs_.or_with(plan.dropped_col_idxs);
+    num_dropped_vars_ += num_dropped_vars;
+    counters_.num_dropped_vars += num_dropped_vars;
+    compaction_history_.push_back(
+        CompactionHistoryEntry{.eliminations = std::move(plan.eliminations),
+                               .trail_rows_before = {},
+                               .renumbering = std::nullopt});
+    implication_graph_.reconfigure(active_num_vars_);
+    did_complete_sweep_ = false;
+    ++counters_.num_compactions;
+
+    const bool renumbers = plan.counters.num_unit_resolvents == 0 &&
+                           renumbering_frees_enough_words(active_num_vars_, num_dropped_vars_);
+    selector_->update_with_substitution(rewritten_clause_ids, dropped_col_idxs_, trail_);
+    decisions_->update_with_substitution(dropped_col_idxs_, selector_->clauses(),
+                                         selector_->active_flags());
+    if (renumbers) {
+        apply_renumbering();
+    }
+    return true;
+}
+
+std::vector<ClauseId> Solver::write_bve_lines(const BvePlan& plan) {
+    assert(proof_writer_ != nullptr && "no proof to record the resolvents in");
+    std::vector<ClauseId> lines;
+    lines.reserve(plan.resolvents.size());
+    std::vector<RawRow> rows;
+    for (const BvePlan::Resolvent& resolvent : plan.resolvents) {
+        // Under the resolvent's linear negation the first parent propagates and
+        // the second is falsified.
+        const auto line_of = [&](const BvePlan::Parent& parent) {
+            return parent.is_resolvent ? lines[parent.idx] : proof_id_of_clause_[parent.idx];
+        };
+        const std::vector<ClauseId> reasons{line_of(resolvent.parents[0]),
+                                            line_of(resolvent.parents[1])};
+        lines.push_back(next_proof_clause_id_++);
+        if (!resolvent.clause.has_value()) {
+            rows.clear();
+            for (const VarListEquation& row : plan.eliminations[resolvent.elimination_idx]
+                                                  .removed_clauses[resolvent.removed_clause_idx]) {
+                RawRow& lifted = rows.emplace_back();
+                for (const std::uint32_t var : row.vars) {
+                    lifted.push_back(active_var_to_original_[var]);
+                }
+                // A renumbering keeps the variables' order, so the row stays ascending.
+                if (row.constant) {
+                    lifted.push_back(original_num_vars_);
+                }
+            }
+            proof_writer_->write_learned(lines.back(), rows, reasons);
+            continue;
+        }
+        if (resolvent.clause->rows() == 0) {
+            proof_writer_->write_empty(lines.back(), reasons);
+            break;
+        }
+        proof_writer_->write_learned(lines.back(), *resolvent.clause, active_var_to_original_,
+                                     reasons);
+    }
+    return lines;
+}
+
 void Solver::feed_unit(const Equation& unit, const ClauseId proof_line) {
     assert(trail_.level() == 0 && "a unit is fed at the root");
     assert(unit.num_bits() == active_num_vars_ + 1 &&
@@ -1255,17 +1408,37 @@ Solution Solver::solve() {
             continue;
         }
 
-        if (compaction_.enabled && maybe_compact_before_decision()) {
+        const bool replaying = vivify_replay_next_ < vivify_replay_.size();
+        if (!replaying && compaction_.enabled && maybe_compact_before_decision()) {
             // The root trail was emptied, so re-propagate rather than decide.
             continue;
         }
 
-        if (maybe_run_implication_graph()) {
+        if (bve_is_due_) {
+            if (!run_bve()) {
+                return Solution{SolveResult::unsat, std::nullopt};
+            }
+            // A unit among the resolvents is propagated and substituted in turn.
+            continue;
+        }
+
+        if (!replaying && maybe_run_implication_graph()) {
             // The root trail gained units, so re-propagate rather than decide.
             continue;
         }
 
-        switch (make_decision_step()) {
+        if (maybe_vivify()) {
+            // The root trail may have gained units, so re-propagate rather than decide.
+            continue;
+        }
+        if (vivify_.force_root_visit && maybe_force_vivify_root_visit()) {
+            continue;
+        }
+
+        if (!vars_at_first_decision_.has_value()) {
+            vars_at_first_decision_ = active_num_vars();
+        }
+        switch (replaying ? replay_decision_step() : make_decision_step()) {
             case DecisionStep::decided:
                 break;
             case DecisionStep::propagating: {
@@ -1333,11 +1506,14 @@ void Solver::add_to_stats(RunStats& stats) const {
     stats.num_substituted_clauses = counters_.num_substituted_clauses;
     stats.num_equivalent_clauses = counters_.num_equivalent_clauses_at_input +
                                    counters_.num_equivalent_clauses_at_subsumption +
-                                   counters_.num_equivalent_clauses_at_substitution;
+                                   counters_.num_equivalent_clauses_at_substitution +
+                                   counters_.num_equivalent_clauses_at_vivification;
     stats.num_equivalent_clauses_at_input = counters_.num_equivalent_clauses_at_input;
     stats.num_equivalent_clauses_at_subsumption = counters_.num_equivalent_clauses_at_subsumption;
     stats.num_equivalent_clauses_at_substitution =
         counters_.num_equivalent_clauses_at_substitution;
+    stats.num_equivalent_clauses_at_vivification =
+        counters_.num_equivalent_clauses_at_vivification;
     stats.num_equivalent_starting_learned_pairs = counters_.num_equivalent_starting_learned_pairs;
     stats.num_equivalent_learned_pairs = counters_.num_equivalent_learned_pairs;
     stats.num_deferred_runs = counters_.num_deferred_runs;
@@ -1352,7 +1528,6 @@ void Solver::add_to_stats(RunStats& stats) const {
     stats.final_budget_fraction = counters_.final_budget_fraction;
 
     stats.num_restarts = counters_.num_restarts;
-    stats.num_reused_levels = counters_.num_reused_levels;
 
     // Ids are never reused, so what was allocated and what is still there part
     // company as soon as deletion runs.
@@ -1401,6 +1576,52 @@ void Solver::add_to_stats(RunStats& stats) const {
     stats.implication_graph_vertex_pairs = implication_graph_.num_vertex_pairs();
     stats.implication_graph_span_intersection_time_s = graph.span_intersection_time_s;
     stats.implication_graph_time_s = graph.time_s;
+
+    stats.vivify_passes = vivify_counters_.num_passes;
+    stats.vivify_candidates = vivify_counters_.num_candidates;
+    stats.vivify_unchanged = vivify_counters_.num_unchanged;
+    stats.vivify_orders = vivify_counters_.num_orders;
+    stats.vivify_assumed = vivify_counters_.num_assumed;
+    stats.vivify_implied = vivify_counters_.num_implied;
+    stats.vivify_attempt_props = vivify_counters_.num_attempt_props;
+    stats.vivify_narrowed = vivify_counters_.num_narrowed;
+    stats.vivify_width_before = vivify_counters_.narrowed_width_before;
+    stats.vivify_width_after = vivify_counters_.narrowed_width_after;
+    stats.vivify_units = vivify_counters_.num_units;
+    stats.vivify_narrowed_to_width_2 = vivify_counters_.num_narrowed_to_width_2;
+    stats.vivify_by_refutation = vivify_counters_.num_narrowed_by_refutation;
+    stats.vivify_by_conflict = vivify_counters_.num_narrowed_by_conflict;
+    stats.vivify_replacement_uses = vivify_counters_.num_replacement_uses;
+    stats.vivify_root_satisfied = vivify_counters_.num_root_satisfied;
+    stats.vivify_forced_visits = vivify_counters_.num_forced_visits;
+    stats.vivify_forced_visit_rows = vivify_counters_.forced_visit_rows;
+    stats.vivify_replayed = vivify_counters_.num_replayed;
+    stats.vivify_replay_skipped = vivify_counters_.num_replay_skipped;
+    stats.vivify_budget_stops = vivify_counters_.num_budget_stops;
+    stats.vivify_time_s = vivify_counters_.time_s;
+
+    stats.bve_passes = bve_totals_.num_passes;
+    stats.bve_eliminated = bve_totals_.num_eliminated;
+    stats.bve_eliminated_by_gate = bve_totals_.num_eliminated_by_gate;
+    stats.bve_eliminated_in_one_clause = bve_totals_.num_eliminated_in_one_clause;
+    stats.bve_units_substituted = bve_totals_.num_units_substituted;
+    stats.bve_clauses_tested_alone = bve_totals_.num_clauses_tested_alone;
+    stats.bve_clauses_before = bve_totals_.clauses_before;
+    stats.bve_clauses_after = bve_totals_.clauses_after;
+    stats.bve_equation_bits = bve_totals_.equation_bits;
+    stats.bve_steps = bve_totals_.num_steps;
+    stats.bve_steps_to_keep_rows = bve_totals_.steps_to_keep_rows;
+    stats.bve_time_s = bve_totals_.time_s;
+    stats.bve_readings = bve_totals_.num_readings;
+    stats.bve_readings_eliminating = bve_totals_.num_readings_eliminating;
+    stats.bve_tail_groups = bve_totals_.num_tail_groups;
+    stats.bve_tail_rows = bve_totals_.num_tail_rows;
+    stats.bve_held_in_core = bve_totals_.num_held_in_core;
+    stats.bve_choices_tried = bve_totals_.num_choices_tried;
+    stats.bve_not_drawn = bve_totals_.num_not_drawn;
+    stats.bve_not_accepted = bve_totals_.num_not_accepted;
+    stats.bve_choices_accepted = bve_totals_.num_choices_accepted;
+    stats.vars_at_first_decision = vars_at_first_decision_.value_or(0);
 
     stats.decision_time_s = counters_.decision_time_s;
 

@@ -30,9 +30,6 @@ struct RestartConfig {
     /// @brief Trail length, relative to its average, that blocks a restart; `0` never blocks.
     double lbd_trail_ratio = 1.4;
 
-    /// @brief Whether a restart keeps the decisions it would immediately re-make.
-    bool reuse_trail = false;
-
     bool operator==(const RestartConfig&) const = default;
 };
 
@@ -45,13 +42,7 @@ struct ConflictSummary {
 /// @brief Stateful restart scheduler driven by the conflicts as they happen.
 class RestartPolicy {
 public:
-    explicit RestartPolicy(bool reuse_trail = false) : reuse_trail_(reuse_trail) {}
-
     virtual ~RestartPolicy() = default;
-
-    /// @brief Whether a restart backjumps to the deepest level the decision
-    /// procedure would rebuild anyway, rather than to the root.
-    bool reuses_trail() const noexcept { return reuse_trail_; }
 
     /// @brief Record one non-root conflict; true exactly when it calls for a restart.
     ///
@@ -65,9 +56,6 @@ public:
 
     /// @brief Add this policy's own counters to `stats`; the default has none.
     virtual void add_to_stats(RunStats& stats) const;
-
-private:
-    bool reuse_trail_;
 };
 
 class NoRestarts final : public RestartPolicy {

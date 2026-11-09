@@ -22,20 +22,21 @@ add_library(xorcle_core
     src/algebra/equation_repr.cpp
     src/algebra/row_echelon_matrix.cpp
     src/algebra/dense/dense_gf2_vector.cpp
-    src/algebra/dense/dense_repr.cpp
     src/algebra/sparse/sparse_gf2_vector.cpp
-    src/algebra/sparse/sparse_repr.cpp
     src/core/analysis.cpp
     src/core/implication_graph_proof.cpp
     src/core/propagation.cpp
     src/core/solver.cpp
     src/core/trail.cpp
     src/core/trail_basis.cpp
+    src/core/vivify.cpp
+    src/heuristics/bve/bve.cpp
     src/heuristics/compaction/compaction.cpp
     src/heuristics/compaction/original_variables.cpp
     src/heuristics/equivalent_clauses/equivalent_clause_table.cpp
     src/heuristics/decisions/clause_decisions.cpp
     src/heuristics/decisions/csids.cpp
+    src/heuristics/decisions/saved_trails.cpp
     src/heuristics/decisions/decision_procedure.cpp
     src/heuristics/decisions/fixed_literals.cpp
     src/heuristics/decisions/phase.cpp

@@ -7,7 +7,7 @@
 #include <cstring>
 #include <optional>
 #include <span>
-
+#include <string>
 
 #include "algebra/equation_repr.h"
 #include "util/index_set.h"
@@ -77,6 +77,34 @@ public:
         if (this != &other) {
             resize(other.num_bits_);
             std::memcpy(words_, other.words_, num_words() * sizeof(Word));
+        }
+        return *this;
+    }
+
+    /// @brief Take `other`'s words, leaving it of no bits.
+    /// @pre `other`'s words are its own allocation, not a holder's buffer.
+    DenseGF2Vector(DenseGF2Vector&& other) noexcept
+        : num_bits_(other.num_bits_),
+          capacity_(other.capacity_),
+          words_(other.words_),
+          owns_words_(true) {
+        assert(other.owns_words_ && "a vector is moved out of its holder's buffer");
+        other.release();
+    }
+
+    /// @brief Take `other`'s words, leaving it of no bits.
+    /// @pre `other`'s words are its own allocation, not a holder's buffer.
+    DenseGF2Vector& operator=(DenseGF2Vector&& other) noexcept {
+        assert(other.owns_words_ && "a vector is moved out of its holder's buffer");
+        if (this != &other) {
+            if (owns_words_) {
+                delete[] words_;
+            }
+            num_bits_ = other.num_bits_;
+            capacity_ = other.capacity_;
+            words_ = other.words_;
+            owns_words_ = true;
+            other.release();
         }
         return *this;
     }
@@ -288,6 +316,11 @@ public:
 
     std::size_t hash() const noexcept;
 
+    /// @brief Append bytes that determine every bit but the last among vectors of as
+    /// many bits: each nonzero word with its index as four bytes, which are never all ones.
+    /// @pre `num_bits() >= 1`.
+    void append_key_except_last_bit(std::string& key) const;
+
     /// @brief A hash that `equals_except_last_bit()` vectors share.
     /// @pre `num_bits() >= 1`.
     std::size_t hash_except_last_bit() const noexcept;
@@ -298,10 +331,22 @@ public:
     void for_each_set_bit(F&& f) const {
         const Word* words = words_;
         const std::size_t num_words = word_count(num_bits_);
-        for (std::size_t w = 0; w < num_words; ++w) {
+        std::size_t w = 0;
+        while (true) {
+            // Zero words four at a time, then one: most words of a sparse row are zero.
+            while (w + 4 <= num_words && (words[w] | words[w + 1] | words[w + 2] | words[w + 3]) == 0) {
+                w += 4;
+            }
+            while (w < num_words && words[w] == 0) {
+                ++w;
+            }
+            if (w == num_words) {
+                return;
+            }
             for (Word word = words[w]; word != 0; word &= word - 1) {
                 f((w << word_shift) + static_cast<std::size_t>(std::countr_zero(word)));
             }
+            ++w;
         }
     }
 
@@ -323,6 +368,14 @@ public:
     }
 
 private:
+    /// @brief Become a vector of no bits and no words, which can be moved or assigned again.
+    void release() noexcept {
+        num_bits_ = 0;
+        capacity_ = 0;
+        words_ = nullptr;
+        owns_words_ = true;
+    }
+
 #ifndef NDEBUG
     /// @brief Whether every bit below `i` is zero, for the fused add's precondition.
     bool no_set_bit_below(std::size_t i) const noexcept {

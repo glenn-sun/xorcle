@@ -656,12 +656,13 @@ std::vector<std::string> raw_lines_before_compaction(const std::filesystem::path
     return lines;
 }
 
-/// @brief The solver's raw proof of @p clauses, under the default options.
+/// @brief The solver's raw proof of @p clauses, under the default options but with BVE off, which
+/// would rewrite the clauses before the graph reads them.
 std::vector<std::string> solver_raw_lines(const std::vector<Clause>& clauses,
                                           std::size_t num_vars,
                                           std::size_t& num_units_fed) {
     std::ostringstream help;
-    const std::optional<Options> options = parse_options({"instance.xnf"}, help);
+    const std::optional<Options> options = parse_options({"--bve=false", "instance.xnf"}, help);
     REQUIRE(options.has_value());
     const std::filesystem::path path = scratch_path("implication_graph.raw");
     {

@@ -13,15 +13,17 @@ namespace xorcle {
 enum class DecisionPhase {
     satisfy, ///< Decide the linear negation of the sampled row.
     falsify, ///< Decide the sampled row as it is stored.
-    random ///< Choose per decision, from the phase RNG stream.
+    random, ///< Choose per decision, from the phase RNG stream.
+    /// CSIDS chooses the side by its saved trails; a side they leave open is drawn as by `random`.
+    saved
 };
 
-inline constexpr DecisionPhase default_decision_phase = DecisionPhase::falsify;
+inline constexpr DecisionPhase default_decision_phase = DecisionPhase::saved;
 
 /// @brief Apply a decision phase in place to an equation in `falsify` form.
 ///
-/// Consumes exactly one draw from `rng` under `DecisionPhase::random`, and none
-/// otherwise.
+/// Consumes exactly one draw from `rng` under `DecisionPhase::random` and
+/// `DecisionPhase::saved`, and none otherwise.
 /// @pre `eqn.num_bits() == false_equation.num_bits()` and both share a representation.
 void apply_phase(Equation& eqn, DecisionPhase phase, const Equation& false_equation, Rng& rng);
 

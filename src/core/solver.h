@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
@@ -13,6 +14,7 @@
 #include "core/clause_id.h"
 #include "core/propagation.h"
 #include "core/trail.h"
+#include "heuristics/bve/bve.h"
 #include "heuristics/compaction/compaction.h"
 #include "heuristics/decisions/clause_activity.h"
 #include "heuristics/decisions/decision_procedure.h"
@@ -54,6 +56,76 @@ struct PropagationConfig {
     bool operator==(const PropagationConfig&) const = default;
 };
 
+/// @brief When and how vivification narrows clauses.
+///
+/// A pass goes through the clauses of width 3 and up by width, narrowest first,
+/// tries a clause of width `w` in a round with probability `2^(3 - w)`, and leaves
+/// out a clause a pass went through unless it is new or narrowed since.
+struct VivifyConfig {
+    bool enabled = false;
+
+    /// @brief Times a pass goes through the clauses of one width before the next width.
+    std::size_t rounds = 2;
+
+    std::size_t cadence = 1000; ///< Conflicts after a pass before the next may run.
+
+    /// @brief Whether a pass due above the root goes to the root for it and then
+    /// replays the decisions.
+    bool force_root_visit = false;
+
+    /// @brief The rows a pass may assume and imply, per row the search decided or
+    /// propagated since the last pass.
+    double effort = 0.01;
+
+    bool operator==(const VivifyConfig&) const = default;
+};
+
+/// @brief A clause an order narrowed to, with the proof lines that derive it.
+struct VivifyNarrowing {
+    Clause clause;
+    /// @brief In replay order; empty without a proof.
+    std::vector<ClauseId> proof_hints;
+};
+
+/// @brief What the vivification passes of one solve did.
+struct VivifyCounters {
+    std::size_t num_passes = 0;
+    std::size_t num_candidates = 0; ///< Clauses listed, summed over the passes.
+    /// @brief Clauses left unlisted as already gone through, summed over the passes.
+    std::size_t num_unchanged = 0;
+    std::size_t num_orders = 0;
+    std::size_t num_assumed = 0;       ///< Rows assumed, each opening a level.
+    std::size_t num_implied = 0;       ///< Equations the assumptions implied.
+    std::size_t num_attempt_props = 0; ///< Clauses handed to the propagator for them.
+
+    std::size_t num_narrowed = 0;
+    std::size_t narrowed_width_before = 0; ///< Summed over the narrowed clauses.
+    std::size_t narrowed_width_after = 0;
+    std::size_t num_units = 0;
+    std::size_t num_narrowed_to_width_2 = 0;
+
+    /// @brief The narrowed clauses by what ended the order.
+    std::size_t num_narrowed_by_refutation = 0;
+    std::size_t num_narrowed_by_conflict = 0;
+
+    /// @brief Conflict analyses that resolved with a clause a pass put in place.
+    std::size_t num_replacement_uses = 0;
+
+    std::size_t num_root_satisfied = 0; ///< Orders that found the root satisfying the clause.
+
+
+    /// @brief Root visits forced for a pass, the trail rows above the root they
+    /// dropped, and the decisions replayed and left out as decided.
+    std::size_t num_forced_visits = 0;
+    std::size_t forced_visit_rows = 0;
+    std::size_t num_replayed = 0;
+    std::size_t num_replay_skipped = 0;
+
+
+    std::size_t num_budget_stops = 0; ///< Passes their budget stopped before their last order.
+    double time_s = 0.0;
+};
+
 /// @brief Where the solver reports progress while it runs, and how often.
 struct ProgressConfig {
     ProgressReporter* reporter = nullptr; ///< Not owned; null reports nothing.
@@ -76,7 +148,6 @@ struct SolverCounters {
     std::size_t num_propagations = 0;
     std::size_t num_conflicts = 0;     ///< Root conflict included.
     std::size_t num_restarts = 0;
-    std::size_t num_reused_levels = 0; ///< Decision levels restarts kept instead of discarding.
     std::size_t num_compactions = 0;
     std::size_t num_renumberings = 0; ///< Compactions that also renumbered.
     std::size_t num_dropped_vars = 0;
@@ -86,6 +157,7 @@ struct SolverCounters {
     std::size_t num_equivalent_clauses_at_input = 0;
     std::size_t num_equivalent_clauses_at_subsumption = 0;
     std::size_t num_equivalent_clauses_at_substitution = 0;
+    std::size_t num_equivalent_clauses_at_vivification = 0;
     /// @brief Of those, the pairs of a starting and a learned clause, and of two learned clauses.
     std::size_t num_equivalent_starting_learned_pairs = 0;
     std::size_t num_equivalent_learned_pairs = 0;
@@ -211,6 +283,7 @@ public:
     /// @pre If `proof_writer` is non-null then `proof_writer->num_vars() == num_vars`.
     /// @pre If deletion is enabled with `DeletionKey::activity` then `decisions`
     /// is a `ClauseActivitySource`.
+    /// @pre If `bve.enabled` then compaction is enabled.
     Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t> used_vars,
            std::unique_ptr<ClauseSelector> selector, std::unique_ptr<DecisionProcedure> decisions,
            std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer = nullptr,
@@ -218,7 +291,8 @@ public:
            bool minimize = true, const DeletionConfig& deletion = {},
            bool bump_responsible_clauses = false, bool subsume = true,
            const PropagationConfig& propagation = {},
-           const ImplicationGraphConfig& implication_graph = {});
+           const ImplicationGraphConfig& implication_graph = {},
+           const VivifyConfig& vivify = {}, const BveConfig& bve = {});
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -262,6 +336,8 @@ public:
 
     /// @brief Width-2 clauses and vertices as the graph last held them.
     const ImplicationGraph& implication_graph() const noexcept { return implication_graph_; }
+
+    const VivifyCounters& vivify_counters() const noexcept { return vivify_counters_; }
 
     const DecisionProcedure& decision_procedure() const noexcept { return *decisions_; }
 
@@ -364,6 +440,15 @@ private:
 
     DecisionStep make_decision_step();
 
+    /// @brief Decide the next decision `maybe_force_vivify_root_visit()` saved that
+    /// the trail leaves open, or as `make_decision_step()` once none is left.
+    DecisionStep replay_decision_step();
+
+    /// @brief With a vivification pass due above the root, save the decisions to
+    /// replay and go to the root, where the pass runs once propagation is quiescent.
+    /// @return Whether it went to the root.
+    bool maybe_force_vivify_root_visit();
+
     /// @brief Fill the variables no clause constrains and answer SAT.
     Solution complete_satisfying_assignment();
 
@@ -430,6 +515,21 @@ private:
     /// must propagate again rather than decide.
     bool maybe_run_implication_graph();
 
+    /// @brief Run a BVE pass over the clause database and drop the variables it
+    /// takes out of every clause; a pass eliminating nothing changes nothing.
+    ///
+    /// A unit among the resolvents leaves the renumbering to the substitution it
+    /// brings; otherwise the pass renumbers if that frees a word.
+    /// @return False if a resolvent was the empty clause.
+    /// @pre The trail is empty and no clause has been learned.
+    bool run_bve();
+
+    /// @brief Record each resolvent of a BVE pass as a line citing its two
+    /// parents, ending at one that is the empty clause.
+    /// @return The line of each resolvent written, in the plan's order.
+    /// @pre `proof_writer_` is non-null and the clause store is as the plan read it.
+    std::vector<ClauseId> write_bve_lines(const BvePlan& plan);
+
     /// @brief Add @p unit as a width-1 clause, so propagation learns it the way
     /// it learns a unit clause conflict analysis produced.
     /// @param proof_line The line proving the clause, read only under a proof.
@@ -441,8 +541,53 @@ private:
     std::size_t clauses_reaching_width_at_most_2() const noexcept {
         return counters_.num_learned_width_1 + counters_.num_learned_width_2 +
                counters_.num_subsume_narrowed_to_width_2 +
-               counters_.num_compaction_narrowed_to_width_2;
+               counters_.num_compaction_narrowed_to_width_2 + vivify_counters_.num_units +
+               vivify_counters_.num_narrowed_to_width_2 +
+               bve_totals_.num_resolvents_of_width_at_most_2;
     }
+
+    /// @brief Run a vivification pass if the trail is at the root and one is owed.
+    /// @return Whether the pass ran an order, in which case the caller must
+    /// propagate again rather than decide.
+    bool maybe_vivify();
+
+    /// @brief The active clauses at least `vivify_min_width` wide that are the reason
+    /// of no trail row and that no pass went through since they were added or narrowed, by width.
+    std::vector<std::vector<ClauseId>> vivify_candidates_by_width();
+
+    /// @brief Assume the rows of one uniformly random basis of clause @p id in
+    /// turn, propagating after each, and undo them.
+    /// @return A narrowing of the clause that the formula implies, if the order found one.
+    /// @pre The trail is at the root and quiescent, and the clause is active, at
+    /// least two rows wide and the reason of no trail row.
+    std::optional<VivifyNarrowing> vivify_one_order(ClauseId id);
+
+    /// @brief The proof lines that derive @p narrowed by unit propagation: the
+    /// root units and the reasons of the trail rows up to @p last_level that add
+    /// to what its linear negation and the lines before them imply, through the
+    /// first that conflicts.
+    /// @pre The trail up to @p last_level, with @p narrowed's linear negation,
+    /// propagates to a conflict.
+    std::vector<ClauseId> vivify_proof_hints(const Clause& narrowed, std::size_t last_level) const;
+
+
+    /// @brief Open a decision level with @p reduced_eqn, as a decision does.
+    /// @pre `reduced_eqn` is reduced by the trail span and leads.
+    void vivify_assume(const Equation& reduced_eqn);
+
+    /// @brief Whether @p narrowed is a narrowing of clause @p id: its rows lie in
+    /// the span of that clause's rows and the root rows, so that it alone implies
+    /// the clause.
+    /// @pre The trail is at the root.
+    bool vivify_is_narrowing(const Clause& narrowed, ClauseId id) const;
+
+    /// @brief Put @p narrowing in the place of clause @p id with its deletion state,
+    /// hand that state to a kept clause with its span instead, or keep it, with its
+    /// proof line, in @p units if it is one row.
+    /// @return The id the clause goes on under, or empty for a unit or a kept clause.
+    /// @pre `vivify_is_narrowing(narrowing.clause, id)`.
+    std::optional<ClauseId> vivify_replace(ClauseId id, VivifyNarrowing narrowing,
+                                           std::vector<std::pair<Equation, ClauseId>>& units);
 
     /// @brief Apply a prepared plan and clear the used flags.
     void apply_deletion(const DeletionPlan& plan);
@@ -634,6 +779,13 @@ private:
     /// @brief Whether a learned clause deletes the reason clause it subsumes.
     bool subsume_;
 
+    BveConfig bve_config_;
+    /// @brief Until the BVE pass has run.
+    bool bve_is_due_;
+    Rng bve_rng_;
+    BveTotals bve_totals_;
+    std::optional<std::size_t> vars_at_first_decision_;
+
     ImplicationGraphConfig implication_graph_config_;
     ImplicationGraph implication_graph_;
 
@@ -653,6 +805,20 @@ private:
     /// @brief Which of the `ImplicationGraphCounters` to credit the run that is due to.
     enum class RunTrigger : std::uint8_t { first_run, clauses, conflicts, feed };
     RunTrigger run_is_due_from_ = RunTrigger::first_run;
+
+    VivifyConfig vivify_;
+    VivifyCounters vivify_counters_;
+    Rng vivify_rng_;
+    std::size_t conflicts_at_last_vivify_pass_ = 0;
+    /// @brief Decisions and propagations of the search when the last pass ran.
+    std::size_t search_rows_at_last_vivify_pass_ = 0;
+    /// @brief Whether a pass has run since the trail last left the root.
+    bool vivify_passed_at_this_root_visit_ = false;
+    /// @brief The decisions a forced root visit left to replay, each with its
+    /// decision clause, and the next to replay.
+    std::vector<std::pair<Equation, std::optional<ClauseId>>> vivify_replay_;
+    std::size_t vivify_replay_next_ = 0;
+    std::vector<std::uint8_t> is_vivify_replacement_; ///< By clause id, short of the newest ids.
 
     /// @brief What the last progress line saw, so the next one can report the
     /// interval between them rather than the run so far.

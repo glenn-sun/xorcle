@@ -72,7 +72,6 @@ RunStats sample_stats() {
     stats.num_compactions = 4;
 
     stats.num_restarts = 2;
-    stats.num_reused_levels = 0;
     stats.num_canceled_restarts = 5;
     stats.fast_lbd = 3.25;
     stats.slow_lbd = 4.5;
@@ -273,7 +272,6 @@ TEST_CASE("ConsoleStatsWriter: the restart lines appear only under a schedule") 
     stats.config = {ConfigEntry{"restart", "lbd", false}};
     const std::string output = console_output(stats);
     CHECK(output.find("c Restarts: 2\n"
-                      "c Reused levels: 0\n"
                       "c Canceled restarts: 5\n"
                       "c Fast LBD average: 3.250\n"
                       "c Slow LBD average: 4.500\n") != std::string::npos);

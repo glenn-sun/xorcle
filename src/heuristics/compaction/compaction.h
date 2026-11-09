@@ -15,15 +15,20 @@
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
+#include "heuristics/bve/elimination.h"
 #include "util/index_set.h"
 
 namespace xorcle {
 
-/// @brief One committed compaction step, enough to undo it on an assignment.
+/// @brief One committed compaction step, enough to undo it on an assignment:
+/// BVE's eliminations, then a substitution, then a renumbering, any of them absent.
 struct CompactionHistoryEntry {
+    /// @brief In the order eliminated.
+    std::vector<Elimination> eliminations;
+
     std::vector<Equation> trail_rows_before;
 
-    /// @brief The renumbering that followed the substitution, if one did.
+    /// @brief The renumbering that followed, if one did.
     std::optional<CompactionTransform> renumbering;
 };
 

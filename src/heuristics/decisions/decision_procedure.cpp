@@ -25,14 +25,11 @@ void DecisionProcedure::update_with_subsumed_clause(ClauseId, ClauseId) {}
 
 // The procedures that walk their whole candidate set on every decision have
 // nothing to restore.
+void DecisionProcedure::update_with_conflict(const Trail&, std::span<const std::size_t>) {}
+
 void DecisionProcedure::update_with_backjump(std::size_t) {}
 
-std::size_t DecisionProcedure::reusable_levels(const RowSpace&, const std::vector<Clause>&,
-                                              const std::vector<std::uint8_t>&,
-                                              const std::vector<std::optional<ClauseId>>&,
-                                              const SatisfactionRecord&) {
-    return 0;
-}
+void DecisionProcedure::update_with_replayed_decision() {}
 
 std::optional<ClauseId> DecisionProcedure::decision_clause_hint() const {
     return std::nullopt;
@@ -61,8 +58,8 @@ void DecisionProcedure::reset_phase_rng() {
     phase_rng_ = make_rng(base_seed_, RngComponent::decision_phase);
 }
 
-void DecisionProcedure::apply_decision_phase(Equation& eqn) const {
-    apply_phase(eqn, decision_phase_, false_equation_, phase_rng_);
+void DecisionProcedure::apply_decision_phase(Equation& eqn, DecisionPhase phase) const {
+    apply_phase(eqn, phase, false_equation_, phase_rng_);
 }
 
 void DecisionProcedure::set_num_vars(std::size_t num_vars) {

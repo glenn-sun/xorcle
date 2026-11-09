@@ -35,7 +35,6 @@ ProgressSnapshot sample_snapshot() {
                             .decision_level = 17,
                             .trail_length = 41,
                             .num_restarts = 3,
-                            .num_reused_levels = 7,
                             .num_deleted_clauses = 640,
                             .num_attempt_props = 31415,
                             .num_watch_updates = 2718};

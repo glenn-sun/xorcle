@@ -17,6 +17,7 @@ void apply_phase(Equation& eqn, DecisionPhase phase, const Equation& false_equat
             eqn.plus_assign(false_equation);
             return;
         case DecisionPhase::random:
+        case DecisionPhase::saved:
             if (random_int(rng, 2) == 1) {
                 eqn.plus_assign(false_equation);
             }

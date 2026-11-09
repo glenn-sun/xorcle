@@ -46,10 +46,14 @@ RunStats::reports(const StatsSection section) const {
             const std::string depth = config_value(*this, "csids_intersection_depth");
             return !depth.empty() && depth != "1";
         }
+        case StatsSection::phase_saving:
+            return config_value(*this, "phase") == "saved";
         case StatsSection::minimize:
             return config_value(*this, "minimize") == "true";
         case StatsSection::subsume:
             return config_value(*this, "subsume") == "true";
+        case StatsSection::vivify:
+            return config_value(*this, "vivify") == "true";
         case StatsSection::deletion:
             return config_value(*this, "deletion") == "true";
         case StatsSection::propagate_budget: {
@@ -57,6 +61,8 @@ RunStats::reports(const StatsSection section) const {
             return config_value(*this, "selection") == "cyclic" && !miss_rate.empty() &&
                    miss_rate != "0";
         }
+        case StatsSection::bve:
+            return config_value(*this, "bve") == "true";
         case StatsSection::implication_graph:
             return config_value(*this, "implication_graph") == "true";
         case StatsSection::exact_watchlist:

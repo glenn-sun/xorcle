@@ -62,6 +62,11 @@ if expect_status 2 "$work/missing.xnf"; then
     expect_line err '^Error: ' "a missing file printed no Error: line"
 fi
 
+# An option that needs another: BVE drops the variables it eliminates through compaction.
+if expect_status 2 --bve=true --compact=false "$work/missing.xnf"; then
+    expect_line err '^Error: .*--bve requires --compact=true' "--bve without compaction printed no Error: line"
+fi
+
 printf 'p xnf 3 2\n1 2 0\n' > "$work/malformed.xnf"
 if expect_status 1 "$work/malformed.xnf"; then
     expect_line err '^Error: ' "a malformed instance printed no Error: line"

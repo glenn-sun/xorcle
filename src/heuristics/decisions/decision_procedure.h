@@ -16,6 +16,7 @@
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
+#include "core/trail.h"
 #include "heuristics/decisions/phase.h"
 #include "util/index_set.h"
 #include "util/random.h"
@@ -66,6 +67,11 @@ public:
     /// @brief Whether propagation last ran to quiescence, leaving no clause propagating.
     bool quiescent() const noexcept { return quiescent_; }
 
+    /// @brief The stamp of every level up to the trail's, empty for a record that knows nothing.
+    std::span<const std::size_t> level_stamps() const noexcept {
+        return level_stamps_.empty() ? level_stamps_ : level_stamps_.first(level_ + 1);
+    }
+
 private:
     std::span<const std::size_t> level_stamps_;
     std::size_t level_ = 0;
@@ -76,8 +82,11 @@ private:
 struct IntersectionCounters {
     std::size_t decisions = 0; ///< Drawn from an intersection of two or more clauses.
     std::size_t intersected_clauses = 0; ///< Below the top, whose intersection was kept.
-    std::size_t dimension_before = 0; ///< Of the top clause modulo the trail.
-    std::size_t dimension_after = 0; ///< Of the intersection drawn from.
+    /// @brief Of the top clause modulo the trail, counting under `span^±` the
+    /// directions alone, as the plain form does.
+    std::size_t dimension_before = 0;
+    std::size_t dimension_after = 0; ///< Of the intersection drawn from, counted as `dimension_before`.
+    std::size_t dimension_one = 0; ///< Decisions drawn from an intersection of dimension one.
     std::size_t empty_intersections = 0; ///< Open clauses below the top that were not kept.
     std::size_t skipped_intersections = 0; ///< Of those, the ones sharing no pivot column.
     std::size_t passed_satisfied_clauses = 0;
@@ -148,6 +157,11 @@ public:
 
     virtual void update_with_resolved_clause(ClauseId id);
 
+    /// @brief Note the trail of a non-root conflict, before the backjump, which
+    /// the default ignores.
+    /// @param level_stamps The stamp of every level of `trail`.
+    virtual void update_with_conflict(const Trail& trail, std::span<const std::size_t> level_stamps);
+
     /// @brief Note that `replacement_id` subsumed `subsumed_id`, which is about to
     /// be deleted: the replacement inherits the larger of the two activities.
     /// @pre Both ids are already registered.
@@ -157,23 +171,11 @@ public:
     /// leaves the candidates the discarded levels had ruled out to be offered again.
     virtual void update_with_backjump(std::size_t level);
 
+    /// @brief Note that the solver decided an equation it chose itself, one level up.
+    virtual void update_with_replayed_decision();
+
     /// @brief The clause the last decision came from, for the selector to prioritize.
     virtual std::optional<ClauseId> decision_clause_hint() const;
-
-    /// @brief How many of the lowest decision levels a restart may keep.
-    ///
-    /// The levels this procedure would rank ahead of the decision it is about to
-    /// make, so that keeping them costs no search. `decision_clauses[k]` is the
-    /// clause the decision at level `k + 1` came from, empty when no clause
-    /// supplied it.
-    /// @return At most `decision_clauses.size()`. The default keeps nothing.
-    /// @pre `trail_span` is not conflicting.
-    /// @pre `clause_active.size() == clauses.size()`.
-    virtual std::size_t reusable_levels(const RowSpace& trail_span,
-                                        const std::vector<Clause>& clauses,
-                                        const std::vector<std::uint8_t>& clause_active,
-                                        const std::vector<std::optional<ClauseId>>& decision_clauses,
-                                        const SatisfactionRecord& known = {});
 
     /// @brief Note that a substitution rewrote the clauses and emptied the root
     /// trail, which the default ignores.
@@ -198,6 +200,8 @@ public:
 
     void set_decision_phase(DecisionPhase phase) noexcept { decision_phase_ = phase; }
 
+    DecisionPhase decision_phase() const noexcept { return decision_phase_; }
+
     /// @brief The run's seed, which every RNG stream of the run derives from.
     Seed base_seed() const noexcept { return base_seed_; }
 
@@ -216,7 +220,11 @@ protected:
 
     /// @brief Apply the configured phase in place to an equation in `falsify` form.
     /// @pre `eqn` has `num_vars() + 1` bits and this procedure's representation.
-    void apply_decision_phase(Equation& eqn) const;
+    void apply_decision_phase(Equation& eqn) const { apply_decision_phase(eqn, decision_phase_); }
+
+    /// @brief Apply `phase` in place, drawing from the phase stream as the configured one would.
+    /// @pre As `apply_decision_phase(eqn)`.
+    void apply_decision_phase(Equation& eqn, DecisionPhase phase) const;
 
     void set_num_vars(std::size_t num_vars);
 

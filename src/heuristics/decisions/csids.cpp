@@ -43,8 +43,10 @@ Csids::Csids(EquationRepr repr, std::size_t num_vars, Seed seed, const CsidsConf
       state_(config),
       clause_sat_workspace_(repr, num_vars),
       intersection_depth_(config.intersection_depth),
+      span_(config.span),
       intersection_(repr, num_vars),
-      clause_equation_rng_(make_rng(seed, RngComponent::csids_equation)) {
+      clause_equation_rng_(make_rng(seed, RngComponent::csids_equation)),
+      saved_trails_(repr, num_vars, config.phase_saving) {
     reinitialize();
 }
 
@@ -56,6 +58,7 @@ void Csids::reinitialize() {
     state_.reset_activity();
     satisfied_by_level_.clear();
     level_ = 0;
+    saved_trails_.reinitialize(num_vars());
 }
 
 DecisionResult Csids::make_decision(const RowSpace& trail_span,
@@ -90,7 +93,7 @@ DecisionResult Csids::make_decision(const RowSpace& trail_span,
             // decision, so the last-decision record stands.
             return DecisionResult{std::nullopt, id};
         }
-        if (intersection_depth_ > 1) {
+        if (intersection_depth_ > 1 || phase_saving()) {
             const auto start = std::chrono::steady_clock::now();
             std::optional<DecisionResult> result =
                 decide_from_intersection(id, trail_span, clauses, clause_active, known);
@@ -128,6 +131,8 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
     // Every reduced row is zero in the trail span's pivot columns, so a nonzero
     // combination of them lies outside the span; a clause is open only if `0 = 1`
     // is outside its span plus the trail's, so its negation lies outside too.
+    // Under span^± the space also holds `0 = 1`, and a nonzero combination of
+    // the other rows is a direction the trail does not settle.
     RowSpace& space = intersection_;
     std::vector<Equation>& spare_rows = intersection_spare_rows_;
     assert(space.rows() == 0 && "the last decision left rows in the intersection");
@@ -143,17 +148,27 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
         }
     }
     const std::size_t dimension_before = space.rows();
+    const bool plus_minus = span_ == CsidsSpan::plus_minus;
+    if (plus_minus) {
+        add_false_row_to_intersection();
+    }
+    // `0 = 1` is not a direction.
+    const auto dimension = [&space, plus_minus] {
+        return space.rows() - (plus_minus ? 1 : 0);
+    };
 
     // Open clauses are set aside to surface the ones below, and all go back.
     set_aside_ids_.clear();
     set_aside_ids_.push_back(top_id);
+    changed_clause_ids_.clear();
+    changed_clause_ids_.push_back(top_id);
     heap.extract_max();
     std::optional<ClauseId> propagating_id;
     std::size_t intersected_clauses = 0;
     while (set_aside_ids_.size() < intersection_depth_ && !heap.empty()) {
         // One dimension left is the decision, and after quiescence no clause
         // below is propagating either, so the rest of the walk finds nothing.
-        if (space.rows() == 1 && known.quiescent()) {
+        if (dimension() == 1 && known.quiescent()) {
             break;
         }
         const ClauseId id = heap.peek_max();
@@ -172,13 +187,19 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
         }
         set_aside_ids_.push_back(id);
         heap.extract_max();
-        if (space.rows() == 1) {
+        if (dimension() == 1) {
             // Its intersection with any clause is itself or nothing.
             continue;
         }
 
         const RowSpace& reduced_clause = clause_sat_workspace_.reduced_clause();
-        // An equation of both spans leads in a pivot column of each.
+        // An equation of both spans leads in a pivot column of each. Under span^±
+        // the clause's space is the reduced one plus `0 = 1`, which `space` holds,
+        // so its intersection with `space` is `space` meeting the reduced clause,
+        // plus `0 = 1`; and an open clause never pivots the constant column, so
+        // `space`'s pivot there is never found shared.
+        assert(!reduced_clause.pivot_col_idxs().test(reduced_clause.cols() - 1) &&
+               "an open clause holds 0 = 1 modulo the trail");
         if (!space.pivot_col_idxs().intersects(reduced_clause.pivot_col_idxs())) {
             assert(span_intersection(space, reduced_clause).empty() &&
                    "spans sharing no pivot column intersect");
@@ -192,9 +213,15 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
             ++intersection_counters_.empty_intersections;
             continue;
         }
+        if (intersection.size() < dimension()) {
+            changed_clause_ids_.push_back(id);
+        }
         clear_intersection();
         for (Equation& row : intersection) {
             space.add_row(std::move(row));
+        }
+        if (plus_minus) {
+            add_false_row_to_intersection();
         }
         ++intersected_clauses;
     }
@@ -207,17 +234,35 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
         clear_intersection();
         return DecisionResult{std::nullopt, propagating_id};
     }
-    if (intersected_clauses == 0) {
+    if (intersected_clauses == 0 && !phase_saving()) {
         clear_intersection();
         return std::nullopt;
     }
-    ++intersection_counters_.decisions;
-    intersection_counters_.intersected_clauses += intersected_clauses;
-    intersection_counters_.dimension_before += dimension_before;
-    intersection_counters_.dimension_after += space.rows();
+    if (intersected_clauses > 0) {
+        ++intersection_counters_.decisions;
+        intersection_counters_.intersected_clauses += intersected_clauses;
+        intersection_counters_.dimension_before += dimension_before;
+        intersection_counters_.dimension_after += dimension();
+        if (dimension() == 1) {
+            ++intersection_counters_.dimension_one;
+        }
+    }
+    if (phase_saving()) {
+        if (plus_minus) {
+            // Phase saving takes V without `0 = 1`, and adds it back while the side is open.
+            intersection_spare_rows_.push_back(space.pop_row(space.rows() - 1));
+        }
+        saved_trails_.narrow(space, changed_clause_ids_, clauses, trail_span,
+                             known.level_stamps());
+    }
 
+    // `0 = 1`, while the space holds it, is the last row, and the side is drawn
+    // after; a space phase saving left without it has its sides chosen.
+    const bool holds_false = space.pivot_col_idxs().test(space.cols() - 1);
+    assert((!holds_false || space.pivot_col_idx(space.rows() - 1) == space.cols() - 1) &&
+           "0 = 1 is not the intersection's last row");
     Equation decision = Equation::eq_true(repr(), num_vars());
-    random_nonzero_coefficients(space.rows(), clause_equation_rng_)
+    random_nonzero_coefficients(space.rows() - (holds_false ? 1 : 0), clause_equation_rng_)
         .for_each_set([&](std::size_t row_idx) { decision.plus_assign(space.row(row_idx)); });
 #ifndef NDEBUG
     Equation reduced = decision;
@@ -226,14 +271,68 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
 #endif
     clear_intersection();
     record_decision();
-    apply_decision_phase(decision);
+    if (holds_false || (span_ == CsidsSpan::plain && !phase_saving())) {
+        const DecisionPhase phase = decision_phase();
+        const bool sided = phase == DecisionPhase::falsify || phase == DecisionPhase::satisfy;
+        if (plus_minus && sided) {
+            orient_to_falsify(decision, clauses[top_id], trail_span);
+        }
+#ifndef NDEBUG
+        if (sided) {
+            RowSpace top_span = trail_span;
+            for (const Equation& row : clauses[top_id]) {
+                top_span.add_row(row);
+            }
+            Equation side = decision;
+            assert(top_span.partial_reduce(side).kind == ReduceResult::Kind::eq_true &&
+                   "the falsify side of a decision is outside its top clause's span(neg(C), U)");
+        }
+#endif
+        apply_decision_phase(decision);
+    }
     return DecisionResult{std::move(decision), std::nullopt};
+}
+
+void Csids::orient_to_falsify(Equation& eqn, const Clause& top_clause,
+                              const RowSpace& trail_span) {
+    [[maybe_unused]] const ClauseStatus status =
+        clause_status_by_trail(trail_span, top_clause, clause_sat_workspace_);
+    assert(status == ClauseStatus::open && "the top clause is no longer open at its decision");
+    Equation side;
+    if (intersection_spare_rows_.empty()) {
+        side = eqn;
+    } else {
+        side = std::move(intersection_spare_rows_.back());
+        intersection_spare_rows_.pop_back();
+        side.assign_from(eqn);
+    }
+    const ReduceResult kind = clause_sat_workspace_.reduced_clause().partial_reduce(side);
+    assert(!kind.is_leading() && "a decision under span^± is outside its top clause's span^±");
+    if (kind.kind == ReduceResult::Kind::eq_false) {
+        apply_decision_phase(eqn, DecisionPhase::satisfy);
+    }
+    intersection_spare_rows_.push_back(std::move(side));
 }
 
 void Csids::clear_intersection() {
     while (intersection_.rows() != 0) {
         intersection_spare_rows_.push_back(intersection_.pop_row(intersection_.rows() - 1));
     }
+}
+
+void Csids::add_false_row_to_intersection() {
+    Equation row;
+    if (intersection_spare_rows_.empty()) {
+        row = Equation::eq_false(repr(), num_vars());
+    } else {
+        row = std::move(intersection_spare_rows_.back());
+        intersection_spare_rows_.pop_back();
+        row.set_eq_false();
+    }
+    [[maybe_unused]] const std::optional<std::size_t> row_idx =
+        intersection_.add_row_get_row_idx(std::move(row));
+    assert(row_idx == std::optional<std::size_t>(intersection_.rows() - 1) &&
+           "0 = 1 is not the intersection's last row");
 }
 
 void Csids::update_with_asserting_clause(const Clause&) {
@@ -294,6 +393,12 @@ void Csids::update_with_new_clause(const Clause&, ClauseId id) {
     state_.pending_learned_priority.reset();
 }
 
+void Csids::update_with_conflict(const Trail& trail, std::span<const std::size_t> level_stamps) {
+    if (phase_saving()) {
+        saved_trails_.update_with_conflict(trail, level_stamps);
+    }
+}
+
 void Csids::update_with_resolved_clause(ClauseId id) {
     if (id < state_.num_clauses) {
         state_.activity.bump_activity(id);
@@ -315,6 +420,25 @@ void Csids::add_to_stats(RunStats& stats) const {
     stats.intersected_clauses = intersection_counters_.intersected_clauses;
     stats.intersection_dimension_before = intersection_counters_.dimension_before;
     stats.intersection_dimension_after = intersection_counters_.dimension_after;
+    stats.intersection_dimension_one = intersection_counters_.dimension_one;
+    const PhaseSavingCounters& saved = saved_trails_.counters();
+    stats.phase_saving_decisions = saved.decisions;
+    stats.phase_saving_clause_step_target = saved.target_clause_step.accepted;
+    stats.phase_saving_clause_step_target_trivial = saved.target_clause_step.trivial;
+    stats.phase_saving_clause_step_target_inconsistent = saved.target_clause_step.inconsistent;
+    stats.phase_saving_clause_step_recent = saved.recent_clause_step.accepted;
+    stats.phase_saving_clause_step_recent_trivial = saved.recent_clause_step.trivial;
+    stats.phase_saving_clause_step_recent_inconsistent = saved.recent_clause_step.inconsistent;
+    stats.phase_saving_clause_step_top_clause = saved.clause_step_top_clause;
+    stats.phase_saving_clause_step_partner = saved.clause_step_partner;
+    stats.phase_saving_narrowing_target = saved.target_narrowing;
+    stats.phase_saving_narrowing_recent = saved.recent_narrowing;
+    stats.phase_saving_none = saved.none;
+    stats.phase_saving_uniform_sides = saved.uniform_sides;
+    stats.phase_saving_dimension_before = saved.dimension_before;
+    stats.phase_saving_dimension_after = saved.dimension_after;
+    stats.phase_saving_cleared = saved.cleared;
+    stats.phase_saving_time_s = saved.time_s;
     stats.intersection_empty = intersection_counters_.empty_intersections;
     stats.intersection_skipped = intersection_counters_.skipped_intersections;
     stats.intersection_passed_satisfied_clauses = intersection_counters_.passed_satisfied_clauses;
@@ -330,48 +454,12 @@ std::optional<ClauseId> Csids::decision_clause_hint() const {
     return state_.last_decision_clause;
 }
 
-std::size_t Csids::reusable_levels(
-    const RowSpace& trail_span, const std::vector<Clause>& clauses,
-    const std::vector<std::uint8_t>& clause_active,
-    const std::vector<std::optional<ClauseId>>& decision_clauses, const SatisfactionRecord& known) {
-    assert(clause_active.size() == clauses.size() && "clause active flags are desynchronized");
-
-    // The same walk `make_decision()` makes; what it sets aside, the restart's
-    // backjump puts back.
-    std::optional<ClauseId> next;
-    while (!state_.activity.activity_heap.empty()) {
-        const ClauseId id = state_.activity.activity_heap.peek_max();
-        if (id >= clauses.size() || clause_active[id] == 0) {
-            state_.activity.activity_heap.extract_max();
-            continue;
-        }
-        if (candidate_status(id, clauses[id], trail_span, known) != ClauseStatus::satisfied) {
-            next = id;
-            break;
-        }
-    }
-
-    // Nothing left to decide from, so no level outranks it.
-    if (!next.has_value()) {
-        return 0;
-    }
-
-    const double next_activity = state_.activity.activity_heap.activity(*next);
-    std::size_t levels = 0;
-    while (levels < decision_clauses.size()) {
-        const std::optional<ClauseId>& id = decision_clauses[levels];
-        if (!id.has_value() || *id >= clause_active.size() || clause_active[*id] == 0 ||
-            state_.activity.activity_heap.activity(*id) <= next_activity) {
-            break;
-        }
-        ++levels;
-    }
-    return levels;
-}
-
 void Csids::update_with_substitution(const IndexSet&, const std::vector<Clause>& clauses,
                                      const std::vector<std::uint8_t>& clause_active) {
     state_.num_clauses = static_cast<ClauseId>(clauses.size());
+    if (phase_saving()) {
+        saved_trails_.clear();
+    }
 
     // The root trail is rebuilt, so no clause is known satisfied any more.
     for (std::vector<ClauseId>& ids : satisfied_by_level_) {
@@ -397,6 +485,7 @@ void Csids::update_with_renumbering(const CompactionTransform& transform) {
     clause_sat_workspace_.reconfigure(num_vars());
     intersection_ = RowSpace(repr(), num_vars());
     intersection_spare_rows_.clear();
+    saved_trails_.reconfigure(num_vars());
 }
 
 } // namespace xorcle

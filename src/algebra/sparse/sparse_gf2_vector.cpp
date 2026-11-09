@@ -97,6 +97,12 @@ bool SparseGF2Vector::equals_except_last_bit(const SparseGF2Vector& other) const
     return std::ranges::equal(bits_except_last_bit(), other.bits_except_last_bit());
 }
 
+void SparseGF2Vector::append_key_except_last_bit(std::string& key) const {
+    assert(num_bits_ != 0 && "append_key_except_last_bit on a vector of no bits");
+    const std::span<const Bit> bits = bits_except_last_bit();
+    key.append(reinterpret_cast<const char*>(bits.data()), bits.size() * sizeof(Bit));
+}
+
 std::size_t SparseGF2Vector::hash() const noexcept {
     return static_cast<std::size_t>(hash_bits(num_bits_, bits_));
 }

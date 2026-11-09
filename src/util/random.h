@@ -27,7 +27,9 @@ enum class RngComponent : std::uint64_t {
     decision_phase = 0x6a09e667f3bcc909ULL,
     csids_equation = 0xbb67ae8584caa73bULL,
     minimize_representative = 0x3c6ef372fe94f82bULL,
-    implication_graph_sample = 0xa54ff53a5f1d36f1ULL
+    implication_graph_sample = 0xa54ff53a5f1d36f1ULL,
+    vivify_basis = 0x9b05688c2b3e6c1fULL,
+    bve_draw = 0x510e527fade682d1ULL
 };
 
 Seed derive_seed(Seed base_seed, RngComponent component);

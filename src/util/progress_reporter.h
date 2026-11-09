@@ -58,7 +58,6 @@ struct ProgressSnapshot {
     std::size_t decision_level = 0;
     std::size_t trail_length = 0;
     std::size_t num_restarts = 0;
-    std::size_t num_reused_levels = 0;
 
     std::size_t num_deleted_clauses = 0;
 

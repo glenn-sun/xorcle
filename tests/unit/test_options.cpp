@@ -56,7 +56,7 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
     CHECK(options.decisions == DecisionProcedureName::csids);
-    CHECK(options.phase == DecisionPhase::falsify);
+    CHECK(options.phase == DecisionPhase::saved);
     CHECK(options.selection == ClauseSelectorName::exact_watchlist);
     CHECK(options.restart == RestartMethod::none);
     CHECK(options.deletion == true);
@@ -199,7 +199,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--csids-decay=X"));
     CHECK(contains(text, "[default: " + format_real(Options{}.csids_decay) + "; range 0..1]"));
     CHECK(contains(text, "--decisions=csids|fixed_literals"));
-    CHECK(contains(text, "--phase=falsify|satisfy|random"));
+    CHECK(contains(text, "--phase=falsify|satisfy|random|saved"));
     CHECK(contains(text, "--selection=cyclic|exact_watchlist"));
     CHECK(contains(text, "--proof=PATH"));
     CHECK(contains(text, "--stats-file=PATH"));
@@ -404,23 +404,30 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(refusal({"--stats-file=s.csv", "--report=all"}).starts_with("--report requires"));
     CHECK(refusal({"--report-cadence=0", "--report=all"}).starts_with("--report requires"));
 
-    // --phase reaches only CSIDS, and trail reuse needs the procedure that
-    // ranks levels; --seed is read either way.
+    // --phase reaches only CSIDS; --seed is read either way.
     CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--phase=satisfy"})
               .starts_with("--phase requires --decisions=csids"));
     CHECK_NOTHROW(
         parse_with_input({"--decisions=fixed_literals", "--deletion=false", "--seed=7"}));
-    CHECK(refusal({"--restart=lbd", "--restart-reuse-trail=true", "--decisions=fixed_literals",
-                   "--deletion=false"})
-              .starts_with("--restart-reuse-trail requires --decisions=csids"));
+    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--csids-span=plus_minus"})
+              .starts_with("--csids-span requires --decisions=csids"));
+    CHECK(parse_with_input({"--csids-span=plus_minus", "--phase=satisfy"}).phase ==
+          DecisionPhase::satisfy);
+    CHECK(parse_with_input({"--csids-span=plus_minus"}).csids_span == CsidsSpan::plus_minus);
+    CHECK(refusal({"--phase=falsify", "--phase-saving-recent=2"})
+              .starts_with("--phase-saving-recent requires"));
+    CHECK(refusal({"--phase=saved", "--phase-saving-target=false",
+                   "--phase-saving-target-reset=10"})
+              .starts_with("--phase-saving-target-reset requires"));
+    CHECK_NOTHROW(parse_with_input({"--phase=saved", "--phase-saving-recent=2"}));
+    CHECK(refusal({"--phase=saved", "--phase-saving-target=false",
+                   "--phase-saving-target-on-ties=true"})
+              .starts_with("--phase-saving-target-on-ties requires"));
+    CHECK(parse_with_input({"--csids-span=plus_minus", "--phase=saved"}).phase ==
+          DecisionPhase::saved);
+    CHECK(parse_with_input({"--phase=saved"}).phase == DecisionPhase::saved);
     CHECK_NOTHROW(
         parse_with_input({"--restart=lbd", "--decisions=fixed_literals", "--deletion=false"}));
-
-    // Trail reuse is a switch, so it is checked against its value: asking for it
-    // without a schedule is refused, and turning it off is always allowed.
-    CHECK(refusal({"--restart-reuse-trail=true"}).starts_with("--restart-reuse-trail requires"));
-    CHECK_NOTHROW(parse_with_input({"--restart-reuse-trail=false"}));
-    CHECK(parse_with_input({}).restart_reuse_trail == false);
 
     // So is the implication graph, whose units only stop steering the search
     // once a compaction rewrites the database against them.

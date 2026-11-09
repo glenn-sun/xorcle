@@ -16,12 +16,23 @@ void ClauseSelector::debug_assert_database_synchronized() const {
            "clause database and activity flags are desynchronized");
     assert(clauses_.size() == clause_learned_.size() &&
            clauses_.size() == clause_used_since_deletion_.size() &&
+           clauses_.size() == clause_vivified_.size() &&
            clauses_.size() == clause_lbd_.size() &&
            clauses_.size() == clause_unused_passes_.size() &&
            clauses_.size() == clause_out_of_unused_passes_.size() &&
            clauses_.size() == clause_spans_eq_false_.size() &&
            clauses_.size() == clause_entered_.size() &&
            "clause database and metadata are desynchronized");
+}
+
+void ClauseSelector::debug_assert_widths_counted() const {
+    std::vector<std::size_t> counted(num_active_clauses_by_width_.size(), 0);
+    for (const ClauseId id : active_clause_ids()) {
+        assert(clauses_[id].rows() < counted.size() && "an active clause's width was never counted");
+        ++counted[clauses_[id].rows()];
+    }
+    assert(counted == num_active_clauses_by_width_ &&
+           "the active clauses by width are miscounted");
 }
 
 void ClauseSelector::debug_assert_clause_id(ClauseId id) const {
@@ -35,6 +46,13 @@ void ClauseSelector::replace_clause(ClauseId id, Clause clause) {
     debug_assert_clause_id(id);
 #endif
     const Clause replaced = std::exchange(clauses_[id], std::move(clause));
+    if (replaced.rows() != clauses_[id].rows()) {
+        clause_vivified_[id] = 0;
+    }
+    if (clause_active_[id] != 0) {
+        count_width(replaced.rows(), false);
+        count_width(clauses_[id].rows(), true);
+    }
     if (clause_active_[id] != 0 && clause_entered_[id] != 0) {
         assert(replaced.cols() == clauses_[id].cols() &&
                "an active clause was replaced by one over another numbering");
@@ -203,6 +221,7 @@ void ClauseSelector::set_clause_active(ClauseId id, bool active) {
         return;
     }
     clause_active_[id] = 0;
+    count_width(clauses_[id].rows(), false);
     if (2 * ++num_inactive_listed_ > listed_clause_ids_.size()) {
         std::erase_if(listed_clause_ids_,
                       [this](ClauseId listed) { return clause_active_[listed] == 0; });
@@ -277,12 +296,14 @@ void ClauseSelector::add_clause(Clause clause) {
     listed_clause_ids_.push_back(clauses_.size());
     const ClauseId id = clauses_.size();
     clause_spans_eq_false_.push_back(0);
+    count_width(clause.rows(), true);
     clauses_.push_back(std::move(clause));
     clause_active_.push_back(1);
     clause_entered_.push_back(0);
     unentered_clause_ids_.push_back(id);
     clause_learned_.push_back(0);
     clause_used_since_deletion_.push_back(0);
+    clause_vivified_.push_back(0);
     clause_lbd_.push_back(0.0);
     clause_unused_passes_.push_back(0);
     clause_out_of_unused_passes_.push_back(0);

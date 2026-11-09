@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <memory>
@@ -64,6 +65,20 @@ public:
     virtual std::string to_string(const PrintMode& mode) const = 0;
 };
 
+/// @brief Whether the equation `vector` holds is `0 = 0`, `0 = 1`, or a real
+/// equation with a leading bit.
+template <GF2Vector V>
+ReduceResult classify(const V& vector) noexcept {
+    const std::optional<std::size_t> leading = vector.leading_bit();
+    if (!leading) {
+        return ReduceResult::eq_true();
+    }
+    if (*leading + 1 == vector.num_bits()) {
+        return ReduceResult::eq_false();
+    }
+    return ReduceResult::leading(*leading);
+}
+
 /// @brief Implements `EquationInterface` against any `GF2Vector`, allocated in one
 /// block with the vector's buffer.
 template <GF2Vector V>
@@ -105,18 +120,7 @@ public:
         return vector_.leading_bit();
     }
 
-    /// @brief Whether the equation is `0 = 0`, `0 = 1`, or a real equation with a
-    /// leading bit.
-    ReduceResult classify() const noexcept override {
-        const std::optional<std::size_t> leading = vector_.leading_bit();
-        if (!leading) {
-            return ReduceResult::eq_true();
-        }
-        if (*leading + 1 == vector_.num_bits()) {
-            return ReduceResult::eq_false();
-        }
-        return ReduceResult::leading(*leading);
-    }
+    ReduceResult classify() const noexcept override { return xorcle::classify(vector_); }
 
     void plus_assign(const EquationInterface& other) override {
         vector_.plus_assign(cast(other).vector_);
@@ -146,9 +150,19 @@ public:
     }
 
     std::vector<std::size_t> bits() const override {
+        // One pass over the words, through a buffer that up to 64 bits fill
+        // before the list takes them in one allocation.
+        std::array<std::size_t, 64> buffer;
+        std::size_t num_buffered = 0;
         std::vector<std::size_t> out;
-        out.reserve(vector_.num_set_bits());
-        vector_.for_each_set_bit([&](std::size_t bit) { out.push_back(bit); });
+        vector_.for_each_set_bit([&](std::size_t bit) {
+            if (num_buffered == buffer.size()) {
+                out.insert(out.end(), buffer.begin(), buffer.end());
+                num_buffered = 0;
+            }
+            buffer[num_buffered++] = bit;
+        });
+        out.insert(out.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(num_buffered));
         return out;
     }
 

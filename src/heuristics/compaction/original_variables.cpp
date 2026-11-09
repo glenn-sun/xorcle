@@ -1,6 +1,7 @@
 #include "heuristics/compaction/original_variables.h"
 
 #include <cassert>
+#include <cstdint>
 #include <span>
 #include <utility>
 
@@ -9,6 +10,30 @@
 namespace xorcle {
 
 namespace {
+
+/// @brief Whether @p assignment satisfies the clause with linear negation @p negation.
+bool satisfies(const IndexSet& assignment, const std::vector<VarListEquation>& negation) {
+    for (const VarListEquation& row : negation) {
+        bool sum = false;
+        for (const std::uint32_t var : row.vars) {
+            sum = sum != assignment.test(var);
+        }
+        if (sum != row.constant) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool satisfies_all(const IndexSet& assignment,
+                   const std::vector<std::vector<VarListEquation>>& negations) {
+    for (const std::vector<VarListEquation>& negation : negations) {
+        if (!satisfies(assignment, negation)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 /// @brief Undo one compaction step in place.
 void undo_one_compaction(IndexSet& assignment, const CompactionHistoryEntry& entry) {
@@ -45,6 +70,24 @@ void undo_one_compaction(IndexSet& assignment, const CompactionHistoryEntry& ent
         } else {
             assignment.reset(eliminated_var);
         }
+    }
+
+    // An assignment that satisfies the resolvents satisfies the clauses an
+    // elimination removed either as it is or with the flip set flipped.
+    for (auto elimination = entry.eliminations.rbegin(); elimination != entry.eliminations.rend();
+         ++elimination) {
+        if (satisfies_all(assignment, elimination->removed_clauses)) {
+            continue;
+        }
+        for (const std::uint32_t var : elimination->flip_set) {
+            if (assignment.test(var)) {
+                assignment.reset(var);
+            } else {
+                assignment.set(var);
+            }
+        }
+        assert(satisfies_all(assignment, elimination->removed_clauses) &&
+               "neither side of a flip set satisfies the clauses its elimination removed");
     }
 }
 

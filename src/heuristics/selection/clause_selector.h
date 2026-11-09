@@ -94,6 +94,16 @@ public:
         return {listed_clause_ids_, clause_active_};
     }
 
+    /// @brief The number of active clauses of each width, short of the widths none has had.
+    std::span<const std::size_t> num_active_clauses_by_width() const noexcept {
+        return num_active_clauses_by_width_;
+    }
+
+#ifndef NDEBUG
+    /// @brief Hold `num_active_clauses_by_width()` to a count over every active clause.
+    void debug_assert_widths_counted() const;
+#endif
+
     /// @brief Whether the clause was learned rather than read from the instance.
     bool is_clause_learned(ClauseId id) const {
 #ifndef NDEBUG
@@ -140,6 +150,21 @@ public:
         debug_assert_clause_id(id);
 #endif
         clause_used_since_deletion_[id] = used ? 1 : 0;
+    }
+
+    /// @brief Whether a vivification pass has been through the clause since it was
+    /// added or `replace_clause()` last changed its width.
+    bool is_clause_vivified(ClauseId id) const {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        return clause_vivified_[id] != 0;
+    }
+    void set_clause_vivified(ClauseId id) {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        clause_vivified_[id] = 1;
     }
 
     /// @brief Consecutive deletion passes the clause has sat through unlocked and unused.
@@ -215,6 +240,18 @@ public:
     virtual void add_to_stats(RunStats& stats) const;
 
 protected:
+    /// @brief Count an active clause of @p width in or out of `num_active_clauses_by_width_`.
+    void count_width(std::size_t width, bool in) {
+        if (num_active_clauses_by_width_.size() <= width) {
+            num_active_clauses_by_width_.resize(width + 1, 0);
+        }
+        if (in) {
+            ++num_active_clauses_by_width_[width];
+        } else {
+            --num_active_clauses_by_width_[width];
+        }
+    }
+
     /// @brief Store a clause under the next id, with no other side effects.
     virtual void add_clause(Clause clause);
 
@@ -274,8 +311,10 @@ protected:
     /// @brief Ascending: every active id, and at most as many inactive ones.
     std::vector<ClauseId> listed_clause_ids_;
     std::size_t num_inactive_listed_ = 0; ///< Inactive ids still in `listed_clause_ids_`.
+    std::vector<std::size_t> num_active_clauses_by_width_;
     std::vector<std::uint8_t> clause_learned_;
     std::vector<std::uint8_t> clause_used_since_deletion_;
+    std::vector<std::uint8_t> clause_vivified_;
     std::vector<double> clause_lbd_;
     std::vector<std::size_t> clause_unused_passes_;
     std::vector<std::uint8_t> clause_out_of_unused_passes_;

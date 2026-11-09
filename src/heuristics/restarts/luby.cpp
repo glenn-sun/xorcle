@@ -45,7 +45,7 @@ luby_value(std::size_t index) {
 }
 
 Luby::Luby(const RestartConfig& config)
-    : RestartPolicy(config.reuse_trail), unit_conflicts_(config.luby_unit_conflicts) {
+    : unit_conflicts_(config.luby_unit_conflicts) {
     assert(config.luby_unit_conflicts != 0 && "Luby unit budget must be non-zero");
     refresh_budget();
 }

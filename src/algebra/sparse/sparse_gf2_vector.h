@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "algebra/equation_repr.h"
@@ -127,6 +128,11 @@ public:
     bool equals_except_last_bit(const SparseGF2Vector& other) const noexcept;
 
     std::size_t hash() const noexcept;
+
+    /// @brief Append bytes that determine every bit but the last among vectors of as
+    /// many bits: each set bit as four bytes, which are never all ones.
+    /// @pre `num_bits() >= 1`.
+    void append_key_except_last_bit(std::string& key) const;
 
     /// @brief A hash that `equals_except_last_bit()` vectors share.
     /// @pre `num_bits() >= 1`.

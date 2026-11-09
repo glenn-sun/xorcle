@@ -284,10 +284,21 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
         {"luby",
          {"--restart=luby", "--restart-luby-unit=1"},
          &SolverCounters::num_restarts},
-        {"luby, reusing the trail",
-         {"--restart=luby", "--restart-luby-unit=1", "--restart-reuse-trail=true",
-          "--implication-graph=false"},
-         &SolverCounters::num_restarts},
+        {"span plus-minus", {"--csids-span=plus_minus"}},
+        {"span plus-minus, random side", {"--csids-span=plus_minus", "--phase=random"}},
+        {"phase saving", {"--phase=saved"}},
+        {"phase saving, span plus-minus", {"--phase=saved", "--csids-span=plus_minus"}},
+        {"phase saving, two recent trails, target reset often",
+         {"--phase=saved", "--phase-saving-recent=2", "--phase-saving-target-reset=10"}},
+        {"phase saving, top clause alone",
+         {"--phase=saved", "--csids-intersection-depth=1"}},
+        {"phase saving, luby restarts, no recent trail",
+         {"--phase=saved", "--restart=luby", "--phase-saving-recent=0"}},
+        {"phase saving, no target, sparse",
+         {"--phase=saved", "--phase-saving-target=false", "--selection=cyclic",
+          "--equation-repr=sparse"}},
+        {"phase saving, target replaced on ties",
+         {"--phase=saved", "--phase-saving-target-on-ties=true", "--phase-saving-target-reset=1"}},
     };
 
     // Equivalent clauses are evicted at input and at a substitution; at a subsumption
@@ -325,6 +336,93 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
     }
     CHECK(evictions.num_equivalent_clauses_at_input > 0);
     CHECK(evictions.num_equivalent_clauses_at_substitution > 0);
+}
+
+// Vivification writes no proof lines, so its answers are held to brute force
+// and its models to the input.
+TEST_CASE("fuzz: vivification leaves the verdict and the models right") {
+    struct Arm {
+        std::string name;
+        std::vector<std::string> flags;
+        bool stops_at_budget = false;
+    };
+    // A pass of the default cadence never falls inside instances this small, and
+    // the default effort's budget seldom reaches past a few orders.
+    const std::vector<Arm> arms = {
+        {"new or narrowed, two rounds",
+         {"--vivify=true", "--vivify-cadence=0", "--vivify-effort=1000"}},
+        {"four rounds, ten conflicts apart",
+         {"--vivify=true", "--vivify-cadence=10", "--vivify-rounds=4", "--vivify-effort=1000"}},
+        {"one round, a conflict apart",
+         {"--vivify=true", "--vivify-cadence=1", "--vivify-rounds=1", "--vivify-effort=1000"}},
+        {"forced root visits, one round, a conflict apart",
+         {"--vivify=true", "--vivify-cadence=0", "--vivify-rounds=1", "--vivify-effort=1000",
+          "--vivify-force-root-visit=true"}},
+        {"the default effort",
+         {"--vivify=true", "--vivify-cadence=5"},
+         true},
+    };
+    for (const Arm& arm : arms) {
+        CAPTURE(arm.name);
+        TestRandom random(20261013);
+        VivifyCounters total;
+        std::size_t num_kept = 0; // Narrowings a kept clause already had.
+        std::size_t num_sat = 0;
+        std::size_t num_unsat = 0;
+        for (std::size_t index = 0; index < 150; ++index) {
+            const std::string text = index % 5 == 4 ? random_wide_instance(random)
+                                                    : random_instance(random);
+            CAPTURE(index);
+            CAPTURE(text);
+            std::ostringstream help;
+            std::vector<std::string> arguments;
+            arguments.insert(arguments.end(), arm.flags.begin(), arm.flags.end());
+            arguments.push_back("--seed=" + std::to_string(index % 3));
+            arguments.emplace_back("instance.xnf");
+            const std::optional<Options> options = parse_options(arguments, help);
+            REQUIRE(options.has_value());
+            ParsedDimacs parsed = parse_dimacs_string(text, options->equation_repr);
+            const std::vector<std::vector<RawRow>> rows = clause_rows(parsed);
+            const std::unique_ptr<Solver> solver =
+                make_solver(*options, parsed.num_vars, parsed.used_vars);
+            for (Clause& clause : parsed.clauses) {
+                solver->add_starting_clause(std::move(clause));
+            }
+            const Solution solution = solver->solve();
+            if (index % 5 != 4) {
+                REQUIRE(solution.result == enumerated_verdict(text));
+            }
+            if (solution.result == SolveResult::sat) {
+                ++num_sat;
+                REQUIRE(solution.assignment.has_value());
+                for (const std::vector<RawRow>& clause : rows) {
+                    CHECK(clause_holds(clause, *solution.assignment));
+                }
+            } else {
+                ++num_unsat;
+            }
+            const VivifyCounters& counters = solver->vivify_counters();
+            total.num_orders += counters.num_orders;
+            total.num_narrowed += counters.num_narrowed;
+            total.num_units += counters.num_units;
+            total.num_narrowed_by_refutation += counters.num_narrowed_by_refutation;
+            total.num_budget_stops += counters.num_budget_stops;
+            num_kept += solver->counters().num_equivalent_clauses_at_vivification;
+        }
+        MESSAGE(arm.name << ": orders " << total.num_orders << ", narrowed " << total.num_narrowed
+                         << ", units " << total.num_units << ", by refutation "
+                         << total.num_narrowed_by_refutation << ", budget stops "
+                         << total.num_budget_stops << ", a kept clause's "
+                         << num_kept << ", sat " << num_sat
+                         << ", unsat " << num_unsat);
+        CHECK(num_sat > 0);
+        CHECK(num_unsat > 0);
+        CHECK(total.num_orders > 0);
+        CHECK(total.num_narrowed > 0);
+        if (arm.stops_at_budget) {
+            CHECK(total.num_budget_stops > 0);
+        }
+    }
 }
 
 } // namespace xorcle

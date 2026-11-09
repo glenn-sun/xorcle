@@ -16,10 +16,21 @@
 #include "heuristics/decisions/clause_activity.h"
 #include "heuristics/decisions/clause_decisions.h"
 #include "heuristics/decisions/decision_procedure.h"
+#include "heuristics/decisions/saved_trails.h"
 #include "util/max_heap.h"
 #include "util/random.h"
 
 namespace xorcle {
+
+/// @brief Which span of each clause's linear negation, modulo the trail span U,
+/// CSIDS intersects and draws a decision from.
+enum class CsidsSpan {
+    plain, ///< `span(neg(C), U)`, deciding in the configured phase.
+    /// `span^±(neg(C), U)`, which also holds `0 = 1`: a decision is a direction
+    /// the trail does not settle, whose `falsify` side lies in the top clause's
+    /// `span(neg(C), U)`.
+    plus_minus
+};
 
 /// @brief Tunable CSIDS parameters.
 struct CsidsConfig {
@@ -33,6 +44,10 @@ struct CsidsConfig {
     /// negations a decision is drawn from the intersection of; `1` is the top
     /// clause alone.
     std::size_t intersection_depth = 50;
+
+    CsidsSpan span = CsidsSpan::plain;
+
+    PhaseSavingConfig phase_saving;
 
     bool operator==(const CsidsConfig&) const = default;
 };
@@ -86,9 +101,14 @@ public:
 
     void update_with_resolved_clause(ClauseId id) override;
 
+    /// @brief Save the conflict's trail for phase saving.
+    void update_with_conflict(const Trail& trail, std::span<const std::size_t> level_stamps) override;
+
     /// @brief Put the clauses found satisfied above `level` back in the heap.
     /// @pre `level` is at most the level of the trail's last decision.
     void update_with_backjump(std::size_t level) override;
+
+    void update_with_replayed_decision() override { ++level_; }
 
     /// @brief The replacement inherits the subsumed clause's activity when larger.
     void update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id) override;
@@ -96,14 +116,6 @@ public:
     double clause_activity(ClauseId id) const override;
 
     std::optional<ClauseId> decision_clause_hint() const override;
-
-    /// @brief The levels whose decision clause still outranks the clause the next
-    /// decision would come from.
-    std::size_t reusable_levels(
-        const RowSpace& trail_span, const std::vector<Clause>& clauses,
-        const std::vector<std::uint8_t>& clause_active,
-        const std::vector<std::optional<ClauseId>>& decision_clauses,
-        const SatisfactionRecord& known = {}) override;
 
     void update_with_substitution(const IndexSet& dropped_col_idxs,
                                   const std::vector<Clause>& clauses,
@@ -113,6 +125,10 @@ public:
 
     const IntersectionCounters& intersection_counters() const noexcept {
         return intersection_counters_;
+    }
+
+    const PhaseSavingCounters& phase_saving_counters() const noexcept {
+        return saved_trails_.counters();
     }
 
     void add_to_stats(RunStats& stats) const override;
@@ -138,9 +154,20 @@ private:
     /// @brief Move every row of `intersection_` to `intersection_spare_rows_`.
     void clear_intersection();
 
+    /// @brief Add `0 = 1` to `intersection_` as its last row.
+    void add_false_row_to_intersection();
+
+    /// @brief Put a decision drawn under `CsidsSpan::plus_minus` on the side in the
+    /// top clause's `span(neg(C), U)`.
+    /// @pre `eqn` lies in the top clause's `span^±(neg(C), U)` and outside `span^±(U)`.
+    void orient_to_falsify(Equation& eqn, const Clause& top_clause, const RowSpace& trail_span);
+
+    bool phase_saving() const noexcept { return decision_phase() == DecisionPhase::saved; }
+
     CsidsState state_;
     ClauseSatisfactionWorkspace clause_sat_workspace_;
     std::size_t intersection_depth_;
+    CsidsSpan span_;
 
     /// @brief Off the heap, by a level found to satisfy them; spans nest, so
     /// they stay satisfied until a backjump below it.
@@ -151,9 +178,11 @@ private:
     std::size_t level_ = 0;
     IntersectionCounters intersection_counters_;
     std::vector<ClauseId> set_aside_ids_;
+    /// @brief The top clause and the clauses whose intersection shrank the last decision's space.
+    std::vector<ClauseId> changed_clause_ids_;
 
-    /// @brief What `decide_from_intersection()` has intersected down to; empty
-    /// between decisions.
+    /// @brief What `decide_from_intersection()` has intersected down to, empty
+    /// between decisions, and ending in `0 = 1` under `CsidsSpan::plus_minus`.
     RowSpace intersection_;
 
     /// @brief Rows `decide_from_intersection()` is done with, which the next
@@ -161,6 +190,8 @@ private:
     std::vector<Equation> intersection_spare_rows_;
 
     Rng clause_equation_rng_; ///< Stream for sampling a combination of a clause's rows.
+
+    SavedTrails saved_trails_;
 };
 
 } // namespace xorcle
