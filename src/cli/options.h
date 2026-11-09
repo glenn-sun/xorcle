@@ -705,7 +705,7 @@ inline std::unique_ptr<Solver> make_solver(const Options& options, std::size_t n
         VivifyConfig{.enabled = options.vivify,
                      .rounds = options.vivify_rounds,
                      .cadence = options.vivify_cadence,
-                     .force_root_visit = options.vivify_force_root_visit,
+                     .force_root_visit = options.vivify && options.vivify_force_root_visit,
                      .effort = options.vivify_effort},
         bve_config(options));
 }
