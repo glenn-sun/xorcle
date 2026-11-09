@@ -38,12 +38,57 @@ bool same_span(RowSpace left, RowSpace right) {
 
 } // namespace
 
+PhaseRotation::PhaseRotation(std::size_t interval_conflicts)
+    : interval_conflicts_(interval_conflicts) {
+    assert(interval_conflicts > 0 && "a rotation step lasts at least one conflict");
+}
+
+bool PhaseRotation::update_with_conflict() noexcept {
+    if (++conflicts_in_step_ < cycle_ * interval_conflicts_) {
+        return false;
+    }
+    conflicts_in_step_ = 0;
+    if (++step_idx_ == num_phase_orders) {
+        step_idx_ = 0;
+        ++cycle_;
+    }
+    return true;
+}
+
 SavedTrails::SavedTrails(EquationRepr repr, std::size_t num_vars, const PhaseSavingConfig& config)
     : repr_(repr),
       num_vars_(num_vars),
       config_(config),
       candidate_(repr, num_vars),
-      work_row_(repr, num_vars) {}
+      work_row_(repr, num_vars) {
+    if (config.rotation_interval.has_value()) {
+        rotation_.emplace(*config.rotation_interval);
+    }
+}
+
+bool SavedTrails::consults_trails() const noexcept {
+    if (!rotation_.has_value()) {
+        return true;
+    }
+    const bool target = config_.target && mode_ == SearchMode::stable;
+    switch (rotation_->order()) {
+        case PhaseOrder::falsify:
+            return false;
+        case PhaseOrder::target_falsify:
+            return target;
+        case PhaseOrder::recent_falsify:
+            return config_.recent_trails > 0;
+        case PhaseOrder::target_recent_falsify:
+            return target || config_.recent_trails > 0;
+    }
+    return true;
+}
+
+void SavedTrails::note_falsify_decision() {
+    assert(!consults_trails() && "only a decision no trail is consulted for is the falsify order's");
+    ++counters_.order_decisions[static_cast<std::size_t>(rotation_->order())];
+    ++counters_.falsify_sides;
+}
 
 void SavedTrails::reconfigure(std::size_t num_vars) {
     clear();
@@ -62,6 +107,9 @@ void SavedTrails::reinitialize(std::size_t num_vars) {
     target_ = {};
     recent_.clear();
     conflicts_since_target_reset_ = 0;
+    if (config_.rotation_interval.has_value()) {
+        rotation_.emplace(*config_.rotation_interval);
+    }
     counters_ = {};
     trail_ = nullptr;
 }
@@ -117,6 +165,9 @@ void SavedTrails::update_with_conflict(const Trail& trail,
     assert(trail.span().pivot_col_idxs().test(trail.span().cols() - 1) &&
            "a conflict's trail ends in its 0 = 1");
     trail_ = &trail;
+    if (rotation_.has_value() && rotation_->update_with_conflict()) {
+        ++counters_.rotations;
+    }
     if (config_.recent_trails > 0) {
         if (recent_.size() < config_.recent_trails) {
             recent_.emplace_back();
@@ -144,8 +195,12 @@ void SavedTrails::narrow(RowSpace& space, std::span<const ClauseId> clause_ids,
                          std::span<const std::size_t> level_stamps) {
     assert(!level_stamps.empty() && space.rows() > 0 && !holds_false(space) &&
            "phase saving narrows a nonempty space without 0 = 1, knowing the level stamps");
+    assert(consults_trails() && "phase saving narrows only under an order naming a kept trail");
     const auto start = std::chrono::steady_clock::now();
     ++counters_.decisions;
+    if (rotation_.has_value()) {
+        ++counters_.order_decisions[static_cast<std::size_t>(rotation_->order())];
+    }
     Equation false_row = spare_copy(space.row(0));
     false_row.set_eq_false();
     space.add_row(std::move(false_row));
@@ -153,12 +208,17 @@ void SavedTrails::narrow(RowSpace& space, std::span<const ClauseId> clause_ids,
 
     std::vector<std::pair<SavedTrail*, bool>>& trails = trails_;
     trails.clear();
-    if (target_.num_rows() > 0) {
+    const PhaseOrder order =
+        rotation_.has_value() ? rotation_->order() : PhaseOrder::target_recent_falsify;
+    const bool target = mode_ == SearchMode::stable && target_.num_rows() > 0;
+    if (target && order != PhaseOrder::recent_falsify) {
         trails.emplace_back(&target_, true);
     }
-    for (SavedTrail& saved : recent_) {
-        if (saved.num_rows() > 0) {
-            trails.emplace_back(&saved, false);
+    if (order != PhaseOrder::target_falsify) {
+        for (SavedTrail& saved : recent_) {
+            if (saved.num_rows() > 0) {
+                trails.emplace_back(&saved, false);
+            }
         }
     }
     assert((trails.empty() || (trail_ != nullptr && &trail_->span() == &trail_span)) &&
@@ -208,7 +268,7 @@ void SavedTrails::narrow(RowSpace& space, std::span<const ClauseId> clause_ids,
     space.reduce_rows();
     counters_.dimension_after += directions(space);
     if (holds_false(space)) {
-        ++counters_.uniform_sides;
+        ++(rotation_.has_value() ? counters_.falsify_sides : counters_.uniform_sides);
     }
     const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
     counters_.time_s += elapsed.count();

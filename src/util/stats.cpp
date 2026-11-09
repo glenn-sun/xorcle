@@ -40,20 +40,26 @@ RunStats::reports(const StatsSection section) const {
             // A row with no recorded schedule has nothing to say about one,
             // which is not the same as a schedule named `none`.
             const std::string restart = config_value(*this, "restart");
-            return !restart.empty() && restart != "none";
+            return (!restart.empty() && restart != "none") ||
+                   config_value(*this, "stabilize") == "true";
         }
+        case StatsSection::stabilize:
+            return config_value(*this, "stabilize") == "true";
         case StatsSection::intersection: {
             const std::string depth = config_value(*this, "csids_intersection_depth");
             return !depth.empty() && depth != "1";
         }
         case StatsSection::phase_saving:
-            return config_value(*this, "phase") == "saved";
+            return config_value(*this, "phase") == "saved" ||
+                   config_value(*this, "phase") == "rotate";
         case StatsSection::minimize:
             return config_value(*this, "minimize") == "true";
         case StatsSection::subsume:
             return config_value(*this, "subsume") == "true";
         case StatsSection::vivify:
             return config_value(*this, "vivify") == "true";
+        case StatsSection::subsume_pass:
+            return config_value(*this, "subsume_pass") == "true";
         case StatsSection::deletion:
             return config_value(*this, "deletion") == "true";
         case StatsSection::propagate_budget: {

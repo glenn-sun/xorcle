@@ -27,6 +27,7 @@ add_library(xorcle_core
     src/core/implication_graph_proof.cpp
     src/core/propagation.cpp
     src/core/solver.cpp
+    src/core/subsume_pass.cpp
     src/core/trail.cpp
     src/core/trail_basis.cpp
     src/core/vivify.cpp
@@ -46,6 +47,7 @@ add_library(xorcle_core
     src/heuristics/restarts/lbd_restarts.cpp
     src/heuristics/restarts/luby.cpp
     src/heuristics/restarts/restart_policy.cpp
+    src/heuristics/restarts/stabilize.cpp
     src/heuristics/selection/clause_selector.cpp
     src/heuristics/selection/cyclic.cpp
     src/heuristics/selection/exact_watchlist.cpp

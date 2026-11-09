@@ -22,6 +22,8 @@ CsidsState::CsidsState(const CsidsConfig& config)
                .decay = config.decay},
       initial_inc_amt(config.bump) {
     assert(config.decay >= 0.0 && config.decay <= 1.0 && "CSIDS requires 0 <= decay <= 1");
+    assert(config.focused_decay >= 0.0 && config.focused_decay <= 1.0 &&
+           "CSIDS requires 0 <= focused decay <= 1");
     assert(config.initial_activity >= 0.0 && "CSIDS requires a non-negative A0");
     assert(config.bump >= 0.0 && "CSIDS requires a non-negative bump");
     assert(config.intersection_depth >= 1 && "CSIDS requires an intersection depth of at least 1");
@@ -41,6 +43,8 @@ void CsidsState::reset_activity() {
 Csids::Csids(EquationRepr repr, std::size_t num_vars, Seed seed, const CsidsConfig& config)
     : DecisionProcedure(repr, num_vars, seed),
       state_(config),
+      stable_decay_(config.decay),
+      focused_decay_(config.focused_decay),
       clause_sat_workspace_(repr, num_vars),
       intersection_depth_(config.intersection_depth),
       span_(config.span),
@@ -93,7 +97,7 @@ DecisionResult Csids::make_decision(const RowSpace& trail_span,
             // decision, so the last-decision record stands.
             return DecisionResult{std::nullopt, id};
         }
-        if (intersection_depth_ > 1 || phase_saving()) {
+        if (intersection_depth_ > 1 || consults_trails()) {
             const auto start = std::chrono::steady_clock::now();
             std::optional<DecisionResult> result =
                 decide_from_intersection(id, trail_span, clauses, clause_active, known);
@@ -114,6 +118,9 @@ DecisionResult Csids::make_decision(const RowSpace& trail_span,
 
         record_decision();
         apply_decision_phase(sample.reduced);
+        if (decision_phase() == DecisionPhase::rotate) {
+            saved_trails_.note_falsify_decision();
+        }
         ++level_;
         return DecisionResult{std::move(sample.reduced), std::nullopt};
     }
@@ -234,7 +241,7 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
         clear_intersection();
         return DecisionResult{std::nullopt, propagating_id};
     }
-    if (intersected_clauses == 0 && !phase_saving()) {
+    if (intersected_clauses == 0 && !consults_trails()) {
         clear_intersection();
         return std::nullopt;
     }
@@ -247,7 +254,8 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
             ++intersection_counters_.dimension_one;
         }
     }
-    if (phase_saving()) {
+    const bool consulted = consults_trails();
+    if (consulted) {
         if (plus_minus) {
             // Phase saving takes V without `0 = 1`, and adds it back while the side is open.
             intersection_spare_rows_.push_back(space.pop_row(space.rows() - 1));
@@ -271,11 +279,15 @@ std::optional<DecisionResult> Csids::decide_from_intersection(
 #endif
     clear_intersection();
     record_decision();
-    if (holds_false || (span_ == CsidsSpan::plain && !phase_saving())) {
+    if (holds_false || (span_ == CsidsSpan::plain && !consulted)) {
         const DecisionPhase phase = decision_phase();
-        const bool sided = phase == DecisionPhase::falsify || phase == DecisionPhase::satisfy;
-        if (plus_minus && sided) {
+        const bool rotate = phase == DecisionPhase::rotate;
+        const bool sided = phase == DecisionPhase::falsify || phase == DecisionPhase::satisfy || rotate;
+        if ((plus_minus && sided) || (rotate && holds_false)) {
             orient_to_falsify(decision, clauses[top_id], trail_span);
+        }
+        if (rotate && !consulted) {
+            saved_trails_.note_falsify_decision();
         }
 #ifndef NDEBUG
         if (sided) {
@@ -343,7 +355,18 @@ void Csids::update_with_asserting_clause(const Clause&) {
         state_.activity.activity_heap.rescale(0.0);
     } else {
         state_.activity.inc_amt *= (1.0 / state_.activity.decay);
+        // A bump rescales first unless conflicts go unbumped, which a decay of 0.5
+        // takes 170 of to reach this.
+        if (state_.activity.inc_amt > 1e150) {
+            state_.activity.activity_heap.rescale(1e-100);
+            state_.activity.inc_amt *= 1e-100;
+        }
     }
+}
+
+void Csids::update_with_mode(SearchMode mode) {
+    state_.activity.decay = mode == SearchMode::stable ? stable_decay_ : focused_decay_;
+    saved_trails_.update_with_mode(mode);
 }
 
 ClauseStatus Csids::candidate_status(const ClauseId id, const Clause& clause,
@@ -414,6 +437,11 @@ void Csids::update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replaceme
     }
 }
 
+void Csids::update_with_narrowed_clause(ClauseId id) {
+    assert(id < state_.num_clauses && "a narrowing names an unregistered clause");
+    state_.activity.activity_heap.insert(id);
+}
+
 void Csids::add_to_stats(RunStats& stats) const {
     DecisionProcedure::add_to_stats(stats);
     stats.intersection_decisions = intersection_counters_.decisions;
@@ -435,6 +463,16 @@ void Csids::add_to_stats(RunStats& stats) const {
     stats.phase_saving_narrowing_recent = saved.recent_narrowing;
     stats.phase_saving_none = saved.none;
     stats.phase_saving_uniform_sides = saved.uniform_sides;
+    stats.phase_saving_falsify_sides = saved.falsify_sides;
+    stats.phase_saving_rotations = saved.rotations;
+    stats.phase_saving_decisions_target_recent_falsify =
+        saved.order_decisions[static_cast<std::size_t>(PhaseOrder::target_recent_falsify)];
+    stats.phase_saving_decisions_falsify =
+        saved.order_decisions[static_cast<std::size_t>(PhaseOrder::falsify)];
+    stats.phase_saving_decisions_target_falsify =
+        saved.order_decisions[static_cast<std::size_t>(PhaseOrder::target_falsify)];
+    stats.phase_saving_decisions_recent_falsify =
+        saved.order_decisions[static_cast<std::size_t>(PhaseOrder::recent_falsify)];
     stats.phase_saving_dimension_before = saved.dimension_before;
     stats.phase_saving_dimension_after = saved.dimension_after;
     stats.phase_saving_cleared = saved.cleared;

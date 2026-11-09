@@ -107,6 +107,9 @@ public:
     /// @pre `other.size() == size()`.
     bool intersects(const IndexSet& other) const noexcept;
 
+    /// @pre `other.size() == size()`.
+    bool is_subset_of(const IndexSet& other) const noexcept;
+
     /// @brief Call `f(index)` for each set index, in ascending order.
     template <class F>
     void for_each_set(F&& f) const {

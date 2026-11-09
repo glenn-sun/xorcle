@@ -105,6 +105,9 @@ protected:
 
     void update_with_inactive_clause(ClauseId id) override;
 
+    /// @brief Retire the clause's cells and build new ones, as for a new clause.
+    void update_with_narrowed_clause(ClauseId id) override;
+
 private:
     using Word = DenseGF2Vector::Word;
 

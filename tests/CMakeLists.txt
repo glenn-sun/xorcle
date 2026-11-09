@@ -43,6 +43,7 @@ add_executable(xorcle_tests
     unit/test_row_echelon_matrix.cpp
     unit/test_solver.cpp
     unit/test_stats_writer.cpp
+    unit/test_subsume_pass.cpp
     unit/test_trail.cpp
     unit/test_trail_basis.cpp)
 
@@ -183,6 +184,27 @@ add_test(NAME proof_roundtrip_vivify_force_root_visit
             ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
             --vivify=true --vivify-cadence=10 --vivify-force-root-visit=true)
 set_tests_properties(proof_roundtrip_vivify_force_root_visit PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME proof_roundtrip_phase_rotate
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect "^c Steps of the rotation ended: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --phase=rotate --phase-rotate-interval=2)
+set_tests_properties(proof_roundtrip_phase_rotate PROPERTIES SKIP_RETURN_CODE 77)
+# The subsumption pass, at root visits fifty conflicts apart: each strengthened
+# clause is a line hinted by the wider clause and then the narrower, and a subsumed
+# or strengthened clause is deleted.
+add_test(NAME proof_roundtrip_subsume_pass
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect "^c Strengthened, visited narrower, learned by starting: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> perfect_matching "n=21;k=4" 1
+            --subsume-pass=true --subsume-pass-cadence=50)
+set_tests_properties(proof_roundtrip_subsume_pass PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME proof_roundtrip_stabilize
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect "^c Restarts in focused mode: [1-9]"
+            ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle> random_kxnf "n=14;k=3" 1
+            --stabilize=true --stabilize-interval=5 --focused-restart-lbd-min-ratio=1.0)
+set_tests_properties(proof_roundtrip_stabilize PROPERTIES SKIP_RETURN_CODE 77)
 # Half the declared variables are unused, and the proof is over all of them. The
 # second instance compacts as well.
 add_test(NAME proof_roundtrip_unused_vars

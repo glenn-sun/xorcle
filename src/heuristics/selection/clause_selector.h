@@ -75,6 +75,11 @@ public:
 
     void replace_clause(ClauseId id, Clause clause);
 
+    /// @brief Overwrite an active clause at the root with a narrowing of it, which
+    /// takes the place of its watches as a new clause would.
+    /// @pre The clause is active, and the trail is at the root and quiescent.
+    void narrow_clause(ClauseId id, Clause clause);
+
     /// @brief The active clauses that carry a column of @p col_idxs or span `0 = 1`,
     /// in ascending order; enters the clauses added since the last call.
     /// @pre `col_idxs` is sized like a clause's columns and leaves the last one out.
@@ -165,6 +170,21 @@ public:
         debug_assert_clause_id(id);
 #endif
         clause_vivified_[id] = 1;
+    }
+
+    /// @brief Whether a subsumption pass has been through the clause since it was
+    /// added or `replace_clause()` last changed it.
+    bool is_clause_subsume_passed(ClauseId id) const {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        return clause_subsume_passed_[id] != 0;
+    }
+    void set_clause_subsume_passed(ClauseId id) {
+#ifndef NDEBUG
+        debug_assert_clause_id(id);
+#endif
+        clause_subsume_passed_[id] = 1;
     }
 
     /// @brief Consecutive deletion passes the clause has sat through unlocked and unused.
@@ -261,6 +281,10 @@ protected:
     /// @brief Note that an active clause went inactive, which the default ignores.
     virtual void update_with_inactive_clause(ClauseId id);
 
+    /// @brief Note that `narrow_clause()` overwrote an active clause, which the
+    /// default ignores.
+    virtual void update_with_narrowed_clause(ClauseId id);
+
     /// @brief Whether `col_idx_to_clause_ids_[col_idx]` is right to name the clause.
     bool carries(ClauseId id, std::size_t col_idx) const {
         return clause_active_[id] != 0 && clauses_[id].carries(col_idx);
@@ -315,6 +339,7 @@ protected:
     std::vector<std::uint8_t> clause_learned_;
     std::vector<std::uint8_t> clause_used_since_deletion_;
     std::vector<std::uint8_t> clause_vivified_;
+    std::vector<std::uint8_t> clause_subsume_passed_;
     std::vector<double> clause_lbd_;
     std::vector<std::size_t> clause_unused_passes_;
     std::vector<std::uint8_t> clause_out_of_unused_passes_;

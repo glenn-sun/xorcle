@@ -31,6 +31,7 @@
 #include "heuristics/decisions/phase.h"
 #include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
+#include "heuristics/restarts/stabilize.h"
 #include "heuristics/selection/clause_selector.h"
 #include "util/progress_reporter.h"
 #include "util/random.h"
@@ -535,6 +536,14 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     if (options.bve && !options.compact) {
         throw CliError("--bve requires --compact=true, which drops the variables it eliminates");
     }
+    // Focused mode's restarts are the only ones under --stabilize.
+    if (options.stabilize && options.restart != RestartMethod::none) {
+        throw CliError("--stabilize requires --restart=none: focused mode restarts by its own "
+                       "--focused-restart-lbd-* options");
+    }
+    if (options.stabilize && options.decisions != DecisionProcedureName::csids) {
+        throw CliError("--stabilize requires --decisions=csids, whose decay and phase the modes set");
+    }
     if (options.implication_graph && !options.compact) {
         throw CliError("--implication-graph requires --compact=true: without a compaction after "
                        "each feed, which basis of the fed units the rule happened to pick would "
@@ -619,6 +628,7 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
 inline CsidsConfig csids_config(const Options& options) {
     return CsidsConfig{.initial_activity = options.csids_initial,
                        .decay = options.csids_decay,
+                       .focused_decay = options.focused_decay,
                        .bump = options.csids_bump,
                        .intersection_depth = options.csids_intersection_depth,
                        .span = options.csids_span,
@@ -626,7 +636,12 @@ inline CsidsConfig csids_config(const Options& options) {
                                         .target = options.phase_saving_target,
                                         .target_reset_conflicts =
                                             options.phase_saving_target_reset,
-                                        .target_on_ties = options.phase_saving_target_on_ties}};
+                                        .target_on_ties = options.phase_saving_target_on_ties,
+                                        .rotation_interval =
+                                            options.phase == DecisionPhase::rotate
+                                                ? std::optional<std::size_t>(
+                                                      options.phase_rotate_interval)
+                                                : std::nullopt}};
 }
 
 inline CompactionConfig compaction_config(const Options& options) {
@@ -677,6 +692,18 @@ inline RestartConfig restart_config(const Options& options) {
                          .lbd_trail_ratio = options.restart_lbd_trail_ratio};
 }
 
+inline StabilizeConfig stabilize_config(const Options& options) {
+    return StabilizeConfig{
+        .enabled = options.stabilize,
+        .interval_conflicts = options.stabilize_interval,
+        .focused_restarts = {.method = RestartMethod::lbd,
+                             .lbd_fast_window = options.focused_restart_lbd_fast,
+                             .lbd_slow_window = options.focused_restart_lbd_slow,
+                             .lbd_min_ratio = options.focused_restart_lbd_min_ratio,
+                             .lbd_min_conflicts = options.focused_restart_lbd_min_conflicts,
+                             .lbd_trail_ratio = options.focused_restart_lbd_trail_ratio}};
+}
+
 // --- Building the solver -----------------------------------------------------
 
 /// @brief The solver `xorcle` runs for @p options over the variables
@@ -707,7 +734,11 @@ inline std::unique_ptr<Solver> make_solver(const Options& options, std::size_t n
                      .cadence = options.vivify_cadence,
                      .force_root_visit = options.vivify && options.vivify_force_root_visit,
                      .effort = options.vivify_effort},
-        bve_config(options));
+        bve_config(options),
+        SubsumePassConfig{.enabled = options.subsume_pass,
+                          .cadence = options.subsume_pass_cadence,
+                          .effort = options.subsume_pass_effort},
+        stabilize_config(options));
 }
 
 } // namespace xorcle

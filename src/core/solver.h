@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,7 @@
 #include "heuristics/implication_graph/implication_graph.h"
 #include "heuristics/propagation/attempt_budget.h"
 #include "heuristics/restarts/restart_policy.h"
+#include "heuristics/restarts/stabilize.h"
 #include "heuristics/selection/clause_selector.h"
 #include "heuristics/selection/cyclic.h"
 #include "io/proof_raw_file.h"
@@ -126,6 +128,70 @@ struct VivifyCounters {
     double time_s = 0.0;
 };
 
+/// @brief When the subsumption pass runs.
+///
+/// A pass at a root visit checks pairs of active clauses of which one was added or
+/// changed since the last pass: a subsumed wider clause D is deleted, and a
+/// strengthened D loses a row. It visits every clause as the narrower clause,
+/// narrowest first, then each unchanged clause as the wider clause, until its
+/// budget is spent. A pass due above the root goes to the root for it and replays
+/// the decisions.
+struct SubsumePassConfig {
+    bool enabled = false;
+
+    std::size_t cadence = 1000; ///< Conflicts after a pass before the next may run.
+
+    /// @brief The rows a pass may read in its checks per row the search decided or
+    /// implied since the last pass.
+    double effort = 10.0;
+
+    bool operator==(const SubsumePassConfig&) const = default;
+};
+
+/// @brief Hits of the subsumption pass by the kinds of the narrower clause C and
+/// the wider clause D, `starting` or `learned` as each was before the hit.
+struct SubsumePassHitsByKind {
+    std::size_t starting_by_starting = 0;
+    std::size_t learned_by_starting = 0; ///< D learned, C starting.
+    std::size_t starting_by_learned = 0; ///< D starting, C learned.
+    std::size_t learned_by_learned = 0;
+};
+
+/// @brief What the subsumption passes of one solve did.
+struct SubsumePassCounters {
+    std::size_t num_passes = 0;
+    std::size_t num_forced_visits = 0;
+
+    /// @brief Visits of a clause as the wider clause D and as the narrower clause C.
+    std::size_t num_visits_as_wider = 0;
+    std::size_t num_visits_as_narrower = 0;
+
+    std::size_t num_entries_scanned = 0;     ///< Index entries read, both directions.
+    std::size_t num_containment_tests = 0;   ///< Of the leading columns, before any row.
+    std::size_t num_row_checks = 0;          ///< Rows of C reduced against D.
+    std::size_t num_row_additions = 0;       ///< Rows of D added in those reductions.
+    std::size_t num_rows_read = 0;           ///< Per row of C reduced, the rows of D.
+    std::size_t num_budget_stops = 0;        ///< Passes their budget stopped.
+
+    /// @brief By the direction that found the hit: the visited wider or narrower.
+    SubsumePassHitsByKind subsumed_as_wider;
+    SubsumePassHitsByKind subsumed_as_narrower;
+    SubsumePassHitsByKind strengthened_as_wider;
+    SubsumePassHitsByKind strengthened_as_narrower;
+
+    /// @brief The rows of the subsumed clauses, and one per strengthening.
+    std::size_t num_rows_removed = 0;
+    std::size_t num_units = 0;
+    std::size_t num_promotions = 0; ///< Learned clauses that subsumed a starting one.
+
+    /// @brief Hits by the width of D: up to 2, 3, 4 to 6, 7 and up.
+    std::size_t hits_by_width[4] = {};
+    /// @brief Hits on a learned D by its LBD: up to 2, up to 6, up to 15, above.
+    std::size_t hits_by_lbd[4] = {};
+
+    double time_s = 0.0;
+};
+
 /// @brief Where the solver reports progress while it runs, and how often.
 struct ProgressConfig {
     ProgressReporter* reporter = nullptr; ///< Not owned; null reports nothing.
@@ -152,9 +218,11 @@ struct SolverCounters {
     std::size_t num_renumberings = 0; ///< Compactions that also renumbered.
     std::size_t num_dropped_vars = 0;
     std::size_t num_substituted_clauses = 0; ///< Clauses a compaction rewrote or deactivated.
+    std::size_t num_tautologies_at_input = 0;
 
     /// @brief Equivalent clauses evicted, by where the kept clause was found.
     std::size_t num_equivalent_clauses_at_input = 0;
+    std::size_t num_equivalent_clauses_at_subsume_pass = 0;
     std::size_t num_equivalent_clauses_at_subsumption = 0;
     std::size_t num_equivalent_clauses_at_substitution = 0;
     std::size_t num_equivalent_clauses_at_vivification = 0;
@@ -284,6 +352,7 @@ public:
     /// @pre If deletion is enabled with `DeletionKey::activity` then `decisions`
     /// is a `ClauseActivitySource`.
     /// @pre If `bve.enabled` then compaction is enabled.
+    /// @pre If `stabilize.enabled` then `restarts` is a `NoRestarts`.
     Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t> used_vars,
            std::unique_ptr<ClauseSelector> selector, std::unique_ptr<DecisionProcedure> decisions,
            std::unique_ptr<RestartPolicy> restarts, RawProofWriter* proof_writer = nullptr,
@@ -292,7 +361,9 @@ public:
            bool bump_responsible_clauses = false, bool subsume = true,
            const PropagationConfig& propagation = {},
            const ImplicationGraphConfig& implication_graph = {},
-           const VivifyConfig& vivify = {}, const BveConfig& bve = {});
+           const VivifyConfig& vivify = {}, const BveConfig& bve = {},
+           const SubsumePassConfig& subsume_pass = {},
+           const StabilizeConfig& stabilize = {});
 
     Solver(const Solver&) = delete;
     Solver& operator=(const Solver&) = delete;
@@ -300,7 +371,8 @@ public:
     /// @brief Add a clause from the input instance, in its linear negation.
     ///
     /// A clause with no rows is the empty clause: it stays out of the database,
-    /// and `solve()` answers UNSAT citing it.
+    /// and `solve()` answers UNSAT citing it. A tautology, whose linear negation
+    /// holds `0 = 1`, stays out too.
     /// @pre No solving has happened yet and no compaction has run.
     /// @pre `clause` is over the used variables and uses the solver's
     /// representation.
@@ -338,6 +410,10 @@ public:
     const ImplicationGraph& implication_graph() const noexcept { return implication_graph_; }
 
     const VivifyCounters& vivify_counters() const noexcept { return vivify_counters_; }
+
+    const SubsumePassCounters& subsume_pass_counters() const noexcept {
+        return subsume_pass_counters_;
+    }
 
     const DecisionProcedure& decision_procedure() const noexcept { return *decisions_; }
 
@@ -440,14 +516,15 @@ private:
 
     DecisionStep make_decision_step();
 
-    /// @brief Decide the next decision `maybe_force_vivify_root_visit()` saved that
+    /// @brief Decide the next decision `maybe_force_root_visit()` saved that
     /// the trail leaves open, or as `make_decision_step()` once none is left.
     DecisionStep replay_decision_step();
 
-    /// @brief With a vivification pass due above the root, save the decisions to
-    /// replay and go to the root, where the pass runs once propagation is quiescent.
+    /// @brief With a vivification pass whose visit is forced or a subsumption pass
+    /// due above the root, save the decisions to replay and go to the root, where
+    /// the passes run once propagation is quiescent.
     /// @return Whether it went to the root.
-    bool maybe_force_vivify_root_visit();
+    bool maybe_force_root_visit();
 
     /// @brief Fill the variables no clause constrains and answer SAT.
     Solution complete_satisfying_assignment();
@@ -581,13 +658,32 @@ private:
     /// @pre The trail is at the root.
     bool vivify_is_narrowing(const Clause& narrowed, ClauseId id) const;
 
-    /// @brief Put @p narrowing in the place of clause @p id with its deletion state,
-    /// hand that state to a kept clause with its span instead, or keep it, with its
-    /// proof line, in @p units if it is one row.
-    /// @return The id the clause goes on under, or empty for a unit or a kept clause.
+    /// @brief Overwrite clause @p id with @p narrowing, hand the clause's deletion
+    /// state to a kept clause with its span instead, or keep it, with its proof
+    /// line, in @p units if it is one row.
+    /// @return Whether the clause goes on under its id.
     /// @pre `vivify_is_narrowing(narrowing.clause, id)`.
-    std::optional<ClauseId> vivify_replace(ClauseId id, VivifyNarrowing narrowing,
-                                           std::vector<std::pair<Equation, ClauseId>>& units);
+    bool vivify_replace(ClauseId id, VivifyNarrowing narrowing,
+                        std::vector<std::pair<Equation, ClauseId>>& units);
+
+    /// @brief Overwrite clause @p id with @p narrowed at the root, or hand its
+    /// deletion state to a kept clause with that span and delete it.
+    /// @param site The counter of an eviction into a kept clause.
+    /// @return Whether the clause goes on under its id.
+    /// @pre @p narrowed implies the clause, is in reduced row-echelon form and has
+    /// at least two rows; @p proof_hints derive it under a proof.
+    bool put_narrowing_in_place(ClauseId id, Clause narrowed,
+                                const std::vector<ClauseId>& proof_hints,
+                                std::size_t SolverCounters::* site);
+
+    /// @brief Run a subsumption pass if the trail is at the root and one is due.
+    /// @return Whether the pass changed the clauses, in which case the caller must
+    /// propagate again rather than decide.
+    bool maybe_subsume_pass();
+
+    /// @brief Run one subsumption pass; whether it changed the clauses.
+    /// @pre The trail is at the root and quiescent.
+    bool run_subsume_pass();
 
     /// @brief Apply a prepared plan and clear the used flags.
     void apply_deletion(const DeletionPlan& plan);
@@ -607,6 +703,9 @@ private:
     /// deletion state of the two.
     void merge_into_equivalent_clause(ClauseId kept_id, const EvictedClauseState& evicted,
                                       std::size_t SolverCounters::* site);
+
+    /// @brief Leave clause @p kept_id the better deletion state of its own and @p removed.
+    void merge_deletion_state(ClauseId kept_id, const EvictedClauseState& removed);
 
 #ifndef NDEBUG
     /// @brief Whether the table holds exactly the active clauses.
@@ -659,6 +758,30 @@ private:
     Cyclic* cyclic_selector_ = nullptr; ///< `selector_`, if it is `Cyclic`.
     std::unique_ptr<DecisionProcedure> decisions_;
     std::unique_ptr<RestartPolicy> restarts_;
+
+    /// @brief What the search spent in a mode, or the run's totals at a mode's start.
+    struct ModeTotals {
+        std::size_t conflicts = 0;
+        std::size_t decisions = 0;
+        std::size_t propagations = 0;
+        double time_s = 0.0;
+    };
+
+    /// @brief The run's totals so far.
+    ModeTotals mode_totals_now() const;
+
+    /// @brief Enter the schedule's mode, crediting what was spent since the last switch.
+    void switch_mode();
+
+    /// @brief Present exactly under `StabilizeConfig::enabled`.
+    std::optional<ModeSchedule> modes_;
+    std::unique_ptr<RestartPolicy> focused_restarts_;
+    std::size_t interval_conflicts_ = 0;
+    std::array<ModeTotals, 2> mode_totals_{}; ///< By `SearchMode`, up to the last switch.
+    ModeTotals totals_at_mode_start_;
+    std::size_t num_mode_switches_ = 0;
+    std::size_t num_focused_restarts_ = 0;
+
     Propagator propagator_;
 
     RawProofWriter* proof_writer_; ///< Not owned; null for no proof.
@@ -814,11 +937,22 @@ private:
     std::size_t search_rows_at_last_vivify_pass_ = 0;
     /// @brief Whether a pass has run since the trail last left the root.
     bool vivify_passed_at_this_root_visit_ = false;
+    /// @brief By clause id, short of the newest ids: whether vivification narrowed it.
+    std::vector<std::uint8_t> is_vivify_replacement_;
+
     /// @brief The decisions a forced root visit left to replay, each with its
     /// decision clause, and the next to replay.
-    std::vector<std::pair<Equation, std::optional<ClauseId>>> vivify_replay_;
-    std::size_t vivify_replay_next_ = 0;
-    std::vector<std::uint8_t> is_vivify_replacement_; ///< By clause id, short of the newest ids.
+    std::vector<std::pair<Equation, std::optional<ClauseId>>> root_visit_replay_;
+    std::size_t root_visit_replay_next_ = 0;
+
+    SubsumePassConfig subsume_pass_;
+    SubsumePassCounters subsume_pass_counters_;
+    Rng subsume_pass_rng_;
+    std::size_t conflicts_at_last_subsume_pass_ = 0;
+    /// @brief Decisions and propagations of the search when the last pass ran.
+    std::size_t search_rows_at_last_subsume_pass_ = 0;
+    /// @brief Whether a pass has run since the trail last left the root.
+    bool subsume_passed_at_this_root_visit_ = false;
 
     /// @brief What the last progress line saw, so the next one can report the
     /// interval between them rather than the run so far.

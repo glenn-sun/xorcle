@@ -47,4 +47,14 @@ bool IndexSet::intersects(const IndexSet& other) const noexcept {
     return false;
 }
 
+bool IndexSet::is_subset_of(const IndexSet& other) const noexcept {
+    assert(other.size_ == size_ && "IndexSet::is_subset_of size mismatch");
+    for (std::size_t w = 0; w < words_.size(); ++w) {
+        if ((words_[w] & ~other.words_[w]) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace xorcle

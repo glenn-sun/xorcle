@@ -11,6 +11,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <random>
+#include <utility>
+#include <vector>
 
 #include "util/index_set.h"
 
@@ -29,7 +31,8 @@ enum class RngComponent : std::uint64_t {
     minimize_representative = 0x3c6ef372fe94f82bULL,
     implication_graph_sample = 0xa54ff53a5f1d36f1ULL,
     vivify_basis = 0x9b05688c2b3e6c1fULL,
-    bve_draw = 0x510e527fade682d1ULL
+    bve_draw = 0x510e527fade682d1ULL,
+    subsume_pass_draw = 0x1f83d9abfb41bd6bULL
 };
 
 Seed derive_seed(Seed base_seed, RngComponent component);
@@ -47,5 +50,14 @@ int random_int(Rng& rng, int upper_bound);
 /// discarded.
 /// @pre `num_rows > 0`.
 IndexSet random_nonzero_coefficients(std::size_t num_rows, Rng& rng);
+
+/// @brief Put @p items in a uniformly random order.
+template <typename T>
+void shuffle_uniformly(std::vector<T>& items, Rng& rng) {
+    for (std::size_t i = items.size(); i > 1; --i) {
+        std::uniform_int_distribution<std::size_t> below(0, i - 1);
+        std::swap(items[i - 1], items[below(rng)]);
+    }
+}
 
 } // namespace xorcle

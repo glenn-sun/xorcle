@@ -9,11 +9,13 @@
 #include <cstddef>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "heuristics/restarts/lbd_restarts.h"
 #include "heuristics/restarts/luby.h"
 #include "heuristics/restarts/restart_policy.h"
+#include "heuristics/restarts/stabilize.h"
 
 namespace xorcle {
 
@@ -243,6 +245,25 @@ TEST_CASE("restart policies: note_restart is what advances the schedule") {
     // Advancing gives luby_value(2) == 1 then luby_value(3) == 2, i.e. 10 and 20.
     policy.note_restart();
     CHECK(observed_budgets(policy, 2) == std::vector<std::size_t>{10, 20});
+}
+
+TEST_CASE("ModeSchedule: focused 1, then stable and focused k squared for k = 2, 3") {
+    // Interval 2: focused 2, stable 8, focused 8, stable 18, focused 18.
+    ModeSchedule schedule(2);
+    const std::pair<SearchMode, std::size_t> phases[]{
+        {SearchMode::focused, 2}, {SearchMode::stable, 8}, {SearchMode::focused, 8},
+        {SearchMode::stable, 18}, {SearchMode::focused, 18}};
+    std::size_t switches = 0;
+    for (const auto& [mode, conflicts] : phases) {
+        for (std::size_t conflict = 0; conflict < conflicts; ++conflict) {
+            CHECK(schedule.mode() == mode);
+            const bool ended = schedule.update_with_conflict();
+            CHECK(ended == (conflict + 1 == conflicts));
+            switches += ended ? 1U : 0U;
+        }
+    }
+    CHECK(switches == 5);
+    CHECK(schedule.mode() == SearchMode::stable);
 }
 
 } // namespace xorcle

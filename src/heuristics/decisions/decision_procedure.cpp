@@ -23,6 +23,8 @@ void DecisionProcedure::update_with_resolved_clause(ClauseId) {}
 
 void DecisionProcedure::update_with_subsumed_clause(ClauseId, ClauseId) {}
 
+void DecisionProcedure::update_with_narrowed_clause(ClauseId) {}
+
 // The procedures that walk their whole candidate set on every decision have
 // nothing to restore.
 void DecisionProcedure::update_with_conflict(const Trail&, std::span<const std::size_t>) {}
@@ -30,6 +32,8 @@ void DecisionProcedure::update_with_conflict(const Trail&, std::span<const std::
 void DecisionProcedure::update_with_backjump(std::size_t) {}
 
 void DecisionProcedure::update_with_replayed_decision() {}
+
+void DecisionProcedure::update_with_mode(SearchMode) {}
 
 std::optional<ClauseId> DecisionProcedure::decision_clause_hint() const {
     return std::nullopt;

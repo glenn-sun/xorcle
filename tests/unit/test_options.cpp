@@ -56,7 +56,7 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
     CHECK(options.decisions == DecisionProcedureName::csids);
-    CHECK(options.phase == DecisionPhase::saved);
+    CHECK(options.phase == DecisionPhase::rotate);
     CHECK(options.selection == ClauseSelectorName::exact_watchlist);
     CHECK(options.restart == RestartMethod::none);
     CHECK(options.deletion == true);
@@ -323,6 +323,39 @@ TEST_CASE("options: the configuration projections carry the values across") {
               .enabled == false);
 }
 
+TEST_CASE("options: --stabilize takes its own restarts and needs CSIDS") {
+    const auto refusal = [](std::vector<std::string> arguments) {
+        return rejection_message<CliError>(std::move(arguments));
+    };
+    CHECK(stabilize_config(parse_with_input({})) == StabilizeConfig{});
+    CHECK(refusal({"--stabilize-interval=50"})
+              .starts_with("--stabilize-interval requires --stabilize=true"));
+    CHECK(refusal({"--focused-decay=0.6"}).starts_with("--focused-decay requires --stabilize=true"));
+    CHECK(refusal({"--focused-restart-lbd-slow=1000"})
+              .starts_with("--focused-restart-lbd-slow requires --stabilize=true"));
+    CHECK(refusal({"--stabilize=true", "--restart=lbd"})
+              .starts_with("--stabilize requires --restart=none"));
+    CHECK(refusal({"--stabilize=true", "--decisions=fixed_literals", "--deletion=false"})
+              .starts_with("--stabilize requires --decisions=csids"));
+
+    const Options options = parse_with_input(
+        {"--stabilize=true", "--stabilize-interval=50", "--focused-decay=0.75",
+         "--focused-restart-lbd-fast=20", "--focused-restart-lbd-slow=1000",
+         "--focused-restart-lbd-min-ratio=1.2", "--focused-restart-lbd-min-conflicts=1000",
+         "--focused-restart-lbd-trail-ratio=1.4", "--phase=rotate"});
+    const StabilizeConfig stabilize = stabilize_config(options);
+    CHECK(stabilize.enabled);
+    CHECK(stabilize.interval_conflicts == 50);
+    CHECK(stabilize.focused_restarts.method == RestartMethod::lbd);
+    CHECK(stabilize.focused_restarts.lbd_fast_window == 20);
+    CHECK(stabilize.focused_restarts.lbd_slow_window == 1000);
+    CHECK(stabilize.focused_restarts.lbd_min_ratio == 1.2);
+    CHECK(stabilize.focused_restarts.lbd_min_conflicts == 1000);
+    CHECK(stabilize.focused_restarts.lbd_trail_ratio == 1.4);
+    CHECK(csids_config(options).focused_decay == 0.75);
+    CHECK(restart_config(options).method == RestartMethod::none);
+}
+
 TEST_CASE("options: --report takes the progress group names") {
     CHECK(parse_with_input({"--report=all"}).report == "all");
     CHECK(parse_with_input({"--report=search,deletion"}).report == "search,deletion");
@@ -426,6 +459,10 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(parse_with_input({"--csids-span=plus_minus", "--phase=saved"}).phase ==
           DecisionPhase::saved);
     CHECK(parse_with_input({"--phase=saved"}).phase == DecisionPhase::saved);
+    CHECK(refusal({"--phase=saved", "--phase-rotate-interval=10"})
+              .starts_with("--phase-rotate-interval requires --phase=rotate"));
+    CHECK_NOTHROW(parse_with_input({"--phase=rotate", "--phase-rotate-interval=10",
+                                    "--phase-saving-recent=2", "--csids-span=plus_minus"}));
     CHECK_NOTHROW(
         parse_with_input({"--restart=lbd", "--decisions=fixed_literals", "--deletion=false"}));
 

@@ -831,8 +831,8 @@ TEST_CASE("solver: vivification removes a row the trail implies from the clause"
             }
             ++num_narrowed;
             CHECK(counters.narrowed_width_after == 2);
-            // The replacement takes the first id after the eight starting clauses.
-            const Clause& replacement = run.solver->selector().clauses()[8];
+            // The narrowing overwrites (x1 v x2 v x3) under its own id.
+            const Clause& replacement = run.solver->selector().clauses()[1];
             REQUIRE(replacement.rows() == 2);
             Equation x1 = make_equation_with(EquationRepr::dense, 4, {0});
             CHECK(replacement.partial_reduce(x1).kind != ReduceResult::Kind::eq_true);
@@ -866,6 +866,108 @@ TEST_CASE("solver: a vivification narrowing a kept clause already has adds no cl
         }
     }
     CHECK(num_kept > 0);
+}
+
+// A tautology stays out of the database and keeps its place in the proof's
+// numbering. Kept, `x1 = 0 v x1 = 1 v x2 = 1` would be the one clause wide enough
+// for the pass at the first root visit, and an order assuming `x1 + x2 = 1` first
+// would narrow it at `x1 + x2 = 0`, refuted by its own `0 = 1`, to a tautology no
+// trail derives, as most of these seeds do. The unit [x5 = 1] is the
+// root's propagation, which the pass's budget is a multiple of.
+TEST_CASE("solver: a tautology at input is dropped, and the proof checks") {
+    constexpr std::string_view instance = "p xnf 5 6\n"
+                                          "5 0\n"
+                                          "-1 1 2 0\n"
+                                          "3 4 0\n"
+                                          "3 -4 0\n"
+                                          "-3 4 0\n"
+                                          "-3 -4 0\n";
+    const std::vector<std::vector<RawRow>> inputs =
+        clause_rows(parse_dimacs_string(instance, EquationRepr::dense));
+    const std::filesystem::path path = scratch_path("tautology.raw");
+    for (std::size_t seed = 0; seed < 20; ++seed) {
+        CAPTURE(seed);
+        {
+            RawProofWriter writer(path, 5, inputs.size());
+            Run run = make_run(EquationRepr::dense, instance,
+                               {"--vivify=true", "--vivify-cadence=0", "--vivify-effort=1000",
+                                "--compact=false", "--implication-graph=false",
+                                "--seed=" + std::to_string(seed)},
+                               nullptr, &writer);
+            CHECK(run.solver->solve().result == SolveResult::unsat);
+            CHECK(run.solver->counters().num_tautologies_at_input == 1);
+            CHECK(run.solver->vivify_counters().num_orders == 0);
+            writer.finalize(true);
+        }
+        RawProofFileSource source(path);
+        std::ostringstream proof;
+        postprocess_raw_proof(source, 5, inputs.size(), EquationRepr::dense, proof, inputs);
+        LrupChecker checker(EquationRepr::dense, 5, inputs);
+        CHECK(checker.check(proof.str()) == "");
+    }
+    std::filesystem::remove(path);
+}
+
+// A pass at the first root visit, before any decision: (-x1 v x2) strengthens
+// (x1 v x2 v x3), and (x2 v x4) subsumes (x2 v x4 v x5); no other pair is related,
+// and the clause the strengthening makes waits for the next pass. Its rows are
+// x2 = 0 and one of x3 = 0 and x1 + x3 = 0, drawn uniformly, since either clause is
+// implied by the two and narrower than the wider of them.
+TEST_CASE("solver: a subsumption pass deletes and strengthens") {
+    // The unit [x6 = 1] is the root's propagation, which gives the budget a row of
+    // the search.
+    constexpr std::string_view instance = "p cnf 6 5\n"
+                                          "1 2 3 0\n"
+                                          "-1 2 0\n"
+                                          "2 4 0\n"
+                                          "2 4 5 0\n"
+                                          "6 0\n";
+    const auto plain = rows_of(make_clause(EquationRepr::dense, 5, {{1}, {2}}));
+    const auto merged = rows_of(make_clause(EquationRepr::dense, 5, {{0, 2}, {1}}));
+    std::size_t num_plain = 0;
+    std::size_t num_merged = 0;
+    for (std::size_t seed = 0; seed < 40; ++seed) {
+        CAPTURE(seed);
+        Run run = make_run(EquationRepr::dense, instance,
+                           {"--subsume-pass=true", "--subsume-pass-cadence=0",
+                            "--subsume-pass-effort=1000000", "--implication-graph=false",
+                            "--seed=" + std::to_string(seed)});
+        CHECK(run.solver->solve().result == SolveResult::sat);
+        const SubsumePassCounters& counters = run.solver->subsume_pass_counters();
+        REQUIRE(counters.num_passes == 1);
+        CHECK(counters.subsumed_as_wider.starting_by_starting +
+                  counters.subsumed_as_narrower.starting_by_starting ==
+              1);
+        CHECK(counters.strengthened_as_wider.starting_by_starting +
+                  counters.strengthened_as_narrower.starting_by_starting ==
+              1);
+        CHECK(counters.num_rows_removed == 4);
+        CHECK(run.solver->num_active_clauses() == 3);
+        // The strengthening overwrites (x1 v x2 v x3) under its own id.
+        const auto rows = rows_of(run.solver->selector().clauses()[0]);
+        num_plain += rows == plain ? 1U : 0U;
+        num_merged += rows == merged ? 1U : 0U;
+    }
+    CHECK(num_plain + num_merged == 40);
+    CHECK(num_plain >= 10);
+    CHECK(num_merged >= 10);
+}
+
+// (-x1 v x2) and (x1 v x2) leave the unit x2, which goes through the unit path; the
+// unit [x4 = 1] gives the budget a row of the search.
+TEST_CASE("solver: a subsumption pass strengthening to a unit feeds it") {
+    constexpr std::string_view instance = "p cnf 4 4\n"
+                                          "1 2 0\n"
+                                          "-1 2 0\n"
+                                          "1 3 0\n"
+                                          "4 0\n";
+    Run run = make_run(EquationRepr::dense, instance,
+                       {"--subsume-pass=true", "--subsume-pass-cadence=0",
+                        "--subsume-pass-effort=1000000", "--implication-graph=false"});
+    const Solution solution = run.solver->solve();
+    REQUIRE(solution.result == SolveResult::sat);
+    CHECK(solution.assignment->test(1));
+    CHECK(run.solver->subsume_pass_counters().num_units == 1);
 }
 
 } // namespace xorcle

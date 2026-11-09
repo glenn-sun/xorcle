@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -439,7 +440,9 @@ TEST_CASE_TEMPLATE("csids: span^± intersects directions and draws the side", Ta
             procedure.update_with_new_clause(clauses[id], id);
         }
         procedure.update_with_resolved_clause(0);
-        const DecisionResult result = procedure.make_decision(empty, clauses, active);
+        const std::vector<std::size_t> stamps{1};
+        const DecisionResult result =
+            procedure.make_decision(empty, clauses, active, SatisfactionRecord(stamps, 0));
         REQUIRE(result.equation.has_value());
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{0});
         counters = procedure.intersection_counters();
@@ -486,13 +489,54 @@ TEST_CASE_TEMPLATE("csids: span^± intersects directions and draws the side", Ta
                   std::vector<std::size_t>{0, num_vars});
         }
     }
+
+    SUBCASE("rotate puts a side no trail decides on the falsify side") {
+        config.phase_saving.rotation_interval = 1000;
+        for (const CsidsSpan span : {CsidsSpan::plain, CsidsSpan::plus_minus}) {
+            config.span = span;
+            for (std::uint64_t seed = 0; seed < 16; ++seed) {
+                IntersectionCounters counters;
+                const std::vector<std::size_t> bits =
+                    decide(config, Seed{seed}, counters, DecisionPhase::rotate);
+                // The falsify side lies in the top clause's span(x0, x1): no constant.
+                CHECK(!bits.empty());
+                CHECK(std::ranges::find(bits, num_vars) == bits.end());
+                if (span == CsidsSpan::plus_minus) {
+                    CHECK(bits == std::vector<std::size_t>{0});
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("phase rotation: every step of cycle c lasts c intervals") {
+    // Interval 2: four steps of 2 conflicts, then four of 4, then four of 6.
+    PhaseRotation rotation(2);
+    const PhaseOrder cycle[]{PhaseOrder::target_recent_falsify, PhaseOrder::falsify,
+                             PhaseOrder::target_falsify, PhaseOrder::recent_falsify};
+    std::vector<PhaseOrder> expected;
+    for (std::size_t c = 1; c <= 3; ++c) {
+        for (const PhaseOrder order : cycle) {
+            expected.insert(expected.end(), 2 * c, order);
+        }
+    }
+    std::size_t rotations = 0;
+    for (std::size_t conflicts = 0; conflicts < expected.size(); ++conflicts) {
+        CHECK(rotation.order() == expected[conflicts]);
+        if (rotation.update_with_conflict()) {
+            ++rotations;
+        }
+    }
+    CHECK(rotations == 12);
+    CHECK(rotation.order() == PhaseOrder::target_recent_falsify);
 }
 
 TEST_CASE_TEMPLATE("saved trails: the clause step chooses a side consistent with the trail",
                    Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     constexpr std::size_t num_vars = 4;
-    const PhaseSavingConfig config{.recent_trails = 1, .target = false};
+    const PhaseSavingConfig config{
+        .recent_trails = 1, .target = false, .rotation_interval = std::nullopt};
     SavedTrails saved(repr, num_vars, config);
 
     // The saved trail S: `x0 = 0` decided at level 1, then `x1 = 0` propagated, then
@@ -550,6 +594,62 @@ TEST_CASE_TEMPLATE("saved trails: the clause step chooses a side consistent with
         CHECK(bits_of(space.row(0)) == std::vector<std::size_t>{1});
         CHECK(saved.counters().recent_clause_step.inconsistent == 1);
         CHECK(saved.counters().clause_step_partner == 1);
+    }
+}
+
+TEST_CASE_TEMPLATE("saved trails: focused mode consults no target trail", Tag, DenseTag,
+                   SparseTag) {
+    constexpr EquationRepr repr = Tag::value;
+    constexpr std::size_t num_vars = 4;
+
+    // A conflict at level 2 makes level 1, `x0 = 0`, the target; the search is back at the root.
+    Trail current(repr, num_vars);
+    current.learn(make_equation_with(repr, num_vars, {0}), std::nullopt, 1);
+    current.learn(make_equation_with(repr, num_vars, {1}), std::nullopt, 2);
+    current.learn(make_equation_with(repr, num_vars, {num_vars}), ClauseId{0}, 2);
+    const std::vector<std::size_t> stamps{1};
+    const std::vector<Clause> clauses;
+    const auto narrowed = [&](SavedTrails& saved) {
+        saved.update_with_conflict(current, std::vector<std::size_t>{1, 2, 3});
+        current.resize(1);
+        RowSpace space(repr, num_vars);
+        space.add_row(make_equation_with(repr, num_vars, {0}));
+        space.add_row(make_equation_with(repr, num_vars, {1}));
+        saved.narrow(space, std::vector<ClauseId>{}, clauses, current.span(), stamps);
+        return space;
+    };
+    const PhaseSavingConfig config{
+        .recent_trails = 0, .target = true, .rotation_interval = std::nullopt};
+
+    SUBCASE("stable mode narrows to the target's side") {
+        SavedTrails saved(repr, num_vars, config);
+        const RowSpace space = narrowed(saved);
+        REQUIRE(space.rows() == 1);
+        CHECK(bits_of(space.row(0)) == std::vector<std::size_t>{0});
+        CHECK(saved.counters().target_narrowing == 1);
+    }
+
+    SUBCASE("focused mode leaves the side open") {
+        SavedTrails saved(repr, num_vars, config);
+        saved.update_with_mode(SearchMode::focused);
+        const RowSpace space = narrowed(saved);
+        CHECK(space.rows() == 3);
+        CHECK(saved.counters().target_narrowing == 0);
+        CHECK(saved.counters().none == 1);
+        CHECK(saved.counters().uniform_sides == 1);
+    }
+
+    SUBCASE("under rotation, focused mode's target orders consult no trail") {
+        PhaseSavingConfig rotating = config;
+        rotating.rotation_interval = 1000;
+        SavedTrails saved(repr, num_vars, rotating);
+        CHECK(saved.consults_trails());
+        saved.update_with_mode(SearchMode::focused);
+        CHECK(!saved.consults_trails());
+        rotating.recent_trails = 1;
+        SavedTrails with_recent(repr, num_vars, rotating);
+        with_recent.update_with_mode(SearchMode::focused);
+        CHECK(with_recent.consults_trails());
     }
 }
 

@@ -9,7 +9,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <random>
 #include <span>
 #include <utility>
 #include <vector>
@@ -35,14 +34,6 @@ constexpr std::size_t vivify_min_width = 3;
 /// @brief A uniform draw from the 2^53 multiples of 2^-53 below 1.
 double uniform_below_one(Rng& rng) {
     return static_cast<double>(rng() >> 11) * 0x1.0p-53;
-}
-
-template <typename T>
-void shuffle_uniformly(std::vector<T>& items, Rng& rng) {
-    for (std::size_t i = items.size(); i > 1; --i) {
-        std::uniform_int_distribution<std::size_t> below(0, i - 1);
-        std::swap(items[i - 1], items[below(rng)]);
-    }
 }
 
 } // namespace
@@ -263,9 +254,8 @@ std::optional<VivifyNarrowing> Solver::vivify_one_order(const ClauseId id) {
     return result;
 }
 
-std::optional<ClauseId> Solver::vivify_replace(
-    const ClauseId id, VivifyNarrowing narrowing,
-    std::vector<std::pair<Equation, ClauseId>>& units) {
+bool Solver::vivify_replace(const ClauseId id, VivifyNarrowing narrowing,
+                            std::vector<std::pair<Equation, ClauseId>>& units) {
     Clause& narrowed = narrowing.clause;
     narrowed.reduce_rows();
     const std::size_t width = selector_->clause(id).rows();
@@ -274,71 +264,60 @@ std::optional<ClauseId> Solver::vivify_replace(
     ++vivify_counters_.num_narrowed;
     vivify_counters_.narrowed_width_before += width;
     vivify_counters_.narrowed_width_after += narrowed.rows();
-    const auto write_line = [&]() -> ClauseId {
-        if (proof_writer_ == nullptr) {
-            return 0;
-        }
-        const ClauseId line = next_proof_clause_id_++;
-        proof_writer_->write_learned(line, narrowed, active_var_to_original_,
-                                     narrowing.proof_hints);
-        return line;
-    };
     if (narrowed.rows() == 1) {
         // Fed once the pass is over: a unit met above the root would be learned there.
-        const ClauseId proof_line = write_line();
+        ClauseId proof_line = 0;
+        if (proof_writer_ != nullptr) {
+            proof_line = next_proof_clause_id_++;
+            proof_writer_->write_learned(proof_line, narrowed, active_var_to_original_,
+                                         narrowing.proof_hints);
+        }
         Equation unit = narrowed.row(0);
         unit.plus_assign(false_equation_);
         units.emplace_back(std::move(unit), proof_line);
         ++vivify_counters_.num_units;
-        return std::nullopt;
+        return false;
     }
     vivify_counters_.num_narrowed_to_width_2 += width > 2 && narrowed.rows() == 2 ? 1U : 0U;
+    if (!put_narrowing_in_place(id, std::move(narrowed), narrowing.proof_hints,
+                                &SolverCounters::num_equivalent_clauses_at_vivification)) {
+        return false;
+    }
+    is_vivify_replacement_.resize(std::max(is_vivify_replacement_.size(), id + 1), 0);
+    is_vivify_replacement_[id] = 1;
+    return true;
+}
 
-    const EvictedClauseState replaced = evicted_clause_state(id);
+bool Solver::put_narrowing_in_place(const ClauseId id, Clause narrowed,
+                                    const std::vector<ClauseId>& proof_hints,
+                                    std::size_t SolverCounters::* const site) {
+    assert(trail_.level() == 0 && "a clause is overwritten at the root");
+    assert(narrowed.rows() >= 2 && "a unit goes through the unit path, not in a clause's place");
     equivalent_clauses_.remove(id);
-    std::optional<ClauseId> replacement_id = selector_->num_clauses();
     const std::optional<ClauseId> kept_id = equivalent_clauses_.find_or_enter(
-        narrowed, narrowed.rows_hash(active_var_to_original_), *replacement_id,
-        selector_->clauses());
+        narrowed, narrowed.rows_hash(active_var_to_original_), id, selector_->clauses());
     if (kept_id.has_value()) {
-        // A kept clause already has the narrowing's span, so none is added.
-        merge_into_equivalent_clause(*kept_id, replaced,
-                                     &SolverCounters::num_equivalent_clauses_at_vivification);
+        // A kept clause already has the narrowing's span, so the clause goes.
+        merge_into_equivalent_clause(*kept_id, evicted_clause_state(id), site);
         decisions_->update_with_subsumed_clause(id, *kept_id);
-        replacement_id.reset();
-    } else {
-        const ClauseId proof_line = write_line();
-        decisions_->update_with_new_clause(narrowed, *replacement_id);
         if (proof_writer_ != nullptr) {
-            assert(proof_id_of_clause_.size() == *replacement_id &&
-                   "a clause went without a proof id");
-            proof_id_of_clause_.push_back(proof_line);
+            proof_writer_->write_deleted({proof_id_of_clause_[id]});
         }
-        selector_->add_asserting_clause(
-            std::move(narrowed), trail_,
-            AssertingClauseInfo{.lbd = 0, .removed_levels = 0, .is_replacement = true});
-        ++num_active_clauses_;
-        if (replaced.is_learned) {
-            selector_->set_clause_lbd(*replacement_id, replaced.lbd);
-        } else {
-            selector_->set_clause_learned(*replacement_id, false);
-        }
-        selector_->set_clause_unused_passes(*replacement_id, replaced.unused_passes);
-        selector_->set_clause_out_of_unused_passes(*replacement_id,
-                                                   replaced.is_out_of_unused_passes);
-        selector_->set_clause_used_since_deletion(*replacement_id, replaced.is_used_since_deletion);
-        decisions_->update_with_subsumed_clause(id, *replacement_id);
-        is_vivify_replacement_.resize(*replacement_id + 1, 0);
-        is_vivify_replacement_[*replacement_id] = 1;
+        selector_->set_clause_active(id, false);
+        selector_->replace_clause(id, inactive_clause_placeholder(repr_, false_equation_));
+        --num_active_clauses_;
+        return false;
     }
-
     if (proof_writer_ != nullptr) {
+        const ClauseId proof_line = next_proof_clause_id_++;
+        proof_writer_->write_learned(proof_line, narrowed, active_var_to_original_, proof_hints);
         proof_writer_->write_deleted({proof_id_of_clause_[id]});
+        proof_id_of_clause_[id] = proof_line;
     }
-    selector_->set_clause_active(id, false);
-    selector_->replace_clause(id, inactive_clause_placeholder(repr_, false_equation_));
-    --num_active_clauses_;
-    return replacement_id;
+    selector_->narrow_clause(id, std::move(narrowed));
+    decisions_->update_with_narrowed_clause(id);
+    implication_graph_.clause_was_rewritten(id);
+    return true;
 }
 
 std::vector<std::vector<ClauseId>> Solver::vivify_candidates_by_width() {
@@ -405,8 +384,8 @@ bool Solver::maybe_vivify() {
     // The assumptions and what they imply are not the search's.
     const SolverCounters search_counters = counters_;
     ++vivify_counters_.num_passes;
-    // A clause this pass puts in place has not had the rounds of its own width.
-    const ClauseId first_replacement_id = selector_->num_clauses();
+    // A clause this pass narrows has not had the rounds of its new width.
+    std::vector<std::uint8_t> is_narrowed(selector_->num_clauses(), 0);
 
     // The width at which the budget stopped the pass.
     std::optional<std::size_t> stopped_at;
@@ -420,7 +399,7 @@ bool Solver::maybe_vivify() {
     std::vector<std::pair<Equation, ClauseId>> units;
     bool ran_an_order = false;
     for (std::size_t width = vivify_min_width; width < by_width.size() && !stopped_at; ++width) {
-        // A clause that narrows keeps its place here under its new id.
+        // A clause that narrows keeps its place here.
         std::vector<ClauseId>& ids = by_width[width];
         vivify_counters_.num_candidates += ids.size();
         const double draw_below = std::pow(2.0, 3.0 - static_cast<double>(width));
@@ -439,8 +418,12 @@ bool Solver::maybe_vivify() {
                 std::optional<VivifyNarrowing> narrowed = vivify_one_order(id);
                 ran_an_order = true;
                 if (narrowed.has_value()) {
-                    ids[i] = vivify_replace(id, std::move(*narrowed), units).value_or(no_clause_id);
-                } else if (id < first_replacement_id) {
+                    if (vivify_replace(id, std::move(*narrowed), units)) {
+                        is_narrowed[id] = 1;
+                    } else {
+                        ids[i] = no_clause_id;
+                    }
+                } else if (is_narrowed[id] == 0) {
                     selector_->set_clause_vivified(id);
                 }
             }
@@ -452,7 +435,7 @@ bool Solver::maybe_vivify() {
     for (std::size_t width = vivify_min_width;
          width < by_width.size() && (!stopped_at || width < *stopped_at); ++width) {
         for (const ClauseId id : by_width[width]) {
-            if (id < first_replacement_id) {
+            if (is_narrowed[id] == 0) {
                 selector_->set_clause_vivified(id);
             }
         }
@@ -488,36 +471,51 @@ bool Solver::maybe_vivify() {
     return ran_an_order;
 }
 
-bool Solver::maybe_force_vivify_root_visit() {
-    // A replay under way, or no conflict since the last pass, leaves nothing new to visit for.
-    if (trail_.level() == 0 || vivify_replay_next_ < vivify_replay_.size() ||
-        counters_.num_conflicts == conflicts_at_last_vivify_pass_ ||
-        counters_.num_conflicts - conflicts_at_last_vivify_pass_ < vivify_.cadence) {
+bool Solver::maybe_force_root_visit() {
+    // A replay under way leaves nothing new to visit for.
+    if (trail_.level() == 0 || root_visit_replay_next_ < root_visit_replay_.size()) {
         return false;
     }
-    const std::span<const std::size_t> num_by_width = selector_->num_active_clauses_by_width();
-    if (std::all_of(num_by_width.begin() + static_cast<std::ptrdiff_t>(std::min(
-                                               vivify_min_width, num_by_width.size())),
-                    num_by_width.end(), [](const std::size_t num) { return num == 0; })) {
+    // No conflict since the last pass leaves nothing new to visit for either.
+    const auto is_due = [this](const std::size_t conflicts_at_last_pass,
+                               const std::size_t cadence) {
+        return counters_.num_conflicts != conflicts_at_last_pass &&
+               counters_.num_conflicts - conflicts_at_last_pass >= cadence;
+    };
+    bool vivify_is_due = false;
+    if (vivify_.force_root_visit && is_due(conflicts_at_last_vivify_pass_, vivify_.cadence)) {
+        const std::span<const std::size_t> num_by_width =
+            selector_->num_active_clauses_by_width();
+        vivify_is_due = !std::all_of(
+            num_by_width.begin() +
+                static_cast<std::ptrdiff_t>(std::min(vivify_min_width, num_by_width.size())),
+            num_by_width.end(), [](const std::size_t num) { return num == 0; });
+    }
+    const bool subsume_pass_is_due =
+        subsume_pass_.enabled && is_due(conflicts_at_last_subsume_pass_, subsume_pass_.cadence);
+    if (!vivify_is_due && !subsume_pass_is_due) {
         return false;
     }
-    vivify_replay_.clear();
-    vivify_replay_next_ = 0;
+    root_visit_replay_.clear();
+    root_visit_replay_next_ = 0;
     for (std::size_t level = 1; level <= trail_.level(); ++level) {
         const std::size_t trail_idx = trail_.rows_at_level(level - 1);
         assert(!trail_.reasons()[trail_idx].has_value() && "a level opens with a propagated row");
-        vivify_replay_.emplace_back(trail_.row(trail_idx), decision_clause_of_level_[level - 1]);
+        root_visit_replay_.emplace_back(trail_.row(trail_idx), decision_clause_of_level_[level - 1]);
     }
-    ++vivify_counters_.num_forced_visits;
-    vivify_counters_.forced_visit_rows += trail_.span().rows() - trail_.rows_at_level(0);
+    if (vivify_is_due) {
+        ++vivify_counters_.num_forced_visits;
+        vivify_counters_.forced_visit_rows += trail_.span().rows() - trail_.rows_at_level(0);
+    }
+    subsume_pass_counters_.num_forced_visits += subsume_pass_is_due ? 1U : 0U;
     // The backjump can queue clauses, so the loop propagates the root before the pass.
     backjump_to(0);
     return true;
 }
 
 Solver::DecisionStep Solver::replay_decision_step() {
-    while (vivify_replay_next_ < vivify_replay_.size()) {
-        auto& [decision_eqn, decision_clause] = vivify_replay_[vivify_replay_next_++];
+    while (root_visit_replay_next_ < root_visit_replay_.size()) {
+        auto& [decision_eqn, decision_clause] = root_visit_replay_[root_visit_replay_next_++];
         if (trail_.span().partial_reduce(decision_eqn).kind != ReduceResult::Kind::leading) {
             ++vivify_counters_.num_replay_skipped;
             continue;
@@ -534,8 +532,8 @@ Solver::DecisionStep Solver::replay_decision_step() {
         decisions_->update_with_replayed_decision();
         return DecisionStep::decided;
     }
-    vivify_replay_.clear();
-    vivify_replay_next_ = 0;
+    root_visit_replay_.clear();
+    root_visit_replay_next_ = 0;
     return make_decision_step();
 }
 

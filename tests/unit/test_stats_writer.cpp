@@ -215,6 +215,7 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c Compactions that renumbered: 0\n"
         "c Variables dropped: 0\n"
         "c Clauses rewritten by a compaction: 0\n"
+        "c Tautologies dropped at input: 0\n"
         "c Equivalent clauses evicted: 0\n"
         "c Equivalent clauses evicted at input: 0\n"
         "c Equivalent clauses evicted at a subsumption: 0\n"

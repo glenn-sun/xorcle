@@ -119,6 +119,9 @@ struct Tally {
     std::size_t unsat = 0;
     SolverCounters counters; ///< Summed over the runs, for the coverage checks.
     std::size_t units_fed = 0;
+    std::size_t subsume_pass_rows_removed = 0;
+    std::size_t subsume_pass_units = 0;
+    std::size_t subsume_pass_budget_stops = 0;
 };
 
 /// @brief Whether an assignment over the original variables satisfies a clause,
@@ -187,6 +190,9 @@ SolveResult run_and_check(const std::string& text, const std::vector<std::string
         tally.counters.num_decision_propagations += counters.num_decision_propagations;
         tally.counters.num_undone_decisions += counters.num_undone_decisions;
         tally.units_fed += solver->implication_graph_counters().num_units_fed;
+        tally.subsume_pass_rows_removed += solver->subsume_pass_counters().num_rows_removed;
+        tally.subsume_pass_units += solver->subsume_pass_counters().num_units;
+        tally.subsume_pass_budget_stops += solver->subsume_pass_counters().num_budget_stops;
     }
 
     REQUIRE(solution.result == expected.value_or(solution.result));
@@ -299,6 +305,18 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
           "--equation-repr=sparse"}},
         {"phase saving, target replaced on ties",
          {"--phase=saved", "--phase-saving-target-on-ties=true", "--phase-saving-target-reset=1"}},
+        {"phase rotation, short steps", {"--phase=rotate", "--phase-rotate-interval=2"}},
+        {"phase rotation, span plus-minus",
+         {"--phase=rotate", "--phase-rotate-interval=3", "--csids-span=plus_minus"}},
+        {"phase rotation, no target",
+         {"--phase=rotate", "--phase-rotate-interval=1", "--phase-saving-target=false"}},
+        {"stable and focused modes, short phases", {"--stabilize=true", "--stabilize-interval=2"}},
+        {"stable and focused modes under rotation",
+         {"--stabilize=true", "--stabilize-interval=3", "--phase=rotate",
+          "--phase-rotate-interval=2"}},
+        {"stable and focused modes, trail blocking, slow average 1000",
+         {"--stabilize=true", "--stabilize-interval=1", "--focused-restart-lbd-slow=1000",
+          "--focused-restart-lbd-min-conflicts=3", "--focused-restart-lbd-trail-ratio=1.4"}},
     };
 
     // Equivalent clauses are evicted at input and at a substitution; at a subsumption
@@ -338,9 +356,9 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
     CHECK(evictions.num_equivalent_clauses_at_substitution > 0);
 }
 
-// Vivification writes no proof lines, so its answers are held to brute force
-// and its models to the input.
-TEST_CASE("fuzz: vivification leaves the verdict and the models right") {
+// Its answers are held to brute force, its models to the input and its proofs,
+// each narrowing a line, to the checker.
+TEST_CASE("fuzz: vivification leaves the verdict, the models and the proofs right") {
     struct Arm {
         std::string name;
         std::vector<std::string> flags;
@@ -383,12 +401,15 @@ TEST_CASE("fuzz: vivification leaves the verdict and the models right") {
             REQUIRE(options.has_value());
             ParsedDimacs parsed = parse_dimacs_string(text, options->equation_repr);
             const std::vector<std::vector<RawRow>> rows = clause_rows(parsed);
+            const std::filesystem::path path = scratch_path("fuzz_vivify.raw");
+            RawProofWriter writer(path, parsed.num_vars, rows.size());
             const std::unique_ptr<Solver> solver =
-                make_solver(*options, parsed.num_vars, parsed.used_vars);
+                make_solver(*options, parsed.num_vars, parsed.used_vars, &writer);
             for (Clause& clause : parsed.clauses) {
                 solver->add_starting_clause(std::move(clause));
             }
             const Solution solution = solver->solve();
+            writer.finalize(solution.result == SolveResult::unsat);
             if (index % 5 != 4) {
                 REQUIRE(solution.result == enumerated_verdict(text));
             }
@@ -400,6 +421,13 @@ TEST_CASE("fuzz: vivification leaves the verdict and the models right") {
                 }
             } else {
                 ++num_unsat;
+                RawProofFileSource source(path);
+                std::ostringstream proof;
+                postprocess_raw_proof(source, parsed.num_vars, rows.size(),
+                                      options->equation_repr, proof, rows);
+                LrupChecker checker(options->equation_repr, parsed.num_vars, rows);
+                CHECK(checker.check(proof.str()) == "");
+                std::filesystem::remove(path);
             }
             const VivifyCounters& counters = solver->vivify_counters();
             total.num_orders += counters.num_orders;
@@ -421,6 +449,60 @@ TEST_CASE("fuzz: vivification leaves the verdict and the models right") {
         CHECK(total.num_narrowed > 0);
         if (arm.stops_at_budget) {
             CHECK(total.num_budget_stops > 0);
+        }
+    }
+}
+
+// The subsumption pass deletes and strengthens clauses with a proof line each, so
+// its answers are held to brute force, their models and their proofs; the wide
+// instances only to the models and proofs.
+TEST_CASE("fuzz: the subsumption pass leaves every answer right and checked") {
+    struct Arm {
+        std::string name;
+        std::vector<std::string> flags;
+        bool stops_at_budget = false;
+    };
+    const std::vector<Arm> arms = {
+        {"every root visit, nearly unbudgeted",
+         {"--subsume-pass=true", "--subsume-pass-cadence=0", "--subsume-pass-effort=1000000"}},
+        {"a conflict apart, nearly unbudgeted",
+         {"--subsume-pass=true", "--subsume-pass-cadence=1", "--subsume-pass-effort=1000000"}},
+        {"no compaction, a conflict apart, nearly unbudgeted",
+         {"--subsume-pass=true", "--subsume-pass-cadence=1", "--compact=false",
+          "--subsume-pass-effort=1000000"}},
+        {"cyclic with a miss rate, sparse",
+         {"--subsume-pass=true", "--subsume-pass-cadence=2", "--selection=cyclic",
+          "--equation-repr=sparse", "--propagate-miss-rate=0.5", "--propagate-window=1"}},
+        {"a conflict apart, the default effort",
+         {"--subsume-pass=true", "--subsume-pass-cadence=1"},
+         true},
+        {"every root visit, effort 1",
+         {"--subsume-pass=true", "--subsume-pass-cadence=0", "--subsume-pass-effort=1"},
+         true},
+    };
+    for (const Arm& arm : arms) {
+        CAPTURE(arm.name);
+        TestRandom random(20261108);
+        Tally tally;
+        for (std::size_t index = 0; index < 300; ++index) {
+            const bool wide = index % 5 == 4;
+            const std::string text = wide ? random_wide_instance(random) : random_instance(random);
+            CAPTURE(index);
+            CAPTURE(text);
+            std::vector<std::string> flags = arm.flags;
+            flags.push_back("--seed=" + std::to_string(index % 3));
+            run_and_check(text, flags, tally,
+                          wide ? std::nullopt : std::optional(enumerated_verdict(text)));
+        }
+        MESSAGE(arm.name << ": rows removed " << tally.subsume_pass_rows_removed << ", units "
+                         << tally.subsume_pass_units << ", budget stops "
+                         << tally.subsume_pass_budget_stops << ", sat " << tally.sat
+                         << ", unsat " << tally.unsat);
+        CHECK(tally.sat > 0);
+        CHECK(tally.unsat > 0);
+        CHECK(tally.subsume_pass_rows_removed > 0);
+        if (arm.stops_at_budget) {
+            CHECK(tally.subsume_pass_budget_stops > 0);
         }
     }
 }

@@ -78,6 +78,9 @@ XORCLE_OPTION(phase_saving_target_reset, Size, 1000, 1, SIZE_MAX,
               "conflicts between resets of the target trail")
 XORCLE_OPTION(phase_saving_target_on_ties, Bool, false, false, true,
               "replace the target trail by a trail as long as it, not only by a longer one")
+XORCLE_OPTION(phase_rotate_interval, Size, 1000, 1, SIZE_MAX,
+              "conflicts in each step of --phase=rotate's first cycle; every step of\n"
+              "cycle c lasts c times as many")
 
 XORCLE_OPTION(bump_responsible_clauses, Bool, false, false, true,
               "also bump the reason clauses of the learned clause's responsible trail\n"
@@ -86,11 +89,13 @@ XORCLE_OPTION(bump_responsible_clauses, Bool, false, false, true,
 XORCLE_ENUM_OPTION(phase, DecisionPhase, default_decision_phase,
                    "decide sampled equation (falsify) or its negation (satisfy), either at\n"
                    "random (random), or by the target trail and the recent conflict trails\n"
-                   "(saved)")
+                   "(saved), or by those and the falsify side in an order that rotates with\n"
+                   "the conflicts (rotate)")
 XORCLE_ENUM_VALUE(phase, "falsify", DecisionPhase::falsify)
 XORCLE_ENUM_VALUE(phase, "satisfy", DecisionPhase::satisfy)
 XORCLE_ENUM_VALUE(phase, "random", DecisionPhase::random)
 XORCLE_ENUM_VALUE(phase, "saved", DecisionPhase::saved)
+XORCLE_ENUM_VALUE(phase, "rotate", DecisionPhase::rotate)
 
 // --- Selection -------------------------------------------------------------
 
@@ -129,6 +134,27 @@ XORCLE_OPTION(restart_lbd_min_conflicts, Size, 1000, 1, SIZE_MAX,
 XORCLE_OPTION(restart_lbd_trail_ratio, Real, 1.4, 0.0, INFINITY,
               "block a restart while the trail exceeds this multiple of its recent\n"
               "average (0 never blocks)")
+
+// --- Stable and focused modes ---------------------------------------------
+
+XORCLE_OPTION(stabilize, Bool, false, false, true,
+              "alternate a focused mode, which restarts by the LBD rule, decays activity\n"
+              "by --focused-decay and saves phases without the target trail, with stable\n"
+              "mode, the search without restarts; phases last 1, 4, 4, 9, 9, ... intervals")
+XORCLE_OPTION(stabilize_interval, Size, 1000, 1, SIZE_MAX,
+              "conflicts in the first focused phase")
+XORCLE_OPTION(focused_decay, Real, 0.5, 0.0, 1.0, "activity decay per conflict in focused mode")
+XORCLE_OPTION(focused_restart_lbd_fast, Size, 33, 1, SIZE_MAX,
+              "window of focused mode's fast LBD average")
+XORCLE_OPTION(focused_restart_lbd_slow, Size, 100000, 1, SIZE_MAX,
+              "window of focused mode's slow LBD average")
+XORCLE_OPTION(focused_restart_lbd_min_ratio, Real, 1.1, 1.0, INFINITY,
+              "fast/slow ratio needed for a focused-mode restart")
+XORCLE_OPTION(focused_restart_lbd_min_conflicts, Size, 2, 1, SIZE_MAX,
+              "focused-mode conflicts needed between restarts")
+XORCLE_OPTION(focused_restart_lbd_trail_ratio, Real, 0.0, 0.0, INFINITY,
+              "block a focused-mode restart while the trail exceeds this multiple of its\n"
+              "recent average (0 never blocks)")
 
 // --- Clause minimization ---------------------------------------------------
 
@@ -215,6 +241,19 @@ XORCLE_OPTION(vivify_effort, Real, 0.01, 0.0, INFINITY,
               "rows a vivification pass may assume and imply, per row the search decided or\n"
               "implied since the last pass")
 
+// --- The subsumption pass ---------------------------------------------------
+
+XORCLE_OPTION(subsume_pass, Bool, false, false, true,
+              "a subsumption and strengthening pass at root visits: a clause whose span\n"
+              "holds another's is deleted, and one whose span plus 0 = 1 holds another's\n"
+              "loses a row; a pass due above the root forces a visit to it")
+XORCLE_OPTION(subsume_pass_cadence, Size, 1000, 0, SIZE_MAX,
+              "conflicts after a subsumption pass before the next may run")
+XORCLE_OPTION(subsume_pass_effort, Real, 10.0, 0.0, INFINITY,
+              "rows a subsumption pass may read in its checks, per row the search decided\n"
+              "or implied since the last pass; it visits the narrower clauses narrowest\n"
+              "first")
+
 // --- Output ----------------------------------------------------------------
 
 XORCLE_OPTION(proof, Text, "", "", "", "write an LRUP(⊕) proof here")
@@ -241,14 +280,15 @@ XORCLE_REQUIRES(csids_decay, options.decisions == DecisionProcedureName::csids, 
 XORCLE_REQUIRES(csids_intersection_depth, options.decisions == DecisionProcedureName::csids,
                 "--decisions=csids")
 XORCLE_REQUIRES(csids_span, options.decisions == DecisionProcedureName::csids, "--decisions=csids")
-XORCLE_REQUIRES(phase_saving_recent, options.phase == DecisionPhase::saved, "--phase=saved")
-XORCLE_REQUIRES(phase_saving_target, options.phase == DecisionPhase::saved, "--phase=saved")
+XORCLE_REQUIRES(phase_saving_recent, saves_trails(options.phase), "--phase=saved or rotate")
+XORCLE_REQUIRES(phase_saving_target, saves_trails(options.phase), "--phase=saved or rotate")
 XORCLE_REQUIRES(phase_saving_target_on_ties,
-                options.phase == DecisionPhase::saved && options.phase_saving_target,
-                "--phase=saved and --phase-saving-target=true")
+                saves_trails(options.phase) && options.phase_saving_target,
+                "--phase=saved or rotate, and --phase-saving-target=true")
 XORCLE_REQUIRES(phase_saving_target_reset,
-                options.phase == DecisionPhase::saved && options.phase_saving_target,
-                "--phase=saved and --phase-saving-target=true")
+                saves_trails(options.phase) && options.phase_saving_target,
+                "--phase=saved or rotate, and --phase-saving-target=true")
+XORCLE_REQUIRES(phase_rotate_interval, options.phase == DecisionPhase::rotate, "--phase=rotate")
 XORCLE_REQUIRES(bump_responsible_clauses, options.decisions == DecisionProcedureName::csids,
                 "--decisions=csids, the only procedure with an activity to bump")
 XORCLE_REQUIRES(phase, options.decisions == DecisionProcedureName::csids,
@@ -258,6 +298,9 @@ XORCLE_REQUIRES(vivify_rounds, options.vivify, "--vivify")
 XORCLE_REQUIRES(vivify_cadence, options.vivify, "--vivify")
 XORCLE_REQUIRES(vivify_effort, options.vivify, "--vivify")
 XORCLE_REQUIRES(vivify_force_root_visit, options.vivify, "--vivify")
+
+XORCLE_REQUIRES(subsume_pass_cadence, options.subsume_pass, "--subsume-pass")
+XORCLE_REQUIRES(subsume_pass_effort, options.subsume_pass, "--subsume-pass")
 
 XORCLE_REQUIRES(propagate_miss_rate, options.selection == ClauseSelectorName::cyclic,
                 "--selection=cyclic")
@@ -272,6 +315,14 @@ XORCLE_REQUIRES(restart_lbd_slow, options.restart == RestartMethod::lbd, "--rest
 XORCLE_REQUIRES(restart_lbd_min_ratio, options.restart == RestartMethod::lbd, "--restart=lbd")
 XORCLE_REQUIRES(restart_lbd_min_conflicts, options.restart == RestartMethod::lbd, "--restart=lbd")
 XORCLE_REQUIRES(restart_lbd_trail_ratio, options.restart == RestartMethod::lbd, "--restart=lbd")
+
+XORCLE_REQUIRES(stabilize_interval, options.stabilize, "--stabilize=true")
+XORCLE_REQUIRES(focused_decay, options.stabilize, "--stabilize=true")
+XORCLE_REQUIRES(focused_restart_lbd_fast, options.stabilize, "--stabilize=true")
+XORCLE_REQUIRES(focused_restart_lbd_slow, options.stabilize, "--stabilize=true")
+XORCLE_REQUIRES(focused_restart_lbd_min_ratio, options.stabilize, "--stabilize=true")
+XORCLE_REQUIRES(focused_restart_lbd_min_conflicts, options.stabilize, "--stabilize=true")
+XORCLE_REQUIRES(focused_restart_lbd_trail_ratio, options.stabilize, "--stabilize=true")
 
 XORCLE_REQUIRES(deletion_cadence_coefficient, options.deletion, "--deletion=true")
 XORCLE_REQUIRES(deletion_cadence_offset, options.deletion, "--deletion=true")

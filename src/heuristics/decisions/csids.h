@@ -38,6 +38,7 @@ struct CsidsConfig {
     double initial_activity = 1.0;
 
     double decay = 0.98; ///< `1` never decays, `0` keeps only the newest activity.
+    double focused_decay = 0.5; ///< The decay in focused mode.
     double bump = 1.0; ///< The initial activity increment.
 
     /// @brief The open clauses, from the top of the heap down, whose linear
@@ -80,8 +81,8 @@ struct CsidsState {
 /// it, decayed at every conflict. See arXiv:2605.15002 for details.
 class Csids final : public DecisionProcedure, public ClauseActivitySource {
 public:
-    /// @brief The equation-sampling stream derives from `seed`.
-    /// @pre `config.decay` satisfies `0 <= decay <= 1` and
+    /// @brief The equation-sampling stream derives from `seed`; the mode is stable.
+    /// @pre `config.decay` and `config.focused_decay` lie in `[0, 1]`, and
     /// `config.initial_activity` and `config.bump` are non-negative.
     Csids(EquationRepr repr, std::size_t num_vars, Seed seed,
           const CsidsConfig& config = {});
@@ -110,8 +111,14 @@ public:
 
     void update_with_replayed_decision() override { ++level_; }
 
+    /// @brief Decay by the mode's decay, and consult the target trail only in stable mode.
+    void update_with_mode(SearchMode mode) override;
+
     /// @brief The replacement inherits the subsumed clause's activity when larger.
     void update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id) override;
+
+    /// @brief Put the clause back in the heap.
+    void update_with_narrowed_clause(ClauseId id) override;
 
     double clause_activity(ClauseId id) const override;
 
@@ -162,9 +169,15 @@ private:
     /// @pre `eqn` lies in the top clause's `span^±(neg(C), U)` and outside `span^±(U)`.
     void orient_to_falsify(Equation& eqn, const Clause& top_clause, const RowSpace& trail_span);
 
-    bool phase_saving() const noexcept { return decision_phase() == DecisionPhase::saved; }
+    bool phase_saving() const noexcept { return saves_trails(decision_phase()); }
+    /// @brief Whether phase saving chooses the next decision's space.
+    bool consults_trails() const noexcept {
+        return phase_saving() && saved_trails_.consults_trails();
+    }
 
     CsidsState state_;
+    double stable_decay_;
+    double focused_decay_;
     ClauseSatisfactionWorkspace clause_sat_workspace_;
     std::size_t intersection_depth_;
     CsidsSpan span_;

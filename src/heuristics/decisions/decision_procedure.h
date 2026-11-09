@@ -18,6 +18,7 @@
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "heuristics/decisions/phase.h"
+#include "heuristics/restarts/stabilize.h"
 #include "util/index_set.h"
 #include "util/random.h"
 #include "util/stats.h"
@@ -167,12 +168,19 @@ public:
     /// @pre Both ids are already registered.
     virtual void update_with_subsumed_clause(ClauseId subsumed_id, ClauseId replacement_id);
 
+    /// @brief Note that clause @p id was overwritten at the root by a narrowing,
+    /// which the trail need not satisfy where it satisfied the clause.
+    virtual void update_with_narrowed_clause(ClauseId id);
+
     /// @brief Note that the trail went back to decision level `level`, which
     /// leaves the candidates the discarded levels had ruled out to be offered again.
     virtual void update_with_backjump(std::size_t level);
 
     /// @brief Note that the solver decided an equation it chose itself, one level up.
     virtual void update_with_replayed_decision();
+
+    /// @brief Adopt `mode`'s policies from the next decision on; the default ignores it.
+    virtual void update_with_mode(SearchMode mode);
 
     /// @brief The clause the last decision came from, for the selector to prioritize.
     virtual std::optional<ClauseId> decision_clause_hint() const;

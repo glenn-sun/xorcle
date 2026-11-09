@@ -129,12 +129,14 @@ ConsoleStatsWriter::log(const RunStats& stats) {
 
     append_section(StatsSection::search);
     append_section(StatsSection::restart);
+    append_section(StatsSection::stabilize);
     append_section(StatsSection::clauses);
     append_section(StatsSection::intersection);
     append_section(StatsSection::phase_saving);
     append_section(StatsSection::minimize);
     append_section(StatsSection::subsume);
     append_section(StatsSection::vivify);
+    append_section(StatsSection::subsume_pass);
     append_section(StatsSection::deletion);
     append_section(StatsSection::propagate_budget);
     append_section(StatsSection::bve);
@@ -162,6 +164,11 @@ ConsoleStatsWriter::log(const RunStats& stats) {
     append_ratio(output, "Propagations per second",
                  divide_or_nullopt(static_cast<double>(stats.num_propagations), stats.solve_time_s),
                  "", 1);
+    if (stats.reports(StatsSection::subsume_pass)) {
+        append_ratio(output, "Subsumption pass time share",
+                     divide_or_nullopt(100.0 * stats.subsume_pass_time_s, stats.solve_time_s), "%",
+                     2);
+    }
 
     std::cout << output.str();
     write_verdict(std::cout, stats);

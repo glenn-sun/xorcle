@@ -44,7 +44,8 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
                const DeletionConfig& deletion, bool bump_responsible_clauses, bool subsume,
                const PropagationConfig& propagation,
                const ImplicationGraphConfig& implication_graph, const VivifyConfig& vivify,
-               const BveConfig& bve)
+               const BveConfig& bve, const SubsumePassConfig& subsume_pass,
+               const StabilizeConfig& stabilize)
     : repr_(repr),
       original_num_vars_(num_vars),
       used_vars_(std::move(used_vars)),
@@ -57,6 +58,7 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
       selector_(std::move(selector)),
       decisions_(std::move(decisions)),
       restarts_(std::move(restarts)),
+      interval_conflicts_(stabilize.interval_conflicts),
       propagator_(repr, active_num_vars_),
       proof_writer_(proof_writer),
       proof_root_span_(repr, num_vars),
@@ -73,13 +75,20 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
       bve_is_due_(bve.enabled),
       implication_graph_config_(implication_graph),
       implication_graph_(repr, active_num_vars_, implication_graph),
-      vivify_(vivify) {
+      vivify_(vivify),
+      subsume_pass_(subsume_pass) {
     assert(std::ranges::is_sorted(used_vars_, std::less_equal<>{}) &&
            (used_vars_.empty() || used_vars_.back() < num_vars) &&
            "the used variables must be strictly ascending and below num_vars");
     assert(selector_ != nullptr && "the clause selector must not be null");
     assert(decisions_ != nullptr && "the decision procedure must not be null");
     assert(restarts_ != nullptr && "the restart policy must not be null; use NoRestarts");
+    if (stabilize.enabled) {
+        assert(dynamic_cast<const NoRestarts*>(restarts_.get()) != nullptr &&
+               "stable and focused modes replace the restart policy");
+        focused_restarts_ = make_restart_policy(stabilize.focused_restarts);
+        modes_.emplace(interval_conflicts_);
+    }
     cyclic_selector_ = dynamic_cast<Cyclic*>(selector_.get());
     assert((propagate_miss_rate_ == 0.0 || cyclic_selector_ != nullptr) &&
            "an attempt budget needs the cyclic selector");
@@ -109,6 +118,9 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
         assert(propagate_miss_rate_ == 0.0 && "vivification assumes on a quiescent trail");
         vivify_rng_ = make_rng(decisions_->base_seed(), RngComponent::vivify_basis);
     }
+    if (subsume_pass_.enabled) {
+        subsume_pass_rng_ = make_rng(decisions_->base_seed(), RngComponent::subsume_pass_draw);
+    }
 }
 
 void Solver::add_starting_clause(Clause clause) {
@@ -123,6 +135,15 @@ void Solver::add_starting_clause(Clause clause) {
         if (!empty_starting_clause_proof_id_) {
             empty_starting_clause_proof_id_ = next_proof_clause_id_;
         }
+        if (proof_writer_ != nullptr) {
+            ++next_proof_clause_id_;
+        }
+        return;
+    }
+    if (clause.pivot_col_idxs().test(clause.num_vars())) {
+        // The linear negation holds `0 = 1`, so every assignment satisfies the clause, which
+        // keeps its place in the proof's numbering.
+        ++counters_.num_tautologies_at_input;
         if (proof_writer_ != nullptr) {
             ++next_proof_clause_id_;
         }
@@ -294,8 +315,8 @@ std::size_t Solver::attempt_budget() {
 
 std::optional<Solution> Solver::handle_conflict() {
     ++counters_.num_conflicts;
-    vivify_replay_.clear();
-    vivify_replay_next_ = 0;
+    root_visit_replay_.clear();
+    root_visit_replay_next_ = 0;
     assert(trail_.level() == conflict_level_ &&
            "the conflicting propagation left the trail above the level the conflict holds at");
     if (level() == 0) {
@@ -373,7 +394,9 @@ void Solver::handle_non_root_conflict() {
     counters_.sum_conflict_trail_length += trail_.span().rows();
     // Consumes a conflict from the restart budget, so it must run exactly once
     // per non-root conflict whether or not a restart fires.
-    const bool restart_now = restarts_->should_restart_after_conflict(
+    const bool focused = modes_.has_value() && modes_->mode() == SearchMode::focused;
+    RestartPolicy& restarts = focused ? *focused_restarts_ : *restarts_;
+    const bool restart_now = restarts.should_restart_after_conflict(
         ConflictSummary{.lbd = learned.lbd, .trail_length = trail_.span().rows()});
 
     // How many levels the *solver* discards. Without a restart that is the
@@ -383,8 +406,12 @@ void Solver::handle_non_root_conflict() {
     if (restart_now) {
         removed_levels = level_before_backjump;
         backjump_to(0);
-        restarts_->note_restart();
+        restarts.note_restart();
         ++counters_.num_restarts;
+        num_focused_restarts_ += focused ? 1U : 0U;
+    }
+    if (modes_.has_value() && modes_->update_with_conflict()) {
+        switch_mode();
     }
 
     decisions_->update_with_new_clause(learned.clause, new_clause_id);
@@ -1116,6 +1143,10 @@ bool Solver::run_bve() {
 
     BvePlan plan = build_bve_plan(selector_->clauses(), selector_->active_clause_ids(),
                                   active_num_vars_, repr_, bve_config_, bve_rng_);
+    if (plan.eliminations.empty()) {
+        // A pass that eliminates nothing is not applied, so it removes no clause.
+        plan.counters.clauses_after = plan.counters.clauses_before;
+    }
     bve_totals_.add_pass(plan.counters);
     std::vector<ClauseId> resolvent_lines;
     if (proof_writer_ != nullptr) {
@@ -1301,17 +1332,22 @@ void Solver::merge_into_equivalent_clause(const ClauseId kept_id,
         ++counters_.num_equivalent_starting_learned_pairs;
     }
 
-    if (!evicted.is_learned) {
+    merge_deletion_state(kept_id, evicted);
+}
+
+void Solver::merge_deletion_state(const ClauseId kept_id, const EvictedClauseState& removed) {
+    const bool kept_is_learned = selector_->is_clause_learned(kept_id);
+    if (!removed.is_learned) {
         // Standing for a starting clause, the kept clause is never deleted.
         selector_->set_clause_learned(kept_id, false);
     } else if (kept_is_learned) {
-        selector_->set_clause_lbd(kept_id, std::min(selector_->clause_lbd(kept_id), evicted.lbd));
+        selector_->set_clause_lbd(kept_id, std::min(selector_->clause_lbd(kept_id), removed.lbd));
         selector_->set_clause_unused_passes(
-            kept_id, std::min(selector_->clause_unused_passes(kept_id), evicted.unused_passes));
-        if (!evicted.is_out_of_unused_passes) {
+            kept_id, std::min(selector_->clause_unused_passes(kept_id), removed.unused_passes));
+        if (!removed.is_out_of_unused_passes) {
             selector_->set_clause_out_of_unused_passes(kept_id, false);
         }
-        if (evicted.is_used_since_deletion) {
+        if (removed.is_used_since_deletion) {
             selector_->set_clause_used_since_deletion(kept_id, true);
         }
     }
@@ -1383,6 +1419,9 @@ Solution Solver::solve() {
     }
 
     solve_start_ = std::chrono::steady_clock::now();
+    if (modes_.has_value()) {
+        decisions_->update_with_mode(modes_->mode());
+    }
     if (reports_progress()) {
         report_progress();
     }
@@ -1408,7 +1447,7 @@ Solution Solver::solve() {
             continue;
         }
 
-        const bool replaying = vivify_replay_next_ < vivify_replay_.size();
+        const bool replaying = root_visit_replay_next_ < root_visit_replay_.size();
         if (!replaying && compaction_.enabled && maybe_compact_before_decision()) {
             // The root trail was emptied, so re-propagate rather than decide.
             continue;
@@ -1427,11 +1466,15 @@ Solution Solver::solve() {
             continue;
         }
 
+        if (maybe_subsume_pass()) {
+            // A clause may have narrowed to a unit, so re-propagate rather than decide.
+            continue;
+        }
         if (maybe_vivify()) {
             // The root trail may have gained units, so re-propagate rather than decide.
             continue;
         }
-        if (vivify_.force_root_visit && maybe_force_vivify_root_visit()) {
+        if (maybe_force_root_visit()) {
             continue;
         }
 
@@ -1491,6 +1534,27 @@ Solution Solver::complete_satisfying_assignment() {
     return Solution{SolveResult::sat, std::move(original_assignment)};
 }
 
+Solver::ModeTotals Solver::mode_totals_now() const {
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - solve_start_;
+    return ModeTotals{.conflicts = counters_.num_conflicts,
+                      .decisions = decisions_->counters().decisions,
+                      .propagations = counters_.num_propagations,
+                      .time_s = elapsed.count()};
+}
+
+void Solver::switch_mode() {
+    const ModeTotals now = mode_totals_now();
+    // The mode left is the other one.
+    ModeTotals& left = mode_totals_[modes_->mode() == SearchMode::focused ? 1 : 0];
+    left.conflicts += now.conflicts - totals_at_mode_start_.conflicts;
+    left.decisions += now.decisions - totals_at_mode_start_.decisions;
+    left.propagations += now.propagations - totals_at_mode_start_.propagations;
+    left.time_s += now.time_s - totals_at_mode_start_.time_s;
+    totals_at_mode_start_ = now;
+    ++num_mode_switches_;
+    decisions_->update_with_mode(modes_->mode());
+}
+
 void Solver::add_to_stats(RunStats& stats) const {
     stats.num_vars = num_vars();
     stats.unused_vars = original_num_vars_ - used_vars_.size();
@@ -1504,10 +1568,12 @@ void Solver::add_to_stats(RunStats& stats) const {
     stats.num_renumberings = counters_.num_renumberings;
     stats.num_dropped_vars = counters_.num_dropped_vars;
     stats.num_substituted_clauses = counters_.num_substituted_clauses;
+    stats.num_tautologies_at_input = counters_.num_tautologies_at_input;
     stats.num_equivalent_clauses = counters_.num_equivalent_clauses_at_input +
                                    counters_.num_equivalent_clauses_at_subsumption +
                                    counters_.num_equivalent_clauses_at_substitution +
-                                   counters_.num_equivalent_clauses_at_vivification;
+                                   counters_.num_equivalent_clauses_at_vivification +
+                                   counters_.num_equivalent_clauses_at_subsume_pass;
     stats.num_equivalent_clauses_at_input = counters_.num_equivalent_clauses_at_input;
     stats.num_equivalent_clauses_at_subsumption = counters_.num_equivalent_clauses_at_subsumption;
     stats.num_equivalent_clauses_at_substitution =
@@ -1600,6 +1666,41 @@ void Solver::add_to_stats(RunStats& stats) const {
     stats.vivify_budget_stops = vivify_counters_.num_budget_stops;
     stats.vivify_time_s = vivify_counters_.time_s;
 
+    const SubsumePassCounters& pass = subsume_pass_counters_;
+    stats.subsume_pass_passes = pass.num_passes;
+    stats.subsume_pass_forced_visits = pass.num_forced_visits;
+    stats.subsume_pass_visits_as_wider = pass.num_visits_as_wider;
+    stats.subsume_pass_visits_as_narrower = pass.num_visits_as_narrower;
+    stats.subsume_pass_entries_scanned = pass.num_entries_scanned;
+    stats.subsume_pass_containment_tests = pass.num_containment_tests;
+    stats.subsume_pass_row_checks = pass.num_row_checks;
+    stats.subsume_pass_row_additions = pass.num_row_additions;
+    stats.subsume_pass_rows_read = pass.num_rows_read;
+    stats.subsume_pass_budget_stops = pass.num_budget_stops;
+#define XORCLE_SUBSUME_PASS_KINDS(event, direction)                                                \
+    stats.subsume_pass_##event##_##direction##_ss = pass.event##_as_##direction.starting_by_starting; \
+    stats.subsume_pass_##event##_##direction##_sl = pass.event##_as_##direction.learned_by_starting;  \
+    stats.subsume_pass_##event##_##direction##_ls = pass.event##_as_##direction.starting_by_learned;  \
+    stats.subsume_pass_##event##_##direction##_ll = pass.event##_as_##direction.learned_by_learned;
+    XORCLE_SUBSUME_PASS_KINDS(subsumed, wider)
+    XORCLE_SUBSUME_PASS_KINDS(subsumed, narrower)
+    XORCLE_SUBSUME_PASS_KINDS(strengthened, wider)
+    XORCLE_SUBSUME_PASS_KINDS(strengthened, narrower)
+#undef XORCLE_SUBSUME_PASS_KINDS
+    stats.subsume_pass_rows_removed = pass.num_rows_removed;
+    stats.subsume_pass_units = pass.num_units;
+    stats.subsume_pass_promotions = pass.num_promotions;
+    stats.subsume_pass_equivalent_clauses = counters_.num_equivalent_clauses_at_subsume_pass;
+    stats.subsume_pass_hits_width_2 = pass.hits_by_width[0];
+    stats.subsume_pass_hits_width_3 = pass.hits_by_width[1];
+    stats.subsume_pass_hits_width_4_6 = pass.hits_by_width[2];
+    stats.subsume_pass_hits_width_7 = pass.hits_by_width[3];
+    stats.subsume_pass_hits_lbd_2 = pass.hits_by_lbd[0];
+    stats.subsume_pass_hits_lbd_6 = pass.hits_by_lbd[1];
+    stats.subsume_pass_hits_lbd_15 = pass.hits_by_lbd[2];
+    stats.subsume_pass_hits_lbd_16 = pass.hits_by_lbd[3];
+    stats.subsume_pass_time_s = pass.time_s;
+
     stats.bve_passes = bve_totals_.num_passes;
     stats.bve_eliminated = bve_totals_.num_eliminated;
     stats.bve_eliminated_by_gate = bve_totals_.num_eliminated_by_gate;
@@ -1628,6 +1729,30 @@ void Solver::add_to_stats(RunStats& stats) const {
     selector_->add_to_stats(stats);
     decisions_->add_to_stats(stats);
     restarts_->add_to_stats(stats);
+    if (modes_.has_value()) {
+        focused_restarts_->add_to_stats(stats);
+        std::array<ModeTotals, 2> totals = mode_totals_;
+        const ModeTotals now = mode_totals_now();
+        ModeTotals& current = totals[static_cast<std::size_t>(modes_->mode())];
+        current.conflicts += now.conflicts - totals_at_mode_start_.conflicts;
+        current.decisions += now.decisions - totals_at_mode_start_.decisions;
+        current.propagations += now.propagations - totals_at_mode_start_.propagations;
+        current.time_s += now.time_s - totals_at_mode_start_.time_s;
+        const ModeTotals& focused = totals[static_cast<std::size_t>(SearchMode::focused)];
+        const ModeTotals& stable = totals[static_cast<std::size_t>(SearchMode::stable)];
+        stats.stabilize_switches = num_mode_switches_;
+        stats.focused_restarts = num_focused_restarts_;
+        stats.focused_conflicts = focused.conflicts;
+        stats.focused_decisions = focused.decisions;
+        stats.focused_propagations = focused.propagations;
+        stats.focused_time_s = focused.time_s;
+        stats.stable_conflicts = stable.conflicts;
+        stats.stable_decisions = stable.decisions;
+        stats.stable_propagations = stable.propagations;
+        stats.stable_time_s = stable.time_s;
+        const double time_s = focused.time_s + stable.time_s;
+        stats.focused_time_share = time_s > 0.0 ? focused.time_s / time_s : 0.0;
+    }
 }
 
 } // namespace xorcle

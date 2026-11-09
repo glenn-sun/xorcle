@@ -12,6 +12,7 @@ void apply_phase(Equation& eqn, DecisionPhase phase, const Equation& false_equat
 
     switch (phase) {
         case DecisionPhase::falsify:
+        case DecisionPhase::rotate:
             return;
         case DecisionPhase::satisfy:
             eqn.plus_assign(false_equation);

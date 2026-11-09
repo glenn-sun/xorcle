@@ -497,6 +497,12 @@ void ExactWatchlist::update_with_inactive_clause(ClauseId id) {
     }
 }
 
+void ExactWatchlist::update_with_narrowed_clause(ClauseId id) {
+    assert(top_level() == 0 && "a clause was narrowed above the root");
+    update_with_inactive_clause(id);
+    build_pair(id);
+}
+
 void ExactWatchlist::update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) {
     const RowSpace& span = trail.span();
     assert(span.repr() == EquationRepr::dense && "the exact watchlist needs dense equations");
@@ -757,7 +763,10 @@ void ExactWatchlist::update_with_substitution(std::span<const ClauseId> rewritte
     clear_side_queue();
 
     for (const std::uint32_t pair : retired_pairs_) {
-        clause_pair_[pair_clause_[pair]] = no_pair;
+        // A narrowed clause has new cells by the time its old ones are freed.
+        if (clause_pair_[pair_clause_[pair]] == pair) {
+            clause_pair_[pair_clause_[pair]] = no_pair;
+        }
         key_[2 * pair] = zero_key;
         key_[2 * pair + 1] = zero_key;
         free_pairs_.push_back(pair);

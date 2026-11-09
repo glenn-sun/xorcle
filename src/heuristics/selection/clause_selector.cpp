@@ -17,6 +17,7 @@ void ClauseSelector::debug_assert_database_synchronized() const {
     assert(clauses_.size() == clause_learned_.size() &&
            clauses_.size() == clause_used_since_deletion_.size() &&
            clauses_.size() == clause_vivified_.size() &&
+           clauses_.size() == clause_subsume_passed_.size() &&
            clauses_.size() == clause_lbd_.size() &&
            clauses_.size() == clause_unused_passes_.size() &&
            clauses_.size() == clause_out_of_unused_passes_.size() &&
@@ -49,6 +50,7 @@ void ClauseSelector::replace_clause(ClauseId id, Clause clause) {
     if (replaced.rows() != clauses_[id].rows()) {
         clause_vivified_[id] = 0;
     }
+    clause_subsume_passed_[id] = 0;
     if (clause_active_[id] != 0) {
         count_width(replaced.rows(), false);
         count_width(clauses_[id].rows(), true);
@@ -59,6 +61,12 @@ void ClauseSelector::replace_clause(ClauseId id, Clause clause) {
         enter_carried_col_idxs(id, &replaced);
         maybe_clean_carrier_entries();
     }
+}
+
+void ClauseSelector::narrow_clause(ClauseId id, Clause clause) {
+    assert(is_clause_active(id) && "an inactive clause was narrowed");
+    replace_clause(id, std::move(clause));
+    update_with_narrowed_clause(id);
 }
 
 void ClauseSelector::enter_carried_col_idxs(const ClauseId id, const Clause* const replaced) {
@@ -304,6 +312,7 @@ void ClauseSelector::add_clause(Clause clause) {
     clause_learned_.push_back(0);
     clause_used_since_deletion_.push_back(0);
     clause_vivified_.push_back(0);
+    clause_subsume_passed_.push_back(0);
     clause_lbd_.push_back(0.0);
     clause_unused_passes_.push_back(0);
     clause_out_of_unused_passes_.push_back(0);
@@ -312,6 +321,8 @@ void ClauseSelector::add_clause(Clause clause) {
 void ClauseSelector::update_with_new_equation(const Equation&, const Trail&) {}
 
 void ClauseSelector::update_with_inactive_clause(ClauseId) {}
+
+void ClauseSelector::update_with_narrowed_clause(ClauseId) {}
 
 std::unique_ptr<ClauseSelector> make_clause_selector(ClauseSelectorName name,
                                                      std::size_t num_vars) {
