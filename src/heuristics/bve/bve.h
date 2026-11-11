@@ -12,13 +12,16 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
+#include "algebra/equation.h"
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "heuristics/bve/elimination.h"
+#include "heuristics/bve/gate_solver.h"
 #include "util/index_set.h"
 #include "util/random.h"
 
@@ -34,6 +37,23 @@ struct BveConfig {
     /// @brief The least fraction of the clauses present at a pass's start that the
     /// pass must remove for another to follow.
     double success_rate;
+
+    BveCoreShrinking core_shrinking;
+
+    /// @brief The most conflicts one solve of a gate search may take.
+    std::size_t gate_max_conflicts;
+
+    /// @brief The largest cost, `clauses² × max(1, 2^(rank - 6))`, of a gate search done
+    /// by its truth table rather than the gate solver.
+    ///
+    /// Any bound from 4e5 to 1e6 gives the gate searches their least total time.
+    std::size_t gate_max_table_cost;
+
+    /// @brief The largest share of the present clauses a try may touch and still search for a gate.
+    double gate_max_clause_share;
+
+    /// @brief Whether a one-sided gate's root equations are added as unit clauses.
+    bool root_equations;
 };
 
 /// @brief What one BVE pass did.
@@ -45,6 +65,11 @@ struct BveCounters {
     std::size_t width_after = 0; ///< Of the clauses after, summed.
     std::size_t num_unit_resolvents = 0; ///< Among the clauses left.
     std::size_t num_resolvents_of_width_at_most_2 = 0; ///< Among the clauses left, units included.
+    std::size_t num_gate_searches = 0;
+    std::size_t num_gates = 0;
+    /// @brief Equations one-sided gates make false at the root, added as unit clauses.
+    std::size_t num_root_equations = 0;
+    double gate_time_s = 0.0; ///< Of the gate searches.
 };
 
 struct BvePlan {
@@ -55,23 +80,34 @@ struct BvePlan {
     /// @brief The clauses read that the pass does not leave, ascending.
     std::vector<ClauseId> removed_ids;
 
-    /// @brief A clause a resolvent was resolved from: a clause read by its id,
-    /// or a resolvent by its index in `resolvents`.
+    /// @brief A clause a line cites: a clause read by its id, a resolvent by its
+    /// index in `resolvents`, or a lemma of the same resolvent by its index in `lemmas`.
     struct Parent {
-        bool is_resolvent;
+        enum class Kind : std::uint8_t { clause, resolvent, lemma };
+        Kind kind;
         std::size_t idx;
     };
 
-    /// @brief A resolvent: the clause if the pass left it, and else where its
-    /// rows are among the clauses a later elimination removed.
+    /// @brief A clause derived on the way to a root equation, and the clauses its line cites.
+    struct Lemma {
+        Clause clause;
+        std::vector<Parent> reasons;
+    };
+
+    /// @brief A resolvent, or a root equation of a one-sided gate as a unit clause: the
+    /// clause if the pass left it, and else where its rows are among the clauses a
+    /// later elimination removed.
     struct Resolvent {
-        std::array<Parent, 2> parents;
+        std::array<Parent, 2> parents; ///< Of a resolvent.
+        /// @brief Of a root equation, its line's lemmas and the clauses it cites, in replay order.
+        std::vector<Lemma> lemmas;
+        std::vector<Parent> reasons;
         std::optional<Clause> clause;
         std::size_t elimination_idx = 0;
         std::size_t removed_clause_idx = 0;
     };
 
-    /// @brief Every resolvent the pass derived, in the order derived.
+    /// @brief Every resolvent and root equation the pass derived, in the order derived.
     std::vector<Resolvent> resolvents;
 
     /// @brief In the order eliminated.
@@ -92,12 +128,25 @@ struct BvePlan {
 /// clauses touched first, until `config.max_refusals_in_a_row` are refused in a
 /// row. See arXiv:2605.15002 for projection onto a span.
 ///
+/// @param with_proof Whether each root equation's plan carries the lines that derive it.
 /// @param rng Drawn from for the order and for each choice among equals.
 /// @pre `active_clause_ids` are ids of `clauses`, each over `num_vars` variables
 /// in representation `repr`; none is a tautology, and no two have one span.
-/// @pre `1 <= config.group_cap <= 16`, `config.max_refusals_in_a_row >= 1` and
-/// `0 <= config.success_rate <= 1`.
+/// @pre `1 <= config.group_cap <= 16`, `config.max_refusals_in_a_row >= 1`,
+/// `0 <= config.success_rate <= 1`, `config.gate_max_conflicts >= 1` and
+/// `0 <= config.gate_max_clause_share <= 1`.
 BvePlan build_bve_plan(const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
-                       std::size_t num_vars, EquationRepr repr, const BveConfig& config, Rng& rng);
+                       std::size_t num_vars, EquationRepr repr, const BveConfig& config,
+                       bool with_proof, Rng& rng);
+
+/// @brief A basis of the equations the spans of @p negations share, each of which a
+/// flip set changes, given @p unchanged, the equations of the first span it does not
+/// change; empty if it changes none of them.
+///
+/// When the clauses' rests are unsatisfiable together, each equation of the basis
+/// is false at the root: the gate is one-sided.
+/// @pre @p negations is not empty, and @p unchanged is a hyperplane of its first span.
+std::vector<Equation> changed_shared_equations(const std::vector<Clause>& negations,
+                                               const Clause& unchanged);
 
 } // namespace xorcle

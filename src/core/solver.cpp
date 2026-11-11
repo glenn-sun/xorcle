@@ -1162,7 +1162,7 @@ bool Solver::run_bve() {
     phase_timer_.switch_to(SolverPhase::bve);
 
     BvePlan plan = build_bve_plan(clause_database_.clauses(), clause_database_.active_clause_ids(),
-                                  active_num_vars_, repr_, *bve_config_, bve_rng_);
+                                  active_num_vars_, repr_, *bve_config_, proof_writer_ != nullptr, bve_rng_);
     if (stats_.bve_passes++ == 0) {
         stats_.bve_clauses_before = plan.counters.clauses_before;
         stats_.bve_width_before = plan.counters.width_before;
@@ -1170,6 +1170,10 @@ bool Solver::run_bve() {
     stats_.bve_eliminated += plan.counters.num_eliminated;
     stats_.bve_clauses_after = plan.counters.clauses_after;
     stats_.bve_width_after = plan.counters.width_after;
+    stats_.bve_gate_searches += plan.counters.num_gate_searches;
+    stats_.bve_gates += plan.counters.num_gates;
+    stats_.bve_root_equations += plan.counters.num_root_equations;
+    stats_.bve_gate_time_s += plan.counters.gate_time_s;
     // Another BVE pass follows one that removed at least `success_rate` of the clauses it read.
     const std::size_t before = plan.counters.clauses_before;
     const std::size_t after = plan.counters.clauses_after;
@@ -1182,7 +1186,7 @@ bool Solver::run_bve() {
     if (plan.found_empty_clause) {
         return false;
     }
-    if (plan.eliminations.empty()) {
+    if (plan.eliminations.empty() && plan.resolvents.empty()) {
         return true;
     }
 
@@ -1242,6 +1246,11 @@ bool Solver::run_bve() {
     assert(debug_equivalent_clause_table_is_exact() &&
            "the equivalent clause table is out of step with the active clauses");
 
+    if (plan.eliminations.empty()) {
+        // Only root equations were added, and they are propagated and substituted next.
+        return true;
+    }
+
     // No clause carries a variable the pass took out of every clause, so its
     // column is dropped as a substitution's is.
     const std::size_t num_dropped_vars = plan.dropped_col_idxs.count();
@@ -1273,14 +1282,40 @@ std::vector<ClauseId> Solver::write_bve_lines(const BvePlan& plan) {
     std::vector<ClauseId> lines;
     lines.reserve(plan.resolvents.size());
     std::vector<ProofRow> rows;
+    std::vector<ClauseId> lemma_lines;
     for (const BvePlan::Resolvent& resolvent : plan.resolvents) {
-        // Under the resolvent's linear negation the first parent propagates and
-        // the second is falsified.
         const auto line_of = [&](const BvePlan::Parent& parent) {
-            return parent.is_resolvent ? lines[parent.idx] : proof_id_of_clause_[parent.idx];
+            switch (parent.kind) {
+            case BvePlan::Parent::Kind::clause:
+                return proof_id_of_clause_[parent.idx];
+            case BvePlan::Parent::Kind::resolvent:
+                return lines[parent.idx];
+            case BvePlan::Parent::Kind::lemma:
+                return lemma_lines[parent.idx];
+            }
+            return ClauseId{0};
         };
-        const std::vector<ClauseId> reasons{line_of(resolvent.parents[0]),
-                                            line_of(resolvent.parents[1])};
+        const auto lines_of = [&](const std::vector<BvePlan::Parent>& parents) {
+            std::vector<ClauseId> cited;
+            cited.reserve(parents.size());
+            for (const BvePlan::Parent& parent : parents) {
+                cited.push_back(line_of(parent));
+            }
+            return cited;
+        };
+        // A root equation's lemmas are lines of their own, deleted once it is written.
+        lemma_lines.clear();
+        for (const BvePlan::Lemma& lemma : resolvent.lemmas) {
+            const std::vector<ClauseId> reasons = lines_of(lemma.reasons);
+            lemma_lines.push_back(next_proof_clause_id_++);
+            proof_writer_->write_learned(lemma_lines.back(), lemma.clause, active_var_to_original_, reasons);
+        }
+        // Under a resolvent's linear negation the first parent propagates and the
+        // second is falsified.
+        const std::vector<ClauseId> reasons =
+            resolvent.reasons.empty()
+                ? std::vector<ClauseId>{line_of(resolvent.parents[0]), line_of(resolvent.parents[1])}
+                : lines_of(resolvent.reasons);
         lines.push_back(next_proof_clause_id_++);
         if (!resolvent.clause.has_value()) {
             rows.clear();
@@ -1289,14 +1324,16 @@ std::vector<ClauseId> Solver::write_bve_lines(const BvePlan& plan) {
                 rows.push_back(lift_row(row, active_var_to_original_, original_num_vars_));
             }
             proof_writer_->write_learned(lines.back(), rows, reasons);
-            continue;
-        }
-        if (resolvent.clause->rows() == 0) {
+        } else if (resolvent.clause->rows() == 0) {
             proof_writer_->write_empty(lines.back(), reasons);
             break;
+        } else {
+            proof_writer_->write_learned(lines.back(), *resolvent.clause, active_var_to_original_,
+                                         reasons);
         }
-        proof_writer_->write_learned(lines.back(), *resolvent.clause, active_var_to_original_,
-                                     reasons);
+        if (!lemma_lines.empty()) {
+            proof_writer_->write_deleted(lemma_lines);
+        }
     }
     return lines;
 }

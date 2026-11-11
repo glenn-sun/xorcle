@@ -239,6 +239,22 @@ XORCLE_OPTION(bve, bve_max_refusals_in_a_row, Size, 5, 1, SIZE_MAX,
 XORCLE_OPTION(bve, bve_success_rate, Real, 0.01, 0.0, 1.0,
               "the least fraction of the clauses present at a BVE pass's start that it\n"
               "must remove for another pass to follow")
+XORCLE_ENUM_OPTION(bve, bve_core_shrinking, BveCoreShrinking, BveCoreShrinking::none,
+                   "how a BVE gate search shrinks its first core: keep it (none), or solve\n"
+                   "again on the core until it stops shrinking (repeat)")
+XORCLE_ENUM_VALUE(bve_core_shrinking, "none", BveCoreShrinking::none)
+XORCLE_ENUM_VALUE(bve_core_shrinking, "repeat", BveCoreShrinking::repeat)
+XORCLE_OPTION(bve, bve_gate_max_conflicts, Size, 100, 1, SIZE_MAX,
+              "the most conflicts one solve of a BVE gate search may take; a first solve\n"
+              "that reaches it finds no gate")
+XORCLE_OPTION(bve, bve_gate_max_table_cost, Size, 500000, 0, SIZE_MAX,
+              "the largest clauses^2 x max(1, 2^(rank - 6)) of a BVE gate search done by its\n"
+              "truth table; a dearer one goes to the gate solver")
+XORCLE_OPTION(bve, bve_gate_max_clause_share, Real, 0.1, 0.0, 1.0,
+              "the largest share of the present clauses a BVE try may touch and still search\n"
+              "for a gate; a try touching more resolves every pair")
+XORCLE_OPTION(bve, bve_root_equations, Bool, true, false, true,
+              "add the equations a one-sided BVE gate makes false at the root as unit clauses")
 
 // --- The implication graph --------------------------------------------------
 

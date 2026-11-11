@@ -4,6 +4,7 @@
 #include <array>
 #include <bit>
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -21,6 +22,7 @@
 #include "algebra/gf2_vector_of_repr.h"
 #include "algebra/pivot_table.h"
 #include "algebra/reduce_result.h"
+#include "heuristics/bve/gate_solver.h"
 #include "util/index_set.h"
 #include "util/random.h"
 
@@ -34,11 +36,6 @@ constexpr Var no_var = static_cast<Var>(-1);
 /// @brief Index of a direction: an equation without its constant.
 using DirectionId = std::uint32_t;
 
-/// @brief Independent equations a gate's truth table may range over.
-///
-/// The table has 2^rank points, and its minimal cover costs the square of the
-/// clauses added times the table's words: above rank 10 that outweighs the try's resolution.
-constexpr std::size_t max_gate_rank = 10;
 template <GF2Vector V>
 std::size_t constant_bit(const V& row) {
     return row.num_bits() - 1;
@@ -210,164 +207,6 @@ std::optional<std::vector<V>> canonical(std::vector<V> spanning, PivotTable& lea
     return in_order;
 }
 
-/// @brief The truth table, in coordinates of a basis of their equations, of
-/// the points some clause added so far forbids.
-template <GF2Vector V>
-class GateTable {
-public:
-    enum class Outcome { over_rank, open, covered };
-
-    /// @param num_bits Of the equations added.
-    explicit GateTable(std::size_t num_bits) : rest_(num_bits) {}
-
-    /// @brief Start again from no clause added, keeping the buffers.
-    void clear() {
-        rank_ = 0;
-        forbidden_.assign(1, 0);
-        num_added_ = 0;
-    }
-
-    /// @brief Add the clause with linear negation @p negation, unless its
-    /// equations take the basis past `max_gate_rank`; `covered` once the
-    /// clauses added are jointly unsatisfiable.
-    Outcome add(std::span<const V> negation) {
-        const std::size_t rank_before = rank_;
-        if (coordinates_of_added_.size() == num_added_) {
-            coordinates_of_added_.emplace_back();
-        }
-        Coordinates& coordinates = coordinates_of_added_[num_added_];
-        coordinates.clear();
-        for (const V& row : negation) {
-            rest_.assign_from(row);
-            rest_.reset_bit(constant_bit(rest_));
-            std::uint32_t in_basis = 0;
-            for (Var leading_var = lowest_var_from(rest_, 0); leading_var != no_var;
-                 leading_var = lowest_var_from(rest_, leading_var + 1)) {
-                std::size_t basis_idx = 0;
-                while (basis_idx < rank_ && lead_of_basis_[basis_idx] != leading_var) {
-                    ++basis_idx;
-                }
-                if (basis_idx == rank_) {
-                    if (rank_ == max_gate_rank) {
-                        rank_ = rank_before;
-                        return Outcome::over_rank;
-                    }
-                    lead_of_basis_[rank_] = leading_var;
-                    if (basis_.size() == rank_) {
-                        basis_.emplace_back(rest_.num_bits());
-                    }
-                    basis_[rank_].assign_from(rest_);
-                    ++rank_;
-                }
-                rest_.plus_assign(basis_[basis_idx]);
-                in_basis ^= std::uint32_t{1} << basis_idx;
-            }
-            coordinates.emplace_back(in_basis, constant_of(row));
-        }
-
-        // One word holds six coordinates, and a table over fewer repeats.
-        const std::size_t num_words =
-            std::size_t{1} << (std::max<std::size_t>(rank_, 6) - 6);
-        while (forbidden_.size() < num_words) {
-            forbidden_.insert(forbidden_.end(), forbidden_.begin(), forbidden_.end());
-        }
-        split_of(coordinates, split_);
-        bool covered = true;
-        for (std::size_t word_idx = 0; word_idx < num_words; ++word_idx) {
-            forbidden_[word_idx] |= forbidden_word(split_, word_idx);
-            covered = covered && forbidden_[word_idx] == ~std::uint64_t{0};
-        }
-        ++num_added_;
-        return covered ? Outcome::covered : Outcome::open;
-    }
-
-    /// @brief The members left once each one the others cover without is taken
-    /// out, tried in the order added.
-    /// @pre The clauses added are jointly unsatisfiable.
-    std::vector<std::uint8_t> minimal_cover() {
-        const std::size_t num_added = num_added_;
-        const std::size_t num_words = forbidden_.size();
-        std::vector<std::uint64_t> forbidden_by(num_added * num_words);
-        for (std::size_t added = 0; added < num_added; ++added) {
-            split_of(coordinates_of_added_[added], split_);
-            for (std::size_t word_idx = 0; word_idx < num_words; ++word_idx) {
-                forbidden_by[added * num_words + word_idx] = forbidden_word(split_, word_idx);
-            }
-        }
-        std::vector<std::uint8_t> is_member(num_added, 1);
-        std::size_t num_members = num_added;
-        for (std::size_t added = 0; added < num_added && num_members > 1; ++added) {
-            bool others_cover = true;
-            for (std::size_t word_idx = 0; word_idx < num_words && others_cover; ++word_idx) {
-                std::uint64_t forbidden = 0;
-                for (std::size_t other = 0; other < num_added; ++other) {
-                    if (other != added && is_member[other] != 0) {
-                        forbidden |= forbidden_by[other * num_words + word_idx];
-                    }
-                }
-                others_cover = forbidden == ~std::uint64_t{0};
-            }
-            if (others_cover) {
-                is_member[added] = 0;
-                --num_members;
-            }
-        }
-        return is_member;
-    }
-
-private:
-    using Coordinates = std::vector<std::pair<std::uint32_t, bool>>;
-
-    /// @brief An equation's coordinates as the part within one word, with the
-    /// constant folded in, and the coordinates that pick the word.
-    struct Split {
-        std::uint64_t in_word;
-        std::uint32_t of_word;
-    };
-
-    static void split_of(const Coordinates& coordinates, std::vector<Split>& split) {
-        split.clear();
-        for (const auto& [in_basis, constant] : coordinates) {
-            std::uint64_t sum = 0;
-            for (std::uint32_t rest = in_basis & 63U; rest != 0; rest &= rest - 1) {
-                sum ^= coordinate_word(static_cast<std::size_t>(std::countr_zero(rest)), 0);
-            }
-            split.push_back({.in_word = constant ? sum : ~sum, .of_word = in_basis >> 6});
-        }
-    }
-
-    /// @brief Word @p word_idx of the points at which every equation of a
-    /// linear negation with these coordinates holds.
-    static std::uint64_t forbidden_word(const std::vector<Split>& split, std::size_t word_idx) {
-        std::uint64_t forbidden = ~std::uint64_t{0};
-        for (const Split& equation : split) {
-            const bool flips = (std::popcount(equation.of_word & static_cast<std::uint32_t>(word_idx)) & 1) != 0;
-            forbidden &= flips ? ~equation.in_word : equation.in_word;
-        }
-        return forbidden;
-    }
-
-    /// @brief Word @p word_idx of the truth table of coordinate @p coordinate.
-    static std::uint64_t coordinate_word(std::size_t coordinate, std::size_t word_idx) {
-        constexpr std::array<std::uint64_t, 6> in_word{
-            0xaaaaaaaaaaaaaaaaULL, 0xccccccccccccccccULL, 0xf0f0f0f0f0f0f0f0ULL,
-            0xff00ff00ff00ff00ULL, 0xffff0000ffff0000ULL, 0xffffffff00000000ULL};
-        if (coordinate < 6) {
-            return in_word[coordinate];
-        }
-        return ((word_idx >> (coordinate - 6)) & 1U) != 0 ? ~std::uint64_t{0} : 0;
-    }
-
-    std::vector<V> basis_; ///< Without constants; its first `rank_` rows.
-    std::size_t rank_ = 0;
-    std::array<Var, max_gate_rank> lead_of_basis_{};
-    std::vector<std::uint64_t> forbidden_{0};
-    std::vector<Coordinates> coordinates_of_added_; ///< Its first `num_added_`.
-    std::size_t num_added_ = 0;
-    V rest_;
-    std::vector<Split> split_;
-};
-
 /// @brief A clause a flip set touches: one row it changes, and a basis of the
 /// rest of the linear negation that it does not.
 template <GF2Vector V>
@@ -407,15 +246,36 @@ public:
         /// among that elimination's removed clauses.
         std::size_t elimination_idx = 0;
         std::size_t removed_clause_idx = 0;
+        /// @brief Of a root equation, its derivation among `derivations()`.
+        std::optional<std::size_t> derivation_idx;
         bool present = true;
     };
 
-    Formula(std::size_t num_vars, const BveConfig& config, Rng& rng)
+    /// @brief A clause a derivation's line cites: a clause by its index, or a lemma by its place.
+    struct Cited {
+        bool is_lemma;
+        std::uint32_t idx;
+    };
+
+    /// @brief The lines that derive a root equation: lemmas, each in its linear
+    /// negation with the clauses it cites, then the equation's own citations.
+    struct Derivation {
+        struct Lemma {
+            Rows rows;
+            std::vector<Cited> reasons;
+        };
+        std::vector<Lemma> lemmas;
+        std::vector<Cited> reasons;
+    };
+
+    Formula(std::size_t num_vars, const BveConfig& config, bool with_proof, Rng& rng)
         : num_vars_(num_vars),
           config_(config),
+          with_proof_(with_proof),
           rng_(rng),
+          refutation_rng_(rng()),
           leads_(num_vars + 1),
-          gate_table_(num_vars + 1),
+          direction_(num_vars + 1),
           echelon_leads_(num_vars + 1),
           reduced_(num_vars + 1),
           held_pivots_(num_vars),
@@ -424,6 +284,11 @@ public:
     const std::vector<StoredClause>& clauses() const noexcept { return clauses_; }
     const std::vector<Elimination>& eliminations() const noexcept { return eliminations_; }
     bool found_empty_clause() const noexcept { return found_empty_clause_; }
+    std::size_t num_gate_searches() const noexcept { return num_gate_searches_; }
+    std::size_t num_gates() const noexcept { return num_gates_; }
+    std::size_t num_root_equations() const noexcept { return num_root_equations_; }
+    double gate_time_s() const noexcept { return gate_time_s_; }
+    const std::vector<Derivation>& derivations() const noexcept { return derivations_; }
 
     /// @brief The canonical form of the clause with linear negation spanned by
     /// @p spanning; nothing if the span holds `0 = 1`.
@@ -1070,6 +935,10 @@ private:
                     taken = hyperplane;
                     break;
                 }
+                // The root equations a refused try added.
+                for (auto clause_idx = static_cast<std::uint32_t>(clauses_before); clause_idx < clauses_.size(); ++clause_idx) {
+                    enter(clause_idx);
+                }
                 if (++num_refusals == config_.max_refusals_in_a_row) {
                     break;
                 }
@@ -1216,7 +1085,7 @@ private:
             }
             assert(found && "the flip set does not touch the clause");
         }
-        const std::optional<std::vector<std::uint8_t>> in_gate = find_gate(parts);
+        const std::optional<std::vector<std::uint8_t>> in_gate = find_gate(parts, clause_idxs);
 
         Resolution resolution;
         std::unordered_multimap<std::size_t, std::size_t> resolvent_idxs_by_hash;
@@ -1363,52 +1232,179 @@ private:
         eliminations_.push_back(std::move(record));
     }
 
-    /// @brief The members of a gate among @p parts, shrunk to a minimal one;
-    /// nothing if no rests of dimension at most `max_gate_rank` together are
-    /// jointly unsatisfiable.
+    /// @brief The members of a gate among @p parts, the clauses @p clause_idxs
+    /// split; nothing if their rests are satisfiable together, if the gate solver
+    /// reaches its conflict cap, or if they are more than
+    /// `config_.gate_max_clause_share` of the present clauses.
     ///
-    /// The rests are added fewest rows first, equal ones in an order drawn uniformly.
-    std::optional<std::vector<std::uint8_t>> find_gate(std::span<const SplitClause<V>> parts) {
-        std::vector<std::size_t> order(parts.size());
-        std::iota(order.begin(), order.end(), std::size_t{0});
-        shuffle_uniformly(order, rng_);
-        std::stable_sort(order.begin(), order.end(), [&parts](std::size_t a, std::size_t b) {
-            return parts[a].num_rest < parts[b].num_rest;
-        });
-
-        GateTable<V>& table = gate_table_;
-        table.clear();
-        std::vector<std::size_t> members;
-        for (const std::size_t i : order) {
-            const typename GateTable<V>::Outcome outcome = table.add(parts[i].rests());
-            if (outcome == GateTable<V>::Outcome::over_rank) {
-                continue;
-            }
-            members.push_back(i);
-            if (outcome != GateTable<V>::Outcome::covered) {
-                continue;
-            }
-            const std::vector<std::uint8_t> is_member = table.minimal_cover();
-            std::vector<std::uint8_t> in_gate(parts.size(), 0);
-            for (std::size_t added = 0; added < members.size(); ++added) {
-                in_gate[members[added]] = is_member[added];
-            }
-            return in_gate;
+    /// With `config_.root_equations`, a one-sided gate's root equations are added
+    /// as unit clauses. `search_gate_hybrid()` reads each rest as its coordinates
+    /// over a basis of the rests' directions, with its constant.
+    std::optional<std::vector<std::uint8_t>> find_gate(std::span<const SplitClause<V>> parts,
+                                                       const std::vector<std::uint32_t>& clause_idxs) {
+        if (static_cast<double>(parts.size()) >
+            config_.gate_max_clause_share * static_cast<double>(present_clause_idxs_by_hash_.size())) {
+            return std::nullopt;
         }
-        return std::nullopt;
+        const auto start = std::chrono::steady_clock::now();
+        // The basis in echelon form, each row reduced by those before it.
+        std::vector<V> basis;
+        std::vector<std::size_t> lead_of_basis;
+        // Per rest row, in the order of the parts, the basis rows its direction sums.
+        std::vector<std::vector<std::uint32_t>> in_basis;
+        for (const SplitClause<V>& part : parts) {
+            for (const V& row : part.rests()) {
+                direction_.assign_from(row);
+                direction_.reset_bit(constant_bit(direction_));
+                std::vector<std::uint32_t>& sums = in_basis.emplace_back();
+                for (std::uint32_t basis_idx = 0; basis_idx < basis.size(); ++basis_idx) {
+                    if (direction_.get_bit(lead_of_basis[basis_idx])) {
+                        direction_.plus_assign(basis[basis_idx]);
+                        sums.push_back(basis_idx);
+                    }
+                }
+                if (const std::optional<std::size_t> lead = direction_.leading_bit()) {
+                    sums.push_back(static_cast<std::uint32_t>(basis.size()));
+                    basis.push_back(direction_);
+                    lead_of_basis.push_back(*lead);
+                }
+            }
+        }
+        const std::size_t rank = basis.size();
+        std::vector<std::vector<DenseGF2Vector>> rests(parts.size());
+        std::size_t rest_idx = 0;
+        for (std::size_t part_idx = 0; part_idx < parts.size(); ++part_idx) {
+            for (const V& row : parts[part_idx].rests()) {
+                DenseGF2Vector& rest = rests[part_idx].emplace_back(rank + 1);
+                for (const std::uint32_t basis_idx : in_basis[rest_idx++]) {
+                    rest.set_bit(basis_idx);
+                }
+                if (constant_of(row)) {
+                    rest.set_bit(rank);
+                }
+            }
+        }
+        GateSearch search = search_gate_hybrid(rests, rank + 1, config_.gate_max_table_cost,
+                                               config_.core_shrinking, config_.gate_max_conflicts,
+                                               gate_table_, rng_);
+        ++num_gate_searches_;
+        gate_time_s_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        if (!search.core.has_value()) {
+            return std::nullopt;
+        }
+        const std::vector<std::uint32_t>& core = *search.core;
+        ++num_gates_;
+        if (config_.root_equations) {
+            const std::vector<Equation> root_negations = changed_shared_equations_of(parts, core);
+            // A table's gate comes without a refutation; the gate solver gives the proof's lines.
+            if (with_proof_ && !root_negations.empty() && search.by_table) {
+                search.refutation = refute_gate(rests, rank + 1, core, refutation_rng_);
+            }
+            static const GateRefutation no_refutation;
+            const GateRefutation& refutation = with_proof_ ? search.refutation : no_refutation;
+            for (const Equation& negation : root_negations) {
+                add_root_equation(gf2_vector_of<V>(negation), clause_idxs, basis, refutation);
+            }
+        }
+        std::vector<std::uint8_t> in_gate(parts.size(), 0);
+        for (const std::uint32_t part_idx : core) {
+            in_gate[part_idx] = 1;
+        }
+        return in_gate;
+    }
+
+    /// @brief A basis of the equations the spans of the linear negations of the
+    /// clauses @p core names among @p parts share, each changed by the flip set.
+    std::vector<Equation> changed_shared_equations_of(std::span<const SplitClause<V>> parts,
+                                                      const std::vector<std::uint32_t>& core) const {
+        const auto negation_of = [&](const SplitClause<V>& part, const bool with_changed) {
+            Clause clause(V::repr, num_vars_);
+            const auto add = [&](const V& row) {
+                Equation equation(V::repr, num_vars_);
+                gf2_vector_of<V>(equation).assign_from(row);
+                clause.add_row(std::move(equation));
+            };
+            if (with_changed) {
+                add(part.changed);
+            }
+            for (const V& row : part.rests()) {
+                add(row);
+            }
+            return clause;
+        };
+        std::vector<Clause> negations;
+        negations.reserve(core.size());
+        for (const std::uint32_t part_idx : core) {
+            negations.push_back(negation_of(parts[part_idx], true));
+        }
+        return changed_shared_equations(negations, negation_of(parts[core[0]], false));
+    }
+
+    /// @brief Add the unit clause whose linear negation is @p negation, false at the
+    /// root by a one-sided gate among the clauses @p clause_idxs, unless a present
+    /// clause has its span; its derivation is @p refutation's lines with @p negation
+    /// added to each.
+    /// @param basis The directions @p refutation's coordinates stand for.
+    void add_root_equation(const V& negation, const std::vector<std::uint32_t>& clause_idxs,
+                           const std::vector<V>& basis, const GateRefutation& refutation) {
+        std::optional<Rows> unit = canonical_of(Rows{negation});
+        assert(unit.has_value() && "a changed equation is 0 = 1");
+        if (is_present(*unit)) {
+            return;
+        }
+        const std::size_t rank = basis.size();
+        const auto cited = [&](const std::vector<std::uint32_t>& reasons) {
+            std::vector<Cited> cited_clauses;
+            cited_clauses.reserve(reasons.size());
+            for (const std::uint32_t reason : reasons) {
+                cited_clauses.push_back(reason < clause_idxs.size()
+                                            ? Cited{.is_lemma = false, .idx = clause_idxs[reason]}
+                                            : Cited{.is_lemma = true,
+                                                    .idx = static_cast<std::uint32_t>(reason - clause_idxs.size())});
+            }
+            return cited_clauses;
+        };
+        Derivation derivation;
+        for (const GateRefutation::Lemma& lemma : refutation.lemmas) {
+            Rows rows{negation};
+            for (const DenseGF2Vector& row : lemma.rows) {
+                V& lifted = rows.emplace_back(num_vars_ + 1);
+                row.for_each_set_bit([&](const std::size_t bit) {
+                    if (bit < rank) {
+                        lifted.plus_assign(basis[bit]);
+                    } else {
+                        lifted.set_bit(num_vars_);
+                    }
+                });
+            }
+            derivation.lemmas.push_back({.rows = std::move(rows), .reasons = cited(lemma.reasons)});
+        }
+        derivation.reasons = cited(refutation.reasons);
+        const std::uint32_t clause_idx = add(std::move(*unit), {});
+        clauses_[clause_idx].derivation_idx = derivations_.size();
+        derivations_.push_back(std::move(derivation));
+        ++num_root_equations_;
     }
 
     static constexpr std::uint32_t none = static_cast<std::uint32_t>(-1);
 
     std::size_t num_vars_;
     BveConfig config_;
+    bool with_proof_;
     Rng& rng_;
+    Rng refutation_rng_; ///< Seeded from `rng_`, drawn from only for a proof's lines.
     PivotTable leads_; ///< Empty between calls of `canonical()`.
     // Scratch of `resolve()` and `find_gate()`.
     std::vector<SplitClause<V>> parts_;
     Rows spanning_;
     CanonicalWork canonical_work_;
-    GateTable<V> gate_table_;
+    V direction_; ///< Scratch of `find_gate()`.
+    GateTable gate_table_;
+    std::size_t num_gate_searches_ = 0;
+    std::size_t num_gates_ = 0;
+    std::size_t num_root_equations_ = 0;
+    double gate_time_s_ = 0.0;
+    std::vector<Derivation> derivations_;
     std::vector<StoredClause> clauses_; ///< In the order added.
     /// @brief The present clauses' indices, by `hash_of()` their rows.
     std::unordered_multimap<std::size_t, std::uint32_t> present_clause_idxs_by_hash_;
@@ -1482,10 +1478,10 @@ Clause clause_of(const std::vector<V>& rows, std::size_t num_vars, EquationRepr 
 template <GF2Vector V>
 BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClauseIds active_clause_ids,
                             const std::size_t num_vars, const EquationRepr repr, const BveConfig& config,
-                            Rng& rng) {
+                            const bool with_proof, Rng& rng) {
     using Rows = std::vector<V>;
     BvePlan plan;
-    Formula<V> formula(num_vars, config, rng);
+    Formula<V> formula(num_vars, config, with_proof, rng);
     BveCounters& counters = plan.counters;
     for (const ClauseId id : active_clause_ids) {
         assert(clauses[id].num_vars() == num_vars && "an active clause is over another numbering");
@@ -1505,6 +1501,10 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
     formula.run_pass();
 
     plan.found_empty_clause = formula.found_empty_clause();
+    counters.num_gate_searches = formula.num_gate_searches();
+    counters.num_gates = formula.num_gates();
+    counters.num_root_equations = formula.num_root_equations();
+    counters.gate_time_s = formula.gate_time_s();
     plan.eliminations = formula.eliminations();
     counters.num_eliminated = plan.eliminations.size();
     plan.dropped_col_idxs = IndexSet(num_vars + 1);
@@ -1531,16 +1531,36 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
         }
         const auto parent = [&](const std::uint32_t parent_clause_idx) {
             return parent_clause_idx < num_input_clauses
-                       ? BvePlan::Parent{.is_resolvent = false,
+                       ? BvePlan::Parent{.kind = BvePlan::Parent::Kind::clause,
                                          .idx = formula.clauses()[parent_clause_idx].input_id}
-                       : BvePlan::Parent{.is_resolvent = true,
+                       : BvePlan::Parent{.kind = BvePlan::Parent::Kind::resolvent,
                                          .idx = parent_clause_idx - num_input_clauses};
         };
         BvePlan::Resolvent& resolvent = plan.resolvents.emplace_back(BvePlan::Resolvent{
             .parents = {parent(clause.parent_clause_idxs[0]), parent(clause.parent_clause_idxs[1])},
+            .lemmas = {},
+            .reasons = {},
             .clause = std::nullopt,
             .elimination_idx = clause.elimination_idx,
             .removed_clause_idx = clause.removed_clause_idx});
+        if (clause.derivation_idx.has_value()) {
+            const auto cited = [&](const std::vector<typename Formula<V>::Cited>& reasons) {
+                std::vector<BvePlan::Parent> parents;
+                parents.reserve(reasons.size());
+                for (const typename Formula<V>::Cited& reason : reasons) {
+                    parents.push_back(reason.is_lemma
+                                          ? BvePlan::Parent{.kind = BvePlan::Parent::Kind::lemma, .idx = reason.idx}
+                                          : parent(reason.idx));
+                }
+                return parents;
+            };
+            const typename Formula<V>::Derivation& derivation = formula.derivations()[*clause.derivation_idx];
+            for (const typename Formula<V>::Derivation::Lemma& lemma : derivation.lemmas) {
+                resolvent.lemmas.push_back({.clause = clause_of<V>(lemma.rows, num_vars, repr),
+                                            .reasons = cited(lemma.reasons)});
+            }
+            resolvent.reasons = cited(derivation.reasons);
+        }
         if (clause.present) {
             counters.num_unit_resolvents += clause.rows.size() == 1 ? 1U : 0U;
             counters.num_resolvents_of_width_at_most_2 += clause.rows.size() <= 2 ? 1U : 0U;
@@ -1553,14 +1573,52 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
 
 } // namespace
 
+std::vector<Equation> changed_shared_equations(const std::vector<Clause>& negations,
+                                               const Clause& unchanged) {
+    assert(!negations.empty() && "no clauses to share an equation");
+    Clause shared = negations[0];
+    for (std::size_t i = 1; i < negations.size() && shared.rows() > 0; ++i) {
+        std::vector<Equation> rows = span_intersection(shared, negations[i]);
+        shared = Clause(shared.repr(), shared.num_vars());
+        for (Equation& row : rows) {
+            shared.add_row(std::move(row));
+        }
+    }
+    // Each row the flip set does not change is replaced by its sum with one it does.
+    std::vector<Equation> changed;
+    std::optional<Equation> first_changed;
+    std::vector<Equation> unchanged_rows;
+    for (const Equation& row : shared) {
+        Equation reduced = row;
+        if (unchanged.partial_reduce(reduced).kind == ReduceResult::Kind::eq_true) {
+            unchanged_rows.push_back(row);
+            continue;
+        }
+        if (!first_changed.has_value()) {
+            first_changed = row;
+        }
+        changed.push_back(row);
+    }
+    if (!first_changed.has_value()) {
+        return {};
+    }
+    for (Equation& row : unchanged_rows) {
+        row.plus_assign(*first_changed);
+        changed.push_back(std::move(row));
+    }
+    return changed;
+}
+
 BvePlan build_bve_plan(const std::vector<Clause>& clauses,
                        const ActiveClauseIds active_clause_ids, const std::size_t num_vars,
-                       const EquationRepr repr, const BveConfig& config, Rng& rng) {
+                       const EquationRepr repr, const BveConfig& config, const bool with_proof, Rng& rng) {
     assert(config.group_cap >= 1 && config.group_cap <= 16 && config.max_refusals_in_a_row >= 1 &&
-           config.success_rate >= 0.0 && config.success_rate <= 1.0 &&
-           "the group cap, the refusal limit or the success rate is out of range");
+           config.success_rate >= 0.0 && config.success_rate <= 1.0 && config.gate_max_conflicts >= 1 &&
+           config.gate_max_clause_share >= 0.0 && config.gate_max_clause_share <= 1.0 &&
+           "the group cap, the refusal limit, the success rate, the gate conflict cap or the gate "
+           "clause share is out of range");
     return with_gf2_vector_of(repr, [&]<GF2Vector V>(std::type_identity<V>) {
-        return build_bve_plan_over<V>(clauses, active_clause_ids, num_vars, repr, config, rng);
+        return build_bve_plan_over<V>(clauses, active_clause_ids, num_vars, repr, config, with_proof, rng);
     });
 }
 

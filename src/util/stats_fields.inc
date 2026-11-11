@@ -116,6 +116,10 @@ XORCLE_STAT(bve, Count, bve_clauses_before, "bve_clauses_before", "Clauses befor
 XORCLE_STAT(bve, Count, bve_clauses_after, "bve_clauses_after", "Clauses after the last BVE pass")
 XORCLE_STAT(bve, Count, bve_width_before, "bve_width_before", "Total width before the first BVE pass")
 XORCLE_STAT(bve, Count, bve_width_after, "bve_width_after", "Total width after the last BVE pass")
+XORCLE_STAT(bve, Count, bve_gate_searches, "bve_gate_searches", "BVE gate searches")
+XORCLE_STAT(bve, Count, bve_gates, "bve_gates", "Of those, gates found")
+XORCLE_STAT(bve, Count, bve_root_equations, "bve_root_equations", "Root equations from one-sided gates, added as unit clauses")
+XORCLE_STAT(bve, Real, bve_gate_time_s, "bve_gate_time_s", "Time of the gate searches, within BVE's (s)")
 
 // --- The implication graph, reported only when it ran -----------------------
 

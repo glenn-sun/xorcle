@@ -634,7 +634,12 @@ inline ImplicationGraphConfig implication_graph_config(const Options& options) {
 inline BveConfig bve_config(const Options& options) {
     return BveConfig{.group_cap = options.bve_group_cap,
                      .max_refusals_in_a_row = options.bve_max_refusals_in_a_row,
-                     .success_rate = options.bve_success_rate};
+                     .success_rate = options.bve_success_rate,
+                     .core_shrinking = options.bve_core_shrinking,
+                     .gate_max_conflicts = options.bve_gate_max_conflicts,
+                     .gate_max_table_cost = options.bve_gate_max_table_cost,
+                     .gate_max_clause_share = options.bve_gate_max_clause_share,
+                     .root_equations = options.bve_root_equations};
 }
 
 inline DeletionConfig deletion_config(const Options& options) {

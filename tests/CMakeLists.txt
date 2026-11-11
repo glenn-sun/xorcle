@@ -29,6 +29,7 @@ add_executable(xorcle_tests
     unit/test_equation.cpp
     unit/test_equivalent_clause_table.cpp
     unit/test_fuzz.cpp
+    unit/test_gate_solver.cpp
     unit/test_implication_graph.cpp
     unit/test_index_set.cpp
     unit/test_max_heap.cpp
@@ -127,6 +128,14 @@ add_test(NAME proof_roundtrip_bve_nothing
             ${script_args} random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip_bve_nothing PROPERTIES SKIP_RETURN_CODE 77)
 
+# Here one-sided gates make equations false at the root, each a line derived from
+# the gate's clauses through the lemmas of the gate search.
+add_test(NAME proof_roundtrip_bve_root_equations
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            --expect-stat bve_root_equations
+            ${script_args} tseitin "n=90;k=3" 1)
+set_tests_properties(proof_roundtrip_bve_root_equations PROPERTIES SKIP_RETURN_CODE 77)
+
 # The default exact watchlist hands the propagator a trigger hint; the cyclic
 # selector does not, so its attempts reach their reasons by a path of their own,
 # and its default miss rate leaves propagation short of a fixed point.
@@ -183,7 +192,7 @@ set_tests_properties(proof_roundtrip_equivalent_clause_eviction PROPERTIES SKIP_
 add_test(NAME proof_roundtrip_equivalent_clause_eviction_subsumption
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat equivalent_clauses
-            ${script_args} tseitin "n=300;k=4" 1)
+            ${script_args} tseitin "n=300;k=4" 1 --bve-root-equations=false)
 set_tests_properties(proof_roundtrip_equivalent_clause_eviction_subsumption
                      PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -194,6 +203,7 @@ add_test(NAME proof_roundtrip_vivify
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat vivify_narrowed
             ${script_args} tseitin "n=90;k=3" 1
+            --bve-root-equations=false
             --vivify-cadence=10)
 set_tests_properties(proof_roundtrip_vivify PROPERTIES SKIP_RETURN_CODE 77)
 # A pass due above the root forces a restart with replay, so narrowings are written

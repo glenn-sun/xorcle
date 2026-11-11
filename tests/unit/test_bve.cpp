@@ -73,7 +73,7 @@ BvePlan plan_for(const std::vector<Clause>& clauses, std::size_t num_vars,
     std::iota(ids.begin(), ids.end(), ClauseId{0});
     const std::vector<std::uint8_t> is_active(clauses.size(), 1);
     Rng rng = make_rng(seed, RngComponent::bve_draw);
-    return build_bve_plan(clauses, ActiveClauseIds(ids, is_active), num_vars, in_repr, config, rng);
+    return build_bve_plan(clauses, ActiveClauseIds(ids, is_active), num_vars, in_repr, config, true, rng);
 }
 
 /// @brief @p clauses with their rows in representation @p to.
@@ -215,12 +215,16 @@ TEST_CASE("bve: a variable defined by a gate is eliminated through the gate") {
         }
     }
 
+    // y's clauses are more than the default share of these few.
+    BveConfig config = default_bve_config();
+    config.gate_max_clause_share = 1.0;
     for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan plan = plan_for(clauses, num_vars, default_bve_config(), seed);
+        const BvePlan plan = plan_for(clauses, num_vars, config, seed);
         const auto of_y = std::ranges::find_if(plan.eliminations, [](const Elimination& elimination) {
             return elimination.flip_set == std::vector<std::uint32_t>{0};
         });
         REQUIRE(of_y != plan.eliminations.end());
+        CHECK(plan.counters.num_gates > 0);
         CHECK(of_y->removed_clauses.size() == 5);
         CHECK(plan.dropped_col_idxs.test(0));
         check_models(plan, clauses, num_vars);
@@ -320,6 +324,7 @@ TEST_CASE("bve: models are completed on random formulas, in the variables given 
         config.group_cap = 1 + below(4);
         config.max_refusals_in_a_row =
             std::array<std::size_t, 3>{std::numeric_limits<std::size_t>::max(), 1, 3}[below(3)];
+        config.gate_max_clause_share = std::array<double, 2>{1.0, config.gate_max_clause_share}[below(2)];
         const BvePlan plan = plan_for(clauses, num_vars, config, round);
         check_sparse_plan(plan, clauses, num_vars, config, round);
         num_eliminated += plan.eliminations.size();

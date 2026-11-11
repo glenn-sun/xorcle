@@ -35,6 +35,7 @@ add_library(xorcle_core
     src/core/trail_basis.cpp
     src/core/vivify.cpp
     src/heuristics/bve/bve.cpp
+    src/heuristics/bve/gate_solver.cpp
     src/heuristics/compaction/compaction.cpp
     src/heuristics/compaction/original_variables.cpp
     src/heuristics/equivalent_clauses/equivalent_clause_table.cpp
