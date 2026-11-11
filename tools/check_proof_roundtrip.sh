@@ -1,10 +1,11 @@
 #!/bin/sh
 # Solve an UNSAT instance with --proof and verify the proof with the
-# independently written LRUP(⊕) checker.
+# independently written LRUP(⊕) checker, check_lrup_parity.
 #
 # Usage: check_proof_roundtrip.sh [--cnf-xor] [--insert <clause line>] [--unused]
 #        [--expect-stat <column>]
-#        <python> <repository root> <xorcle binary> <family> <params> <seed> [solver option...]
+#        <python> <repository root> <xorcle binary> <checker binary> <family> <params> <seed>
+#        [solver option...]
 # Exit:  0 pass, 1 fail, 77 skipped (the generator lacks a dependency)
 #
 # --cnf-xor solves and checks the instance as `tools/xnf_convert.py cnf-xor` writes it.
@@ -34,10 +35,11 @@ done
 python="$1"
 root="$2"
 xorcle="$3"
-family="$4"
-params="$5"
-seed="$6"
-shift 6
+checker="$4"
+family="$5"
+params="$6"
+seed="$7"
+shift 7
 
 work="${TMPDIR:-/tmp}/xorcle_proof_roundtrip.$$"
 mkdir -p "$work"
@@ -129,4 +131,4 @@ if [ ! -s "$proof" ]; then
     exit 1
 fi
 
-"$python" "$root/tools/check_lrup_parity.py" "$instance" "$proof"
+"$checker" "$instance" "$proof"

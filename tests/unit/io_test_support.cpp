@@ -148,8 +148,8 @@ LrupChecker::Status LrupChecker::propagate(const Rows& rows, RowSpace& basis) co
         }
     }
     const ProofRow deduced = negate(residues[0]);
-    if (contains(basis, residues[0]) || contains(basis, deduced)) {
-        return Status::none;
+    if (contains(basis, deduced)) {
+        return Status::already_known;
     }
     basis.add_row(equation(deduced));
     return Status::deduced;

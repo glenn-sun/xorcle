@@ -1,22 +1,25 @@
-"""Mutation tests for tools/check_lrup_parity.py: each case of tests/lrup_cases.txt passes or
-fails as it says, a failure with the message given here."""
+"""Mutation tests for the check_lrup_parity binary: each case of tests/lrup_cases.txt passes or
+fails as it says, a failure with the message given here.
 
-import contextlib
-import io
+Usage: test_check_lrup_parity.py <check_lrup_parity binary> [unittest options]
+"""
+
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "tools"))
-
-import check_lrup_parity
+CHECKER = ""
 
 #: What the checker says about each broken case.
 MESSAGES = {
     "dropped_reason": "no conflict derived",
-    "flipped_literal": "did not propagate",
+    # The flipped unit makes reason 1 unit with its equation already known.
+    "flipped_literal": "no conflict derived",
+    "satisfied_reason_not_unit": "reason clause 4 did not propagate",
+    "implied_reason_not_unit": "reason clause 2 did not propagate",
     "reason_cited_after_its_deletion": "missing reason clause id 2",
     "missing_empty_clause": "no line derives the empty clause",
     "no_lines": "no line derives the empty clause",
@@ -65,16 +68,19 @@ class CheckLrupParityTest(unittest.TestCase):
                         f.write(instance)
                     with open(proof_path, "w", encoding="utf-8") as f:
                         f.write(proof)
-                    out = io.StringIO()
-                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                        status = check_lrup_parity.check_proof(instance_path, proof_path, verbose=False)
+                    run = subprocess.run([CHECKER, instance_path, proof_path],
+                                         capture_output=True, text=True)
+                    out = run.stdout + run.stderr
                     if passes:
-                        self.assertEqual(status, 0, out.getvalue())
-                        self.assertIn("OK:", out.getvalue())
+                        self.assertEqual(run.returncode, 0, out)
+                        self.assertIn("OK:", out)
                     else:
-                        self.assertEqual(status, 1, out.getvalue())
-                        self.assertIn(MESSAGES[name], out.getvalue())
+                        self.assertEqual(run.returncode, 1, out)
+                        self.assertIn(MESSAGES[name], out)
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    CHECKER = sys.argv.pop(1)
     unittest.main()

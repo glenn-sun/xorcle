@@ -66,36 +66,46 @@ if(NOT Python3_Interpreter_FOUND)
     return()
 endif()
 
-# What check_cli.sh and check_proof_roundtrip.sh take after their options.
+# What check_cli.sh takes after its options.
 set(script_args ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR} $<TARGET_FILE:xorcle>)
 
 # Exit codes, error lines, a SAT model and the statistics file, end to end.
 add_test(NAME cli
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_cli.sh ${script_args})
 
+# The tests below check proofs with the checker the top level builds.
+if(NOT XORCLE_PROOF_CHECKER)
+    message(STATUS "No proof checker: the tests that check proofs are not registered")
+    return()
+endif()
+
+# What check_proof_roundtrip.sh takes after its options.
+set(roundtrip_args ${script_args} ${XORCLE_PROOF_CHECKER})
+
 # The proof checker the roundtrips rely on, against mutated proofs.
 add_test(NAME lrup_checker
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_check_lrup_parity.py -v)
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_check_lrup_parity.py
+            ${XORCLE_PROOF_CHECKER} -v)
 
 # Everything registers with CTest, so `ctest --test-dir build` is the single
 # command. A roundtrip skips when the generator lacks a package its family needs.
 add_test(NAME proof_roundtrip
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${script_args} random_kxnf "n=14;k=3" 1)
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip PROPERTIES SKIP_RETURN_CODE 77)
 
 # Minimization is on by default and rewrites the learned clause, but leaves the
 # derivation a chain of resolutions, so both settings have to check.
 add_test(NAME proof_roundtrip_no_minimize
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --minimize=false)
 set_tests_properties(proof_roundtrip_no_minimize PROPERTIES SKIP_RETURN_CODE 77)
 
 # BVE and vivification run by default, so the proof without either is checked here.
 add_test(NAME proof_roundtrip_no_bve_no_vivify
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --bve=false --vivify=false)
 set_tests_properties(proof_roundtrip_no_bve_no_vivify PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -104,7 +114,7 @@ set_tests_properties(proof_roundtrip_no_bve_no_vivify PROPERTIES SKIP_RETURN_COD
 # deletion lines are written.
 add_test(NAME proof_roundtrip_luby
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect-stat restarts
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --restart=luby --restart-luby-unit=1)
 set_tests_properties(proof_roundtrip_luby PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -112,7 +122,7 @@ set_tests_properties(proof_roundtrip_luby PROPERTIES SKIP_RETURN_CODE 77)
 # renumbering by default: here they are not, so the variables keep their numbers.
 add_test(NAME proof_roundtrip_no_compact
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect-stat compactions
-            ${script_args} tseitin "n=90;k=3" 1
+            ${roundtrip_args} tseitin "n=90;k=3" 1
             --compact=false)
 set_tests_properties(proof_roundtrip_no_compact PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -121,11 +131,11 @@ set_tests_properties(proof_roundtrip_no_compact PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_bve
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat bve_eliminated
-            ${script_args} bivium "r=531;k=51;wrong=1" 1)
+            ${roundtrip_args} bivium "r=531;k=51;wrong=1" 1)
 set_tests_properties(proof_roundtrip_bve PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_bve_nothing
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect-stat bve_passes
-            ${script_args} random_kxnf "n=14;k=3" 1)
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip_bve_nothing PROPERTIES SKIP_RETURN_CODE 77)
 
 # Here one-sided gates make equations false at the root, each a line derived from
@@ -133,7 +143,7 @@ set_tests_properties(proof_roundtrip_bve_nothing PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_bve_root_equations
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat bve_root_equations
-            ${script_args} tseitin "n=90;k=3" 1)
+            ${roundtrip_args} tseitin "n=90;k=3" 1)
 set_tests_properties(proof_roundtrip_bve_root_equations PROPERTIES SKIP_RETURN_CODE 77)
 
 # The default exact watchlist hands the propagator a trigger hint; the cyclic
@@ -141,7 +151,7 @@ set_tests_properties(proof_roundtrip_bve_root_equations PROPERTIES SKIP_RETURN_C
 # and its default miss rate leaves propagation short of a fixed point.
 add_test(NAME proof_roundtrip_cyclic
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --selection=cyclic)
 set_tests_properties(proof_roundtrip_cyclic PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -150,19 +160,19 @@ set_tests_properties(proof_roundtrip_cyclic PROPERTIES SKIP_RETURN_CODE 77)
 # left are deleted.
 add_test(NAME proof_roundtrip_unused_passes
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --deletion-cadence-coefficient=0.7 --deletion-cadence-offset=0 --deletion-wait=3)
 set_tests_properties(proof_roundtrip_unused_passes PROPERTIES SKIP_RETURN_CODE 77)
 
 # The sparse representation, under each selector.
 add_test(NAME proof_roundtrip_sparse
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --equation-repr=sparse)
 set_tests_properties(proof_roundtrip_sparse PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_sparse_cyclic
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --equation-repr=sparse --selection=cyclic)
 set_tests_properties(proof_roundtrip_sparse_cyclic PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -172,14 +182,14 @@ set_tests_properties(proof_roundtrip_sparse_cyclic PROPERTIES SKIP_RETURN_CODE 7
 add_test(NAME proof_roundtrip_implication_graph
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat implication_graph_units_fed
-            ${script_args} rand_qp "n=12;m=36;planted=0" 1)
+            ${roundtrip_args} rand_qp "n=12;m=36;planted=0" 1)
 set_tests_properties(proof_roundtrip_implication_graph PROPERTIES SKIP_RETURN_CODE 77)
 
 # 135 variables, three words a row, so rewrite lines and the compaction records
 # span word boundaries.
 add_test(NAME proof_roundtrip_wide
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --expect-stat compactions
-            ${script_args} tseitin "n=90;k=3" 1)
+            ${roundtrip_args} tseitin "n=90;k=3" 1)
 set_tests_properties(proof_roundtrip_wide PROPERTIES SKIP_RETURN_CODE 77)
 
 # A clause evicted at a substitution is a deletion line; a subsumption
@@ -187,12 +197,12 @@ set_tests_properties(proof_roundtrip_wide PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_equivalent_clause_eviction
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat equivalent_clauses
-            ${script_args} ctc "r=4;b=3;k=4;wrong=1" 1)
+            ${roundtrip_args} ctc "r=4;b=3;k=4;wrong=1" 1)
 set_tests_properties(proof_roundtrip_equivalent_clause_eviction PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_equivalent_clause_eviction_subsumption
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat equivalent_clauses
-            ${script_args} tseitin "n=300;k=4" 1 --bve-root-equations=false)
+            ${roundtrip_args} tseitin "n=300;k=4" 1 --bve-root-equations=false)
 set_tests_properties(proof_roundtrip_equivalent_clause_eviction_subsumption
                      PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -202,7 +212,7 @@ set_tests_properties(proof_roundtrip_equivalent_clause_eviction_subsumption
 add_test(NAME proof_roundtrip_vivify
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat vivify_narrowed
-            ${script_args} tseitin "n=90;k=3" 1
+            ${roundtrip_args} tseitin "n=90;k=3" 1
             --bve-root-equations=false
             --vivify-cadence=10)
 set_tests_properties(proof_roundtrip_vivify PROPERTIES SKIP_RETURN_CODE 77)
@@ -212,13 +222,13 @@ set_tests_properties(proof_roundtrip_vivify PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_vivify_forced_restart
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat forced_restarts
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --vivify-cadence=10)
 set_tests_properties(proof_roundtrip_vivify_forced_restart PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_phase_rotate
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat phase_saving_decisions_recent_only
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --phase-rotate-interval=2)
 set_tests_properties(proof_roundtrip_phase_rotate PROPERTIES SKIP_RETURN_CODE 77)
 # The subsumption pass, at root visits fifty conflicts apart: each strengthened
@@ -227,13 +237,13 @@ set_tests_properties(proof_roundtrip_phase_rotate PROPERTIES SKIP_RETURN_CODE 77
 add_test(NAME proof_roundtrip_subsume_pass
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat subsumed_clauses
-            ${script_args} perfect_matching "n=21;k=4" 1
+            ${roundtrip_args} perfect_matching "n=21;k=4" 1
             --inproc-subsume-strengthen=true --inproc-subsume-strengthen-cadence=50)
 set_tests_properties(proof_roundtrip_subsume_pass PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_stabilize
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
             --expect-stat focused_restarts
-            ${script_args} random_kxnf "n=14;k=3" 1
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
             --stabilize=true --stabilize-interval=5 --focused-restart-lbd-min-ratio=1.0)
 set_tests_properties(proof_roundtrip_stabilize PROPERTIES SKIP_RETURN_CODE 77)
 # Half the declared variables are unused, and the proof is over all of them. The
@@ -241,28 +251,28 @@ set_tests_properties(proof_roundtrip_stabilize PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_unused_vars
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --unused
             --expect-stat unused_vars
-            ${script_args} random_kxnf "n=14;k=3" 1)
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip_unused_vars PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_unused_vars_wide
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --unused
             --expect-stat compactions
-            ${script_args} tseitin "n=90;k=3" 1)
+            ${roundtrip_args} tseitin "n=90;k=3" 1)
 set_tests_properties(proof_roundtrip_unused_vars_wide PROPERTIES SKIP_RETURN_CODE 77)
 
 # CNF-XOR input numbers its XOR lines among the clauses in file order, which the
 # proof's reasons cite.
 add_test(NAME proof_roundtrip_cnf_xor
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --cnf-xor
-            ${script_args} random_kxnf "n=14;k=3" 1)
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip_cnf_xor PROPERTIES SKIP_RETURN_CODE 77)
 
 # An empty input clause ends the run at once, and the proof cites it by its
 # position.
 add_test(NAME proof_roundtrip_empty_clause
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --insert "0"
-            ${script_args} random_kxnf "n=14;k=3" 1)
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip_empty_clause PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME proof_roundtrip_empty_clause_cnf_xor
     COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh --cnf-xor --insert "x 0"
-            ${script_args} random_kxnf "n=14;k=3" 1)
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip_empty_clause_cnf_xor PROPERTIES SKIP_RETURN_CODE 77)

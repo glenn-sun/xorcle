@@ -1,4 +1,4 @@
-# LRUP(⊕) proofs, valid and broken, that tools/check_lrup_parity.py (tests/test_check_lrup_parity.py)
+# LRUP(⊕) proofs, valid and broken, that check_lrup_parity (tests/test_check_lrup_parity.py)
 # and the C++ LrupChecker (tests/unit/test_lrup_checker.cpp) must both pass or fail.
 #
 # A case is a `case <name> pass|fail` line, the instance, a `proof` line, the proof and an
@@ -46,6 +46,17 @@ proof
 4 0 2 3 1 0
 end
 
+case reason_already_known pass
+p xnf 2 3
+1 2 0
+-1 0
+-2 0
+proof
+4 1 0 3 3 1 0
+3 0
+5 0 2 4 0
+end
+
 case dropped_reason fail
 p xnf 2 3
 1 2 0
@@ -66,6 +77,26 @@ proof
 4 -1 0 3 1 0
 3 0
 5 0 2 4 0
+end
+
+case satisfied_reason_not_unit fail
+p xnf 3 4
+1 2 0
+-1 0
+-2 0
+-1 3 0
+proof
+5 0 2 4 3 1 0
+end
+
+case implied_reason_not_unit fail
+p xnf 2 4
+1+2 0
+1 2 0
+-1 0
+-2 0
+proof
+5 0 1 2 3 4 0
 end
 
 case reason_cited_after_its_deletion fail

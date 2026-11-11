@@ -45,7 +45,9 @@ TEST_CASE("lrup checker: a valid proof passes and each mutant fails") {
     CHECK(check("4 0 2 3 1 0\n") == "");
 
     CHECK(rejects("4 1 0 1 0\n3 0\n5 0 2 4 0\n", "no conflict derived"));
-    CHECK(rejects("4 -1 0 3 1 0\n3 0\n5 0 2 4 0\n", "did not propagate"));
+    CHECK(check("4 1 0 3 3 1 0\n3 0\n5 0 2 4 0\n") == "");
+    CHECK(rejects("4 -1 0 3 1 0\n3 0\n5 0 2 4 0\n", "no conflict derived"));
+    CHECK(rejects("4 0 1 2 3 0\n", "did not propagate"));
     CHECK(rejects("4 1 0 3 1 0\n2 0\n5 0 2 4 0\n", "missing reason clause 2"));
     CHECK(rejects("4 1 0 3 1 0\n3 0\n", "no line derives the empty clause"));
     CHECK(rejects("", "no line derives the empty clause"));
@@ -61,8 +63,8 @@ TEST_CASE("lrup checker: a valid proof passes and each mutant fails") {
     CHECK(rejects("4 1 0 3 0 1 0\n", "exactly one or two zeros"));
 }
 
-// The cases `tests/test_check_lrup_parity.py` holds the Python checker to.
-TEST_CASE("lrup checker: passes and fails the shared cases as the Python checker does") {
+// The cases `tests/test_check_lrup_parity.py` holds `check_lrup_parity` to.
+TEST_CASE("lrup checker: passes and fails the shared cases as check_lrup_parity does") {
     std::ifstream file(XORCLE_TESTS_DIR "/lrup_cases.txt");
     REQUIRE(file.is_open());
     std::vector<std::string> lines;

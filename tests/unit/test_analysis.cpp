@@ -187,7 +187,7 @@ Conflict make_root_conflict(EquationRepr repr) {
     return Conflict{std::move(trail), std::move(clauses)};
 }
 
-/// @brief Replay a reason chain the way `tools/check_lrup_parity.py` does: every
+/// @brief Replay a reason chain by unit propagation: every
 /// reason but the last leaves exactly one distinct nonzero residue, which is
 /// deduced together with `[0 = 1]`, and the last one leaves none at all.
 bool replays_to_conflict(const std::vector<ClauseId>& reasons, const std::vector<Clause>& clauses,

@@ -88,6 +88,31 @@ add_executable(xorcle src/cli/main.cpp)
 target_link_libraries(xorcle PRIVATE xorcle_core)
 target_compile_definitions(xorcle PRIVATE XORCLE_VERSION="${XORCLE_VERSION}")
 
+# The LRUP(⊕) proof checker, one Rust file built beside the solver by rustc 1.73 or later.
+# Without it the checker is not built and the tests that check proofs are not registered.
+find_program(XORCLE_RUSTC rustc)
+set(rustc_usable FALSE)
+if(XORCLE_RUSTC)
+    execute_process(COMMAND ${XORCLE_RUSTC} --version OUTPUT_VARIABLE rustc_version)
+    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" rustc_version "${rustc_version}")
+    if(rustc_version VERSION_LESS 1.73)
+        message(STATUS "rustc ${rustc_version} is older than 1.73: the proof checker is not built")
+    else()
+        set(rustc_usable TRUE)
+    endif()
+else()
+    message(STATUS "No rustc: the proof checker is not built")
+endif()
+if(rustc_usable)
+    set(XORCLE_PROOF_CHECKER ${CMAKE_BINARY_DIR}/check_lrup_parity${CMAKE_EXECUTABLE_SUFFIX})
+    add_custom_command(OUTPUT ${XORCLE_PROOF_CHECKER}
+        COMMAND ${XORCLE_RUSTC} --edition 2021 -O -o ${XORCLE_PROOF_CHECKER}
+                ${CMAKE_SOURCE_DIR}/tools/check_lrup_parity.rs
+        DEPENDS ${CMAKE_SOURCE_DIR}/tools/check_lrup_parity.rs
+        VERBATIM)
+    add_custom_target(check_lrup_parity ALL DEPENDS ${XORCLE_PROOF_CHECKER})
+endif()
+
 enable_testing()
 add_subdirectory(tests)
 
