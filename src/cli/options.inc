@@ -311,6 +311,11 @@ XORCLE_OPTION(inproc_subsume_strengthen, inproc_subsume_strengthen_effort, Real,
 // --- Output ----------------------------------------------------------------
 
 XORCLE_OPTION(always, proof, Text, "", "", "", "write an LRUP(⊕) proof here")
+XORCLE_GROUP(proof, !options.proof.empty(), "--proof=PATH")
+XORCLE_ENUM_OPTION(proof, proof_format, ProofFormat, ProofFormat::binary,
+                   "how the proof is written")
+XORCLE_ENUM_VALUE(proof_format, "binary", ProofFormat::binary)
+XORCLE_ENUM_VALUE(proof_format, "text", ProofFormat::text)
 XORCLE_OPTION(always, stats_file, Text, "", "", "",
               "append CSV statistics here instead of printing them")
 XORCLE_GROUP(console, options.stats_file.empty(),

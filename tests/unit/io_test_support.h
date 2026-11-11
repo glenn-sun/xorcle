@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -24,6 +25,10 @@ std::vector<std::vector<ProofRow>> clause_rows(const std::vector<Clause>& clause
 /// @brief Each clause's rows over the declared variables.
 std::vector<std::vector<ProofRow>> clause_rows(const ParsedDimacs& parsed);
 
+/// @brief The text spelling of a binary LRUP(⊕) proof, line for line; `std::nullopt` when
+/// it is malformed.
+std::optional<std::string> binary_proof_to_text(const std::string& binary);
+
 /// @brief The LRUP(⊕) checker of `tools/check_lrup_parity.rs`, over `RowSpace`.
 ///
 /// Both bases reduce fully, so they agree on membership and on which residues
@@ -37,8 +42,9 @@ public:
     LrupChecker(EquationRepr repr, std::size_t num_vars,
                 const std::vector<std::vector<ProofRow>>& inputs);
 
+    /// @brief Check a proof in either format, binary when it starts with `a` or `d`.
     /// @return An error message, empty when the proof checks out.
-    std::string check(const std::string& text);
+    std::string check(const std::string& proof);
 
 private:
     using Rows = std::vector<ProofRow>;

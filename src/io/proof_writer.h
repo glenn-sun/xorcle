@@ -4,8 +4,10 @@
 /// @brief The LRUP(⊕) proof the solver writes as it runs.
 
 #include <cstddef>
+#include <cstdint>
 #include <ostream>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "algebra/equation.h"
@@ -31,16 +33,27 @@ ProofRow lift_row(const Equation& row, std::span<const std::size_t> active_var_t
 ProofRow lift_row(const VarListEquation& row, std::span<const std::size_t> active_var_to_original,
                   std::size_t original_num_vars);
 
+/// @brief How an LRUP(⊕) proof is spelled: the README's binary or text format.
+enum class ProofFormat { binary, text };
+
 /// @brief Writes an LRUP(⊕) proof line by line, every row over the original variables.
 ///
 /// The solver numbers clauses from 0, the input clauses first in file order; a line
 /// carries its clause's number plus one, as the format numbers input clauses from 1.
+/// Lines reach the stream in blocks, the last at `flush()` or destruction.
 class ProofWriter {
 public:
-    ProofWriter(std::ostream& out, std::size_t num_vars) : out_(out), num_vars_(num_vars) {}
+    ProofWriter(std::ostream& out, std::size_t num_vars,
+                ProofFormat format = ProofFormat::binary);
+    ~ProofWriter();
+    ProofWriter(const ProofWriter&) = delete;
+    ProofWriter& operator=(const ProofWriter&) = delete;
 
     /// @brief The original variable count, which every row is written over.
     std::size_t num_vars() const noexcept { return num_vars_; }
+
+    /// @brief Hand every line written so far to the stream.
+    void flush();
 
     /// @brief Write a learned clause in its linear negation, lifting every row out of the
     /// active numbering.
@@ -63,11 +76,16 @@ public:
     void write_deleted(const std::vector<ClauseId>& ids);
 
 private:
-    void write_row(const ProofRow& row);
+    void begin_learned(ClauseId id);
+    void write_row(std::span<const std::size_t> row);
     void write_reasons(const std::vector<ClauseId>& reasons);
+    void put_number(std::uint64_t number);
+    void end_line();
 
     std::ostream& out_;
     std::size_t num_vars_;
+    ProofFormat format_;
+    std::string buffer_;
 };
 
 } // namespace xorcle

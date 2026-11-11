@@ -162,7 +162,10 @@ SolveResult run_and_check(const std::string& text, const std::vector<std::string
     std::ostringstream proof;
     Solution solution;
     {
-        ProofWriter writer(proof, num_vars);
+        // Every other run writes the text format, so the checker reads both.
+        const ProofFormat format =
+            (tally.sat + tally.unsat) % 2 == 0 ? ProofFormat::binary : ProofFormat::text;
+        ProofWriter writer(proof, num_vars, format);
         const std::unique_ptr<Solver> solver =
             make_solver(*options, num_vars, parsed.used_vars, &writer);
         for (Clause& clause : parsed.clauses) {
@@ -390,7 +393,8 @@ TEST_CASE("fuzz: vivification leaves the verdict, the models and the proofs righ
             ParsedDimacs parsed = parse_dimacs_string(text, options->equation_repr);
             const std::vector<std::vector<ProofRow>> rows = clause_rows(parsed);
             std::ostringstream proof;
-            ProofWriter writer(proof, parsed.num_vars);
+            ProofWriter writer(proof, parsed.num_vars,
+                               index % 2 == 0 ? ProofFormat::binary : ProofFormat::text);
             const std::unique_ptr<Solver> solver =
                 make_solver(*options, parsed.num_vars, parsed.used_vars, &writer);
             for (Clause& clause : parsed.clauses) {
@@ -408,6 +412,7 @@ TEST_CASE("fuzz: vivification leaves the verdict, the models and the proofs righ
                 }
             } else {
                 ++num_unsat;
+                writer.flush();
                 LrupChecker checker(options->equation_repr, parsed.num_vars, rows);
                 CHECK(checker.check(proof.str()) == "");
             }

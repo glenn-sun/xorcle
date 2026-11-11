@@ -100,4 +100,64 @@ TEST_CASE("lrup checker: passes and fails the shared cases as check_lrup_parity 
     CHECK(num_cases > 0);
 }
 
+namespace {
+
+std::string bytes(std::initializer_list<int> values) {
+    std::string text;
+    for (const int value : values) {
+        text.push_back(static_cast<char>(value));
+    }
+    return text;
+}
+
+} // namespace
+
+// The valid proof of the mutants above, spelled in the binary format, and its broken spellings.
+TEST_CASE("lrup checker: a binary proof checks and a malformed one fails") {
+    const std::vector<Rows> inputs{Rows{row({0}), row({1})}, Rows{row({0, 2})},
+                                   Rows{row({1, 2})}};
+    const auto check = [&](const std::string& proof) {
+        LrupChecker checker(EquationRepr::dense, 2, inputs);
+        return checker.check(proof);
+    };
+    // 4 1 0 3 1 0, then 3 0, then 5 0 2 4 0.
+    const std::string learn_x1 = bytes({'a', 4, 2, 1, 0, 3, 1, 0});
+    const std::string delete_3 = bytes({'d', 3, 0});
+    const std::string refute = bytes({'a', 5, 0, 2, 4, 0});
+    REQUIRE(binary_proof_to_text(learn_x1 + delete_3 + refute) ==
+            "4 1 0 3 1 0\n3 0\n5 0 2 4 0\n");
+
+    CHECK(check(learn_x1 + delete_3 + refute) == "");
+    CHECK(check(learn_x1 + bytes({'d', 0}) + refute)
+              .starts_with("a deletion line lists no clause id"));
+    CHECK(check(learn_x1 + bytes({'d', 2, 0}) + refute).starts_with("missing reason clause 2"));
+    // An equation with no variable, a repeated variable, an unknown line and a cut line.
+    CHECK(check(bytes({'a', 4, 1, 0, 3, 1, 0})) == "a malformed binary proof");
+    CHECK(check(bytes({'a', 4, 4, 1, 0, 0, 3, 1, 0})) == "a malformed binary proof");
+    CHECK(check(learn_x1 + bytes({'x', 3, 0}) + refute) == "a malformed binary proof");
+    CHECK(check(learn_x1 + bytes({'a', 5, 0, 2})) == "a malformed binary proof");
+}
+
+// One proof in both formats: numbers of one byte and of several, the constant bit,
+// a deletion and the empty clause.
+TEST_CASE("proof writer: the binary format reads back as the text format") {
+    const std::size_t num_vars = 300;
+    const std::vector<ProofRow> rows{{0, 299, num_vars}, {128, 129}, {5, num_vars}};
+    const std::vector<ClauseId> reasons{0, 127, 20000};
+    std::string spelled[2];
+    for (const ProofFormat format : {ProofFormat::binary, ProofFormat::text}) {
+        std::ostringstream out;
+        {
+            ProofWriter writer(out, num_vars, format);
+            writer.write_learned(20001, rows, reasons);
+            writer.write_deleted({0, 20001});
+            writer.write_empty(20002, {127});
+        }
+        spelled[format == ProofFormat::binary ? 0 : 1] = out.str();
+    }
+    CHECK(spelled[1] == "20002 -1+300 129+130 -6 0 1 128 20001 0\n1 20002 0\n20003 0 128 0\n");
+    CHECK(binary_proof_to_text(spelled[0]) == spelled[1]);
+    CHECK(spelled[0].size() < spelled[1].size());
+}
+
 } // namespace xorcle

@@ -94,11 +94,12 @@ RunStats run_once(const Options& options) {
     std::ofstream proof_file;
     std::unique_ptr<ProofWriter> proof_writer;
     if (!options.proof.empty()) {
-        proof_file.open(options.proof);
+        proof_file.open(options.proof, std::ios::binary);
         if (!proof_file.is_open()) {
             throw std::runtime_error("unable to open the proof file: " + options.proof);
         }
-        proof_writer = std::make_unique<ProofWriter>(proof_file, parsed.num_vars);
+        proof_writer =
+            std::make_unique<ProofWriter>(proof_file, parsed.num_vars, options.proof_format);
     }
 
     // Progress goes to stdout beside the DIMACS output, so a run writing its
@@ -130,6 +131,7 @@ RunStats run_once(const Options& options) {
            "the model does not satisfy the instance");
 
     if (proof_writer) {
+        proof_writer->flush();
         proof_file.close();
         if (proof_file.fail()) {
             throw std::runtime_error("failed to write the proof file: " + options.proof);

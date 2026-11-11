@@ -586,7 +586,7 @@ std::string solver_proof(const std::vector<Clause>& clauses, std::size_t num_var
         {"--bve=false", "--implication-graph-min-new-clauses=0", "instance.xnf"}, help);
     REQUIRE(options.has_value());
     std::ostringstream proof;
-    ProofWriter writer(proof, num_vars);
+    ProofWriter writer(proof, num_vars, ProofFormat::text);
     std::vector<std::size_t> every_var(num_vars);
     std::iota(every_var.begin(), every_var.end(), std::size_t{0});
     const std::unique_ptr<Solver> solver =
@@ -596,6 +596,7 @@ std::string solver_proof(const std::vector<Clause>& clauses, std::size_t num_var
     }
     solver->solve();
     num_units_fed = solver->stats().implication_graph_units_fed;
+    writer.flush();
     return proof.str();
 }
 

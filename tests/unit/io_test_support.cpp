@@ -1,7 +1,9 @@
 #include "io_test_support.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <utility>
 
@@ -48,8 +50,79 @@ LrupChecker::LrupChecker(EquationRepr repr, std::size_t num_vars,
     }
 }
 
-std::string LrupChecker::check(const std::string& text) {
-    std::istringstream text_stream(text);
+std::optional<std::string> binary_proof_to_text(const std::string& binary) {
+    std::size_t at = 0;
+    const auto number = [&]() -> std::optional<std::uint64_t> {
+        std::uint64_t value = 0;
+        for (unsigned shift = 0; at < binary.size() && shift < 64; shift += 7) {
+            const auto byte = static_cast<unsigned char>(binary[at++]);
+            value |= std::uint64_t{byte & 0x7fU} << shift;
+            if ((byte & 0x80U) == 0) {
+                return value;
+            }
+        }
+        return std::nullopt;
+    };
+    // Numbers up to the `0` that ends a list, each after a space.
+    const auto ids = [&](std::string& text) {
+        for (std::optional<std::uint64_t> id = number(); id.has_value(); id = number()) {
+            if (*id == 0) {
+                return true;
+            }
+            text.append(" ").append(std::to_string(*id));
+        }
+        return false;
+    };
+
+    std::string text;
+    while (at < binary.size()) {
+        const char kind = binary[at++];
+        std::string line;
+        if (kind == 'd') {
+            if (!ids(line)) {
+                return std::nullopt;
+            }
+            text.append(line.empty() ? "" : line.substr(1)).append(" 0\n");
+            continue;
+        }
+        if (kind != 'a') {
+            return std::nullopt;
+        }
+        const std::optional<std::uint64_t> id = number();
+        if (!id.has_value()) {
+            return std::nullopt;
+        }
+        line = std::to_string(*id);
+        for (std::optional<std::uint64_t> head = number(); head != 0; head = number()) {
+            if (!head.has_value() || *head < 2) {
+                return std::nullopt;
+            }
+            line.append(*head % 2 == 1 ? " -" : " ");
+            std::uint64_t var = 0;
+            for (std::uint64_t i = 0; i < *head / 2; ++i) {
+                const std::optional<std::uint64_t> gap = number();
+                if (!gap.has_value() || *gap == 0) {
+                    return std::nullopt;
+                }
+                var += *gap;
+                line.append(i == 0 ? "" : "+").append(std::to_string(var));
+            }
+        }
+        line.append(" 0");
+        if (!ids(line)) {
+            return std::nullopt;
+        }
+        text.append(line).append(" 0\n");
+    }
+    return text;
+}
+
+std::string LrupChecker::check(const std::string& proof) {
+    if (proof.starts_with('a') || proof.starts_with('d')) {
+        const std::optional<std::string> text = binary_proof_to_text(proof);
+        return text.has_value() ? check(*text) : "a malformed binary proof";
+    }
+    std::istringstream text_stream(proof);
     std::string line;
     while (std::getline(text_stream, line)) {
         std::vector<std::string> tokens;

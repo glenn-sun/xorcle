@@ -34,6 +34,7 @@
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/restarts/stabilize.h"
 #include "heuristics/selection/clause_selector.h"
+#include "io/proof_writer.h"
 #include "util/progress_reporter.h"
 #include "util/random.h"
 #include "util/stats.h"

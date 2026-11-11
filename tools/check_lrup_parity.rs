@@ -2,6 +2,8 @@
 //!
 //! Usage: check_lrup_parity <input.xnf> <proof.lrup>
 //!
+//! The proof may be in the text or the binary format, told apart by its first byte.
+//!
 //! Every equation is stored as its linear negation, a row `r` of `n + 1` bits standing for
 //! `r · (x, 1) = 0`: bits `[0, n)` are coefficients and bit `n` the constant. So the token `1+2`,
 //! `x1 + x2 = 1`, is stored as the row of `x1 + x2 = 0`, and a row of all zeros stands for an
@@ -312,39 +314,30 @@ fn check_learned(
     Err(format!("no conflict derived for learned id {id}"))
 }
 
-/// Checks every line, and fails unless some learned line derives the empty clause. A new id
-/// must exceed every id before it, so a learned line cut short after its first `0` is refused
-/// as a deletion of a clause that does not exist.
-fn check_proof(
-    proof: impl BufRead,
+/// The clauses not yet deleted and what the lines so far have done.
+struct Checker {
     num_vars: usize,
-    mut clauses: HashMap<u64, Vec<Bits>>,
-) -> Result<String, String> {
-    let mut max_id = clauses.len() as u64;
-    let (mut line_count, mut learned_count, mut deleted_count) = (0, 0, 0);
-    let mut refuted = false;
+    clauses: HashMap<u64, Vec<Bits>>,
+    max_id: u64,
+    line_count: u64,
+    learned_count: u64,
+    deleted_count: u64,
+    refuted: bool,
+}
 
-    for (line_idx, raw) in proof.lines().enumerate() {
-        let lineno = line_idx + 1;
-        let raw = raw.map_err(|e| format!("ERROR line {lineno}: cannot read: {e}"))?;
-        let line = raw.trim();
-        if is_skipped(line) {
-            continue;
-        }
-        line_count += 1;
-        let error = |msg: String| format!("ERROR line {lineno}: {msg}");
-        let parse_error = |msg: String| error(format!("parse error: {msg}"));
-
-        let tokens: Vec<&str> = line.split_whitespace().collect();
-        match parse_proof_line(&tokens, num_vars).map_err(parse_error)? {
+impl Checker {
+    /// Checks one line and applies it; the error names what failed.
+    fn apply(&mut self, line: ProofLine) -> Result<(), String> {
+        self.line_count += 1;
+        match line {
             ProofLine::Deletion(ids) => {
                 for id in ids {
-                    if clauses.remove(&id).is_none() {
-                        return Err(parse_error(format!(
-                            "Deletion of clause id {id}, which does not exist"
-                        )));
+                    if self.clauses.remove(&id).is_none() {
+                        return Err(format!(
+                            "parse error: Deletion of clause id {id}, which does not exist"
+                        ));
                     }
-                    deleted_count += 1;
+                    self.deleted_count += 1;
                 }
             }
             ProofLine::Learned {
@@ -352,28 +345,238 @@ fn check_proof(
                 rows,
                 reason_ids,
             } => {
-                if id <= max_id {
-                    return Err(error(format!(
-                        "learned id {id} does not exceed every earlier id ({max_id})"
-                    )));
+                if id <= self.max_id {
+                    return Err(format!(
+                        "learned id {id} does not exceed every earlier id ({})",
+                        self.max_id
+                    ));
                 }
-                check_learned(id, &rows, &reason_ids, &clauses, num_vars).map_err(error)?;
+                check_learned(id, &rows, &reason_ids, &self.clauses, self.num_vars)?;
                 // Rows of all zeros are equations that are false, so the clause is empty.
-                refuted |= rows.iter().all(Bits::is_zero);
-                clauses.insert(id, rows);
-                max_id = id;
-                learned_count += 1;
+                self.refuted |= rows.iter().all(Bits::is_zero);
+                self.clauses.insert(id, rows);
+                self.max_id = id;
+                self.learned_count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn summary(self) -> Result<String, String> {
+        if !self.refuted {
+            return Err("ERROR: no line derives the empty clause".into());
+        }
+        Ok(format!(
+            "OK: lines={} learned={} deletions={} clauses_final={}",
+            self.line_count,
+            self.learned_count,
+            self.deleted_count,
+            self.clauses.len()
+        ))
+    }
+}
+
+/// Checks a text proof line by line.
+fn check_text(proof: impl BufRead, checker: &mut Checker) -> Result<(), String> {
+    for (line_idx, raw) in proof.lines().enumerate() {
+        let lineno = line_idx + 1;
+        let raw = raw.map_err(|e| format!("ERROR line {lineno}: cannot read: {e}"))?;
+        let line = raw.trim();
+        if is_skipped(line) {
+            continue;
+        }
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        let parsed = parse_proof_line(&tokens, checker.num_vars)
+            .map_err(|msg| format!("ERROR line {lineno}: parse error: {msg}"))?;
+        checker
+            .apply(parsed)
+            .map_err(|msg| format!("ERROR line {lineno}: {msg}"))?;
+    }
+    Ok(())
+}
+
+/// A binary proof and the count of its bytes read.
+struct BinaryReader<R: BufRead> {
+    inner: R,
+    offset: u64,
+}
+
+impl<R: BufRead> BinaryReader<R> {
+    /// The next byte, or `None` at the end of the proof.
+    fn byte(&mut self) -> Result<Option<u8>, String> {
+        let buffer = self
+            .inner
+            .fill_buf()
+            .map_err(|e| format!("cannot read: {e}"))?;
+        let Some(&byte) = buffer.first() else {
+            return Ok(None);
+        };
+        self.inner.consume(1);
+        self.offset += 1;
+        Ok(Some(byte))
+    }
+
+    /// A number in seven-bit groups, the lowest first, each byte but the last with its high
+    /// bit set.
+    fn number(&mut self) -> Result<u64, String> {
+        // A number that ends within the buffer's first nine bytes fits in 63 bits and is read
+        // in place.
+        let buffer = self
+            .inner
+            .fill_buf()
+            .map_err(|e| format!("cannot read: {e}"))?;
+        if let Some(last) = buffer.iter().take(9).position(|&byte| byte & 0x80 == 0) {
+            let number = buffer[..=last]
+                .iter()
+                .rev()
+                .fold(0u64, |number, &byte| number << 7 | u64::from(byte & 0x7f));
+            self.inner.consume(last + 1);
+            self.offset += last as u64 + 1;
+            return Ok(number);
+        }
+        let mut number = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = self.byte()?.ok_or("Proof ends inside a line")?;
+            let group = u64::from(byte & 0x7f);
+            if shift >= 64 || (group << shift) >> shift != group {
+                return Err("Number exceeds 64 bits".into());
+            }
+            number |= group << shift;
+            if byte & 0x80 == 0 {
+                return Ok(number);
+            }
+            shift += 7;
+        }
+    }
+
+    /// Numbers up to the `0` that ends the list.
+    fn ids(&mut self) -> Result<Vec<u64>, String> {
+        let mut ids = Vec::new();
+        loop {
+            match self.number()? {
+                0 => return Ok(ids),
+                id => ids.push(id),
             }
         }
     }
 
-    if !refuted {
-        return Err("ERROR: no line derives the empty clause".into());
+    /// An equation after its head `2 * k + c`: `k` variables, each written as its distance
+    /// from the one before, the first from 0, and the constant bit `c`.
+    fn equation(&mut self, head: u64, num_vars: usize) -> Result<Bits, String> {
+        let num_row_vars = head / 2;
+        if num_row_vars == 0 {
+            return Err("Equation has no variable".into());
+        }
+        let mut row = Bits::zeros(num_vars);
+        let mut var = 0u64;
+        for _ in 0..num_row_vars {
+            let gap = self.number()?;
+            if gap == 0 {
+                return Err("Equation repeats a variable".into());
+            }
+            var = var.saturating_add(gap);
+            if var > num_vars as u64 {
+                return Err(format!("Variable out of range: {var}"));
+            }
+            row.flip(var as usize - 1);
+        }
+        if head % 2 == 1 {
+            row.flip(num_vars);
+        }
+        Ok(row)
     }
-    Ok(format!(
-        "OK: lines={line_count} learned={learned_count} deletions={deleted_count} clauses_final={}",
-        clauses.len()
-    ))
+
+    /// The line after its leading byte: `a` for a learned clause, `d` for a deletion.
+    fn line(&mut self, kind: u8, num_vars: usize) -> Result<ProofLine, String> {
+        match kind {
+            b'a' => {
+                let id = self.number()?;
+                if id == 0 {
+                    return Err("Clause id must be positive: 0".into());
+                }
+                let mut rows = Vec::new();
+                loop {
+                    match self.number()? {
+                        0 => break,
+                        head => rows.push(self.equation(head, num_vars)?),
+                    }
+                }
+                let reason_ids = self.ids()?;
+                Ok(ProofLine::Learned {
+                    id,
+                    rows,
+                    reason_ids,
+                })
+            }
+            b'd' => {
+                let ids = self.ids()?;
+                if ids.is_empty() {
+                    return Err("Deletion line lists no clause id".into());
+                }
+                Ok(ProofLine::Deletion(ids))
+            }
+            _ => Err(format!(
+                "Line starts with byte 0x{kind:02x}, neither 'a' nor 'd'"
+            )),
+        }
+    }
+}
+
+/// Checks a binary proof line by line.
+fn check_binary(proof: impl BufRead, checker: &mut Checker) -> Result<(), String> {
+    let mut reader = BinaryReader {
+        inner: proof,
+        offset: 0,
+    };
+    let mut lineno = 0u64;
+    loop {
+        let offset = reader.offset;
+        let at = |lineno: u64| format!("ERROR line {lineno} (byte {offset})");
+        let kind = match reader.byte() {
+            Ok(Some(kind)) => kind,
+            Ok(None) => return Ok(()),
+            Err(msg) => return Err(format!("{}: {msg}", at(lineno + 1))),
+        };
+        lineno += 1;
+        let parsed = reader
+            .line(kind, checker.num_vars)
+            .map_err(|msg| format!("{}: parse error: {msg}", at(lineno)))?;
+        checker
+            .apply(parsed)
+            .map_err(|msg| format!("{}: {msg}", at(lineno)))?;
+    }
+}
+
+/// Checks every line, and fails unless some learned line derives the empty clause. A new id
+/// must exceed every id before it, so a text line cut short after its first `0` is refused as
+/// a deletion of a clause that does not exist. A proof whose first byte is `a` or `d` is
+/// binary; any other is text, which starts with a digit, a comment or a blank.
+fn check_proof(
+    mut proof: impl BufRead,
+    num_vars: usize,
+    clauses: HashMap<u64, Vec<Bits>>,
+) -> Result<String, String> {
+    let mut checker = Checker {
+        num_vars,
+        max_id: clauses.len() as u64,
+        clauses,
+        line_count: 0,
+        learned_count: 0,
+        deleted_count: 0,
+        refuted: false,
+    };
+    let first = proof
+        .fill_buf()
+        .map_err(|e| format!("ERROR: cannot read the proof: {e}"))?
+        .first()
+        .copied();
+    if matches!(first, Some(b'a' | b'd')) {
+        check_binary(proof, &mut checker)?;
+    } else {
+        check_text(proof, &mut checker)?;
+    }
+    checker.summary()
 }
 
 fn run(args: &[String]) -> Result<String, String> {

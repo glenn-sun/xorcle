@@ -94,6 +94,13 @@ add_test(NAME proof_roundtrip
             ${roundtrip_args} random_kxnf "n=14;k=3" 1)
 set_tests_properties(proof_roundtrip PROPERTIES SKIP_RETURN_CODE 77)
 
+# The proofs above and below are binary, the default; this one is text.
+add_test(NAME proof_roundtrip_text
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tools/check_proof_roundtrip.sh
+            ${roundtrip_args} random_kxnf "n=14;k=3" 1
+            --proof-format=text)
+set_tests_properties(proof_roundtrip_text PROPERTIES SKIP_RETURN_CODE 77)
+
 # Minimization is on by default and rewrites the learned clause, but leaves the
 # derivation a chain of resolutions, so both settings have to check.
 add_test(NAME proof_roundtrip_no_minimize
