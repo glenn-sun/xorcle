@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "algebra/equation.h"
+#include "algebra/equation_pool.h"
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
@@ -20,19 +21,16 @@ namespace xorcle {
 /// @brief When the solver reads the implication graph of the width-2 clauses,
 /// and how much of it one run may read.
 struct ImplicationGraphConfig {
-    bool enabled = true;
-
-    /// @brief Clauses that reached width at most 2 since the last run, and, as a
-    /// fallback, conflicts since it, either of which makes a run due.
-    std::size_t clause_cadence = 50;
-    std::size_t cadence = 1000;
+    /// @brief Conflicts after a run or a skipped run before the next is due.
+    std::size_t cadence;
+    /// @brief The width-2 clauses new since the last run below which a due run is
+    /// skipped; `0` skips none.
+    std::size_t min_new_clauses;
 
     /// @brief Vertex pairs one run examines, and descendants one side's search
     /// keeps.
-    std::size_t max_pairs = 10000;
-    std::size_t max_descendants = 100;
-
-    bool operator==(const ImplicationGraphConfig&) const = default;
+    std::size_t max_pairs;
+    std::size_t max_descendants;
 };
 
 /// @brief No step of an `ImplicationGraphProofRecord`.
@@ -82,7 +80,6 @@ struct ImplicationGraphProofRecord {
 
 /// @brief What one run of the graph did.
 struct ImplicationGraphRun {
-    bool did_work = false;         ///< False when there was no graph to read.
     std::size_t edges_visited = 0; ///< Arcs the descendant searches traversed.
     std::size_t pairs_eligible = 0; ///< Vertex pairs with an out-arc on either side.
     std::size_t pairs_examined = 0; ///< Of those, the dirty ones the pair cap left room for.
@@ -90,13 +87,13 @@ struct ImplicationGraphRun {
     bool at_the_pair_cap = false;
     std::size_t truncated_sides = 0; ///< Sides the descendant cap cut a level short.
     double span_intersection_time_s = 0.0; ///< Of the run's own seconds.
-    std::vector<Equation> units; ///< Units the root trail did not already have.
+    std::vector<Equation> units;
 };
 
 /// @brief The implication graph of the width-2 clauses.
 ///
 /// A width-2 clause contributes the three nonzero equations of its linear
-/// negation, reduced by the root trail, and the six implications among them,
+/// negation and the six implications among them,
 /// since at most one of the three can hold. A vertex is one such equation; it
 /// and its negation share a key, so `vertex ^ 1` is the negation and the arcs
 /// are closed under negating both ends.
@@ -110,7 +107,7 @@ struct ImplicationGraphRun {
 class ImplicationGraph {
 public:
     ImplicationGraph(EquationRepr repr, std::size_t num_vars,
-                     const ImplicationGraphConfig& config = {});
+                     const ImplicationGraphConfig& config);
 
     /// @brief Adopt a new active variable numbering, discarding the graph.
     void reconfigure(std::size_t num_vars);
@@ -123,16 +120,15 @@ public:
     std::size_t num_width_2_clauses() const noexcept { return num_width_2_clauses_; }
     std::size_t num_vertex_pairs() const noexcept { return num_keys_; }
 
-    /// @brief Look for units the root trail does not already have.
+    /// @brief Look for units.
     ///
     /// A non-null `proof` is cleared and filled with a step per equation the run
     /// proved, and the step proving each of the run's `units`. A unit is offered
     /// by the run that finds it and by no later one.
     ///
-    /// @pre `active_clause_ids` are ids of `clauses`, and every clause shares
-    /// `root_span`'s representation and column count.
+    /// @pre `active_clause_ids` are ids of `clauses`, over the graph's variables, and
+    /// the root trail is empty, its units substituted into the clauses.
     ImplicationGraphRun run(const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
-                            const RowSpace& root_span,
                             ImplicationGraphProofRecord* proof = nullptr);
 
     /// @brief Make @p clause_id unread, its rows having changed.
@@ -147,13 +143,10 @@ private:
         ClauseId clause_id;
     };
 
-    /// @brief Reduce @p clause by the root trail into `triple_`: the three
-    /// nonzero equations of its linear negation.
+    /// @brief Point `triple_` at the three nonzero equations of @p clause's linear
+    /// negation.
     /// @return Whether the clause is one the graph takes at all.
-    bool reduce_triple(const Clause& clause, const RowSpace& root_span);
-
-    /// @brief Fill `reduced_` with the rows of @p clause reduced by the root trail.
-    void reduce_into_reduced(const Clause& clause, const RowSpace& root_span);
+    bool reduce_triple(const Clause& clause);
 
     /// @brief The vertex of @p eqn, added if it is new.
     ///
@@ -165,13 +158,6 @@ private:
     static std::uint32_t key_hash(const Equation& eqn) noexcept;
 
     Equation equation_of(std::size_t vertex) const;
-
-    /// @brief An equation over @p num_vars variables with any contents, taken
-    /// from `spare_rows_` when it has one.
-    Equation spare_row(std::size_t num_vars);
-
-    /// @brief Empty @p span, keeping its rows in `spare_rows_`.
-    void clear_span(RowSpace& span);
 
     /// @brief Add the three vertices of `triple_` and its six arcs, reading the
     /// clause if it is unread.
@@ -201,14 +187,13 @@ private:
     void sample_pairs(ImplicationGraphRun& summary);
 
     /// @brief Intersect the spans of the two sides of every sampled vertex pair,
-    /// appending to @p units what the root span and the units before it leave
-    /// independent.
+    /// appending to @p units what the units before it leave independent.
     ///
     /// For a vertex `a`, `T_a` is the span of `a` and everything `a` reaches,
     /// taken as the whole space once it holds `0 = 1`. Every equation in `T_a`
     /// intersected with `T_not_a` holds in every solution, since exactly one of
     /// `a` and `not a` does.
-    void walk_span_intersections(const RowSpace& root_span, const std::vector<Clause>& clauses,
+    void walk_span_intersections(const std::vector<Clause>& clauses,
                                  ActiveClauseIds active_clause_ids, ImplicationGraphRun& summary,
                                  ImplicationGraphProofRecord* proof);
 
@@ -217,7 +202,7 @@ private:
     /// order, or, where a width-1 clause is active, nothing outside the span of
     /// those units and such clauses; true also when `run` was at the pair cap or
     /// the descendant cap has cut a side in this run or an earlier one.
-    bool full_examination_yields(const ImplicationGraphRun& run, const RowSpace& root_span,
+    bool full_examination_yields(const ImplicationGraphRun& run,
                                  const std::vector<Clause>& clauses,
                                  ActiveClauseIds active_clause_ids);
 
@@ -228,19 +213,18 @@ private:
     /// against the database rather than against its own bookkeeping.
     bool implication_is_clause_backed(std::size_t from, std::size_t to,
                                       const std::vector<Clause>& clauses,
-                                      ActiveClauseIds active_clause_ids, const RowSpace& root_span);
+                                      ActiveClauseIds active_clause_ids);
 
     /// @brief Whether every arc the graph holds is backed by the width-2 clause
     /// it was built from, the clause read and reduced again.
     bool all_arcs_are_clause_backed(const std::vector<Clause>& clauses,
-                                    ActiveClauseIds active_clause_ids, const RowSpace& root_span);
+                                    ActiveClauseIds active_clause_ids);
 #endif
 
     EquationRepr repr_;
     std::size_t num_vars_;
     std::size_t max_pairs_;
     std::size_t max_descendants_;
-    Equation false_eqn_;
     Rng rng_;
 
     /// @brief The keys in `[0, num_keys_)`; the equations past them are kept for
@@ -297,11 +281,7 @@ private:
     bool a_side_was_truncated_ = false;
 #endif
 
-    /// @brief Reused across every clause a run reads, so reading one allocates
-    /// nothing.
-    RowSpace reduced_;
-    /// @brief The rows `reduce_triple()` last took, in the clause or in
-    /// `reduced_`, and their sum.
+    /// @brief The rows `reduce_triple()` last took and their sum.
     std::array<const Equation*, 3> triple_{};
     Equation row_sum_;
 
@@ -319,9 +299,8 @@ private:
     std::vector<ClauseId> parent_clauses_;
     std::vector<ClauseId> other_parent_clauses_;
 
-    /// @brief Rows the walk's spans gave back, of any bit count, reused so building
-    /// a span allocates no rows.
-    std::vector<Equation> spare_rows_;
+    /// @brief Rows the walk's spans gave back, reused so building a span allocates no rows.
+    EquationPool spare_rows_;
 };
 
 } // namespace xorcle

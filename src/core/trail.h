@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "algebra/equation.h"
+#include "algebra/equation_pool.h"
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
@@ -56,7 +57,8 @@ public:
     /// @pre `eqn` is not in the span of the equations at `level` or below.
     /// @pre `level == level() + 1` for a decision, which opens that level, and
     /// `level <= level()` otherwise.
-    /// @pre If `reason` is provided, `eqn + [0 = 1]` belongs to it. Not asserted.
+    /// @pre If `reason` is provided, `eqn + [0 = 1]` lies in the span of its rows and the
+    /// rows at `level` or below; the solver checks it where the clause is at hand.
     std::size_t learn(const Equation& eqn, std::optional<ClauseId> reason, std::size_t level);
 
     std::size_t level() const noexcept { return level_end_.size() - 1; }
@@ -111,6 +113,9 @@ public:
 
     const std::vector<std::optional<ClauseId>>& reasons() const noexcept { return reasons_; }
 
+    /// @brief The clauses that are the reason of some row, over ids below @p num_clauses.
+    IndexSet reason_clause_ids(std::size_t num_clauses) const;
+
     /// @brief The coordinates stored for the reason of the row at `trail_idx`,
     /// or null; they stay until a row at or below `trail_idx` changes.
     /// @pre `trail_idx < span().rows()`.
@@ -155,7 +160,7 @@ private:
     RowSpace span_;
 
     /// @brief The rows a backjump dropped, which the next in-order learns store into.
-    std::vector<Equation> spare_rows_;
+    EquationPool spare_rows_;
 
     /// @brief Which rows the backjump under way drops, indexed by row.
     std::vector<std::uint8_t> is_dropped_;

@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstddef>
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include "util/index_set.h"
@@ -39,6 +40,30 @@ public:
     std::size_t to_old(std::size_t new_col_idx) const noexcept {
         assert(new_col_idx < new_num_vars_ && "to_old: new_col_idx is not in the new numbering");
         return new_col_idx_to_old_col_idx_[new_col_idx];
+    }
+
+    /// @brief Move each column's list, in order, to the column's new index, after handing
+    /// a dropped column's list to @p on_dropped and emptying it.
+    ///
+    /// A list past the old variables, the constant column's, moves as far past the new ones;
+    /// a column past the end of @p lists has an empty list.
+    template <class List, class OnDropped>
+    void move_by_column(std::vector<List>& lists, OnDropped on_dropped) const {
+        const std::size_t num_extra =
+            lists.size() > old_num_vars_ ? lists.size() - old_num_vars_ : 0;
+        for (std::size_t col_idx = 0; col_idx < lists.size(); ++col_idx) {
+            const std::size_t new_col_idx = col_idx < old_num_vars_
+                                                ? old_col_idx_to_new_col_idx_[col_idx]
+                                                : new_num_vars_ + (col_idx - old_num_vars_);
+            if (new_col_idx == npos) {
+                on_dropped(lists[col_idx]);
+                lists[col_idx].clear();
+            } else if (new_col_idx != col_idx) {
+                lists[new_col_idx] = std::move(lists[col_idx]);
+                lists[col_idx].clear();
+            }
+        }
+        lists.resize(new_num_vars_ + num_extra);
     }
 
 private:

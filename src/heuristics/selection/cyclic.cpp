@@ -1,10 +1,8 @@
 #include "heuristics/selection/cyclic.h"
 
-#include <utility>
-
 namespace xorcle {
 
-Cyclic::Cyclic(std::size_t) {}
+Cyclic::Cyclic(const ClauseDatabase& database) : ClauseSelector(database) {}
 
 void Cyclic::stop(const bool by_budget) {
     count_ = 0;
@@ -13,21 +11,18 @@ void Cyclic::stop(const bool by_budget) {
 }
 
 std::optional<ClauseSelection> Cyclic::next() {
-    if (clauses_.empty()) {
+    if (database_.num_clauses() == 0) {
         stop(false);
         return std::nullopt;
     }
 
     if (pending_decision_clause_.has_value()) {
-        const ClauseId decision_clause_id = *pending_decision_clause_;
+        id_ = *pending_decision_clause_;
+        count_ = 0;
         pending_decision_clause_.reset();
-        if (decision_clause_id < clauses_.size() && is_clause_active(decision_clause_id)) {
-            id_ = decision_clause_id;
-            count_ = 0;
-        }
     }
 
-    if (count_ >= clauses_.size()) {
+    if (count_ >= database_.num_clauses()) {
         stop(false);
         return std::nullopt;
     }
@@ -36,15 +31,15 @@ std::optional<ClauseSelection> Cyclic::next() {
         return std::nullopt;
     }
 
-    for (std::size_t attempts = 0; attempts < clauses_.size(); ++attempts) {
+    for (std::size_t attempts = 0; attempts < database_.num_clauses(); ++attempts) {
         const ClauseId current = id_;
-        id_ = (id_ + 1) % clauses_.size();
+        id_ = (id_ + 1) % database_.num_clauses();
         ++count_;
         ++budget_count_;
-        if (is_clause_active(current)) {
+        if (database_.is_clause_active(current)) {
             return ClauseSelection{current, std::nullopt};
         }
-        if (count_ >= clauses_.size()) {
+        if (count_ >= database_.num_clauses()) {
             stop(false);
             return std::nullopt;
         }
@@ -67,20 +62,19 @@ void Cyclic::set_attempt_budget(const std::size_t budget) {
 
 bool Cyclic::last_stop_was_budget() const noexcept { return last_stop_was_budget_; }
 
-void Cyclic::add_asserting_clause(Clause clause, const Trail& trail,
-                                  const AssertingClauseInfo& info) {
+void Cyclic::update_with_asserting_clause(const ClauseId id, const Trail& trail,
+                                          const AssertingClauseInfo& info) {
     const ClauseId cursor = id_;
     const std::size_t count = count_;
-    ClauseSelector::add_asserting_clause(std::move(clause), trail, info);
+    ClauseSelector::update_with_asserting_clause(id, trail, info);
     if (info.is_replacement) {
         id_ = cursor;
         count_ = count;
     }
 }
 
-void Cyclic::add_clause(Clause clause) {
-    ClauseSelector::add_clause(std::move(clause));
-    id_ = clauses_.size() - 1;
+void Cyclic::update_with_new_clause(const ClauseId id) {
+    id_ = id;
     count_ = 0;
 }
 
@@ -93,30 +87,28 @@ void Cyclic::update_with_new_equation(const Equation&, const Trail&) {
     budget_count_ = 0;
 }
 
-void Cyclic::update_with_decision_clause(std::optional<ClauseId> clause_id) {
-    if (clause_id.has_value() && *clause_id < clauses_.size() && is_clause_active(*clause_id)) {
-        pending_decision_clause_ = clause_id;
-    } else {
-        pending_decision_clause_.reset();
-    }
+void Cyclic::update_with_decision(const Equation& reduced_eqn, const Trail& trail,
+                                  std::optional<ClauseId> decision_clause) {
+    update_with_new_equation(reduced_eqn, trail);
+    pending_decision_clause_ = decision_clause;
 }
 
 void Cyclic::update_with_substitution(std::span<const ClauseId>, const IndexSet&,
                                       const Trail&) {
-    if (clauses_.empty()) {
+    if (database_.num_clauses() == 0) {
         id_ = 0;
         pending_decision_clause_.reset();
         stop(false);
         return;
     }
 
-    if (id_ >= clauses_.size()) {
-        id_ %= clauses_.size();
+    if (id_ >= database_.num_clauses()) {
+        id_ %= database_.num_clauses();
     }
-    if (!is_clause_active(id_)) {
+    if (!database_.is_clause_active(id_)) {
         // The next active clause from the cursor on, wrapping to the first.
         std::optional<ClauseId> first;
-        for (const ClauseId candidate : active_clause_ids()) {
+        for (const ClauseId candidate : database_.active_clause_ids()) {
             if (!first.has_value()) {
                 first = candidate;
             }
@@ -127,8 +119,9 @@ void Cyclic::update_with_substitution(std::span<const ClauseId>, const IndexSet&
         }
         id_ = first.value_or(id_);
     }
-    if (pending_decision_clause_.has_value() && (*pending_decision_clause_ >= clauses_.size() ||
-                                                !is_clause_active(*pending_decision_clause_))) {
+    if (pending_decision_clause_.has_value() &&
+        (*pending_decision_clause_ >= database_.num_clauses() ||
+         !database_.is_clause_active(*pending_decision_clause_))) {
         pending_decision_clause_.reset();
     }
     stop(false);

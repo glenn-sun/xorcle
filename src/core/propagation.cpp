@@ -46,8 +46,7 @@ Propagator::Propagator(EquationRepr repr, std::size_t num_vars)
       working_eqn2_(repr, num_vars),
       working_eqn3_(repr, num_vars),
       used_rows_eqn_(repr, num_vars),
-      used_rows_eqn2_(repr, num_vars),
-      false_equation_(Equation::eq_false(repr, num_vars)) {}
+      used_rows_eqn2_(repr, num_vars) {}
 
 void Propagator::reconfigure(std::size_t num_vars) {
     num_vars_ = num_vars;
@@ -61,16 +60,14 @@ void Propagator::reconfigure(std::size_t num_vars) {
     used_rows_eqn_.set_eq_true();
     used_rows_eqn2_.resize(num_vars);
     used_rows_eqn2_.set_eq_true();
-
-    false_equation_.resize(num_vars);
-    false_equation_.set_eq_false();
 }
 
 #ifndef NDEBUG
-void Propagator::debug_assert_watch_hint_holds(const Clause& clause, const Trail& trail,
+void Propagator::debug_assert_watch_hint_holds(const Clause& clause,
+                                               const ClauseWatches& watches, const Trail& trail,
                                                WatchType hint) {
-    working_eqn_.assign_from(clause.row(clause.watched0));
-    working_eqn2_.assign_from(clause.row(clause.watched1));
+    working_eqn_.assign_from(clause.row(watches.watched0));
+    working_eqn2_.assign_from(clause.row(watches.watched1));
     trail.span().reduce(working_eqn_);
     trail.span().reduce(working_eqn2_);
 
@@ -111,7 +108,8 @@ void Propagator::debug_assert_is_held_reduction(const Equation& row, const Trail
 }
 #endif
 
-Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, const Trail& trail,
+Equation* Propagator::unit_propagate_one_clause(ClauseId id, const Clause& clause,
+                                                ClauseWatches& watches, const Trail& trail,
                                                 std::optional<WatchType> trigger_hint,
                                                 std::size_t& num_watch_updates,
                                                 WatchUpdateHandler& handler,
@@ -137,7 +135,7 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
             satisfying_row_idx_ = 0;
             return nullptr;
         }
-        working_eqn_.plus_assign(false_equation_);
+        working_eqn_.negate();
         propagating_row_idx_ = 0;
         if (used_row_idxs != nullptr) {
             collect_used_rows(clause, trail, propagating_row_idx_,
@@ -146,10 +144,10 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
         return &working_eqn_;
     }
 
-    assert(clause.watched0 < clause.rows() && clause.watched1 < clause.rows() &&
+    assert(watches.watched0 < clause.rows() && watches.watched1 < clause.rows() &&
            "a watched row index is out of range");
-    assert(clause.watched0 != clause.watched1 && "both watches name the same row");
-    assert(clause.next_watch_search_start < clause.rows() &&
+    assert(watches.watched0 != watches.watched1 && "both watches name the same row");
+    assert(watches.next_watch_search_start < clause.rows() &&
            "the watch search start is out of range");
 
     const IndexSet& span_pivot_col_idxs = trail.span().pivot_col_idxs();
@@ -172,9 +170,9 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
             std::optional<std::size_t> distinct_from_leading_col_idx,
             bool keep_replacement_eqn) -> std::optional<std::size_t> {
         assert(num_rows > 1 && "cyclic watch search on a unit clause");
-        std::size_t i = clause.next_watch_search_start % num_rows;
+        std::size_t i = watches.next_watch_search_start % num_rows;
         for (std::size_t step = 0; step < num_rows; ++step, i = i + 1 == num_rows ? 0 : i + 1) {
-            if (i == clause.watched0 || i == clause.watched1) {
+            if (i == watches.watched0 || i == watches.watched1) {
                 continue;
             }
             // A row no reduction step is due on is its own partial reduction,
@@ -207,7 +205,7 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
                 }
                 continued_eqn = &continued;
             }
-            clause.next_watch_search_start = i + 1 == num_rows ? 0 : i + 1;
+            watches.next_watch_search_start = i + 1 == num_rows ? 0 : i + 1;
             return i;
         }
         return std::nullopt;
@@ -222,22 +220,22 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
 
     if (trigger_hint.has_value()) {
 #ifndef NDEBUG
-        debug_assert_watch_hint_holds(clause, trail, *trigger_hint);
+        debug_assert_watch_hint_holds(clause, watches, trail, *trigger_hint);
 #endif
         switch (*trigger_hint) {
             case WatchType::zero:
-                tasks[num_tasks++] = {&clause.watched0, &clause.watched1, WatchType::zero};
+                tasks[num_tasks++] = {&watches.watched0, &watches.watched1, WatchType::zero};
                 break;
             case WatchType::one:
-                tasks[num_tasks++] = {&clause.watched1, &clause.watched0, WatchType::one};
+                tasks[num_tasks++] = {&watches.watched1, &watches.watched0, WatchType::one};
                 break;
         }
     } else {
         // A row is copied into scratch only when a reduction step is due; until
         // then it is its own partial reduction.
-        const std::size_t leading_col_idx0 = clause.pivot_col_idx(clause.watched0);
+        const std::size_t leading_col_idx0 = clause.pivot_col_idx(watches.watched0);
         if (span_pivot_col_idxs.test(leading_col_idx0)) {
-            working_eqn_.assign_from(clause.row(clause.watched0));
+            working_eqn_.assign_from(clause.row(watches.watched0));
             reduced0 = trail.span().partial_reduce(working_eqn_, leading_col_idx0);
             reduced0_in_working_eqn = true;
         } else {
@@ -249,11 +247,11 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
             // second watch cannot be read this way, being reduced against the
             // span augmented with the first.
             found_satisfied_ = true;
-            satisfying_row_idx_ = clause.watched0;
+            satisfying_row_idx_ = watches.watched0;
             return nullptr;
         }
         if (reduced0.kind == ReduceResult::Kind::eq_true) {
-            tasks[num_tasks++] = {&clause.watched0, &clause.watched1, WatchType::zero};
+            tasks[num_tasks++] = {&watches.watched0, &watches.watched1, WatchType::zero};
         }
 
         // Reducing modulo the span *plus* the reduced first watch folds the sum
@@ -261,16 +259,16 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
         // become equal to the first.
         const std::optional<std::size_t> extra_leading_col_idx =
             reduced0.is_leading() ? std::optional<std::size_t>(reduced0.bit) : std::nullopt;
-        const std::size_t leading_col_idx1 = clause.pivot_col_idx(clause.watched1);
+        const std::size_t leading_col_idx1 = clause.pivot_col_idx(watches.watched1);
         if (span_pivot_col_idxs.test(leading_col_idx1) ||
             extra_leading_col_idx == leading_col_idx1) {
-            working_eqn2_.assign_from(clause.row(clause.watched1));
+            working_eqn2_.assign_from(clause.row(watches.watched1));
             const ReduceResult reduced1 = trail.span().partial_reduce_with_extra(
                 working_eqn2_, leading_col_idx1,
-                reduced0_in_working_eqn ? working_eqn_ : clause.row(clause.watched0),
+                reduced0_in_working_eqn ? working_eqn_ : clause.row(watches.watched0),
                 extra_leading_col_idx);
             if (reduced1.kind == ReduceResult::Kind::eq_true) {
-                tasks[num_tasks++] = {&clause.watched1, &clause.watched0, WatchType::one};
+                tasks[num_tasks++] = {&watches.watched1, &watches.watched0, WatchType::one};
             }
         }
     }
@@ -302,7 +300,7 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
             if (reduced0_in_working_eqn) {
                 std::swap(working_eqn_, working_eqn2_);
             } else {
-                complement_eqn = &clause.row(clause.watched0);
+                complement_eqn = &clause.row(watches.watched0);
             }
         } else {
             if (trigger_hint.has_value()) {
@@ -352,7 +350,7 @@ Equation* Propagator::unit_propagate_one_clause(ClauseId id, Clause& clause, con
             if (complement_eqn != &working_eqn2_) {
                 working_eqn2_.assign_from(*complement_eqn);
             }
-            working_eqn2_.plus_assign(false_equation_);
+            working_eqn2_.negate();
             propagating_row_idx_ = *task.complement_ptr;
             if (used_row_idxs != nullptr) {
                 collect_used_rows(clause, trail, propagating_row_idx_,

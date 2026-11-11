@@ -9,8 +9,8 @@
 
 #include "core/clause_id.h"
 #include "core/trail.h"
-#include "heuristics/decisions/clause_activity.h"
-#include "heuristics/selection/clause_selector.h"
+#include "heuristics/decisions/csids.h"
+#include "core/clause_database.h"
 
 namespace xorcle {
 
@@ -22,41 +22,28 @@ enum class DeletionKey : std::uint8_t {
 
 /// @brief When the solver deletes learned clauses, and by which key.
 struct DeletionConfig {
-    bool enabled = true;
-
     /// @brief The conflicts between deletion passes are this times the square root of the
     /// conflicts so far plus `cadence_offset`.
-    double cadence_coefficient = 0.25;
+    double cadence_coefficient;
 
-    std::size_t cadence_offset = 5000;
+    std::size_t cadence_offset;
 
     /// @brief The LBD allowed one unused deletion pass; see `allowed_unused_passes()`.
-    double wait = 6.0;
-
-    /// @brief The window of the average of the LBDs measured at a clause's uses as a reason;
-    /// the newest measurement weighs its reciprocal.
-    std::size_t lbd_window = 2;
+    double wait;
 
     /// @brief The fraction of the deletion candidates a deletion pass evicts.
-    double eviction_rate = 0.5;
+    double eviction_rate;
 
-    DeletionKey key = DeletionKey::activity;
-
-    bool operator==(const DeletionConfig&) const = default;
+    DeletionKey key;
 };
 
 /// @brief The consecutive deletion passes a learned clause of this LBD may go unused,
 /// `round(2^(wait - lbd))`.
 std::size_t allowed_unused_passes(double lbd, double wait);
 
-/// @brief Whether a deletion pass may delete this clause once no trail row names it.
-/// @pre `selector.is_clause_learned(id)`.
-bool is_deletion_candidate(const ClauseSelector& selector, ClauseId id, double wait);
-
-/// @brief Average the LBD measured at a use as a reason into a learned clause's LBD, and start
-/// its unused passes over if it was a deletion candidate.
-void update_with_reason_use(ClauseSelector& selector, ClauseId id, std::size_t measured_lbd,
-                            const DeletionConfig& config);
+/// @brief Mark a learned clause used as a reason since the last deletion pass; a starting
+/// clause's record is left alone.
+void update_with_reason_use(ClauseRecord& record);
 
 /// @brief The conflicts between the last deletion pass and the next, at least one.
 std::size_t conflicts_between_deletion_passes(const DeletionConfig& config,
@@ -64,34 +51,30 @@ std::size_t conflicts_between_deletion_passes(const DeletionConfig& config,
 
 /// @brief A read-only view of the state a deletion pass is planned against.
 struct DeletionState {
-    const ClauseSelector& selector;
+    const ClauseDatabase& database;
     const Trail& trail;
-    double wait;
-    double eviction_rate;
-    DeletionKey key;
-    const ClauseActivitySource* activity;
+    const DeletionConfig& config;
+    const Csids& activity;
 };
 
 /// @brief What one deletion pass changes, in clause-id order.
 struct DeletionPlan {
     std::vector<ClauseId> deleted; ///< To delete, ascending.
 
-    /// @brief Clauses reaching their allowed unused passes at this pass, ascending.
-    std::vector<ClauseId> out_of_unused_passes;
-
     /// @brief The unused-pass count after the pass of each active clause, in the
-    /// order of `ClauseSelector::active_clause_ids()`.
+    /// order of `ClauseDatabase::active_clause_ids()`.
     std::vector<std::size_t> unused_passes;
 };
 
-/// @brief Choose the clauses running out of unused passes at this deletion pass, and the
-/// deletion candidates to evict, worst first.
+/// @brief Count each learned clause's unused passes and choose the deletion candidates to
+/// evict, worst first.
 ///
-/// A clause some trail row names as its reason is locked: neither deleted nor
-/// counted as unused. A clause running out here is not also a deletion candidate here.
+/// A clause used since the last pass starts its unused passes over; otherwise a clause
+/// unused for as many passes as `allowed_unused_passes()` gives it is a deletion
+/// candidate, and any other counts one more. A clause some trail row names as its
+/// reason is locked: never a candidate, and not counted as unused.
 ///
-/// @pre `state.activity` is non-null if `state.key` is `DeletionKey::activity`, and
-/// `state.eviction_rate` is in `[0, 1]`.
+/// @pre `state.config.eviction_rate` is in `[0, 1]`.
 DeletionPlan build_deletion_plan(const DeletionState& state);
 
 } // namespace xorcle

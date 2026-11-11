@@ -1,7 +1,6 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -22,8 +21,7 @@
 #include "heuristics_test_support.h"
 #include "heuristics/selection/clause_selector.h"
 #include "io/dimacs.h"
-#include "io/proof_postprocess.h"
-#include "io/proof_raw_file.h"
+#include "io/proof_writer.h"
 #include "io_test_support.h"
 #include "util/index_set.h"
 
@@ -101,8 +99,8 @@ constexpr std::string_view compaction_sat_instance = "p cnf 5 5\n"
 ///
 /// The rows are the clause's linear negation, so an equation of the clause
 /// holds exactly where its row does *not*.
-bool clause_is_satisfied(const std::vector<RawRow>& rows, const IndexSet& assignment) {
-    for (const RawRow& row : rows) {
+bool clause_is_satisfied(const std::vector<ProofRow>& rows, const IndexSet& assignment) {
+    for (const ProofRow& row : rows) {
         bool parity = false;
         for (const std::size_t bit : row) {
             parity ^= bit == assignment.size() ? true : assignment.test(bit);
@@ -116,7 +114,7 @@ bool clause_is_satisfied(const std::vector<RawRow>& rows, const IndexSet& assign
 
 /// @brief Assert that a reported assignment satisfies every input clause,
 /// re-evaluated over the original instance.
-void check_satisfies(const std::vector<std::vector<RawRow>>& clauses, const Solution& solution,
+void check_satisfies(const std::vector<std::vector<ProofRow>>& clauses, const Solution& solution,
                      std::size_t num_vars) {
     REQUIRE(solution.result == SolveResult::sat);
     REQUIRE(solution.assignment.has_value());
@@ -133,7 +131,7 @@ void check_satisfies(const std::vector<std::vector<RawRow>>& clauses, const Solu
 struct Run {
     std::size_t num_vars = 0;
     std::vector<Clause> clauses; ///< The input clauses, over the used variables.
-    std::vector<std::vector<RawRow>> rows; ///< The same over the declared variables.
+    std::vector<std::vector<ProofRow>> rows; ///< The same over the declared variables.
     std::unique_ptr<Solver> solver; ///< The solver, already loaded with `clauses`.
 };
 
@@ -142,7 +140,7 @@ struct Run {
 /// subsumption or implication graph.
 std::vector<std::string> old_heuristics() {
     return {"--selection=cyclic", "--propagate-miss-rate=0", "--deletion=false",
-            "--subsume=false", "--implication-graph=false"};
+            "--otf-subsume=false", "--implication-graph=false"};
 }
 
 /// @brief `a` followed by `b`.
@@ -154,15 +152,14 @@ std::vector<std::string> operator+(std::vector<std::string> a, const std::vector
 /// @brief Parse an instance and build the solver `xorcle` builds for it under
 /// @p flags, so that a run here is the run `xorcle <flags> <file>` performs.
 ///
-/// The sparse representation runs the cyclic selector, the only one it supports,
-/// unless @p flags choose. BVE is off unless @p flags choose: it solves most of
+/// The sparse representation runs the cyclic selector unless @p flags choose. BVE is off unless @p flags choose: it solves most of
 /// these instances before the first decision.
-/// @param selector Replaces the selector @p flags name, when non-null.
+/// @param make_selector Replaces the selector @p flags name, when non-null.
 /// @param proof_writer Not owned; null for no proof.
 Run make_run(EquationRepr repr, std::string_view instance,
              const std::vector<std::string>& flags = {},
-             std::unique_ptr<ClauseSelector> selector = nullptr,
-             RawProofWriter* proof_writer = nullptr) {
+             ClauseSelectorFactory make_selector = nullptr,
+             ProofWriter* proof_writer = nullptr) {
     std::vector<std::string> arguments = {"--bve=false"};
     if (repr == EquationRepr::sparse) {
         arguments.insert(arguments.end(), {"--equation-repr=sparse", "--selection=cyclic"});
@@ -179,7 +176,7 @@ Run make_run(EquationRepr repr, std::string_view instance,
     run.rows = clause_rows(parsed);
     run.solver =
         make_solver(*options, parsed.num_vars, parsed.used_vars, proof_writer, nullptr,
-                    std::move(selector));
+                    std::move(make_selector));
     for (Clause& clause : parsed.clauses) {
         run.solver->add_starting_clause(std::move(clause));
     }
@@ -215,6 +212,7 @@ struct Backjump {
     std::size_t removed_levels = 0; ///< What the solver told the selector it discarded.
     std::size_t asserting_level = 0; ///< Where the learned clause actually asserts.
     std::size_t lbd = 0; ///< The LBD the solver told the selector.
+    double record_lbd = 0.0; ///< The clause's LBD in the database then.
 };
 
 /// @brief A cyclic selector that records every backjump it is told about.
@@ -224,20 +222,22 @@ struct Backjump {
 /// graph would break.
 class RecordingSelector final : public ClauseSelector {
 public:
+    explicit RecordingSelector(const ClauseDatabase& database) : ClauseSelector(database) {}
+
     /// @brief The next active clause in cyclic order, or `std::nullopt` at quiescence.
     std::optional<ClauseSelection> next() override {
-        if (clauses_.empty() || count_ >= clauses_.size()) {
+        if (database_.num_clauses() == 0 || count_ >= database_.num_clauses()) {
             count_ = 0;
             return std::nullopt;
         }
-        for (std::size_t attempts = 0; attempts < clauses_.size(); ++attempts) {
+        for (std::size_t attempts = 0; attempts < database_.num_clauses(); ++attempts) {
             const ClauseId current = id_;
-            id_ = (id_ + 1) % clauses_.size();
+            id_ = (id_ + 1) % database_.num_clauses();
             ++count_;
-            if (is_clause_active(current)) {
+            if (database_.is_clause_active(current)) {
                 return ClauseSelection{current, std::nullopt};
             }
-            if (count_ >= clauses_.size()) {
+            if (count_ >= database_.num_clauses()) {
                 count_ = 0;
                 return std::nullopt;
             }
@@ -246,39 +246,31 @@ public:
         return std::nullopt;
     }
 
-    void update_with_propagation(const Equation& reduced_eqn, const Trail& trail) override {
+    /// @brief Record the trail and refresh the quiescence budget, as `Cyclic` does.
+    void update_with_new_equation(const Equation&, const Trail& trail) override {
         last_trail_ = trail;
-        ClauseSelector::update_with_propagation(reduced_eqn, trail);
+        count_ = 0;
     }
 
-    void update_with_decision(const Equation& reduced_eqn, const Trail& trail) override {
-        last_trail_ = trail;
-        ClauseSelector::update_with_decision(reduced_eqn, trail);
-    }
-
-    /// @brief Record the backjump, then store the clause.
+    /// @brief Record the backjump, then make the clause the next one tried.
     ///
     /// The trail passed here is the backjumped one; the last trail seen before
     /// it is the conflicting one.
-    void add_asserting_clause(Clause clause, const Trail& trail,
-                              const AssertingClauseInfo& info) override {
+    void update_with_asserting_clause(ClauseId id, const Trail& trail,
+                                      const AssertingClauseInfo& info) override {
         REQUIRE(last_trail_.has_value());
         backjumps.push_back(Backjump{last_trail_->level(), trail.level(), info.removed_levels,
-                                     asserting_level_of(clause, *last_trail_), info.lbd});
-        ClauseSelector::add_asserting_clause(std::move(clause), trail, info);
+                                     asserting_level_of(database_.clause(id), *last_trail_),
+                                     info.lbd, database_.record(id).lbd});
+        ClauseSelector::update_with_asserting_clause(id, trail, info);
     }
 
     /// @brief Every conflict this selector was told about, oldest first.
     std::vector<Backjump> backjumps;
 
-protected:
-    /// @brief Refresh the quiescence budget, as `Cyclic` does.
-    void update_with_new_equation(const Equation&, const Trail&) override { count_ = 0; }
-
-    /// @brief Store a clause and make it the next one tried.
-    void add_clause(Clause clause) override {
-        ClauseSelector::add_clause(std::move(clause));
-        id_ = clauses_.size() - 1;
+    /// @brief Make a new clause the next one tried.
+    void update_with_new_clause(ClauseId id) override {
+        id_ = id;
         count_ = 0;
     }
 
@@ -287,6 +279,15 @@ private:
     std::size_t count_ = 0;
     std::optional<Trail> last_trail_;
 };
+
+/// @brief Builds a `RecordingSelector` and points @p recorder at it.
+ClauseSelectorFactory recording_selector(RecordingSelector*& recorder) {
+    return [&recorder](const ClauseDatabase& database) {
+        auto selector = std::make_unique<RecordingSelector>(database);
+        recorder = selector.get();
+        return selector;
+    };
+}
 
 } // namespace
 
@@ -301,10 +302,10 @@ TEST_CASE_TEMPLATE("solver: a root conflict, proved with no decisions", Tag, Den
     // Both clauses are unit, so both propagate at the root: `[x1 = 1]` and then
     // `[x1 = 0]`, whose sum is 1.
     CHECK(run.solver->level() == 0);
-    CHECK(run.solver->decision_procedure().counters().decisions == 0);
-    CHECK(run.solver->counters().num_conflicts == 1);
-    CHECK(run.solver->counters().num_propagations == 2);
-    CHECK(run.solver->counters().num_restarts == 0);
+    CHECK(run.solver->stats().decisions == 0);
+    CHECK(run.solver->stats().num_conflicts == 1);
+    CHECK(run.solver->stats().num_propagations == 2);
+    CHECK(run.solver->stats().num_restarts == 0);
     // Nothing was learned: a root conflict ends the run before analysis.
     CHECK(run.solver->num_clauses() == run.clauses.size());
 }
@@ -319,8 +320,8 @@ TEST_CASE_TEMPLATE("solver: an empty input clause is UNSAT before any search", T
 
         const Solution solution = run.solver->solve();
         CHECK(solution.result == SolveResult::unsat);
-        CHECK(run.solver->counters().num_conflicts == 0);
-        CHECK(run.solver->counters().num_propagations == 0);
+        CHECK(run.solver->stats().num_conflicts == 0);
+        CHECK(run.solver->stats().num_propagations == 0);
         // The empty clause never reaches the database.
         CHECK(run.solver->num_clauses() == 2);
     }
@@ -338,9 +339,9 @@ TEST_CASE_TEMPLATE("solver: SAT decided entirely by root propagation", Tag, Dens
     CHECK_FALSE(solution.assignment->test(1));
     CHECK_FALSE(solution.assignment->test(2));
 
-    CHECK(run.solver->counters().num_propagations == 3);
-    CHECK(run.solver->counters().num_conflicts == 0);
-    CHECK(run.solver->decision_procedure().counters().decisions == 0);
+    CHECK(run.solver->stats().num_propagations == 3);
+    CHECK(run.solver->stats().num_conflicts == 0);
+    CHECK(run.solver->stats().decisions == 0);
 }
 
 TEST_CASE_TEMPLATE("solver: SAT found by search", Tag, DenseTag, SparseTag) {
@@ -353,7 +354,7 @@ TEST_CASE_TEMPLATE("solver: SAT found by search", Tag, DenseTag, SparseTag) {
     // The first two clauses force exactly one of x1, x2, and no clause is unit
     // at the root, so the answer cannot be reached without deciding.
     CHECK(solution.assignment->test(0) != solution.assignment->test(1));
-    CHECK(run.solver->decision_procedure().counters().decisions > 0);
+    CHECK(run.solver->stats().decisions > 0);
 }
 
 TEST_CASE_TEMPLATE("solver: a model is completed over what BVE eliminated", Tag, DenseTag,
@@ -370,12 +371,13 @@ TEST_CASE_TEMPLATE("solver: a model is completed over what BVE eliminated", Tag,
                                           "-4+6 2+7 0\n"
                                           "2+3+5 -6 0\n"
                                           "3+4+7 5+6 0\n";
-    Run run = make_run(repr, instance, {"--bve=true"});
+    // The gate's hyperplane comes after more than 10 refusals in a row, and a group
+    // over seven variables has fewer than 1000 hyperplanes.
+    Run run = make_run(repr, instance, {"--bve=true", "--bve-max-refusals-in-a-row=1000"});
 
     const Solution solution = run.solver->solve();
     check_satisfies(run.rows, solution, run.num_vars);
-    RunStats stats;
-    run.solver->add_to_stats(stats);
+    const RunStats stats = run.solver->stats();
     CHECK(stats.bve_eliminated > 0);
     CHECK(stats.bve_passes > 0);
 }
@@ -385,8 +387,7 @@ TEST_CASE_TEMPLATE("solver: BVE does not change an UNSAT verdict", Tag, DenseTag
     Run run = make_run(repr, search_unsat_instance, {"--bve=true"});
 
     CHECK(run.solver->solve().result == SolveResult::unsat);
-    RunStats stats;
-    run.solver->add_to_stats(stats);
+    const RunStats stats = run.solver->stats();
     CHECK(stats.bve_passes > 0);
 }
 
@@ -400,7 +401,7 @@ TEST_CASE_TEMPLATE("solver: UNSAT found by search", Tag, DenseTag, SparseTag) {
 
     // Eight clauses over three variables, each ruling out one assignment: the
     // solver has to decide, conflict, and learn its way through them.
-    CHECK(run.solver->decision_procedure().counters().decisions > 0);
+    CHECK(run.solver->stats().decisions > 0);
     CHECK(run.solver->num_clauses() > run.clauses.size());
 }
 
@@ -408,32 +409,24 @@ TEST_CASE_TEMPLATE("solver: a clause the decision step hands back propagates wit
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const std::string instance = sign_pattern_instance(4);
-    const std::filesystem::path path =
-        scratch_path(repr == EquationRepr::dense ? "handed_back_dense.raw"
-                                                 : "handed_back_sparse.raw");
-    const std::vector<std::vector<RawRow>> inputs =
+    const std::vector<std::vector<ProofRow>> inputs =
         clause_rows(parse_dimacs_string(instance, repr).clauses);
 
     // Deferring after every fruitless attempt leaves unit clauses for the
     // decision step to meet.
+    std::ostringstream proof;
     {
-        RawProofWriter writer(path, 4, inputs.size());
+        ProofWriter writer(proof, 4);
         Run run = make_run(repr, instance,
                            {"--selection=cyclic", "--propagate-miss-rate=0.5",
                             "--propagate-window=1"},
                            nullptr, &writer);
         CHECK(run.solver->solve().result == SolveResult::unsat);
-        CHECK(run.solver->counters().num_decision_propagations > 0);
-        writer.finalize(true);
     }
 
     // Every propagated row a chain cites has to have come with its reason.
-    RawProofFileSource source(path);
-    std::ostringstream proof;
-    postprocess_raw_proof(source, 4, inputs.size(), repr, proof, inputs);
     LrupChecker checker(repr, 4, inputs);
     CHECK(checker.check(proof.str()) == "");
-    std::filesystem::remove(path);
 }
 
 TEST_CASE_TEMPLATE("solver: a decision a missed propagation forbids is undone", Tag, DenseTag,
@@ -444,7 +437,7 @@ TEST_CASE_TEMPLATE("solver: a decision a missed propagation forbids is undone", 
                         "--csids-intersection-depth=8"});
 
     check_satisfies(run.rows, run.solver->solve(), run.num_vars);
-    CHECK(run.solver->counters().num_undone_decisions > 0);
+    CHECK(run.solver->stats().num_undone_decisions > 0);
 }
 
 TEST_CASE_TEMPLATE("solver: a budget leaves the verdicts alone", Tag, DenseTag, SparseTag) {
@@ -478,12 +471,12 @@ TEST_CASE_TEMPLATE("solver: bumping the learned clause's pivots leaves the answe
 TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Run run = make_run(repr, search_unsat_instance);
-    CHECK(run.solver->counters().num_conflicts == 0);
+    CHECK(run.solver->stats().num_conflicts == 0);
 
     const Solution solution = run.solver->solve();
     REQUIRE(solution.result == SolveResult::unsat);
 
-    const SolverCounters& counters = run.solver->counters();
+    const RunStats counters = run.solver->stats();
     CHECK(counters.num_attempt_props > 0);
     CHECK(counters.num_propagations > 0);
     CHECK(counters.num_conflicts > 0);
@@ -500,44 +493,39 @@ TEST_CASE_TEMPLATE("solver: the counters a search run accumulates", Tag, DenseTa
 TEST_CASE("solver: the two representations agree on what the search did") {
     // Deliberately not a `TEST_CASE_TEMPLATE`: the claim is about the two
     // representations together.
-    // The sparse representation supports only the cyclic selector.
-    const std::vector<std::string> cyclic = {"--selection=cyclic"};
-    Run dense = make_run(EquationRepr::dense, search_unsat_instance, cyclic);
-    Run sparse = make_run(EquationRepr::sparse, search_unsat_instance, cyclic);
+    for (const std::string selection : {"--selection=cyclic", "--selection=exact_watchlist"}) {
+        CAPTURE(selection);
+        Run dense = make_run(EquationRepr::dense, search_unsat_instance, {selection});
+        Run sparse = make_run(EquationRepr::sparse, search_unsat_instance, {selection});
 
-    const Solution dense_solution = dense.solver->solve();
-    const Solution sparse_solution = sparse.solver->solve();
-    CHECK(dense_solution.result == sparse_solution.result);
+        const Solution dense_solution = dense.solver->solve();
+        const Solution sparse_solution = sparse.solver->solve();
+        CHECK(dense_solution.result == sparse_solution.result);
 
-    const SolverCounters& dense_counters = dense.solver->counters();
-    const SolverCounters& sparse_counters = sparse.solver->counters();
-    CHECK(dense_counters.num_conflicts == sparse_counters.num_conflicts);
-    CHECK(dense_counters.num_propagations == sparse_counters.num_propagations);
-    CHECK(dense_counters.num_attempt_props == sparse_counters.num_attempt_props);
-    CHECK(dense_counters.num_watch_updates == sparse_counters.num_watch_updates);
-    CHECK(dense_counters.num_restarts == sparse_counters.num_restarts);
+        const RunStats dense_counters = dense.solver->stats();
+        const RunStats sparse_counters = sparse.solver->stats();
+        CHECK(dense_counters.num_conflicts == sparse_counters.num_conflicts);
+        CHECK(dense_counters.num_propagations == sparse_counters.num_propagations);
+        CHECK(dense_counters.num_attempt_props == sparse_counters.num_attempt_props);
+        CHECK(dense_counters.num_watch_updates == sparse_counters.num_watch_updates);
+        CHECK(dense_counters.num_restarts == sparse_counters.num_restarts);
+    }
 }
 
 TEST_CASE_TEMPLATE("solver: compaction runs and the answer comes back in the original space", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    const std::vector<std::string> compaction_off = {"--compact=false"};
-    Run without = make_run(repr, compaction_sat_instance, compaction_off);
-    const Solution without_solution = without.solver->solve();
-    check_satisfies(without.rows, without_solution, without.num_vars);
-
     Run with = make_run(repr, compaction_sat_instance);
     const Solution with_solution = with.solver->solve();
 
     // The root trail determines variables 0, 1 and 3, leaving x3 and x5 to
     // search in, while `num_vars()` still reports the original space.
-    CHECK(with.solver->counters().num_compactions > 0);
+    CHECK(with.solver->stats().num_compactions > 0);
     CHECK(with.solver->active_num_vars() < 5);
     REQUIRE(with.solver->num_vars() == 5);
 
-    // Same verdict, and an assignment over the *original* five variables.
-    CHECK(with_solution.result == without_solution.result);
+    // An assignment over the *original* five variables.
     check_satisfies(with.rows, with_solution, with.num_vars);
 
     // The back-substituted variables, checked against the instance by hand:
@@ -555,10 +543,10 @@ TEST_CASE_TEMPLATE("solver: a compaction renumbers once that frees enough words"
     // Five variables and the constant fit one word whatever is dropped.
     Run narrow = make_run(repr, compaction_sat_instance);
     (void)narrow.solver->solve();
-    CHECK(narrow.solver->counters().num_compactions > 0);
-    CHECK(narrow.solver->counters().num_dropped_vars >= 3);
-    CHECK(narrow.solver->counters().num_renumberings == 0);
-    CHECK(narrow.solver->active_num_vars() == 5 - narrow.solver->counters().num_dropped_vars);
+    CHECK(narrow.solver->stats().num_compactions > 0);
+    CHECK(narrow.solver->stats().num_dropped_vars >= 3);
+    CHECK(narrow.solver->stats().num_renumberings == 0);
+    CHECK(narrow.solver->active_num_vars() == 5 - narrow.solver->stats().num_dropped_vars);
 
     // 64 variables and the constant need two words, and 63 need one.
     // The fifth clause uses the variables the others do not.
@@ -569,9 +557,9 @@ TEST_CASE_TEMPLATE("solver: a compaction renumbers once that frees enough words"
     wide_instance += "0\n";
     Run wide = make_run(repr, wide_instance);
     const Solution solution = wide.solver->solve();
-    CHECK(wide.solver->counters().num_renumberings == 1);
-    CHECK(wide.solver->counters().num_dropped_vars >= 2);
-    CHECK(wide.solver->active_num_vars() == 64 - wide.solver->counters().num_dropped_vars);
+    CHECK(wide.solver->stats().num_renumberings == 1);
+    CHECK(wide.solver->stats().num_dropped_vars >= 2);
+    CHECK(wide.solver->active_num_vars() == 64 - wide.solver->stats().num_dropped_vars);
     check_satisfies(wide.rows, solution, wide.num_vars);
     CHECK(solution.assignment->test(0));
     CHECK(solution.assignment->test(1) != solution.assignment->test(63));
@@ -595,7 +583,7 @@ TEST_CASE_TEMPLATE("solver: a model covers the unused variables", Tag, DenseTag,
 
         const Solution solution = run.solver->solve();
         check_satisfies(run.rows, solution, 140);
-        CHECK(run.solver->active_num_vars() == 5 - run.solver->counters().num_dropped_vars);
+        CHECK(run.solver->active_num_vars() == 5 - run.solver->stats().num_dropped_vars);
         const IndexSet& assignment = *solution.assignment;
         CHECK(assignment.test(1));
         CHECK_FALSE(assignment.test(3));
@@ -612,43 +600,32 @@ TEST_CASE_TEMPLATE("solver: a model covers the unused variables", Tag, DenseTag,
 TEST_CASE_TEMPLATE("solver: a proof is over the unused variables too", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const std::filesystem::path path =
-        scratch_path(repr == EquationRepr::dense ? "unused_dense.raw" : "unused_sparse.raw");
-
     // `search_unsat_instance` on variables 2, 5 and 8 of 9.
     const std::string instance = "p cnf 9 8\n2 5 8 0\n2 5 -8 0\n2 -5 8 0\n2 -5 -8 0\n"
                                  "-2 5 8 0\n-2 5 -8 0\n-2 -5 8 0\n-2 -5 -8 0\n";
-    const std::vector<std::vector<RawRow>> inputs =
+    const std::vector<std::vector<ProofRow>> inputs =
         clause_rows(parse_dimacs_string(instance, repr));
-    CHECK(inputs[1] == std::vector<RawRow>{{1}, {4}, {7, 9}});
+    CHECK(inputs[1] == std::vector<ProofRow>{{1}, {4}, {7, 9}});
 
+    std::ostringstream proof;
     {
-        RawProofWriter writer(path, 9, inputs.size());
+        ProofWriter writer(proof, 9);
         Run run = make_run(repr, instance, {}, nullptr, &writer);
         CHECK(run.solver->solve().result == SolveResult::unsat);
-        CHECK(run.solver->counters().num_conflicts > 0);
-        writer.finalize(true);
+        CHECK(run.solver->stats().num_conflicts > 0);
     }
 
-    RawProofFileSource source(path);
-    std::ostringstream proof;
-    postprocess_raw_proof(source, 9, inputs.size(), repr, proof, inputs);
     LrupChecker checker(repr, 9, inputs);
     CHECK(checker.check(proof.str()) == "");
-    std::filesystem::remove(path);
 }
 
 TEST_CASE_TEMPLATE("solver: compaction does not change an UNSAT verdict", Tag, DenseTag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    const std::vector<std::string> compaction_off = {"--compact=false"};
-    Run without = make_run(repr, search_unsat_instance, compaction_off);
     Run with = make_run(repr, search_unsat_instance);
-
-    CHECK(without.solver->solve().result == SolveResult::unsat);
     CHECK(with.solver->solve().result == SolveResult::unsat);
-    CHECK(with.solver->counters().num_compactions > 0);
+    CHECK(with.solver->stats().num_compactions > 0);
 }
 
 TEST_CASE_TEMPLATE("solver: restarting does not change the verdict", Tag, DenseTag, SparseTag) {
@@ -656,7 +633,7 @@ TEST_CASE_TEMPLATE("solver: restarting does not change the verdict", Tag, DenseT
     Run restarting = make_run(repr, search_unsat_instance, tiny_luby_restarts());
 
     CHECK(restarting.solver->solve().result == SolveResult::unsat);
-    CHECK(restarting.solver->counters().num_restarts > 0);
+    CHECK(restarting.solver->stats().num_restarts > 0);
 
     Run satisfiable = make_run(repr, search_sat_instance, tiny_luby_restarts());
     const Solution solution = satisfiable.solver->solve();
@@ -671,12 +648,11 @@ TEST_CASE_TEMPLATE("solver: a backjump removes the levels it says it removes", T
     // the asserting level only when no restart fired. The restarting subcase is
     // where the two quantities come apart.
     auto record = [&](const std::vector<std::string>& restarts) {
-        auto selector = std::make_unique<RecordingSelector>();
-        RecordingSelector& recorder = *selector;
+        RecordingSelector* recorder = nullptr;
         Run run = make_run(repr, search_unsat_instance, old_heuristics() + restarts,
-                           std::move(selector));
+                           recording_selector(recorder));
         CHECK(run.solver->solve().result == SolveResult::unsat);
-        return recorder.backjumps;
+        return recorder->backjumps;
     };
 
     SUBCASE("without restarts the removed count is the asserting level's complement") {
@@ -715,131 +691,124 @@ TEST_CASE_TEMPLATE("solver: the learned clause's LBD reaches the selector", Tag,
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
-    auto selector = std::make_unique<RecordingSelector>();
-    RecordingSelector& recorder = *selector;
-    Run run = make_run(repr, search_unsat_instance, old_heuristics(), std::move(selector));
+    RecordingSelector* recorder = nullptr;
+    Run run = make_run(repr, search_unsat_instance, old_heuristics(), recording_selector(recorder));
     const std::size_t num_input_clauses = run.clauses.size();
     CHECK(run.solver->solve().result == SolveResult::unsat);
 
-    const std::vector<Backjump>& backjumps = recorder.backjumps;
-    REQUIRE(recorder.num_clauses() == num_input_clauses + backjumps.size());
+    const ClauseDatabase& database = run.solver->clause_database();
+    const std::vector<Backjump>& backjumps = recorder->backjumps;
+    REQUIRE(database.num_clauses() == num_input_clauses + backjumps.size());
     REQUIRE_FALSE(backjumps.empty());
 
+    // Deletion is off, and a use as a reason measures a starting clause all the same.
+    std::size_t num_measured = 0;
     for (ClauseId id = 0; id < num_input_clauses; ++id) {
-        CHECK_FALSE(recorder.is_clause_learned(id));
+        CHECK_FALSE(database.record(id).learned);
+        num_measured += database.record(id).lbd_measured ? 1U : 0U;
     }
+    CHECK(num_measured > 0);
     for (std::size_t index = 0; index < backjumps.size(); ++index) {
         const ClauseId id = num_input_clauses + index;
         const std::size_t lbd = backjumps[index].lbd;
-        CHECK(recorder.is_clause_learned(id));
-        CHECK(recorder.clause_lbd(id) == static_cast<double>(lbd));
+        CHECK(database.record(id).learned);
+        CHECK(database.record(id).lbd_measured);
+        CHECK(backjumps[index].record_lbd == static_cast<double>(lbd));
         // The clause is derived from the levels of the conflicting trail.
         CHECK(lbd <= backjumps[index].level_before);
     }
 }
 
 
-// The graph is read when enough clauses have reached the width it reads, and
-// otherwise only when the conflict interval elapses, so a huge interval on both
-// leaves the one run the start of a solve always makes.
+// A run is due at the start and each time the conflict
+// interval elapses; one with too few new width-2 clauses is skipped.
 TEST_CASE_TEMPLATE("solver: what makes an implication graph run due", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
 
     const std::string never = "1099511627776";
     const std::vector<std::string> without_graph = {
-        "--selection=cyclic", "--propagate-miss-rate=0", "--deletion=false", "--subsume=false"};
+        "--selection=cyclic", "--propagate-miss-rate=0", "--deletion=false", "--otf-subsume=false",
+        "--vivify=false"};
 
-    const auto counters = [&](const std::vector<std::string>& graph) {
+    const auto stats = [&](const std::vector<std::string>& graph) {
         Run run = make_run(repr, search_unsat_instance, without_graph + graph);
         CHECK(run.solver->solve().result == SolveResult::unsat);
-        return run.solver->implication_graph_counters();
+        return run.solver->stats();
     };
 
-    const ImplicationGraphCounters idle =
-        counters({"--implication-graph=true", "--implication-graph-clause-cadence=" + never,
-                  "--implication-graph-cadence=" + never});
-    CHECK(idle.num_runs_due_to_clauses == 0);
-    CHECK(idle.num_runs_due_to_conflicts == 0);
-    CHECK(idle.num_runs <= 1);
+    const RunStats idle =
+        stats({"--implication-graph=true", "--implication-graph-min-new-clauses=0",
+               "--implication-graph-cadence=" + never});
+    CHECK(idle.implication_graph_skipped_runs == 0);
+    CHECK(idle.num_forced_restarts == 0);
 
-    const ImplicationGraphCounters eager =
-        counters({"--implication-graph=true", "--implication-graph-clause-cadence=1",
-                  "--implication-graph-cadence=" + never});
-    CHECK(eager.num_runs_due_to_clauses > 0);
-    CHECK(eager.num_runs_due_to_conflicts == 0);
-    CHECK(eager.num_runs > idle.num_runs);
+    const RunStats eager =
+        stats({"--implication-graph=true", "--implication-graph-min-new-clauses=0",
+               "--implication-graph-cadence=1"});
+    CHECK(eager.implication_graph_skipped_runs == 0);
+    CHECK(eager.implication_graph_runs > idle.implication_graph_runs);
+
+    // Every due point is skipped, the first included, and none forces a restart.
+    const RunStats skipping =
+        stats({"--implication-graph=true", "--implication-graph-min-new-clauses=" + never,
+               "--implication-graph-cadence=1"});
+    CHECK(skipping.implication_graph_runs == 0);
+    CHECK(skipping.implication_graph_skipped_runs > 0);
+    CHECK(skipping.implication_graph_skipped_runs ==
+          skipping.implication_graph_points_new_0 + skipping.implication_graph_points_new_1_9 +
+              skipping.implication_graph_points_new_10_49 +
+              skipping.implication_graph_points_new_50_99 +
+              skipping.implication_graph_points_new_100);
+    CHECK(skipping.num_forced_restarts == 0);
 
     // Off, nothing is read however many clauses narrow.
-    const ImplicationGraphCounters off = counters({"--implication-graph=false"});
-    CHECK(off.num_runs == 0);
+    const RunStats off = stats({"--implication-graph=false"});
+    CHECK(off.implication_graph_runs == 0);
 }
 
 // A row of the clause's linear negation that the trail already implies is not
 // assumed, and the replacement is the clause of the rows assumed, so the implied
-// row leaves the clause. Here `x1 = 0` is implied: at the root by a unit, or by
-// propagation from any assumed row other than `x1 = 0` itself. A pass runs at the
-// first root visit, its budget a hundredth of the root's one propagation: one order.
+// row leaves the clause. Here `x1 = 0` is implied by propagation from any assumed
+// row other than `x1 = 0` itself. A pass runs at the first root visit, its budget a
+// hundredth of the root's one propagation: one order.
 TEST_CASE("solver: vivification removes a row the trail implies from the clause") {
     const std::vector<std::string> flags = {"--vivify=true", "--vivify-rounds=1",
                                             "--vivify-cadence=0",
-                                            "--compact=false", "--implication-graph=false"};
-    const auto narrowings = [&flags](std::string_view instance, std::size_t seed) {
+                                            "--bve=false", "--implication-graph=false"};
+    // (x1 v x2 v x3), and for each other nonzero v in the span of x1, x2, x3,
+    // [v = 1] v [x1 = 0]. An order whose first row is not `x1 = 0` assumes it,
+    // propagates `x1 = 0`, and ends with two rows that do not span `x1 = 0`;
+    // one whose first row is `x1 = 0` assumes all three and narrows nothing.
+    // The unit [x4 = 1] is the root's propagation.
+    constexpr std::string_view instance = "p xnf 4 8\n"
+                                          "4 0\n"
+                                          "1 2 3 0\n"
+                                          "2 -1 0\n"
+                                          "3 -1 0\n"
+                                          "1+2 -1 0\n"
+                                          "1+3 -1 0\n"
+                                          "2+3 -1 0\n"
+                                          "1+2+3 -1 0\n";
+    std::size_t num_narrowed = 0;
+    for (std::size_t seed = 0; seed < 40; ++seed) {
+        CAPTURE(seed);
         Run run = make_run(EquationRepr::dense, instance,
                            flags + std::vector<std::string>{"--seed=" + std::to_string(seed)});
         CHECK(run.solver->solve().result == SolveResult::sat);
-        const VivifyCounters& counters = run.solver->vivify_counters();
-        REQUIRE(counters.num_orders == 1);
-        return std::pair{counters.num_narrowed, counters.narrowed_width_after};
-    };
-
-    SUBCASE("implied at the root") {
-        // [x1 = 0] ^ (x1 v x2 v x3): every order narrows to two rows.
-        constexpr std::string_view instance = "p cnf 3 2\n"
-                                              "-1 0\n"
-                                              "1 2 3 0\n";
-        for (std::size_t seed = 0; seed < 20; ++seed) {
-            CAPTURE(seed);
-            CHECK(narrowings(instance, seed) == std::pair<std::size_t, std::size_t>{1, 2});
+        const RunStats stats = run.solver->stats();
+        if (stats.vivify_narrowed == 0) {
+            continue;
         }
+        ++num_narrowed;
+        CHECK(stats.vivify_width_after == 2);
+        // The narrowing overwrites (x1 v x2 v x3) under its own id.
+        const Clause& replacement = run.solver->clause_database().clauses()[1];
+        REQUIRE(replacement.rows() == 2);
+        Equation x1 = make_equation_with(EquationRepr::dense, 4, {0});
+        CHECK(replacement.partial_reduce(x1).kind != ReduceResult::Kind::eq_true);
     }
-
-    SUBCASE("implied by propagation") {
-        // (x1 v x2 v x3), and for each other nonzero v in the span of x1, x2, x3,
-        // [v = 1] v [x1 = 0]. An order whose first row is not `x1 = 0` assumes it,
-        // propagates `x1 = 0`, and ends with two rows that do not span `x1 = 0`;
-        // one whose first row is `x1 = 0` assumes all three and narrows nothing.
-        // The unit [x4 = 1] is the root's propagation.
-        constexpr std::string_view instance = "p xnf 4 8\n"
-                                              "4 0\n"
-                                              "1 2 3 0\n"
-                                              "2 -1 0\n"
-                                              "3 -1 0\n"
-                                              "1+2 -1 0\n"
-                                              "1+3 -1 0\n"
-                                              "2+3 -1 0\n"
-                                              "1+2+3 -1 0\n";
-        std::size_t num_narrowed = 0;
-        for (std::size_t seed = 0; seed < 40; ++seed) {
-            CAPTURE(seed);
-            Run run = make_run(EquationRepr::dense, instance,
-                               flags + std::vector<std::string>{"--seed=" + std::to_string(seed)});
-            CHECK(run.solver->solve().result == SolveResult::sat);
-            const VivifyCounters& counters = run.solver->vivify_counters();
-            REQUIRE(counters.num_orders == 1);
-            if (counters.num_narrowed == 0) {
-                continue;
-            }
-            ++num_narrowed;
-            CHECK(counters.narrowed_width_after == 2);
-            // The narrowing overwrites (x1 v x2 v x3) under its own id.
-            const Clause& replacement = run.solver->selector().clauses()[1];
-            REQUIRE(replacement.rows() == 2);
-            Equation x1 = make_equation_with(EquationRepr::dense, 4, {0});
-            CHECK(replacement.partial_reduce(x1).kind != ReduceResult::Kind::eq_true);
-        }
-        // An order starts with `x1 = 0` one time in seven.
-        CHECK(num_narrowed >= 25);
-    }
+    // An order starts with `x1 = 0` one time in seven.
+    CHECK(num_narrowed >= 25);
 }
 
 // A clause another subsumes can narrow to exactly the other's span, through that
@@ -855,14 +824,15 @@ TEST_CASE("solver: a vivification narrowing a kept clause already has adds no cl
         CAPTURE(seed);
         Run run = make_run(EquationRepr::dense, instance,
                            {"--vivify=true", "--vivify-rounds=1", "--vivify-cadence=0",
-                            "--compact=false",
+                            "--bve=false", "--implication-graph=false",
                             "--seed=" + std::to_string(seed)});
         CHECK(run.solver->solve().result == SolveResult::sat);
-        const std::size_t kept = run.solver->counters().num_equivalent_clauses_at_vivification;
+        const std::size_t kept = run.solver->stats().num_equivalent_clauses;
         if (kept != 0) {
             ++num_kept;
-            CHECK(run.solver->num_active_clauses() == 2);
-            CHECK(run.solver->selector().num_clauses() == 3);
+            // The unit's clause went at the substitution of x4.
+            CHECK(run.solver->num_active_clauses() == 1);
+            CHECK(run.solver->clause_database().num_clauses() == 3);
         }
     }
     CHECK(num_kept > 0);
@@ -882,30 +852,24 @@ TEST_CASE("solver: a tautology at input is dropped, and the proof checks") {
                                           "3 -4 0\n"
                                           "-3 4 0\n"
                                           "-3 -4 0\n";
-    const std::vector<std::vector<RawRow>> inputs =
+    const std::vector<std::vector<ProofRow>> inputs =
         clause_rows(parse_dimacs_string(instance, EquationRepr::dense));
-    const std::filesystem::path path = scratch_path("tautology.raw");
     for (std::size_t seed = 0; seed < 20; ++seed) {
         CAPTURE(seed);
+        std::ostringstream proof;
         {
-            RawProofWriter writer(path, 5, inputs.size());
+            ProofWriter writer(proof, 5);
             Run run = make_run(EquationRepr::dense, instance,
                                {"--vivify=true", "--vivify-cadence=0", "--vivify-effort=1000",
-                                "--compact=false", "--implication-graph=false",
+                                "--bve=false", "--implication-graph=false",
                                 "--seed=" + std::to_string(seed)},
                                nullptr, &writer);
             CHECK(run.solver->solve().result == SolveResult::unsat);
-            CHECK(run.solver->counters().num_tautologies_at_input == 1);
-            CHECK(run.solver->vivify_counters().num_orders == 0);
-            writer.finalize(true);
+            CHECK(run.solver->stats().num_tautologies_at_input == 1);
         }
-        RawProofFileSource source(path);
-        std::ostringstream proof;
-        postprocess_raw_proof(source, 5, inputs.size(), EquationRepr::dense, proof, inputs);
         LrupChecker checker(EquationRepr::dense, 5, inputs);
         CHECK(checker.check(proof.str()) == "");
     }
-    std::filesystem::remove(path);
 }
 
 // A pass at the first root visit, before any decision: (-x1 v x2) strengthens
@@ -929,22 +893,15 @@ TEST_CASE("solver: a subsumption pass deletes and strengthens") {
     for (std::size_t seed = 0; seed < 40; ++seed) {
         CAPTURE(seed);
         Run run = make_run(EquationRepr::dense, instance,
-                           {"--subsume-pass=true", "--subsume-pass-cadence=0",
-                            "--subsume-pass-effort=1000000", "--implication-graph=false",
+                           {"--inproc-subsume-strengthen=true", "--inproc-subsume-strengthen-cadence=0",
+                            "--inproc-subsume-strengthen-effort=1000000", "--implication-graph=false",
                             "--seed=" + std::to_string(seed)});
         CHECK(run.solver->solve().result == SolveResult::sat);
-        const SubsumePassCounters& counters = run.solver->subsume_pass_counters();
-        REQUIRE(counters.num_passes == 1);
-        CHECK(counters.subsumed_as_wider.starting_by_starting +
-                  counters.subsumed_as_narrower.starting_by_starting ==
-              1);
-        CHECK(counters.strengthened_as_wider.starting_by_starting +
-                  counters.strengthened_as_narrower.starting_by_starting ==
-              1);
-        CHECK(counters.num_rows_removed == 4);
+        REQUIRE(run.solver->stats().subsume_pass_passes == 1);
+        CHECK(run.solver->stats().num_subsumed_clauses == 2);
         CHECK(run.solver->num_active_clauses() == 3);
         // The strengthening overwrites (x1 v x2 v x3) under its own id.
-        const auto rows = rows_of(run.solver->selector().clauses()[0]);
+        const auto rows = rows_of(run.solver->clause_database().clauses()[0]);
         num_plain += rows == plain ? 1U : 0U;
         num_merged += rows == merged ? 1U : 0U;
     }
@@ -962,12 +919,12 @@ TEST_CASE("solver: a subsumption pass strengthening to a unit feeds it") {
                                           "1 3 0\n"
                                           "4 0\n";
     Run run = make_run(EquationRepr::dense, instance,
-                       {"--subsume-pass=true", "--subsume-pass-cadence=0",
-                        "--subsume-pass-effort=1000000", "--implication-graph=false"});
+                       {"--inproc-subsume-strengthen=true", "--inproc-subsume-strengthen-cadence=0",
+                        "--inproc-subsume-strengthen-effort=1000000", "--implication-graph=false"});
     const Solution solution = run.solver->solve();
     REQUIRE(solution.result == SolveResult::sat);
     CHECK(solution.assignment->test(1));
-    CHECK(run.solver->subsume_pass_counters().num_units == 1);
+    CHECK(run.solver->stats().num_subsumed_clauses == 1);
 }
 
 } // namespace xorcle

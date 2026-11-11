@@ -21,12 +21,10 @@
 namespace xorcle {
 
 /// @brief One committed compaction step, enough to undo it on an assignment:
-/// BVE's eliminations, then a substitution, then a renumbering, any of them absent.
+/// BVE's eliminations or a substitution's, then a renumbering if one followed.
 struct CompactionHistoryEntry {
-    /// @brief In the order eliminated.
+    /// @brief In the order eliminated; a substitution eliminates each root unit's leading variable.
     std::vector<Elimination> eliminations;
-
-    std::vector<Equation> trail_rows_before;
 
     /// @brief The renumbering that followed, if one did.
     std::optional<CompactionTransform> renumbering;
@@ -60,6 +58,7 @@ Clause inactive_clause_placeholder(EquationRepr repr, const Equation& false_row)
 
 /// @brief True when the trail is at the root and at least one variable can be dropped.
 /// @pre The trail span's pivot column set has size `state.active_num_vars + 1`.
+/// @pre At the root level, `state.trail` does not span `0 = 1`.
 bool should_compact_before_decision(const CompactionState& state);
 
 /// @brief Rewrite the candidate clauses, reduced by the root trail; the numbering

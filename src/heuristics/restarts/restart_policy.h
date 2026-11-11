@@ -18,19 +18,17 @@ enum class RestartMethod {
 };
 
 struct RestartConfig {
-    RestartMethod method = RestartMethod::none;
+    RestartMethod method;
     /// @brief The budget for a Luby value of 1; `Luby` requires it nonzero.
-    std::size_t luby_unit_conflicts = 1;
+    std::size_t luby_unit_conflicts;
 
-    std::size_t lbd_fast_window = 33;
-    std::size_t lbd_slow_window = 1000;
+    std::size_t lbd_fast_window;
+    std::size_t lbd_slow_window;
     /// @brief How far the fast average must exceed the slow one.
-    double lbd_min_ratio = 1.1;
-    std::size_t lbd_min_conflicts = 1000; ///< Conflicts an LBD restart waits out.
+    double lbd_min_ratio;
+    std::size_t lbd_min_conflicts; ///< Conflicts an LBD restart waits out.
     /// @brief Trail length, relative to its average, that blocks a restart; `0` never blocks.
-    double lbd_trail_ratio = 1.4;
-
-    bool operator==(const RestartConfig&) const = default;
+    double lbd_trail_ratio;
 };
 
 /// @brief What a conflict tells a restart policy.

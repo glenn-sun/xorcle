@@ -44,7 +44,7 @@ std::string console_output(const RunStats& stats) {
 std::vector<ConfigEntry> sample_config() {
     return {
         ConfigEntry{"seed", "12345", false},
-        ConfigEntry{"decisions", "csids", true},
+        ConfigEntry{"csids_span", "plain", true},
         ConfigEntry{"restart", "none", true},
         ConfigEntry{"minimize", "true", true},
         ConfigEntry{"deletion", "false", false},
@@ -78,9 +78,7 @@ RunStats sample_stats() {
 
     stats.learned_clauses = 17;
     stats.clauses_in_database = 41;
-    stats.clauses_allocated = 47;
     stats.average_learned_lbd = 2.5;
-    stats.learned_equation_bits = 630;
 
     stats.num_minimized_clauses = 11;
     stats.minimize_width_before = 146;
@@ -160,7 +158,7 @@ TEST_CASE("stats: to_string(SolveResult) uses the CSV spellings") {
 
 TEST_CASE("stats: config_value reads the recorded configuration") {
     const RunStats stats = sample_stats();
-    CHECK(config_value(stats, "decisions") == "csids");
+    CHECK(config_value(stats, "csids_span") == "plain");
     CHECK(config_value(stats, "deletion") == "false");
     CHECK(config_value(stats, "absent") == "");
 }
@@ -173,6 +171,7 @@ TEST_CASE("stats: a section reports only when the configuration says it ran") {
     CHECK(stats.reports(StatsSection::search));
     CHECK(stats.reports(StatsSection::clauses));
     CHECK(stats.reports(StatsSection::timing));
+    CHECK(stats.reports(StatsSection::solve_time));
 
     // Steered by the recorded options, so a block can never claim a feature ran
     // that the same row says was off.
@@ -189,10 +188,6 @@ TEST_CASE("stats: a section reports only when the configuration says it ran") {
     CHECK(stats.reports(StatsSection::deletion));
     CHECK(stats.reports(StatsSection::implication_graph));
 
-    // The proof section waits on post-processing having actually run.
-    CHECK(!stats.reports(StatsSection::proof));
-    stats.proof_postprocess_time_s = 0.5;
-    CHECK(stats.reports(StatsSection::proof));
 }
 
 TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
@@ -217,27 +212,34 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c Clauses rewritten by a compaction: 0\n"
         "c Tautologies dropped at input: 0\n"
         "c Equivalent clauses evicted: 0\n"
-        "c Equivalent clauses evicted at input: 0\n"
-        "c Equivalent clauses evicted at a subsumption: 0\n"
-        "c Equivalent clauses evicted at a substitution: 0\n"
-        "c Equivalent pairs of a starting and a learned clause: 0\n"
-        "c Equivalent pairs of learned clauses: 0\n"
-        "c Peak column-to-clause entries: 0\n"
+        "c Forced restarts: 0\n"
+        "c Trail rows above the root forced restarts dropped: 0\n"
+        "c Decisions replayed: 0\n"
+        "c Saved decisions the trail implied at their replay: 0\n"
+        "c Saved decisions the trail refuted at their replay: 0\n"
+        "c Replays a conflict ended: 0\n"
         "c Learned clauses: 17\n"
         "c Clauses in database: 41\n"
-        "c Clauses allocated: 47\n"
         "c Average learned LBD: 2.500\n"
-        "c Learned equation bits: 630\n"
         "c Learned width-1 clauses: 0\n"
         "c Learned width-2 clauses: 0\n"
-        "c Subsumption replacements of width at most 2: 0\n"
-        "c Compaction narrowings to width at most 2: 0\n"
         "c Minimized clauses: 11\n"
         "c Width before minimizing: 146\n"
         "c Width after minimizing: 90\n"
         "c Parse time (s): 0.002\n"
         "c Solve time (s): 0.013\n"
-        "c Decision time (s), also in the solve time: 0.000\n"
+        "c Solve time by phase (s, share of the solve time):\n"
+        "c   Decisions: 0.000 (0.00%)\n"
+        "c   Propagation: 0.000 (0.00%)\n"
+        "c   Conflict analysis: 0.000 (0.00%)\n"
+        "c   Deletion: 0.000 (0.00%)\n"
+        "c   Substitution and renumbering: 0.000 (0.00%)\n"
+        "c   BVE: 0.000 (0.00%)\n"
+        "c   Subsumption pass: 0.000 (0.00%)\n"
+        "c   Vivification: 0.000 (0.00%)\n"
+        "c   Implication graph: 0.000 (0.00%)\n"
+        "c   Replay: 0.000 (0.00%)\n"
+        "c   Other: 0.000 (0.00%)\n"
         "c Propagations per conflict: 11.765\n"
         "c Attempts per propagation, watch update or conflict: 3.000\n"
         "c Fallback decision rate: 7.50%\n"
@@ -245,6 +247,71 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c Propagations per second: 15625.0\n"
         "s UNSATISFIABLE\n";
     CHECK(console_output(sample_stats()) == expected);
+}
+
+TEST_CASE("ConsoleStatsWriter: the solve time by phase, each with its share") {
+    RunStats stats = sample_stats();
+    stats.solve_time_s = 2.0;
+    stats.decision_time_s = 0.25;
+    stats.propagation_time_s = 1.2;
+    stats.analysis_time_s = 0.4;
+    stats.deletion_time_s = 0.01;
+    stats.substitution_time_s = 0.02;
+    stats.bve_time_s = 0.03;
+    stats.subsume_pass_time_s = 0.004;
+    stats.vivify_time_s = 0.05;
+    stats.implication_graph_time_s = 0.006;
+    stats.replay_time_s = 0.02;
+    stats.other_time_s = 0.01;
+    CHECK(console_output(stats).find("c Solve time (s): 2.000\n"
+                                     "c Solve time by phase (s, share of the solve time):\n"
+                                     "c   Decisions: 0.250 (12.50%)\n"
+                                     "c   Propagation: 1.200 (60.00%)\n"
+                                     "c   Conflict analysis: 0.400 (20.00%)\n"
+                                     "c   Deletion: 0.010 (0.50%)\n"
+                                     "c   Substitution and renumbering: 0.020 (1.00%)\n"
+                                     "c   BVE: 0.030 (1.50%)\n"
+                                     "c   Subsumption pass: 0.004 (0.20%)\n"
+                                     "c   Vivification: 0.050 (2.50%)\n"
+                                     "c   Implication graph: 0.006 (0.30%)\n"
+                                     "c   Replay: 0.020 (1.00%)\n"
+                                     "c   Other: 0.010 (0.50%)\n"
+                                     "c Propagations per conflict:") != std::string::npos);
+
+    // With no solve time there is no share to give.
+    stats.solve_time_s = 0.0;
+    CHECK(console_output(stats).find("c   Decisions: 0.250\n") != std::string::npos);
+}
+
+TEST_CASE("CsvStatsWriter: the solve time by phase has a column per phase") {
+    const TempFile temp;
+    RunStats stats = sample_stats();
+    stats.decision_time_s = 0.25;
+    stats.other_time_s = 0.125;
+    {
+        CsvStatsWriter writer(temp.path());
+        writer.log(stats);
+    }
+    const std::string csv = read_file(temp.path());
+    const std::vector<std::string> header = header_of(csv);
+    const std::vector<std::string> row = row_of(csv);
+    REQUIRE(header.size() == row.size());
+    const auto value = [&](const std::string& name) {
+        const auto it = std::find(header.begin(), header.end(), name);
+        REQUIRE(it != header.end());
+        return row[static_cast<std::size_t>(it - header.begin())];
+    };
+    CHECK(value("decision_time_s") == "0.25");
+    CHECK(value("propagation_time_s") == "0");
+    CHECK(value("analysis_time_s") == "0");
+    CHECK(value("deletion_time_s") == "0");
+    CHECK(value("substitution_time_s") == "0");
+    CHECK(value("bve_time_s") == "0");
+    CHECK(value("subsume_pass_time_s") == "0");
+    CHECK(value("vivify_time_s") == "0");
+    CHECK(value("implication_graph_time_s") == "0");
+    CHECK(value("replay_time_s") == "0");
+    CHECK(value("other_time_s") == "0.125");
 }
 
 TEST_CASE("ConsoleStatsWriter: a run at every default says so in one line") {
@@ -383,13 +450,11 @@ TEST_CASE("CsvStatsWriter: the header names the configuration and every field") 
     };
     CHECK(row[static_cast<std::size_t>(column("num_vars"))] == "12");
     CHECK(row[static_cast<std::size_t>(column("clauses_in_database"))] == "41");
-    CHECK(row[static_cast<std::size_t>(column("clauses_allocated"))] == "47");
     CHECK(row[static_cast<std::size_t>(column("average_learned_lbd"))] == "2.5");
     CHECK(row[static_cast<std::size_t>(column("compactions"))] == "4");
     // Written even though this run reported no deletion section on the console.
     CHECK(row[static_cast<std::size_t>(column("deletion_passes"))] == "4");
     CHECK(row[static_cast<std::size_t>(column("canceled_restarts"))] == "5");
-    CHECK(row[static_cast<std::size_t>(column("proof_postprocess_time_s"))] == "0");
 }
 
 TEST_CASE("CsvStatsWriter: rows append under one header") {
@@ -411,20 +476,6 @@ TEST_CASE("CsvStatsWriter: rows append under one header") {
     const std::string second = read_file(temp.path());
     CHECK(second.starts_with(first));
     CHECK(second.find("run_id,timestamp_utc", 1) == std::string::npos);
-}
-
-TEST_CASE("CsvStatsWriter: the post-processing time is the last column") {
-    const TempFile temp;
-    CsvStatsWriter writer(temp.path());
-
-    RunStats stats = sample_stats();
-    CHECK(stats.proof_postprocess_time_s == 0.0);
-    writer.log(stats);
-    CHECK(read_file(temp.path()).ends_with(",0\n"));
-
-    stats.proof_postprocess_time_s = 0.4242;
-    writer.log(stats);
-    CHECK(read_file(temp.path()).ends_with(",0.4242\n"));
 }
 
 TEST_CASE("CsvStatsWriter: a value carrying a comma is quoted") {

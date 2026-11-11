@@ -2,22 +2,14 @@
 # Check the command line end to end: exit codes, error lines, a SAT model
 # against its instance, and the statistics file.
 #
-# Usage: check_cli.sh <repository root> <xorcle binary>
-# Exit:  0 pass, 1 fail, 77 skipped (no usable python3)
+# Usage: check_cli.sh <python> <repository root> <xorcle binary>
+# Exit:  0 pass, 1 fail
 
 set -u
 
-root="$1"
-xorcle="$2"
-
-if [ -x "$root/.venv/bin/python" ]; then
-    python="$root/.venv/bin/python"
-elif command -v python3 >/dev/null 2>&1; then
-    python="python3"
-else
-    echo "check_cli: no python3 available, skipping" >&2
-    exit 77
-fi
+python="$1"
+root="$2"
+xorcle="$3"
 
 work="${TMPDIR:-/tmp}/xorcle_check_cli.$$"
 mkdir -p "$work"
@@ -62,9 +54,9 @@ if expect_status 2 "$work/missing.xnf"; then
     expect_line err '^Error: ' "a missing file printed no Error: line"
 fi
 
-# An option that needs another: BVE drops the variables it eliminates through compaction.
-if expect_status 2 --bve=true --compact=false "$work/missing.xnf"; then
-    expect_line err '^Error: .*--bve requires --compact=true' "--bve without compaction printed no Error: line"
+# An option that needs another: only the cyclic selector reads a miss rate.
+if expect_status 2 --propagate-miss-rate=0.5 "$work/missing.xnf"; then
+    expect_line err '^Error: .*--propagate-miss-rate requires --selection=cyclic' "a miss rate without the cyclic selector printed no Error: line"
 fi
 
 printf 'p xnf 3 2\n1 2 0\n' > "$work/malformed.xnf"
@@ -81,23 +73,16 @@ if expect_status 10 "$work/sat.xnf"; then
     "$python" - "$root/tools" "$work/sat.xnf" "$work/out" <<'EOF' || fail "the model falsifies the instance"
 import sys
 sys.path.insert(0, sys.argv[1])
-from check_lrup_parity import parse_xnf_file
+from xnf_lib import falsified_clauses, read_rows
 
-num_vars, clauses = parse_xnf_file(sys.argv[2])
+num_vars, clauses = read_rows(sys.argv[2])
 values = [int(token) for line in open(sys.argv[3]) if line.startswith("v ")
           for token in line.split()[1:] if token != "0"]
 assert sorted(abs(v) for v in values) == list(range(1, num_vars + 1)), values
 assert -3 in values and -5 in values, values
 assignment = sum(1 << (v - 1) for v in values if v > 0)
-
-def row_fails(row):
-    # A row is an equation of the clause negated, so the clause holds where one fails.
-    parity = bin(row & assignment & ((1 << num_vars) - 1)).count("1") % 2
-    return parity != (row >> num_vars) & 1
-
-for index, rows in clauses.items():
-    if not any(row_fails(row) for row in rows):
-        sys.exit(f"clause {index} is falsified by {values}")
+if falsified_clauses(clauses, assignment):
+    sys.exit(f"{falsified_clauses(clauses, assignment)} clause(s) falsified by {values}")
 EOF
 fi
 

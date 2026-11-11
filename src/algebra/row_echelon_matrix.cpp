@@ -5,6 +5,8 @@
 #include <sstream>
 #include <vector>
 
+#include "algebra/equation_pool.h"
+
 namespace xorcle {
 
 RowEchelonMatrix::RowEchelonMatrix(EquationRepr repr, std::size_t cols)
@@ -54,20 +56,20 @@ std::string Clause::to_string(const PrintMode& mode) const {
 
 std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
                                         const RowEchelonMatrix& right) {
-    std::vector<Equation> spare_rows;
-    return span_intersection(left, right, spare_rows);
+    EquationPool pool(left.repr(), left.cols());
+    return span_intersection(left, right, pool);
 }
 
 std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
-                                        const RowEchelonMatrix& right,
-                                        std::vector<Equation>& spare_rows) {
+                                        const RowEchelonMatrix& right, EquationPool& pool) {
     assert(left.cols() == right.cols() && "span_intersection: the column counts differ");
     assert(left.repr() == right.repr() && "span_intersection: the representations differ");
+    assert(pool.repr() == left.repr() && pool.num_bits() == left.cols() &&
+           "span_intersection: the pool's representation or bit count differs");
 
     // A row of the doubled matrix whose leading column lands in the second half
     // has a zero first half, and its own leading column is the least of those of
     // the rows it is a sum of, so those rows alone make up the intersection.
-    const EquationRepr repr = left.repr();
     const std::size_t cols = left.cols();
 
     // A row of the doubled matrix, kept as its two halves; `first` is null once
@@ -96,20 +98,9 @@ std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
     firsts.reserve(right.rows());
     seconds.reserve(right.rows());
     for (const Equation& row : right) {
-        if (spare_rows.empty()) {
-            firsts.emplace_back(row);
-        } else {
-            firsts.push_back(std::move(spare_rows.back()));
-            spare_rows.pop_back();
-            firsts.back().assign_from(row);
-        }
-        if (spare_rows.empty()) {
-            seconds.push_back(Equation::with_num_bits(repr, cols));
-        } else {
-            seconds.push_back(std::move(spare_rows.back()));
-            spare_rows.pop_back();
-            seconds.back().set_eq_true();
-        }
+        firsts.push_back(pool.copy_of(row));
+        seconds.push_back(pool.take());
+        seconds.back().set_eq_true();
         Equation& first = firsts.back();
         Equation& second = seconds.back();
         bool is_first_zero = false;
@@ -142,11 +133,11 @@ std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
         basis.push_back(std::move(seconds[static_cast<std::size_t>(row->second - seconds.data())]));
     }
     for (Equation& first : firsts) {
-        spare_rows.push_back(std::move(first));
+        pool.give(std::move(first));
     }
     for (Equation& second : seconds) {
         if (!second.is_null()) {
-            spare_rows.push_back(std::move(second));
+            pool.give(std::move(second));
         }
     }
     return basis;

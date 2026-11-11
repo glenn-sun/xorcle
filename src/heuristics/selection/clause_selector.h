@@ -1,24 +1,24 @@
 #pragma once
 
 /// @file clause_selector.h
-/// @brief Choosing which clause to propagate from next, and owning the clause database.
+/// @brief Choosing which clause to propagate from next.
 
 #include <cassert>
 #include <cstddef>
-#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
-#include <vector>
 
 #include "algebra/compaction_transform.h"
 #include "algebra/equation.h"
+#include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
+#include "core/clause_database.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "core/watch.h"
 #include "util/index_set.h"
-#include "util/stats.h"
 
 namespace xorcle {
 
@@ -46,191 +46,50 @@ struct AssertingClauseInfo {
     bool is_replacement = false;
 };
 
-/// @brief Decides which clause the solver tries to propagate from next.
+/// @brief Decides which clause of a `ClauseDatabase` the solver tries to propagate from next.
 ///
-/// It is also the **authoritative clause store**: the solver keeps no clause vector of its
-/// own, and a watchlist selector's indexes are a view of this one.
-///
-/// @pre Every accessor taking a clause id requires `id < num_clauses()`.
+/// The solver changes the database and then tells the selector what changed.
 class ClauseSelector : public WatchUpdateHandler {
 public:
-    ClauseSelector() = default;
+    /// @pre `database` holds no clause yet.
+    explicit ClauseSelector(const ClauseDatabase& database) : database_(database) {
+        assert(database.num_clauses() == 0 && "a selector was built over a database in use");
+    }
 
     ClauseSelector(const ClauseSelector&) = delete;
     ClauseSelector& operator=(const ClauseSelector&) = delete;
 
     ~ClauseSelector() override = default;
 
-    std::size_t num_clauses() const noexcept { return clauses_.size(); }
-
-    const std::vector<Clause>& clauses() const noexcept { return clauses_; }
-
-    /// @brief The clause, whose rows only `replace_clause()` and a renumbering change.
-    Clause& clause(ClauseId id) {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        return clauses_[id];
-    }
-
-    void replace_clause(ClauseId id, Clause clause);
-
-    /// @brief Overwrite an active clause at the root with a narrowing of it, which
-    /// takes the place of its watches as a new clause would.
-    /// @pre The clause is active, and the trail is at the root and quiescent.
-    void narrow_clause(ClauseId id, Clause clause);
-
-    /// @brief The active clauses that carry a column of @p col_idxs or span `0 = 1`,
-    /// in ascending order; enters the clauses added since the last call.
-    /// @pre `col_idxs` is sized like a clause's columns and leaves the last one out.
-    std::vector<ClauseId> clause_ids_carrying(const IndexSet& col_idxs);
-
-    bool is_clause_active(ClauseId id) const {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        return clause_active_[id] != 0;
-    }
-    void set_clause_active(ClauseId id, bool active);
-
-    const std::vector<std::uint8_t>& active_flags() const noexcept { return clause_active_; }
-
-    ActiveClauseIds active_clause_ids() const noexcept {
-        return {listed_clause_ids_, clause_active_};
-    }
-
-    /// @brief The number of active clauses of each width, short of the widths none has had.
-    std::span<const std::size_t> num_active_clauses_by_width() const noexcept {
-        return num_active_clauses_by_width_;
-    }
-
-#ifndef NDEBUG
-    /// @brief Hold `num_active_clauses_by_width()` to a count over every active clause.
-    void debug_assert_widths_counted() const;
-#endif
-
-    /// @brief Whether the clause was learned rather than read from the instance.
-    bool is_clause_learned(ClauseId id) const {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        return clause_learned_[id] != 0;
-    }
-
-    /// @brief Mark a clause learned or not; what replaces an input clause takes
-    /// its standing, so it is never a deletion candidate either.
-    void set_clause_learned(ClauseId id, bool learned) {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        clause_learned_[id] = learned ? 1 : 0;
-    }
-
-    /// @brief The LBD deletion reads, which a use as a reason moves toward the LBD measured there.
-    /// @pre `is_clause_learned(id)`.
-    double clause_lbd(ClauseId id) const {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        assert(clause_learned_[id] != 0 && "only a learned clause has an LBD");
-        return clause_lbd_[id];
-    }
-    /// @pre `is_clause_learned(id)`.
-    void set_clause_lbd(ClauseId id, double lbd) {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        assert(clause_learned_[id] != 0 && "only a learned clause has an LBD");
-        clause_lbd_[id] = lbd;
-    }
-
-    bool is_clause_used_since_deletion(ClauseId id) const {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        return clause_used_since_deletion_[id] != 0;
-    }
-    void set_clause_used_since_deletion(ClauseId id, bool used) {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        clause_used_since_deletion_[id] = used ? 1 : 0;
-    }
-
-    /// @brief Whether a vivification pass has been through the clause since it was
-    /// added or `replace_clause()` last changed its width.
-    bool is_clause_vivified(ClauseId id) const {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        return clause_vivified_[id] != 0;
-    }
-    void set_clause_vivified(ClauseId id) {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        clause_vivified_[id] = 1;
-    }
-
-    /// @brief Whether a subsumption pass has been through the clause since it was
-    /// added or `replace_clause()` last changed it.
-    bool is_clause_subsume_passed(ClauseId id) const {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        return clause_subsume_passed_[id] != 0;
-    }
-    void set_clause_subsume_passed(ClauseId id) {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        clause_subsume_passed_[id] = 1;
-    }
-
-    /// @brief Consecutive deletion passes the clause has sat through unlocked and unused.
-    std::size_t clause_unused_passes(ClauseId id) const {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        return clause_unused_passes_[id];
-    }
-    void set_clause_unused_passes(ClauseId id, std::size_t num_passes) {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        clause_unused_passes_[id] = num_passes;
-    }
-
-    /// @brief Whether the clause has gone unused for as many deletion passes as its LBD allowed.
-    bool is_clause_out_of_unused_passes(ClauseId id) const {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        return clause_out_of_unused_passes_[id] != 0;
-    }
-    void set_clause_out_of_unused_passes(ClauseId id, bool out) {
-#ifndef NDEBUG
-        debug_assert_clause_id(id);
-#endif
-        clause_out_of_unused_passes_[id] = out ? 1 : 0;
-    }
-
     /// @brief The next clause to try, with the trigger when the selector knows it;
     /// `std::nullopt` once the propagation run is over.
     virtual std::optional<ClauseSelection> next() = 0;
 
-    virtual void add_starting_clause(Clause clause); ///< Takes the next id.
+    /// @brief Note a clause the database just added under @p id, other than a learned one.
+    virtual void update_with_new_clause(ClauseId id);
 
-    /// @brief Add a learned asserting clause under the next id; `trail` already reflects
-    /// the backjump.
-    virtual void add_asserting_clause(Clause clause, const Trail& trail,
-                                      const AssertingClauseInfo& info);
+    /// @brief Note a learned asserting clause the database just added under @p id;
+    /// `trail` already reflects the backjump.
+    virtual void update_with_asserting_clause(ClauseId id, const Trail& trail,
+                                              const AssertingClauseInfo& info);
+
+    /// @brief Note that an active clause went inactive, which the default ignores.
+    virtual void update_with_inactive_clause(ClauseId id);
+
+    /// @brief Note that the database overwrote an active clause at the root with a
+    /// narrowing of it, which takes the place of its watches as a new clause would;
+    /// the default ignores it.
+    /// @pre The trail is at the root and quiescent.
+    virtual void update_with_narrowed_clause(ClauseId id);
 
     /// @brief Note an equation learned by propagation, already reduced by the span it was
     /// added to and already on `trail`.
-    virtual void update_with_propagation(const Equation& reduced_eqn, const Trail& trail);
+    virtual void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail);
 
-    virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail);
+    /// @brief Note a decision as `update_with_new_equation()` notes a propagation.
+    /// @param decision_clause The clause the decision was drawn from, if any.
+    virtual void update_with_decision(const Equation& reduced_eqn, const Trail& trail,
+                                      std::optional<ClauseId> decision_clause);
 
     /// @brief The default holds no reduction.
     HeldReduction copy_reduced_companion(ClauseId id, WatchType type, Equation& reduced,
@@ -251,102 +110,23 @@ public:
     virtual void update_with_substitution(std::span<const ClauseId> rewritten_clause_ids,
                                           const IndexSet& dropped_col_idxs, const Trail& trail);
 
-    /// @brief Renumber every active clause, after `update_with_substitution()` told
-    /// of the last variable dropped; no watch moves.
-    /// @pre No dropped variable occurs in an active clause, and `trail` is empty.
+    /// @brief Note that the database renumbered every active clause, which moves no watch
+    /// and which the default ignores.
+    /// @pre `trail` is empty, and `update_with_substitution()` told of the last variable dropped.
     virtual void update_with_renumbering(const CompactionTransform& transform, const Trail& trail);
 
-    /// @brief Add this selector's counters to `stats`.
-    virtual void add_to_stats(RunStats& stats) const;
-
 protected:
-    /// @brief Count an active clause of @p width in or out of `num_active_clauses_by_width_`.
-    void count_width(std::size_t width, bool in) {
-        if (num_active_clauses_by_width_.size() <= width) {
-            num_active_clauses_by_width_.resize(width + 1, 0);
-        }
-        if (in) {
-            ++num_active_clauses_by_width_[width];
-        } else {
-            --num_active_clauses_by_width_[width];
-        }
-    }
-
-    /// @brief Store a clause under the next id, with no other side effects.
-    virtual void add_clause(Clause clause);
-
-    /// @brief React to a learned equation, propagated or decided alike.
-    virtual void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail);
-
-    /// @brief Note that an active clause went inactive, which the default ignores.
-    virtual void update_with_inactive_clause(ClauseId id);
-
-    /// @brief Note that `narrow_clause()` overwrote an active clause, which the
-    /// default ignores.
-    virtual void update_with_narrowed_clause(ClauseId id);
-
-    /// @brief Whether `col_idx_to_clause_ids_[col_idx]` is right to name the clause.
-    bool carries(ClauseId id, std::size_t col_idx) const {
-        return clause_active_[id] != 0 && clauses_[id].carries(col_idx);
-    }
-
-    bool spans_eq_false(ClauseId id) const {
-        return clause_active_[id] != 0 && clause_spans_eq_false_[id] != 0;
-    }
-
-    /// @brief Enter an active clause under each column it carries and @p replaced,
-    /// the clause its id held until now, does not; null for a new id.
-    void enter_carried_col_idxs(ClauseId id, const Clause* replaced);
-
-    /// @brief Drop the stale and repeated entries once they outnumber the rest.
-    void maybe_clean_carrier_entries();
-
-    /// @brief Test every entry against its clause; the number left.
-    std::size_t drop_wrong_carrier_entries();
-
-    /// @brief Clear every entry and enter each entered clause; the number of entries.
-    std::size_t enter_every_clause_again();
-
-#ifndef NDEBUG
-    /// @brief What `clause_ids_carrying()` returns, read off every active clause.
-    std::vector<ClauseId> debug_scan_clause_ids_carrying(const IndexSet& col_idxs) const;
-
-    void debug_assert_database_synchronized() const;
-    void debug_assert_clause_id(ClauseId id) const;
-#endif
-
-
-    std::vector<Clause> clauses_; ///< A clause's id is its index.
-    std::vector<std::uint8_t> clause_spans_eq_false_;
-
-    /// @brief Per variable column, the clauses that may carry it.
-    ///
-    /// `carries()` is the truth: an entry may be stale, and a clause may be entered twice.
-    /// An active clause is entered under every column it carries from the first
-    /// `clause_ids_carrying()` after it was added.
-    std::vector<std::vector<ClauseId>> col_idx_to_clause_ids_;
-    std::vector<ClauseId> clause_ids_spanning_eq_false_; ///< Entries likewise.
-    std::size_t num_carrier_entries_ = 0; ///< Over both of the above.
-    std::size_t peak_carrier_entries_ = 0;
-    std::size_t carrier_cleanup_threshold_ = 0;
-    std::vector<std::uint8_t> clause_entered_;
-    std::vector<ClauseId> unentered_clause_ids_; ///< Added since the last `clause_ids_carrying()`.
-    std::vector<std::uint8_t> clause_active_;
-    /// @brief Ascending: every active id, and at most as many inactive ones.
-    std::vector<ClauseId> listed_clause_ids_;
-    std::size_t num_inactive_listed_ = 0; ///< Inactive ids still in `listed_clause_ids_`.
-    std::vector<std::size_t> num_active_clauses_by_width_;
-    std::vector<std::uint8_t> clause_learned_;
-    std::vector<std::uint8_t> clause_used_since_deletion_;
-    std::vector<std::uint8_t> clause_vivified_;
-    std::vector<std::uint8_t> clause_subsume_passed_;
-    std::vector<double> clause_lbd_;
-    std::vector<std::size_t> clause_unused_passes_;
-    std::vector<std::uint8_t> clause_out_of_unused_passes_;
+    const ClauseDatabase& database_;
 };
 
-/// @brief Build the selector named by @p name over @p num_vars variables.
-std::unique_ptr<ClauseSelector> make_clause_selector(ClauseSelectorName name,
-                                                     std::size_t num_vars);
+/// @brief Builds a selector over the database it is given.
+using ClauseSelectorFactory =
+    std::function<std::unique_ptr<ClauseSelector>(const ClauseDatabase& database)>;
+
+/// @brief Build the selector named by @p name over @p database, whose clauses
+/// have @p num_vars variables and equations of @p repr.
+std::unique_ptr<ClauseSelector> make_clause_selector(ClauseSelectorName name, EquationRepr repr,
+                                                     std::size_t num_vars,
+                                                     const ClauseDatabase& database);
 
 } // namespace xorcle

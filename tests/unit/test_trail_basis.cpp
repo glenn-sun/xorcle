@@ -20,6 +20,13 @@ namespace xorcle {
 
 namespace {
 
+/// @brief The rows of @p basis out of trail-basis coordinates.
+RowSpace converted(const TrailBasisSpace& basis, const Trail& trail) {
+    RowSpace row_space(trail.repr(), trail.num_vars());
+    basis.add_rows_to(row_space);
+    return row_space;
+}
+
 /// @brief A reference count of how many levels a clause lets you discard,
 /// derived from the row's set columns rather than from its leading column.
 std::size_t removable_levels_reference(const TrailBasisSpace& basis, const Trail& trail) {
@@ -242,7 +249,7 @@ TEST_CASE_TEMPLATE("trail basis: bit-count bookkeeping", Tag, DenseTag, SparseTa
     const TrailBasisSpace oldest_only = make_basis(trail, {{7}});
     REQUIRE(oldest_only.rows() == 1);
     CHECK(bits_of(oldest_only.row(0)) == std::vector<std::size_t>{7});
-    CHECK(oldest_only.to_RowSpace().rows() == 1);
+    CHECK(converted(oldest_only, trail).rows() == 1);
     check_echelon_invariant(oldest_only);
 }
 
@@ -279,7 +286,7 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace maps trail step t to column m-1-t
         const std::vector<std::size_t> expected{span_rows - trail_step - 1};
         CHECK(bits_of(basis.row(0)) == expected);
 
-        CHECK(spans_equal(basis.to_RowSpace(), one_row));
+        CHECK(spans_equal(converted(basis, trail), one_row));
     }
 }
 
@@ -300,7 +307,7 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace rewrites a combination of trail r
     REQUIRE(basis.rows() == 1);
     CHECK(bits_of(basis.row(0)) == std::vector<std::size_t>{1, 6});
     check_echelon_invariant(basis);
-    CHECK(spans_equal(basis.to_RowSpace(), row_space));
+    CHECK(spans_equal(converted(basis, trail), row_space));
 }
 
 TEST_CASE_TEMPLATE("trail basis: from_RowSpace of the whole span is the full coordinate basis",
@@ -318,7 +325,7 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace of the whole span is the full coo
     for (std::size_t index = 0; index < basis.rows(); ++index) {
         CHECK(bits_of(basis.row(index)) == std::vector<std::size_t>{index});
     }
-    CHECK(spans_equal(basis.to_RowSpace(), whole_span));
+    CHECK(spans_equal(converted(basis, trail), whole_span));
 }
 
 TEST_CASE_TEMPLATE("trail basis: asserting level of a unit clause is the root", Tag,
@@ -467,7 +474,7 @@ TEST_CASE_TEMPLATE("trail basis: asserting level agrees with the reference arith
     }
 }
 
-TEST_CASE_TEMPLATE("trail basis: from_RowSpace and to_RowSpace round-trip on random input", Tag,
+TEST_CASE_TEMPLATE("trail basis: from_RowSpace and add_rows_to round-trip on random input", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     TestRandom rng(123456789u);
@@ -495,10 +502,10 @@ TEST_CASE_TEMPLATE("trail basis: from_RowSpace and to_RowSpace round-trip on ran
         const TrailBasisSpace basis = TrailBasisSpace::from_RowSpace(row_space, trail);
         check_echelon_invariant(basis);
         CHECK(basis.rows() == row_space.rows());
-        CHECK(spans_equal(basis.to_RowSpace(), row_space));
+        CHECK(spans_equal(converted(basis, trail), row_space));
 
         // And the other direction: coordinates out, coordinates back in.
-        const TrailBasisSpace again = TrailBasisSpace::from_RowSpace(basis.to_RowSpace(), trail);
+        const TrailBasisSpace again = TrailBasisSpace::from_RowSpace(converted(basis, trail), trail);
         REQUIRE(again.rows() == basis.rows());
         for (std::size_t index = 0; index < basis.rows(); ++index) {
             CHECK(bits_of(again.row(index)) == bits_of(basis.row(index)));

@@ -55,8 +55,8 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.equation_repr == EquationRepr::dense);
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
-    CHECK(options.decisions == DecisionProcedureName::csids);
-    CHECK(options.phase == DecisionPhase::rotate);
+    CHECK(options.phase == DecisionPhase::falsify);
+    CHECK(options.phase_saving == PhaseSaving::rotate);
     CHECK(options.selection == ClauseSelectorName::exact_watchlist);
     CHECK(options.restart == RestartMethod::none);
     CHECK(options.deletion == true);
@@ -78,7 +78,7 @@ TEST_CASE("options: --name=value sets each kind") {
                                               "--csids-bump=0",
                                               "--phase=satisfy",
                                               "--deletion=false",
-                                              "--subsume=false",
+                                              "--otf-subsume=false",
                                               "--restart=luby",
                                               "--restart-luby-unit=7",
                                               "--proof=out.lrup",
@@ -91,7 +91,7 @@ TEST_CASE("options: --name=value sets each kind") {
     CHECK(options.csids_bump == doctest::Approx(0.0));
     CHECK(options.phase == DecisionPhase::satisfy);
     CHECK(options.deletion == false);
-    CHECK(options.subsume == false);
+    CHECK(options.otf_subsume == false);
     CHECK(options.restart == RestartMethod::luby);
     CHECK(options.restart_luby_unit == 7);
     CHECK(options.proof == "out.lrup");
@@ -163,20 +163,13 @@ TEST_CASE("options: malformed command lines are rejected") {
     CHECK_THROWS_AS(parse_options({"a.xnf", "b.xnf"}, help), CliError);
 }
 
-TEST_CASE("options: --proof and --proof-raw go with compaction on or off") {
+TEST_CASE("options: --proof goes with compaction on or off") {
     const Options options = parse_with_input({"--proof=out.lrup"});
     CHECK(options.proof == "out.lrup");
-    CHECK(options.proof_raw.empty());
     CHECK(parse_with_input({"--proof=out.lrup", "--compact=false"}).proof == "out.lrup");
-
-    const Options raw = parse_with_input({"--proof-raw=out.raw"});
-    CHECK(raw.proof.empty());
-    CHECK(raw.proof_raw == "out.raw");
-    CHECK(parse_with_input({"--proof-raw=out.raw", "--compact=false"}).proof_raw == "out.raw");
 }
 
 TEST_CASE("options: enum labels are the first spelling naming an enumerator") {
-    CHECK(enum_option_label("decisions", static_cast<int>(DecisionProcedureName::csids)) == "csids");
     CHECK(enum_option_label("phase", static_cast<int>(DecisionPhase::falsify)) == "falsify");
     CHECK(enum_option_label("selection", static_cast<int>(ClauseSelectorName::cyclic)) == "cyclic");
     CHECK(enum_option_spellings("equation_repr") == "dense|sparse");
@@ -198,8 +191,8 @@ TEST_CASE("options: --help is generated from the table") {
                              "; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
     CHECK(contains(text, "[default: " + format_real(Options{}.csids_decay) + "; range 0..1]"));
-    CHECK(contains(text, "--decisions=csids|fixed_literals"));
-    CHECK(contains(text, "--phase=falsify|satisfy|random|saved"));
+    CHECK(contains(text, "--phase=falsify|satisfy|random"));
+    CHECK(contains(text, "--phase-saving=both|target-only|recent-only|none|rotate"));
     CHECK(contains(text, "--selection=cyclic|exact_watchlist"));
     CHECK(contains(text, "--proof=PATH"));
     CHECK(contains(text, "--stats-file=PATH"));
@@ -210,7 +203,6 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "periodically delete some learned clauses [default: true]"));
     CHECK(contains(text, "--deletion-cadence-coefficient=X"));
     CHECK(contains(text, "--deletion-cadence-offset=N"));
-    CHECK(contains(text, "--deletion-lbd-window=N"));
     CHECK(contains(text, "--deletion-eviction-rate=X"));
     CHECK(contains(text, "--deletion-wait=X"));
     CHECK(contains(text, "--deletion-key=lbd|activity"));
@@ -223,6 +215,10 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "restart schedule"));
     CHECK(contains(text, "conflicts for a luby value of 1"));
     CHECK(contains(text, "window of the fast LBD average"));
+
+    CHECK(contains(text, "--lbd-window=N"));
+    CHECK(contains(text,
+                   "window of the average of the LBDs measured at a clause's uses as a reason"));
 }
 
 TEST_CASE("options: the luby budget is a positive count") {
@@ -233,56 +229,60 @@ TEST_CASE("options: the luby budget is a positive count") {
 }
 
 
-TEST_CASE("options: the exact watchlist takes deletion and subsumption, but not sparse rows") {
+TEST_CASE("options: the exact watchlist takes deletion, subsumption and sparse rows") {
     const Options options = parse_with_input({"--selection=exact_watchlist"});
     CHECK(options.deletion);
-    CHECK(options.subsume);
-    CHECK(propagation_config(options).miss_rate == 0.0);
-    CHECK(rejection_message<CliError>({"--selection=exact_watchlist", "--equation-repr=sparse"})
-              .starts_with("--selection=exact_watchlist requires --equation-repr=dense"));
-    CHECK(rejection_message<CliError>({"--equation-repr=sparse"})
-              .starts_with("--selection=exact_watchlist requires --equation-repr=dense"));
+    CHECK(options.otf_subsume);
+    CHECK_FALSE(solver_config(options).attempt_budget.has_value());
+    CHECK(parse_with_input({"--equation-repr=sparse"}).equation_repr == EquationRepr::sparse);
     CHECK(parse_with_input({"--selection=cyclic", "--equation-repr=sparse"}).equation_repr ==
           EquationRepr::sparse);
 }
 
-TEST_CASE("options: deletion refuses an incompatible choice rather than yielding") {
+TEST_CASE("options: deletion's parameters are checked") {
     CHECK(contains(rejection_message<CliError>({"--deletion-cadence-coefficient=0"}),
                    "--deletion-cadence-coefficient must be positive"));
-    CHECK(contains(rejection_message<CliError>({"--deletion-lbd-window=0"}), "must be at least 1"));
-    CHECK_NOTHROW(parse_with_input({"--deletion-lbd-window=1"}));
     CHECK(contains(rejection_message<CliError>({"--deletion-eviction-rate=1.5"}),
                    "--deletion-eviction-rate"));
     CHECK_NOTHROW(parse_with_input({"--deletion-eviction-rate=0"}));
     CHECK_NOTHROW(parse_with_input({"--deletion-eviction-rate=1"}));
 
-    // The key defaults to activity, so the default deletion alone carries the
-    // requirement, whether or not --deletion is given.
-    CHECK(rejection_message<CliError>({"--decisions=fixed_literals"})
-              .starts_with("--deletion-key=activity requires --decisions=csids"));
-    CHECK(contains(rejection_message<CliError>({"--deletion=true", "--decisions=fixed_literals"}),
-                   "requires --decisions=csids"));
-
-    // Saying what you want is always accepted.
-    CHECK(parse_with_input({"--decisions=fixed_literals", "--deletion=false"}).deletion == false);
-    CHECK(parse_with_input({"--decisions=fixed_literals", "--deletion-key=lbd"}).deletion == true);
+    CHECK(parse_with_input({"--deletion=false"}).deletion == false);
+    CHECK(parse_with_input({"--deletion-key=lbd"}).deletion == true);
     CHECK_NOTHROW(parse_with_input({"--deletion=true", "--deletion-key=activity"}));
-
-    // A compatible choice needs nothing said.
     CHECK(parse_with_input({}).deletion == true);
     CHECK(parse_with_input({"--selection=cyclic"}).deletion == true);
 }
 
-TEST_CASE("options: each configuration struct defaults to what an empty command line gives") {
-    const Options defaults = parse_with_input({});
-    CHECK(csids_config(defaults) == CsidsConfig{});
-    CHECK(compaction_config(defaults) == CompactionConfig{});
-    CHECK(deletion_config(defaults) == DeletionConfig{});
-    CHECK(implication_graph_config(defaults) == ImplicationGraphConfig{});
-    // `--propagate-miss-rate` is read only under `--selection=cyclic`, so the
-    // default selector resolves it to 0.
-    CHECK(propagation_config(defaults) == PropagationConfig{});
-    CHECK(restart_config(defaults) == RestartConfig{});
+TEST_CASE("options: the LBD window is read whether or not deletion is on") {
+    CHECK(contains(rejection_message<CliError>({"--lbd-window=0"}), "must be at least 1"));
+    CHECK(solver_config(parse_with_input({"--lbd-window=1"})).lbd_window == 1);
+    CHECK(solver_config(parse_with_input({"--deletion=false", "--lbd-window=3"})).lbd_window == 3);
+    CHECK(solver_config(parse_with_input({})).lbd_window == 2);
+    CHECK(contains(rejection_message<CliError>({"--deletion-lbd-window=3"}),
+                   "unknown option '--deletion-lbd-window'"));
+}
+
+TEST_CASE("options: a feature is configured exactly when its group is read") {
+    const SolverConfig defaults = solver_config(parse_with_input({}));
+    CHECK(defaults.renumber);
+    CHECK_FALSE(defaults.attempt_budget.has_value());
+    CHECK(defaults.deletion.has_value());
+    CHECK(defaults.implication_graph.has_value());
+    CHECK(defaults.vivify.has_value());
+    CHECK(defaults.bve.has_value());
+    CHECK_FALSE(defaults.inproc_subsume_strengthen.has_value());
+    CHECK_FALSE(defaults.stabilize.has_value());
+
+    const SolverConfig off = solver_config(parse_with_input(
+        {"--deletion=false", "--implication-graph=false", "--vivify=false", "--bve=false",
+         "--inproc-subsume-strengthen=true", "--stabilize=true"}));
+    CHECK_FALSE(off.deletion.has_value());
+    CHECK_FALSE(off.implication_graph.has_value());
+    CHECK_FALSE(off.vivify.has_value());
+    CHECK_FALSE(off.bve.has_value());
+    CHECK(off.inproc_subsume_strengthen.has_value());
+    CHECK(off.stabilize.has_value());
 }
 
 TEST_CASE("options: the configuration projections carry the values across") {
@@ -293,21 +293,17 @@ TEST_CASE("options: the configuration projections carry the values across") {
                                               "--deletion=true",
                                               "--deletion-cadence-coefficient=0.75",
                                               "--deletion-cadence-offset=250",
-                                              "--deletion-lbd-window=4",
                                               "--deletion-eviction-rate=0.25",
                                               "--deletion-wait=7.5",
                                               "--deletion-key=activity"});
     const DeletionConfig deletion = deletion_config(options);
-    CHECK(deletion.enabled == true);
     CHECK(deletion.cadence_coefficient == doctest::Approx(0.75));
     CHECK(deletion.cadence_offset == 250);
-    CHECK(deletion.lbd_window == 4);
     CHECK(deletion.eviction_rate == doctest::Approx(0.25));
     CHECK(deletion.wait == doctest::Approx(7.5));
     CHECK(deletion.key == DeletionKey::activity);
 
-    const CompactionConfig compaction = compaction_config(options);
-    CHECK(compaction.enabled == false);
+    CHECK(solver_config(options).renumber == false);
 
     const RestartConfig restart = restart_config(options);
     CHECK(restart.method == RestartMethod::lbd);
@@ -318,33 +314,39 @@ TEST_CASE("options: the configuration projections carry the values across") {
     CHECK(luby.method == RestartMethod::luby);
     CHECK(luby.luby_unit_conflicts == 50);
 
-    CHECK(compaction_config(parse_with_input({})).enabled == true);
-    CHECK(compaction_config(parse_with_input({"--compact=false", "--implication-graph=false"}))
-              .enabled == false);
+    CHECK(solver_config(parse_with_input({})).renumber == true);
 }
 
-TEST_CASE("options: --stabilize takes its own restarts and needs CSIDS") {
+TEST_CASE("options: --stabilize's focused mode takes its own restarts and phase saving") {
     const auto refusal = [](std::vector<std::string> arguments) {
         return rejection_message<CliError>(std::move(arguments));
     };
-    CHECK(stabilize_config(parse_with_input({})) == StabilizeConfig{});
     CHECK(refusal({"--stabilize-interval=50"})
               .starts_with("--stabilize-interval requires --stabilize=true"));
     CHECK(refusal({"--focused-decay=0.6"}).starts_with("--focused-decay requires --stabilize=true"));
     CHECK(refusal({"--focused-restart-lbd-slow=1000"})
               .starts_with("--focused-restart-lbd-slow requires --stabilize=true"));
-    CHECK(refusal({"--stabilize=true", "--restart=lbd"})
-              .starts_with("--stabilize requires --restart=none"));
-    CHECK(refusal({"--stabilize=true", "--decisions=fixed_literals", "--deletion=false"})
-              .starts_with("--stabilize requires --decisions=csids"));
+    CHECK(refusal({"--focused-phase-saving=both"})
+              .starts_with("--focused-phase-saving requires --stabilize=true"));
+    CHECK(restart_config(parse_with_input({"--stabilize=true", "--restart=lbd"})).method ==
+          RestartMethod::lbd);
+    CHECK(refusal({"--phase-saving=none", "--phase-saving-target-reset=10"})
+              .starts_with("--phase-saving-target-reset requires"));
+    CHECK_NOTHROW(parse_with_input({"--phase-saving=none", "--stabilize=true",
+                                    "--focused-phase-saving=target-only",
+                                    "--phase-saving-target-reset=10"}));
+    CHECK_NOTHROW(parse_with_input({"--phase-saving=none", "--stabilize=true",
+                                    "--focused-phase-saving=rotate", "--phase-rotate-interval=10"}));
+    CHECK_FALSE(csids_config(parse_with_input({})).phase_saving.focused_source.has_value());
+    CHECK(csids_config(parse_with_input({"--stabilize=true"})).phase_saving.focused_source ==
+          PhaseSaving::recent_only);
 
     const Options options = parse_with_input(
         {"--stabilize=true", "--stabilize-interval=50", "--focused-decay=0.75",
          "--focused-restart-lbd-fast=20", "--focused-restart-lbd-slow=1000",
          "--focused-restart-lbd-min-ratio=1.2", "--focused-restart-lbd-min-conflicts=1000",
-         "--focused-restart-lbd-trail-ratio=1.4", "--phase=rotate"});
+         "--focused-restart-lbd-trail-ratio=1.4", "--phase-saving=rotate"});
     const StabilizeConfig stabilize = stabilize_config(options);
-    CHECK(stabilize.enabled);
     CHECK(stabilize.interval_conflicts == 50);
     CHECK(stabilize.focused_restarts.method == RestartMethod::lbd);
     CHECK(stabilize.focused_restarts.lbd_fast_window == 20);
@@ -386,7 +388,8 @@ TEST_CASE("options: the recorded configuration is the whole table") {
     CHECK(value_of("implication_graph_cadence") ==
           std::to_string(Options{}.implication_graph_cadence));
     CHECK(value_of("csids_decay") == format_real(Options{}.csids_decay));
-    CHECK(value_of("decisions") == "csids");
+    CHECK(value_of("phase") == "falsify");
+    CHECK(value_of("phase_saving") == "rotate");
     // An unset path records as empty, not as the help text's "unset".
     CHECK(value_of("proof") == "");
 }
@@ -422,58 +425,35 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     };
     CHECK(refusal({"--deletion=false", "--deletion-wait=8"}) ==
           "--deletion-wait requires --deletion=true; nothing would read it here");
-    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--csids-decay=0.5"})
-              .starts_with("--csids-decay requires --decisions=csids"));
     CHECK(refusal({"--restart-lbd-min-ratio=1.2"}).starts_with("--restart-lbd-min-ratio requires"));
     CHECK(refusal({"--restart-luby-unit=50"}).starts_with("--restart-luby-unit requires"));
     CHECK(refusal({"--deletion=false", "--deletion-cadence-coefficient=0.5"})
               .starts_with("--deletion-cadence-coefficient requires"));
     CHECK(refusal({"--deletion=false", "--deletion-cadence-offset=0"})
               .starts_with("--deletion-cadence-offset requires"));
-    // Only CSIDS scores clauses, so only CSIDS can bump the pivots.
-    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false",
-                   "--bump-responsible-clauses=true"})
-              .starts_with("--bump-responsible-clauses requires --decisions=csids"));
     CHECK(refusal({"--stats-file=s.csv", "--report=all"}).starts_with("--report requires"));
     CHECK(refusal({"--report-cadence=0", "--report=all"}).starts_with("--report requires"));
 
-    // --phase reaches only CSIDS; --seed is read either way.
-    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--phase=satisfy"})
-              .starts_with("--phase requires --decisions=csids"));
-    CHECK_NOTHROW(
-        parse_with_input({"--decisions=fixed_literals", "--deletion=false", "--seed=7"}));
-    CHECK(refusal({"--decisions=fixed_literals", "--deletion=false", "--csids-span=plus_minus"})
-              .starts_with("--csids-span requires --decisions=csids"));
     CHECK(parse_with_input({"--csids-span=plus_minus", "--phase=satisfy"}).phase ==
           DecisionPhase::satisfy);
     CHECK(parse_with_input({"--csids-span=plus_minus"}).csids_span == CsidsSpan::plus_minus);
-    CHECK(refusal({"--phase=falsify", "--phase-saving-recent=2"})
-              .starts_with("--phase-saving-recent requires"));
-    CHECK(refusal({"--phase=saved", "--phase-saving-target=false",
-                   "--phase-saving-target-reset=10"})
-              .starts_with("--phase-saving-target-reset requires"));
-    CHECK_NOTHROW(parse_with_input({"--phase=saved", "--phase-saving-recent=2"}));
-    CHECK(refusal({"--phase=saved", "--phase-saving-target=false",
-                   "--phase-saving-target-on-ties=true"})
-              .starts_with("--phase-saving-target-on-ties requires"));
-    CHECK(parse_with_input({"--csids-span=plus_minus", "--phase=saved"}).phase ==
-          DecisionPhase::saved);
-    CHECK(parse_with_input({"--phase=saved"}).phase == DecisionPhase::saved);
-    CHECK(refusal({"--phase=saved", "--phase-rotate-interval=10"})
-              .starts_with("--phase-rotate-interval requires --phase=rotate"));
-    CHECK_NOTHROW(parse_with_input({"--phase=rotate", "--phase-rotate-interval=10",
-                                    "--phase-saving-recent=2", "--csids-span=plus_minus"}));
-    CHECK_NOTHROW(
-        parse_with_input({"--restart=lbd", "--decisions=fixed_literals", "--deletion=false"}));
+    CHECK(refusal({"--phase-saving=recent-only", "--phase-saving-target-reset=10"})
+              .starts_with("--phase-saving-target-reset requires --phase-saving=both, "
+                           "target-only or rotate"));
+    CHECK_NOTHROW(parse_with_input({"--phase-saving=target-only", "--phase-saving-target-reset=10"}));
+    CHECK(refusal({"--phase-saving=both", "--phase-rotate-interval=10"})
+              .starts_with("--phase-rotate-interval requires --phase-saving=rotate"));
+    CHECK_NOTHROW(parse_with_input({"--phase-rotate-interval=10", "--csids-span=plus_minus"}));
+    const Options coin_flip = parse_with_input({"--phase-saving=both", "--phase=random"});
+    CHECK(coin_flip.phase_saving == PhaseSaving::both);
+    CHECK(coin_flip.phase == DecisionPhase::random);
+    CHECK(refusal({"--phase=saved"}).starts_with("--phase"));
+    CHECK(refusal({"--phase=rotate"}).starts_with("--phase"));
 
-    // So is the implication graph, whose units only stop steering the search
-    // once a compaction rewrites the database against them.
-    CHECK(refusal({"--implication-graph=true", "--compact=false"})
-              .starts_with("--implication-graph requires --compact=true"));
-    CHECK(refusal({"--implication-graph=false", "--implication-graph-clause-cadence=8"})
-              .starts_with("--implication-graph-clause-cadence requires --implication-graph=true"));
-    CHECK(parse_with_input({"--implication-graph-clause-cadence=8"})
-              .implication_graph_clause_cadence == 8);
+    CHECK(refusal({"--implication-graph=false", "--implication-graph-min-new-clauses=8"})
+              .starts_with("--implication-graph-min-new-clauses requires --implication-graph=true"));
+    CHECK(parse_with_input({"--implication-graph-min-new-clauses=8"})
+              .implication_graph_min_new_clauses == 8);
     CHECK(refusal({"--implication-graph=false", "--implication-graph-max-pairs=8"})
               .starts_with("--implication-graph-max-pairs requires --implication-graph=true"));
     CHECK(refusal({"--implication-graph=false", "--implication-graph-max-descendants=8"})
@@ -482,9 +462,7 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(parse_with_input({"--implication-graph-max-pairs=8",
                             "--implication-graph-max-descendants=4"})
               .implication_graph_max_descendants == 4);
-    CHECK_NOTHROW(parse_with_input({"--implication-graph=false", "--compact=false"}));
     CHECK_NOTHROW(parse_with_input({"--implication-graph=true", "--proof=p.lrup"}));
-    CHECK_NOTHROW(parse_with_input({"--implication-graph=true", "--proof-raw=p.raw"}));
 
     // Each of these is given where something does read it.
     CHECK(parse_with_input({"--deletion-wait=8"}).deletion_wait == doctest::Approx(8.0));
@@ -508,22 +486,29 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
 
 TEST_CASE("options: only the cyclic selector reads the miss rate") {
     const auto cyclic = std::vector<std::string>{"--selection=cyclic"};
-    CHECK(propagation_config(parse_with_input(cyclic)).miss_rate == doctest::Approx(0.05));
-    CHECK(propagation_config(parse_with_input({})).miss_rate == 0.0);
+    CHECK(solver_config(parse_with_input(cyclic)).attempt_budget->miss_rate ==
+          doctest::Approx(0.05));
+    CHECK_FALSE(solver_config(parse_with_input({})).attempt_budget.has_value());
 
     std::vector<std::string> complete = cyclic;
     complete.emplace_back("--propagate-miss-rate=0");
-    CHECK(propagation_config(parse_with_input(std::move(complete))).miss_rate == 0.0);
+    CHECK_FALSE(solver_config(parse_with_input(std::move(complete))).attempt_budget.has_value());
 }
 
-TEST_CASE("options: the default implication graph follows compaction") {
-    CHECK(parse_with_input({}).implication_graph == true);
-    CHECK(parse_with_input({"--compact=false"}).implication_graph == false);
-    CHECK(implication_graph_config(parse_with_input({"--compact=false"})).enabled == false);
+TEST_CASE("options: vivification runs under the cyclic budget") {
+    const SolverConfig config =
+        solver_config(parse_with_input({"--selection=cyclic", "--propagate-miss-rate=0.5"}));
+    CHECK(config.attempt_budget.has_value());
+    CHECK(config.vivify.has_value());
+}
 
-    CHECK(rejection_message<CliError>({"--compact=false", "--implication-graph=true"})
-              .starts_with("--implication-graph requires --compact=true"));
-
+TEST_CASE("options: BVE and the implication graph go with renumbering on or off") {
+    for (const std::string compact : {"--compact=false", "--compact=true"}) {
+        CAPTURE(compact);
+        CHECK(parse_with_input({compact}).implication_graph == true);
+        CHECK(parse_with_input({compact}).bve == true);
+        CHECK_NOTHROW(parse_with_input({compact, "--implication-graph=true", "--bve=true"}));
+    }
     CHECK(parse_with_input({"--implication-graph=false"}).implication_graph == false);
 }
 

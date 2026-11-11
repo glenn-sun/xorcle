@@ -73,6 +73,10 @@ public:
     /// @pre `!is_null()`.
     void set_eq_false() noexcept;
 
+    /// @brief Add `0 = 1`: the linear negation.
+    /// @pre `!is_null()`.
+    void negate();
+
     /// @brief Get index of the first set bit, or `std::nullopt` if none are set.
     /// @pre `!is_null()`, here and in `classify()`, `is_eq_true()` and `is_eq_false()`.
     std::optional<std::size_t> leading_bit() const noexcept {

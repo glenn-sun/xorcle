@@ -4,18 +4,14 @@
 #include <array>
 #include <bit>
 #include <cassert>
-#include <chrono>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <numeric>
 #include <optional>
 #include <span>
-#include <string>
 #include <type_traits>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -23,6 +19,7 @@
 #include "algebra/equation_template.h"
 #include "algebra/gf2_vector.h"
 #include "algebra/gf2_vector_of_repr.h"
+#include "algebra/pivot_table.h"
 #include "algebra/reduce_result.h"
 #include "util/index_set.h"
 #include "util/random.h"
@@ -33,25 +30,15 @@ namespace {
 
 using Var = std::uint32_t;
 constexpr Var no_var = static_cast<Var>(-1);
-constexpr std::uint32_t no_basis_idx = static_cast<std::uint32_t>(-1);
 
 /// @brief Index of a direction: an equation without its constant.
 using DirectionId = std::uint32_t;
 
 /// @brief Independent equations a gate's truth table may range over.
-constexpr std::size_t max_gate_rank = 15;
-/// @brief Steps reading or writing an equation costs before its length is
-/// counted: an equation of no length takes as long as 16 units of a long one.
-constexpr std::size_t steps_per_equation = 16;
-/// @brief Truth-table words read or written in one step.
-constexpr std::size_t table_words_per_step = 4;
-
-/// @brief What reading or writing a vector once costs, in steps: the words its bits take.
-template <GF2Vector V>
-std::size_t length(const V& vector) {
-    return (vector.num_bits() + 63) / 64;
-}
-
+///
+/// The table has 2^rank points, and its minimal cover costs the square of the
+/// clauses added times the table's words: above rank 10 that outweighs the try's resolution.
+constexpr std::size_t max_gate_rank = 10;
 template <GF2Vector V>
 std::size_t constant_bit(const V& row) {
     return row.num_bits() - 1;
@@ -65,12 +52,7 @@ bool constant_of(const V& row) {
 /// @brief Add `0 = 1` to @p row.
 template <GF2Vector V>
 void negate(V& row) {
-    const std::size_t bit = constant_bit(row);
-    if (row.get_bit(bit)) {
-        row.reset_bit(bit);
-    } else {
-        row.set_bit(bit);
-    }
+    row.flip_bit(constant_bit(row));
 }
 
 template <GF2Vector V>
@@ -114,24 +96,16 @@ void for_each_var(const V& row, F&& f) {
     });
 }
 
+/// @brief A row's part of a hash of rows: @p direction_hash, its `hash_except_last_bit()`,
+/// with its constant.
 template <GF2Vector V>
-void plus_assign(V& row, const V& other, std::size_t& steps) {
-    steps += length(row) + steps_per_equation;
-    row.plus_assign(other);
+std::size_t row_hash(const V& row, const std::size_t direction_hash) {
+    return direction_hash ^ (constant_of(row) ? 1U : 0U);
 }
 
-template <GF2Vector V>
-void append_key(std::string& key, const V& row) {
-    key.push_back(constant_of(row) ? '\1' : '\0');
-    row.append_key_except_last_bit(key);
-    // Ends the row, so that keys of several rows split one way only.
-    key.append(sizeof(std::uint32_t), '\xff');
-}
-
-/// @brief A key of the equation's direction: of its variables, without its constant.
-template <GF2Vector V>
-void append_direction_key(std::string& key, const V& row) {
-    row.append_key_except_last_bit(key);
+/// @brief A hash of rows in order, given the hash of the rows before and the next row's part.
+constexpr std::size_t hash_with_row(const std::size_t hash, const std::size_t row_hash) {
+    return (std::rotl(hash, 31) ^ row_hash) * 0x9e3779b97f4a7c15U;
 }
 
 template <GF2Vector V>
@@ -142,24 +116,13 @@ VarListEquation var_list_of(const V& row) {
     return out;
 }
 
-/// @brief The steps of reading or writing @p rows once.
 template <GF2Vector V>
-std::size_t steps_of(const std::vector<V>& rows) {
-    std::size_t steps = rows.size() * steps_per_equation;
+std::size_t hash_of(const std::vector<V>& rows) {
+    std::size_t hash = 0;
     for (const V& row : rows) {
-        steps += length(row);
+        hash = hash_with_row(hash, row_hash(row, row.hash_except_last_bit()));
     }
-    return steps;
-}
-
-template <GF2Vector V>
-std::string key_of(const std::vector<V>& rows, std::size_t& steps) {
-    steps += steps_of(rows);
-    std::string key;
-    for (const V& row : rows) {
-        append_key(key, row);
-    }
-    return key;
+    return hash;
 }
 
 template <GF2Vector V>
@@ -171,48 +134,6 @@ std::size_t equation_bits(const std::vector<V>& rows) {
     return bits;
 }
 
-/// @brief The leading variables of a basis, each with the index of its row.
-struct Leads {
-    explicit Leads(std::size_t num_vars) : basis_idx_of(num_vars, no_basis_idx), is_lead(num_vars + 1) {}
-
-    void set(Var var, std::size_t basis_idx) {
-        basis_idx_of[var] = static_cast<std::uint32_t>(basis_idx);
-        is_lead.set(var);
-    }
-
-    void reset(Var var) {
-        basis_idx_of[var] = no_basis_idx;
-        is_lead.reset(var);
-    }
-
-    /// @brief The lowest leading variable @p row mentions that is at least
-    /// @p from; `no_var` if none.
-    template <GF2Vector V>
-    Var lowest_in(const V& row, Var from) const {
-        const std::optional<std::size_t> bit = row.first_bit_in(is_lead, from);
-        return bit.has_value() ? static_cast<Var>(*bit) : no_var;
-    }
-
-    std::vector<std::uint32_t> basis_idx_of; ///< Per variable; `no_basis_idx` if it leads no row.
-    IndexSet is_lead; ///< Over the bits of an equation.
-};
-
-/// @brief A uniform draw from `[0, bound)`, by rejection, so that the standard
-/// library does not decide it; nothing is drawn when `bound` is 1.
-/// @pre `bound > 0`.
-std::size_t uniform_below(Rng& rng, std::size_t bound) {
-    assert(bound > 0 && "a draw needs something to draw from");
-    if (bound == 1) {
-        return 0;
-    }
-    const std::uint64_t mask = std::bit_ceil(static_cast<std::uint64_t>(bound)) - 1;
-    while (true) {
-        const std::uint64_t draw = rng() & mask;
-        if (draw < bound) {
-            return static_cast<std::size_t>(draw);
-        }
-    }
-}
 
 /// @brief Workspace of `canonical_in_place()`.
 struct CanonicalWork {
@@ -226,19 +147,14 @@ struct CanonicalWork {
 /// variable, and name its rows in `work.by_lead`; false if the span holds `0 = 1`.
 /// @pre @p leads is empty, and is left empty.
 template <GF2Vector V>
-bool canonical_in_place(std::span<V> rows, Leads& leads, CanonicalWork& work, std::size_t& steps) {
+bool canonical_in_place(std::span<V> rows, PivotTable& leads, CanonicalWork& work) {
     work.basis.clear();
     work.lead_of.clear();
     bool holds_eq_false = false;
     // A row of the basis mentions no variable leading an earlier row.
     for (std::size_t i = 0; i < rows.size(); ++i) {
         V& row = rows[i];
-        steps += length(row) + steps_per_equation;
-        for (Var lead = leads.lowest_in(row, 0); lead != no_var;
-             lead = leads.lowest_in(row, lead + 1)) {
-            const std::uint32_t row_idx = work.basis[leads.basis_idx_of[lead]];
-            plus_assign(row, rows[row_idx], steps);
-        }
+        leads.reduce(row, 0, [&](const std::size_t basis_idx) { row.plus_assign(rows[work.basis[basis_idx]]); });
         const ReduceResult reduced = classify(row);
         if (reduced.kind == ReduceResult::Kind::eq_true) {
             continue;
@@ -261,12 +177,8 @@ bool canonical_in_place(std::span<V> rows, Leads& leads, CanonicalWork& work, st
         // From the highest leading variable down, so that the rows added are reduced already.
         for (auto i = by_lead.rbegin(); i != by_lead.rend(); ++i) {
             V& row = rows[work.basis[*i]];
-            steps += length(row) + steps_per_equation;
-            for (Var lead = leads.lowest_in(row, work.lead_of[*i] + 1); lead != no_var;
-                 lead = leads.lowest_in(row, lead + 1)) {
-                const std::uint32_t row_idx = work.basis[leads.basis_idx_of[lead]];
-                plus_assign(row, rows[row_idx], steps);
-            }
+            leads.reduce(row, work.lead_of[*i] + 1,
+                         [&](const std::size_t basis_idx) { row.plus_assign(rows[work.basis[basis_idx]]); });
         }
     }
     for (const Var lead : work.lead_of) {
@@ -285,9 +197,9 @@ bool canonical_in_place(std::span<V> rows, Leads& leads, CanonicalWork& work, st
 /// its lowest variable, in rising order of those; nothing if the span holds `0 = 1`.
 /// @pre @p leads is empty, and is left empty.
 template <GF2Vector V>
-std::optional<std::vector<V>> canonical(std::vector<V> spanning, Leads& leads, std::size_t& steps) {
+std::optional<std::vector<V>> canonical(std::vector<V> spanning, PivotTable& leads) {
     CanonicalWork work;
-    if (!canonical_in_place(std::span<V>(spanning), leads, work, steps)) {
+    if (!canonical_in_place(std::span<V>(spanning), leads, work)) {
         return std::nullopt;
     }
     std::vector<V> in_order;
@@ -318,7 +230,7 @@ public:
     /// @brief Add the clause with linear negation @p negation, unless its
     /// equations take the basis past `max_gate_rank`; `covered` once the
     /// clauses added are jointly unsatisfiable.
-    Outcome add(std::span<const V> negation, std::size_t& steps) {
+    Outcome add(std::span<const V> negation) {
         const std::size_t rank_before = rank_;
         if (coordinates_of_added_.size() == num_added_) {
             coordinates_of_added_.emplace_back();
@@ -328,7 +240,6 @@ public:
         for (const V& row : negation) {
             rest_.assign_from(row);
             rest_.reset_bit(constant_bit(rest_));
-            steps += length(rest_) + steps_per_equation;
             std::uint32_t in_basis = 0;
             for (Var leading_var = lowest_var_from(rest_, 0); leading_var != no_var;
                  leading_var = lowest_var_from(rest_, leading_var + 1)) {
@@ -347,9 +258,8 @@ public:
                     }
                     basis_[rank_].assign_from(rest_);
                     ++rank_;
-                    steps += length(rest_) + steps_per_equation;
                 }
-                plus_assign(rest_, basis_[basis_idx], steps);
+                rest_.plus_assign(basis_[basis_idx]);
                 in_basis ^= std::uint32_t{1} << basis_idx;
             }
             coordinates.emplace_back(in_basis, constant_of(row));
@@ -361,7 +271,6 @@ public:
         while (forbidden_.size() < num_words) {
             forbidden_.insert(forbidden_.end(), forbidden_.begin(), forbidden_.end());
         }
-        steps += num_words * (coordinates.size() + 1) / table_words_per_step + 1;
         split_of(coordinates, split_);
         bool covered = true;
         for (std::size_t word_idx = 0; word_idx < num_words; ++word_idx) {
@@ -375,7 +284,7 @@ public:
     /// @brief The members left once each one the others cover without is taken
     /// out, tried in the order added.
     /// @pre The clauses added are jointly unsatisfiable.
-    std::vector<std::uint8_t> minimal_cover(std::size_t& steps) {
+    std::vector<std::uint8_t> minimal_cover() {
         const std::size_t num_added = num_added_;
         const std::size_t num_words = forbidden_.size();
         std::vector<std::uint64_t> forbidden_by(num_added * num_words);
@@ -384,7 +293,6 @@ public:
             for (std::size_t word_idx = 0; word_idx < num_words; ++word_idx) {
                 forbidden_by[added * num_words + word_idx] = forbidden_word(split_, word_idx);
             }
-            steps += num_words * (coordinates_of_added_[added].size() + 1) / table_words_per_step + 1;
         }
         std::vector<std::uint8_t> is_member(num_added, 1);
         std::size_t num_members = num_added;
@@ -399,7 +307,6 @@ public:
                 }
                 others_cover = forbidden == ~std::uint64_t{0};
             }
-            steps += num_words * num_added / table_words_per_step + 1;
             if (others_cover) {
                 is_member[added] = 0;
                 --num_members;
@@ -473,45 +380,6 @@ struct SplitClause {
     std::span<const V> rests() const { return {rest.data(), num_rest}; }
 };
 
-/// @brief Bits over the unknowns of one flip-set search.
-using UnknownBits = std::vector<std::uint64_t>;
-
-bool any(const UnknownBits& bits) {
-    return std::ranges::any_of(bits, [](std::uint64_t word) { return word != 0; });
-}
-
-bool test(const UnknownBits& bits, std::size_t idx) {
-    return ((bits[idx >> 6] >> (idx & 63)) & 1U) != 0;
-}
-
-void flip(UnknownBits& bits, std::size_t idx) { bits[idx >> 6] ^= std::uint64_t{1} << (idx & 63); }
-
-/// @pre `any(bits)`.
-std::size_t lowest(const UnknownBits& bits) {
-    for (std::size_t word_idx = 0; word_idx < bits.size(); ++word_idx) {
-        if (bits[word_idx] != 0) {
-            return (word_idx << 6) + static_cast<std::size_t>(std::countr_zero(bits[word_idx]));
-        }
-    }
-    assert(false && "no bit is set");
-    return 0;
-}
-
-void plus_assign(UnknownBits& bits, const UnknownBits& other) {
-    for (std::size_t word_idx = 0; word_idx < bits.size(); ++word_idx) {
-        bits[word_idx] ^= other[word_idx];
-    }
-}
-
-/// @brief Whether @p a and @p b share an odd number of bits.
-bool odd_overlap(const UnknownBits& a, const UnknownBits& b) {
-    std::uint64_t parity = 0;
-    for (std::size_t word_idx = 0; word_idx < a.size(); ++word_idx) {
-        parity ^= a[word_idx] & b[word_idx];
-    }
-    return (std::popcount(parity) & 1) != 0;
-}
-
 bool odd(std::uint32_t mask) { return (std::popcount(mask) & 1) != 0; }
 
 void plus_or(std::vector<std::uint64_t>& bits, const std::vector<std::uint64_t>& other) {
@@ -520,9 +388,9 @@ void plus_or(std::vector<std::uint64_t>& bits, const std::vector<std::uint64_t>&
     }
 }
 
-/// @brief The clauses of a formula in canonical form, and of a reading its kept rows.
+/// @brief The clauses of a formula in canonical form, and of a pass its kept rows.
 ///
-/// A sum of a reading's kept rows is a vector over the kept rows, of `num_vars` bits
+/// A sum of a pass's kept rows is a vector over the kept rows, of `num_vars` bits
 /// as the kept rows are independent.
 template <GF2Vector V>
 class Formula {
@@ -531,9 +399,9 @@ public:
 
     struct StoredClause {
         Rows rows; ///< In rising order of their lowest variables.
+        std::size_t hash = 0; ///< Of `rows`, by `hash_of()`.
         std::vector<DirectionId> row_directions;
         ClauseId input_id = 0;
-        std::vector<ClauseId> duplicate_ids; ///< Input clauses equal to this one.
         std::array<std::uint32_t, 2> parent_clause_idxs{}; ///< Of a resolvent.
         /// @brief Once removed, the elimination that removed it and its place
         /// among that elimination's removed clauses.
@@ -546,9 +414,9 @@ public:
         : num_vars_(num_vars),
           config_(config),
           rng_(rng),
-          leads_(num_vars),
+          leads_(num_vars + 1),
           gate_table_(num_vars + 1),
-          echelon_leads_(num_vars),
+          echelon_leads_(num_vars + 1),
           reduced_(num_vars + 1),
           held_pivots_(num_vars),
           beyond_held_(num_vars) {}
@@ -556,50 +424,43 @@ public:
     const std::vector<StoredClause>& clauses() const noexcept { return clauses_; }
     const std::vector<Elimination>& eliminations() const noexcept { return eliminations_; }
     bool found_empty_clause() const noexcept { return found_empty_clause_; }
-    std::size_t steps() const noexcept { return steps_; }
-    BveCounters& counters() noexcept { return counters_; }
 
     /// @brief The canonical form of the clause with linear negation spanned by
     /// @p spanning; nothing if the span holds `0 = 1`.
     std::optional<Rows> canonical_of(Rows spanning) {
-        return canonical(std::move(spanning), leads_, steps_);
+        return canonical(std::move(spanning), leads_);
     }
 
-    /// @brief Add an input clause, or record @p id as the duplicate of an equal one already there.
-    /// @pre `rows` is canonical.
+    /// @pre `rows` is canonical, and no clause added has its span.
     void add_input_clause(Rows rows, ClauseId id) {
-        const auto found = seen_.find(key_of(rows, steps_));
-        if (found != seen_.end()) {
-            clauses_[found->second].duplicate_ids.push_back(id);
-            return;
-        }
+        assert(!is_present(rows) && "two input clauses have one span");
         const std::uint32_t clause_idx = add(std::move(rows), {});
         clauses_[clause_idx].input_id = id;
     }
 
-    /// @brief Read the clauses in uniformly random orders, eliminating in each
-    /// reading's tail groups and then each clause some flip set touches alone,
-    /// until a reading removes fewer than `success_rate` of the clauses present
-    /// at its start, or none.
-    void run_projection() {
-        std::size_t num_present = num_present_clauses();
-        while (!found_empty_clause_) {
-            if (read_and_eliminate()) {
-                ++counters_.num_readings_eliminating;
-            }
-            const std::size_t num_present_before = num_present;
-            num_present = num_present_clauses();
-            if (num_present >= num_present_before ||
-                static_cast<double>(num_present_before - num_present) <
-                    config_.success_rate * static_cast<double>(num_present_before)) {
-                break;
+    /// @brief One pass: span the clauses in a uniformly random order, split
+    /// the span by the walk back from the order's end and eliminate in each group.
+    void run_pass() {
+        ++pass_id_;
+        order_.clear();
+        for (std::uint32_t clause_idx = 0; clause_idx < clauses_.size(); ++clause_idx) {
+            if (clauses_[clause_idx].present) {
+                order_.push_back(clause_idx);
             }
         }
-    }
+        if (order_.empty()) {
+            return;
+        }
+        shuffle_uniformly(order_, rng_);
+        span_in_order();
+        in_pass_ = true;
+        has_pass_flip_sets_ = false;
 
-    std::size_t num_present_clauses() const {
-        return static_cast<std::size_t>(
-            std::ranges::count_if(clauses_, [](const StoredClause& clause) { return clause.present; }));
+        walk_back();
+        eliminate_in_groups();
+
+        in_pass_ = false;
+        clear_echelon();
     }
 
     /// @brief The variables some present clause mentions, over `num_vars + 1` columns.
@@ -619,6 +480,7 @@ public:
 private:
     struct Direction {
         std::optional<V> vars; ///< With no constant; nothing while the id is free.
+        std::size_t hash = 0; ///< Of `vars`, by `hash_except_last_bit()`.
         std::uint32_t num_rows = 0; ///< The clause rows with this direction.
     };
 
@@ -627,22 +489,23 @@ private:
     /// @return The clause's index.
     std::uint32_t add(Rows rows, std::array<std::uint32_t, 2> parent_clause_idxs) {
         const std::uint32_t clause_idx = static_cast<std::uint32_t>(clauses_.size());
-        seen_.emplace(key_of(rows, steps_), clause_idx);
+        assert(!is_present(rows) && "a clause added has the span of a present one");
         StoredClause clause;
         clause.rows = std::move(rows);
         clause.parent_clause_idxs = parent_clause_idxs;
         const std::size_t width = clause.rows.size();
         clause.row_directions.reserve(width);
         for (std::size_t row_idx = 0; row_idx < width; ++row_idx) {
-            const DirectionId direction = intern(clause.rows[row_idx]);
+            const V& row = clause.rows[row_idx];
+            const std::size_t direction_hash = row.hash_except_last_bit();
+            clause.hash = hash_with_row(clause.hash, row_hash(row, direction_hash));
+            const DirectionId direction = intern(row, direction_hash);
             clause.row_directions.push_back(direction);
             hold_row(direction);
         }
-        if (clause.rows.size() == 1) {
-            unit_clause_idxs_.push_back(clause_idx);
-        }
+        present_clause_idxs_by_hash_.emplace(clause.hash, clause_idx);
         clauses_.push_back(std::move(clause));
-        if (is_reading_) {
+        if (in_pass_) {
             register_users(clause_idx);
         }
         return clause_idx;
@@ -652,7 +515,7 @@ private:
         StoredClause& clause = clauses_[clause_idx];
         assert(clause.present && "the clause was removed already");
         clause.present = false;
-        seen_.erase(key_of(clause.rows, steps_));
+        erase_entry(present_clause_idxs_by_hash_, clause.hash, clause_idx);
         for (const DirectionId direction : clause.row_directions) {
             assert(directions_[direction].num_rows != 0 && "a row was released more often than held");
             --directions_[direction].num_rows;
@@ -664,15 +527,55 @@ private:
         return std::move(clause.rows);
     }
 
+    /// @brief Whether a present clause has the rows `row_at(0)`, ..., `row_at(num_rows - 1)`,
+    /// in that order, whose hash by `hash_of()` is @p hash.
+    template <class RowAt>
+    bool is_present(const std::size_t hash, const std::size_t num_rows, RowAt row_at) const {
+        const auto [begin, end] = present_clause_idxs_by_hash_.equal_range(hash);
+        return std::any_of(begin, end, [&](const auto& entry) {
+            return rows_equal(clauses_[entry.second].rows, num_rows, row_at);
+        });
+    }
+
+    bool is_present(const Rows& rows) const {
+        return is_present(hash_of(rows), rows.size(),
+                          [&rows](const std::size_t row_idx) -> const V& { return rows[row_idx]; });
+    }
+
+    template <class RowAt>
+    static bool rows_equal(const Rows& rows, const std::size_t num_rows, RowAt row_at) {
+        if (rows.size() != num_rows) {
+            return false;
+        }
+        for (std::size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+            if (!rows[row_idx].equals(row_at(row_idx))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// @brief Erase the entry @p hash to @p idx, which @p table holds.
+    template <class Table>
+    static void erase_entry(Table& table, const std::size_t hash,
+                            const Table::mapped_type idx) {
+        const auto [begin, end] = table.equal_range(hash);
+        const auto found =
+            std::find_if(begin, end, [idx](const auto& entry) { return entry.second == idx; });
+        assert(found != end && "the entry is not in the table");
+        table.erase(found);
+    }
+
     // --- The directions ------------------------------------------------------------
 
-    /// @brief The id of the direction of @p row, new if no clause has it yet.
-    DirectionId intern(const V& row) {
-        steps_ += length(row) + steps_per_equation;
-        direction_key_.clear();
-        append_direction_key(direction_key_, row);
-        const auto found = direction_of_key_.find(direction_key_);
-        if (found != direction_of_key_.end()) {
+    /// @brief The id of the direction of @p row, whose `hash_except_last_bit()` is @p hash,
+    /// new if no clause has it yet.
+    DirectionId intern(const V& row, const std::size_t hash) {
+        const auto [begin, end] = direction_ids_by_hash_.equal_range(hash);
+        const auto found = std::find_if(begin, end, [&](const auto& entry) {
+            return directions_[entry.second].vars->equals_except_last_bit(row);
+        });
+        if (found != end) {
             return found->second;
         }
         DirectionId direction;
@@ -682,26 +585,27 @@ private:
         } else {
             direction = static_cast<DirectionId>(directions_.size());
             directions_.emplace_back();
-            reading_sum_.emplace_back(num_vars_);
-            reading_of_.push_back(0);
+            pass_sum_.emplace_back(num_vars_);
+            pass_of_.push_back(0);
             label_.push_back(0);
             label_at_.push_back(0);
         }
         V& vars = directions_[direction].vars.emplace(row);
         vars.reset_bit(constant_bit(vars));
-        direction_of_key_.emplace(direction_key_, direction);
+        directions_[direction].hash = hash;
+        direction_ids_by_hash_.emplace(hash, direction);
         return direction;
     }
 
-    /// @brief Count a clause row with this direction; in a reading, a row new
+    /// @brief Count a clause row with this direction; in a pass, a row new
     /// to it is a sum of rows read, whose kept rows are found by reduction.
     void hold_row(DirectionId direction) {
         Direction& entry = directions_[direction];
-        if (entry.num_rows++ == 0 && is_reading_ && reading_of_[direction] != reading_id_) {
+        if (entry.num_rows++ == 0 && in_pass_ && pass_of_[direction] != pass_id_) {
             reduced_.assign_from(*entry.vars);
-            reduce_in_reading(reduced_, reading_sum_[direction]);
+            reduce_in_pass(reduced_, pass_sum_[direction]);
             assert(lowest_var_from(reduced_, 0) == no_var && "a new row is not in the span read");
-            reading_of_[direction] = reading_id_;
+            pass_of_[direction] = pass_id_;
         }
     }
 
@@ -711,11 +615,9 @@ private:
         if (entry.num_rows != 0 || !entry.vars.has_value()) {
             return;
         }
-        direction_key_.clear();
-        append_direction_key(direction_key_, *entry.vars);
-        direction_of_key_.erase(direction_key_);
+        erase_entry(direction_ids_by_hash_, entry.hash, direction);
         entry.vars.reset();
-        reading_of_[direction] = 0;
+        pass_of_[direction] = 0;
         free_directions_.push_back(direction);
     }
 
@@ -730,17 +632,15 @@ private:
             return echelon_lead_of_[a] > echelon_lead_of_[b];
         });
         for (const std::uint32_t i : by_lead) {
-            for (Var lead = echelon_leads_.lowest_in(echelon_rows_[i], echelon_lead_of_[i] + 1);
-                 lead != no_var; lead = echelon_leads_.lowest_in(echelon_rows_[i], lead + 1)) {
-                const std::uint32_t echelon_idx = echelon_leads_.basis_idx_of[lead];
-                plus_assign(echelon_rows_[i], echelon_rows_[echelon_idx], steps_);
-                plus_assign(reading_sums_[i], reading_sums_[echelon_idx], steps_);
-            }
+            echelon_leads_.reduce(echelon_rows_[i], echelon_lead_of_[i] + 1, [&](const std::size_t echelon_idx) {
+                echelon_rows_[i].plus_assign(echelon_rows_[echelon_idx]);
+                pass_sums_[i].plus_assign(pass_sums_[echelon_idx]);
+            });
         }
         std::vector<std::vector<std::size_t>> bits_of(num_kept);
         // In rising order of the leading variables, so that each list is ascending.
         for (auto i = by_lead.rbegin(); i != by_lead.rend(); ++i) {
-            reading_sums_[*i].for_each_set_bit(
+            pass_sums_[*i].for_each_set_bit(
                 [&](const std::size_t kept_idx) { bits_of[kept_idx].push_back(echelon_lead_of_[*i]); });
         }
         flip_set_of_kept_.clear();
@@ -754,52 +654,11 @@ private:
             echelon_leads_.reset(lead);
         }
         echelon_rows_ = {};
-        reading_sums_ = {};
+        pass_sums_ = {};
         echelon_lead_of_ = {};
     }
 
-    // --- A reading -------------------------------------------------------------------
-
-    /// @brief One reading: span the clauses in a uniformly random order, split
-    /// the span by the walk back from the order's end, eliminate in each tail
-    /// group, then remove each clause some flip set touches alone.
-    /// @return Whether it eliminated anything.
-    bool read_and_eliminate() {
-        ++reading_id_;
-        ++counters_.num_readings;
-        order_.clear();
-        for (std::uint32_t clause_idx = 0; clause_idx < clauses_.size(); ++clause_idx) {
-            if (clauses_[clause_idx].present) {
-                order_.push_back(clause_idx);
-            }
-        }
-        if (order_.empty()) {
-            return false;
-        }
-        for (std::size_t i = order_.size(); i > 1; --i) {
-            std::swap(order_[i - 1], order_[uniform_below(rng_, i)]);
-        }
-        const std::size_t steps_before = steps_;
-        span_in_order();
-        counters_.steps_to_keep_rows += steps_ - steps_before;
-        steps_ = steps_before;
-        is_reading_ = true;
-        has_reading_flip_sets_ = false;
-
-        bool eliminated = false;
-        substitute_units();
-        if (!found_empty_clause_) {
-            walk_back();
-            eliminated = eliminate_in_tail_groups();
-        }
-        if (!found_empty_clause_) {
-            eliminated = eliminate_clauses_touched_alone() || eliminated;
-        }
-
-        is_reading_ = false;
-        clear_echelon();
-        return eliminated;
-    }
+    // --- A pass -------------------------------------------------------------------
 
     /// @brief Reduce each clause's rows, in `order_`, against the span of the
     /// rows kept so far, keeping each that is not in it, and record for each row
@@ -810,13 +669,13 @@ private:
         for (const std::uint32_t clause_idx : order_) {
             added_begin_.push_back(static_cast<std::uint32_t>(adder_of_kept_.size()));
             for (const DirectionId direction : clauses_[clause_idx].row_directions) {
-                if (reading_of_[direction] == reading_id_) {
+                if (pass_of_[direction] == pass_id_) {
                     continue;
                 }
-                reading_of_[direction] = reading_id_;
-                V& sum_of_row = reading_sum_[direction];
+                pass_of_[direction] = pass_id_;
+                V& sum_of_row = pass_sum_[direction];
                 V rest = *directions_[direction].vars;
-                reduce_in_reading(rest, sum_of_row);
+                reduce_in_pass(rest, sum_of_row);
                 const Var lead = lowest_var_from(rest, 0);
                 if (lead == no_var) {
                     continue;
@@ -824,9 +683,8 @@ private:
                 const auto kept_idx = static_cast<std::uint32_t>(adder_of_kept_.size());
                 adder_of_kept_.push_back(clause_idx);
                 // The row is the part reduced away plus itself.
-                steps_ += length(sum_of_row) + steps_per_equation;
                 sum_of_row.set_bit(kept_idx);
-                reading_sums_.push_back(sum_of_row);
+                pass_sums_.push_back(sum_of_row);
                 sum_of_row.set_zero();
                 sum_of_row.set_bit(kept_idx);
                 echelon_leads_.set(lead, echelon_rows_.size());
@@ -839,30 +697,25 @@ private:
         users_.assign(num_kept, {});
         last_user_.assign(num_kept, none);
         unknown_idx_of_kept_.assign(num_kept, none);
-        kept_mark_.assign(num_kept, 0);
         for (const std::uint32_t clause_idx : order_) {
             register_users(clause_idx);
         }
     }
 
-    /// @brief Reduce @p rest against the reading's echelon, setting @p sum_of_row
+    /// @brief Reduce @p rest against the pass's echelon, setting @p sum_of_row
     /// to the kept rows of the part reduced away.
-    void reduce_in_reading(V& rest, V& sum_of_row) {
-        steps_ += length(rest) + steps_per_equation;
+    void reduce_in_pass(V& rest, V& sum_of_row) {
         sum_of_row.set_zero();
-        for (Var lead = echelon_leads_.lowest_in(rest, 0); lead != no_var;
-             lead = echelon_leads_.lowest_in(rest, lead + 1)) {
-            const std::uint32_t echelon_idx = echelon_leads_.basis_idx_of[lead];
-            plus_assign(rest, echelon_rows_[echelon_idx], steps_);
-            plus_assign(sum_of_row, reading_sums_[echelon_idx], steps_);
-        }
+        echelon_leads_.reduce(rest, 0, [&](const std::size_t echelon_idx) {
+            rest.plus_assign(echelon_rows_[echelon_idx]);
+            sum_of_row.plus_assign(pass_sums_[echelon_idx]);
+        });
     }
 
     /// @brief Put clause @p clause_idx on the list of each kept row its rows sum.
     void register_users(std::uint32_t clause_idx) {
         for (const DirectionId direction : clauses_[clause_idx].row_directions) {
-            steps_ += length(reading_sum_[direction]);
-            reading_sum_[direction].for_each_set_bit([&](const std::size_t kept_idx) {
+            pass_sum_[direction].for_each_set_bit([&](const std::size_t kept_idx) {
                 if (last_user_[kept_idx] != clause_idx) {
                     last_user_[kept_idx] = clause_idx;
                     users_[kept_idx].push_back(clause_idx);
@@ -888,21 +741,20 @@ private:
     }
 
     /// @brief The kept rows of @p sum less the rows of the clauses held in the
-    /// core span, in a kept buffer valid until the next call: @p sum plus the held
+    /// core subspace, in a kept buffer valid until the next call: @p sum plus the held
     /// vector of each held pivot it has, which leaves no held pivot.
     const V& beyond_held_in_place(const V& sum) {
         V& rest = beyond_held_;
         rest.assign_from(sum);
-        steps_ += length(sum);
         for (std::uint32_t kept_idx = held_pivot_from(sum, 0); kept_idx != none;
              kept_idx = held_pivot_from(sum, kept_idx + 1)) {
-            plus_assign(rest, held_[held_of_pivot_[kept_idx]], steps_);
+            rest.plus_assign(held_[held_of_pivot_[kept_idx]]);
         }
         return rest;
     }
 
     /// @brief Add the row that sums @p sum to the span of the clauses held in
-    /// the core span, kept in reduced form: each held vector led by its highest
+    /// the core subspace, kept in reduced form: each held vector led by its highest
     /// kept row, which no other has.
     void hold_in_core(const V& sum) {
         V vector = beyond_held_in_place(sum);
@@ -921,7 +773,7 @@ private:
         for (const std::uint32_t held_idx : held_with_[pivot]) {
             V& other = held_[held_idx];
             if (other.get_bit(pivot)) {
-                plus_assign(other, vector, steps_);
+                other.plus_assign(vector);
                 add_to_held_with(held_idx);
             }
         }
@@ -938,14 +790,12 @@ private:
     /// less the held rows: those using it or a held pivot whose vector has it.
     template <class F>
     void for_each_user_beyond_held(std::uint32_t kept_idx, F&& f) {
-        steps_ += users_[kept_idx].size() + held_with_[kept_idx].size();
         for (const std::uint32_t clause_idx : users_[kept_idx]) {
             f(clause_idx);
         }
         for (const std::uint32_t held_idx : held_with_[kept_idx]) {
             if (held_[held_idx].get_bit(kept_idx)) {
                 const std::uint32_t pivot = held_pivot_[held_idx];
-                steps_ += users_[pivot].size();
                 for (const std::uint32_t clause_idx : users_[pivot]) {
                     f(clause_idx);
                 }
@@ -953,13 +803,13 @@ private:
         }
     }
 
-    /// @brief Split the span into the core span and tail groups by moving a cut
+    /// @brief Split the span into the core subspace and groups by moving a cut
     /// back from the end of `order_`.
     ///
     /// The rows a clause past the cut kept, less the span of the clauses held in
-    /// the core span, become tail rows, joined with the tail groups of the
-    /// clauses whose rows sum them less that span; unless the tail group would
-    /// hold more than the cap, when the clause is held in the core span instead.
+    /// the core subspace, become group rows, joined with the groups of the
+    /// clauses whose rows sum them less that span; unless the group would
+    /// hold more than the cap, when the clause is held in the core subspace instead.
     void walk_back() {
         const std::size_t num_kept = adder_of_kept_.size();
         group_of_kept_.assign(num_kept, none);
@@ -973,26 +823,25 @@ private:
         held_of_pivot_.assign(num_kept, none);
         held_with_.assign(num_kept, {});
         std::vector<std::uint32_t> joined;
-        std::vector<std::uint32_t> tail;
+        std::vector<std::uint32_t> own_group_rows;
         std::vector<std::uint32_t> affected;
-        std::size_t first_pos = order_.size();
         for (std::size_t pos = order_.size(); pos-- > 0;) {
             const std::uint32_t begin = added_begin_[pos];
             const std::uint32_t end = added_begin_[pos + 1];
-            tail.clear();
+            own_group_rows.clear();
             for (std::uint32_t kept_idx = begin; kept_idx < end; ++kept_idx) {
                 if (held_of_pivot_[kept_idx] == none) {
-                    tail.push_back(kept_idx);
+                    own_group_rows.push_back(kept_idx);
                 }
             }
-            if (tail.empty()) {
+            if (own_group_rows.empty()) {
                 continue;
             }
-            const auto is_tail = [&](std::uint32_t kept_idx) {
+            const auto is_group_row = [&](std::uint32_t kept_idx) {
                 return kept_idx >= begin && kept_idx < end && held_of_pivot_[kept_idx] == none;
             };
-            // Whether a row's kept rows less the held span have a tail row: the
-            // parity of each tail row over the row's kept rows and the held
+            // Whether a row's kept rows less the held span have a group row: the
+            // parity of each group row over the row's kept rows and the held
             // vectors of its held pivots, read only within the clause's kept rows.
             // Calls f with each kept row of `vector` among the clause's own, [begin, end).
             const auto for_each_in_clause = [&](const V& vector, auto&& f) {
@@ -1001,38 +850,36 @@ private:
                     f(kept_idx);
                 }
             };
-            const auto sums_tail = [&](std::uint32_t clause_idx) {
+            const auto sums_group_row = [&](std::uint32_t clause_idx) {
                 return std::ranges::any_of(clauses_[clause_idx].row_directions, [&](DirectionId direction) {
-                    const V& sum = reading_sum_[direction];
-                    steps_ += length(sum);
+                    const V& sum = pass_sum_[direction];
                     if (!has_held_pivot(sum)) {
                         bool found = false;
-                        for_each_in_clause(sum, [&](const Var kept_idx) { found = found || is_tail(kept_idx); });
+                        for_each_in_clause(sum, [&](const Var kept_idx) { found = found || is_group_row(kept_idx); });
                         return found;
                     }
-                    tail_parity_.assign(end - begin, 0);
-                    for_each_in_clause(sum, [&](const Var kept_idx) { tail_parity_[kept_idx - begin] ^= 1U; });
+                    group_row_parity_.assign(end - begin, 0);
+                    for_each_in_clause(sum, [&](const Var kept_idx) { group_row_parity_[kept_idx - begin] ^= 1U; });
                     for (std::uint32_t kept_idx = held_pivot_from(sum, 0); kept_idx != none;
                          kept_idx = held_pivot_from(sum, kept_idx + 1)) {
                         const V& held = held_[held_of_pivot_[kept_idx]];
-                        steps_ += length(held);
-                        for_each_in_clause(held, [&](const Var in_clause) { tail_parity_[in_clause - begin] ^= 1U; });
+                        for_each_in_clause(held, [&](const Var in_clause) { group_row_parity_[in_clause - begin] ^= 1U; });
                     }
                     for (std::uint32_t kept_idx = begin; kept_idx < end; ++kept_idx) {
-                        if (tail_parity_[kept_idx - begin] != 0 && is_tail(kept_idx)) {
+                        if (group_row_parity_[kept_idx - begin] != 0 && is_group_row(kept_idx)) {
                             return true;
                         }
                     }
                     return false;
                 });
             };
-            // The size first, from the clauses in tail groups only: most clauses
+            // The size first, from the clauses in groups only: most clauses
             // the cap holds are decided without reading every user.
-            std::size_t size = tail.size();
-            bool is_over = size > config_.tail_group_cap;
+            std::size_t size = own_group_rows.size();
+            bool is_over = size > config_.group_cap;
             joined.clear();
             ++mark_stamp_;
-            for (const std::uint32_t kept_idx : tail) {
+            for (const std::uint32_t kept_idx : own_group_rows) {
                 if (is_over) {
                     break;
                 }
@@ -1043,23 +890,23 @@ private:
                     }
                     clause_mark(clause_idx) = mark_stamp_;
                     const std::uint32_t group = find_group(group_of_clause_[clause_idx]);
-                    if (group_mark_[group] == mark_stamp_ || !sums_tail(clause_idx)) {
+                    if (group_mark_[group] == mark_stamp_ || !sums_group_row(clause_idx)) {
                         return;
                     }
                     group_mark_[group] = mark_stamp_;
                     joined.push_back(group);
                     size += group_size_[group];
-                    is_over = size > config_.tail_group_cap;
+                    is_over = size > config_.group_cap;
                 });
             }
             affected.clear();
             if (!is_over) {
                 ++mark_stamp_;
-                for (const std::uint32_t kept_idx : tail) {
+                for (const std::uint32_t kept_idx : own_group_rows) {
                     for_each_user_beyond_held(kept_idx, [&](std::uint32_t clause_idx) {
                         if (clauses_[clause_idx].present && clause_mark(clause_idx) != mark_stamp_) {
                             clause_mark(clause_idx) = mark_stamp_;
-                            if (sums_tail(clause_idx)) {
+                            if (sums_group_row(clause_idx)) {
                                 affected.push_back(clause_idx);
                             }
                         }
@@ -1067,13 +914,8 @@ private:
                 }
             }
             if (is_over) {
-                const StoredClause& clause = clauses_[order_[pos]];
-                const std::size_t width = clause.rows.size();
-                ++counters_.num_held_in_core;
-                counters_.num_held_in_core_alone += tail.size() > config_.tail_group_cap ? 1U : 0U;
-                counters_.width_held_in_core += width;
-                for (const DirectionId direction : clause.row_directions) {
-                    hold_in_core(reading_sum_[direction]);
+                for (const DirectionId direction : clauses_[order_[pos]].row_directions) {
+                    hold_in_core(pass_sum_[direction]);
                 }
                 continue;
             }
@@ -1084,32 +926,17 @@ private:
             for (const std::uint32_t other : joined) {
                 group_parent_[other] = group;
             }
-            for (const std::uint32_t kept_idx : tail) {
+            for (const std::uint32_t kept_idx : own_group_rows) {
                 group_of_kept_[kept_idx] = group;
             }
             for (const std::uint32_t clause_idx : affected) {
                 group_of_clause_[clause_idx] = group;
             }
-            first_pos = pos;
-        }
-        if (first_pos < order_.size()) {
-            const std::size_t depth = (order_.size() - first_pos) * 1000000 / order_.size();
-            counters_.walk_depth_ppm += depth;
-            counters_.max_walk_depth_ppm = std::max(counters_.max_walk_depth_ppm, depth);
-        }
-        for (std::size_t kept_idx = 0; kept_idx < num_kept; ++kept_idx) {
-            if (group_of_kept_[kept_idx] == none) {
-                counters_.users_of_core_rows += users_[kept_idx].size();
-                ++counters_.num_core_rows;
-            } else {
-                counters_.users_of_tail_rows += users_[kept_idx].size();
-            }
         }
     }
 
-    /// @brief The tail groups' rows, the group first reached from the order's end first.
-    /// @return Whether anything was eliminated.
-    bool eliminate_in_tail_groups() {
+    /// @brief The groups' rows, the group first reached from the order's end first.
+    void eliminate_in_groups() {
         std::vector<std::uint32_t> index_of_group(group_parent_.size(), none);
         std::vector<std::vector<std::uint32_t>> groups;
         for (std::size_t pos = order_.size(); pos-- > 0;) {
@@ -1125,26 +952,21 @@ private:
                 groups[index_of_group[group]].push_back(kept_idx);
             }
         }
-        bool eliminated = false;
-        for (const std::vector<std::uint32_t>& tail_rows : groups) {
-            ++counters_.num_tail_groups;
-            counters_.num_tail_rows += tail_rows.size();
-            ++counters_.tail_groups_of_size[std::min(tail_rows.size(), counters_.tail_groups_of_size.size() - 1)];
+        for (const std::vector<std::uint32_t>& group_rows : groups) {
             if (found_empty_clause_) {
-                continue;
+                return;
             }
-            eliminated = eliminate_in_tail_group(tail_rows) || eliminated;
+            eliminate_in_group(group_rows);
         }
-        return eliminated;
     }
 
-    /// @brief The tail rows of the group in hand that @p direction sums less the
+    /// @brief The group rows of the group in hand that @p direction sums less the
     /// held rows, as bits over the group's rows; computed once per `label_stamp_`.
     std::uint32_t label_of(DirectionId direction) {
         if (label_at_[direction] != label_stamp_) {
             label_at_[direction] = label_stamp_;
             std::uint32_t label = 0;
-            beyond_held_in_place(reading_sum_[direction]).for_each_set_bit([&](const std::size_t kept_idx) {
+            beyond_held_in_place(pass_sum_[direction]).for_each_set_bit([&](const std::size_t kept_idx) {
                 if (unknown_idx_of_kept_[kept_idx] != none) {
                     label |= std::uint32_t{1} << unknown_idx_of_kept_[kept_idx];
                 }
@@ -1154,147 +976,116 @@ private:
         return label_[direction];
     }
 
-    /// @brief Try the choices of one tail group, fewest rows touched first and
-    /// equals drawn uniformly, one choice per coset of those accepted, until
-    /// none is left; a choice tried is tried again only once the clauses it
+    /// @brief Try the hyperplanes of one group, fewest clauses touched first and
+    /// equals drawn uniformly, one hyperplane per coset of those accepted, until
+    /// none is left; a hyperplane tried is tried again only once the clauses it
     /// touches have changed.
-    /// @return Whether anything was eliminated.
-    bool eliminate_in_tail_group(const std::vector<std::uint32_t>& tail_rows) {
-        const std::size_t size = tail_rows.size();
+    void eliminate_in_group(const std::vector<std::uint32_t>& group_rows) {
+        const std::size_t size = group_rows.size();
         for (std::size_t i = 0; i < size; ++i) {
-            unknown_idx_of_kept_[tail_rows[i]] = static_cast<std::uint32_t>(i);
+            unknown_idx_of_kept_[group_rows[i]] = static_cast<std::uint32_t>(i);
         }
-        const std::uint32_t num_choices = std::uint32_t{1} << size;
-        const std::size_t num_words = (num_choices + 63) / 64;
-        // Per label, the choices sharing an odd number of tail rows with it.
-        std::unordered_map<std::uint32_t, std::vector<std::uint64_t>> choices_of_label;
-        const auto choices_touching = [&](std::uint32_t label) -> const std::vector<std::uint64_t>& {
-            auto [found, is_new] = choices_of_label.try_emplace(label);
+        const std::uint32_t num_hyperplanes = std::uint32_t{1} << size;
+        const std::size_t num_words = (num_hyperplanes + 63) / 64;
+        // Per label, the hyperplanes sharing an odd number of group rows with it.
+        std::unordered_map<std::uint32_t, std::vector<std::uint64_t>> hyperplanes_of_label;
+        const auto hyperplanes_touching = [&](std::uint32_t label) -> const std::vector<std::uint64_t>& {
+            auto [found, is_new] = hyperplanes_of_label.try_emplace(label);
             if (is_new) {
                 found->second.assign(num_words, 0);
-                steps_ += num_choices / 64 + 1;
-                for (std::uint32_t choice = 1; choice < num_choices; ++choice) {
-                    if (odd(label & choice)) {
-                        found->second[choice >> 6] |= std::uint64_t{1} << (choice & 63);
+                for (std::uint32_t hyperplane = 1; hyperplane < num_hyperplanes; ++hyperplane) {
+                    if (odd(label & hyperplane)) {
+                        found->second[hyperplane >> 6] |= std::uint64_t{1} << (hyperplane & 63);
                     }
                 }
             }
             return found->second;
         };
-        struct Leftover {
-            std::vector<std::uint64_t> choices; ///< Those touching it.
-            std::size_t rows;
-        };
-        std::unordered_map<std::uint32_t, Leftover> leftovers;
-        std::vector<std::size_t> rows_touched(num_choices, 0);
-        std::vector<std::uint32_t> clauses_touched(num_choices, 0);
-        std::vector<std::uint8_t> is_open(num_choices, 1);
-        const auto count = [&](const Leftover& leftover, bool entering) {
+        // Per clause touched by some hyperplane, the hyperplanes touching it.
+        std::unordered_map<std::uint32_t, std::vector<std::uint64_t>> leftovers;
+        std::vector<std::uint32_t> clauses_touched(num_hyperplanes, 0);
+        std::vector<std::uint8_t> is_open(num_hyperplanes, 1);
+        const auto count = [&](const std::vector<std::uint64_t>& hyperplanes_touching_clause, bool entering) {
             for (std::size_t word_idx = 0; word_idx < num_words; ++word_idx) {
-                for (std::uint64_t word = leftover.choices[word_idx]; word != 0; word &= word - 1) {
-                    const std::size_t choice = (word_idx << 6) + static_cast<std::size_t>(std::countr_zero(word));
-                    rows_touched[choice] = entering ? rows_touched[choice] + leftover.rows
-                                                    : rows_touched[choice] - leftover.rows;
-                    clauses_touched[choice] = entering ? clauses_touched[choice] + 1 : clauses_touched[choice] - 1;
-                    is_open[choice] = 1;
+                for (std::uint64_t word = hyperplanes_touching_clause[word_idx]; word != 0; word &= word - 1) {
+                    const std::size_t hyperplane = (word_idx << 6) + static_cast<std::size_t>(std::countr_zero(word));
+                    clauses_touched[hyperplane] = entering ? clauses_touched[hyperplane] + 1 : clauses_touched[hyperplane] - 1;
+                    is_open[hyperplane] = 1;
                 }
             }
-            steps_ += num_choices / 64 + 1;
         };
         const auto enter = [&](std::uint32_t clause_idx) {
-            Leftover leftover{.choices = std::vector<std::uint64_t>(num_words, 0),
-                              .rows = clauses_[clause_idx].rows.size()};
+            std::vector<std::uint64_t> hyperplanes_touching_clause(num_words, 0);
             for (const DirectionId direction : clauses_[clause_idx].row_directions) {
                 const std::uint32_t label = label_of(direction);
                 if (label != 0) {
-                    plus_or(leftover.choices, choices_touching(label));
+                    plus_or(hyperplanes_touching_clause, hyperplanes_touching(label));
                 }
             }
-            if (std::ranges::any_of(leftover.choices, [](std::uint64_t word) { return word != 0; })) {
-                count(leftover, true);
-                leftovers.emplace(clause_idx, std::move(leftover));
+            if (std::ranges::any_of(hyperplanes_touching_clause, [](std::uint64_t word) { return word != 0; })) {
+                count(hyperplanes_touching_clause, true);
+                leftovers.emplace(clause_idx, std::move(hyperplanes_touching_clause));
             }
         };
-        const auto enter_every = [&] {
-            leftovers.clear();
-            std::ranges::fill(rows_touched, 0);
-            std::ranges::fill(clauses_touched, 0);
-            std::ranges::fill(is_open, 1);
-            ++label_stamp_;
-            ++mark_stamp_;
-            for (const std::uint32_t kept_idx : tail_rows) {
-                for_each_user_beyond_held(kept_idx, [&](std::uint32_t clause_idx) {
-                    if (clauses_[clause_idx].present && clause_mark(clause_idx) != mark_stamp_) {
-                        clause_mark(clause_idx) = mark_stamp_;
-                        enter(clause_idx);
-                    }
-                });
-            }
-        };
-        enter_every();
-        // The choices accepted, in reduced echelon form, each led by its lowest bit.
+        ++label_stamp_;
+        ++mark_stamp_;
+        for (const std::uint32_t kept_idx : group_rows) {
+            for_each_user_beyond_held(kept_idx, [&](std::uint32_t clause_idx) {
+                if (clauses_[clause_idx].present && clause_mark(clause_idx) != mark_stamp_) {
+                    clause_mark(clause_idx) = mark_stamp_;
+                    enter(clause_idx);
+                }
+            });
+        }
+        // The hyperplanes accepted, in reduced echelon form, each led by its lowest bit.
         std::vector<std::uint32_t> accepted;
         std::uint32_t accepted_leads = 0;
-        std::vector<std::uint32_t> choices;
+        std::vector<std::uint32_t> hyperplanes;
         std::vector<std::uint32_t> touched;
-        bool eliminated = false;
         while (!found_empty_clause_) {
             // Until an elimination nothing changes: one order serves.
-            choices.clear();
-            for (std::uint32_t choice = 1; choice < num_choices; ++choice) {
-                if ((choice & accepted_leads) == 0 && is_open[choice] != 0 && rows_touched[choice] != 0) {
-                    choices.push_back(choice);
+            hyperplanes.clear();
+            for (std::uint32_t hyperplane = 1; hyperplane < num_hyperplanes; ++hyperplane) {
+                if ((hyperplane & accepted_leads) == 0 && is_open[hyperplane] != 0 && clauses_touched[hyperplane] != 0) {
+                    hyperplanes.push_back(hyperplane);
                 }
             }
-            steps_ += num_choices / 64 + choices.size();
-            for (std::size_t i = choices.size(); i > 1; --i) {
-                std::swap(choices[i - 1], choices[uniform_below(rng_, i)]);
-            }
-            std::ranges::stable_sort(choices, {}, [&rows_touched](std::uint32_t choice) { return rows_touched[choice]; });
+            shuffle_uniformly(hyperplanes, rng_);
+            std::ranges::stable_sort(hyperplanes, {},
+                                     [&clauses_touched](std::uint32_t hyperplane) { return clauses_touched[hyperplane]; });
             std::optional<std::uint32_t> taken;
             std::size_t clauses_before = 0;
-            for (const std::uint32_t choice : choices) {
-                is_open[choice] = 0;
-                ++counters_.num_choices_tried;
-                if (!is_drawn(clauses_touched[choice])) {
-                    ++counters_.num_not_drawn;
-                    continue;
-                }
+            std::size_t num_refusals = 0;
+            for (const std::uint32_t hyperplane : hyperplanes) {
+                is_open[hyperplane] = 0;
                 touched.clear();
-                for (const auto& [clause_idx, leftover] : leftovers) {
-                    if (((leftover.choices[choice >> 6] >> (choice & 63)) & 1U) != 0) {
+                for (const auto& [clause_idx, hyperplanes_touching_clause] : leftovers) {
+                    if (((hyperplanes_touching_clause[hyperplane >> 6] >> (hyperplane & 63)) & 1U) != 0) {
                         touched.push_back(clause_idx);
                     }
                 }
-                steps_ += leftovers.size();
                 std::ranges::sort(touched);
                 clauses_before = clauses_.size();
-                if (try_choice(choice, tail_rows, touched)) {
-                    taken = choice;
+                if (try_hyperplane(hyperplane, group_rows, touched)) {
+                    taken = hyperplane;
+                    break;
+                }
+                if (++num_refusals == config_.max_refusals_in_a_row) {
                     break;
                 }
             }
             if (!taken.has_value()) {
                 break;
             }
-            const std::uint32_t choice = *taken;
-            ++counters_.num_choices_accepted;
-            eliminated = true;
-            const std::uint32_t lead = choice & (~choice + 1);
+            const std::uint32_t hyperplane = *taken;
+            const std::uint32_t lead = hyperplane & (~hyperplane + 1);
             for (std::uint32_t& row : accepted) {
                 if ((row & lead) != 0) {
-                    row ^= choice;
+                    row ^= hyperplane;
                 }
             }
-            accepted.push_back(choice);
+            accepted.push_back(hyperplane);
             accepted_leads |= lead;
-            const std::size_t units_before = counters_.num_units_substituted;
-            substitute_units();
-            if (counters_.num_units_substituted != units_before) {
-                // A substitution rewrites clauses anywhere.
-                enter_every();
-                continue;
-            }
             // Ids of removed rows may be taken by new ones.
             ++label_stamp_;
             for (const std::uint32_t clause_idx : touched) {
@@ -1308,64 +1099,40 @@ private:
                 }
             }
         }
-        for (const std::uint32_t kept_idx : tail_rows) {
+        for (const std::uint32_t kept_idx : group_rows) {
             unknown_idx_of_kept_[kept_idx] = none;
         }
-        return eliminated;
     }
 
-    /// @brief Eliminate by the hyperplane of choice @p choice over @p tail_rows,
+    /// @brief Eliminate by hyperplane @p hyperplane over @p group_rows,
     /// touching @p touched, the clauses with a row whose label shares an odd
-    /// number of tail rows with it; tried with chance 2^(try_from - n) for n
-    /// clauses touched, and not when the same rows of the same clauses were refused.
+    /// number of group rows with it.
     /// @return Whether it was accepted.
-    bool try_choice(std::uint32_t choice, const std::vector<std::uint32_t>& tail_rows,
+    bool try_hyperplane(std::uint32_t hyperplane, const std::vector<std::uint32_t>& group_rows,
                     const std::vector<std::uint32_t>& touched) {
-        assert(!touched.empty() && "a choice touches nothing");
-        // The same clauses resolved on the same rows were refused before.
-        std::string key;
-        for (const std::uint32_t clause_idx : touched) {
-            key.append(reinterpret_cast<const char*>(&clause_idx), sizeof(clause_idx));
-            std::uint8_t bits = 0;
-            const std::vector<DirectionId>& rows = clauses_[clause_idx].row_directions;
-            for (std::size_t row_idx = 0; row_idx < rows.size(); ++row_idx) {
-                bits |= static_cast<std::uint8_t>((odd(label_of(rows[row_idx]) & choice) ? 1U : 0U) << (row_idx & 7));
-                if ((row_idx & 7) == 7 || row_idx + 1 == rows.size()) {
-                    key.push_back(static_cast<char>(bits));
-                    bits = 0;
-                }
-            }
-        }
-        steps_ += key.size() / sizeof(std::uint32_t);
-        if (refused_keys_.contains(key)) {
-            ++counters_.num_choices_refused_before;
-            return false;
-        }
+        assert(!touched.empty() && "a hyperplane touches nothing");
         std::optional<Resolution> resolution =
-            resolve(touched, [this, choice](const StoredClause& clause, std::size_t row_idx) {
-                return odd(label_of(clause.row_directions[row_idx]) & choice);
+            resolve(touched, [this, hyperplane](const StoredClause& clause, std::size_t row_idx) {
+                return odd(label_of(clause.row_directions[row_idx]) & hyperplane);
             });
         if (!resolution.has_value()) {
-            ++counters_.num_not_accepted;
-            refused_keys_.insert(std::move(key));
             return false;
         }
-        counters_.num_eliminated_by_gate += resolution->by_gate ? 1U : 0U;
-        // The hyperplane holds the held rows: a held pivot changes with the tail
-        // rows of its vector the choice changes.
+        // The hyperplane holds the held rows: a held pivot changes with the group
+        // rows of its vector the hyperplane changes.
         std::vector<std::uint32_t> changed_kept_idxs;
         std::unordered_map<std::uint32_t, std::uint8_t> held_parity;
         std::vector<std::uint32_t> holding;
-        for (std::size_t i = 0; i < tail_rows.size(); ++i) {
-            if (((choice >> i) & 1U) != 0) {
-                changed_kept_idxs.push_back(tail_rows[i]);
+        for (std::size_t i = 0; i < group_rows.size(); ++i) {
+            if (((hyperplane >> i) & 1U) != 0) {
+                changed_kept_idxs.push_back(group_rows[i]);
                 // A held vector can be listed more than once.
-                holding = held_with_[tail_rows[i]];
+                holding = held_with_[group_rows[i]];
                 std::ranges::sort(holding);
                 const auto repeated = std::ranges::unique(holding);
                 holding.erase(repeated.begin(), repeated.end());
                 for (const std::uint32_t held_idx : holding) {
-                    if (held_[held_idx].get_bit(tail_rows[i])) {
+                    if (held_[held_idx].get_bit(group_rows[i])) {
                         held_parity[held_idx] ^= 1U;
                     }
                 }
@@ -1377,21 +1144,20 @@ private:
             }
         }
         std::ranges::sort(changed_kept_idxs);
-        replace(touched, std::move(*resolution), reading_flip_set_vars(changed_kept_idxs));
-        ++counters_.num_eliminated;
+        replace(touched, std::move(*resolution), pass_flip_set_vars(changed_kept_idxs));
         return true;
     }
 
     /// @brief The variables of the flip set that changes exactly the kept rows
-    /// @p changed_kept_idxs among the reading's kept rows, ascending.
-    std::vector<std::uint32_t> reading_flip_set_vars(const std::vector<std::uint32_t>& changed_kept_idxs) {
-        if (!has_reading_flip_sets_) {
-            has_reading_flip_sets_ = true;
+    /// @p changed_kept_idxs among the pass's kept rows, ascending.
+    std::vector<std::uint32_t> pass_flip_set_vars(const std::vector<std::uint32_t>& changed_kept_idxs) {
+        if (!has_pass_flip_sets_) {
+            has_pass_flip_sets_ = true;
             find_flip_sets_of(adder_of_kept_.size());
         }
         V sum(num_vars_);
         for (const std::uint32_t kept_idx : changed_kept_idxs) {
-            plus_assign(sum, flip_set_of_kept_[kept_idx], steps_);
+            sum.plus_assign(flip_set_of_kept_[kept_idx]);
         }
         std::vector<std::uint32_t> vars;
         sum.for_each_set_bit([&vars](const std::size_t var) { vars.push_back(static_cast<std::uint32_t>(var)); });
@@ -1405,243 +1171,11 @@ private:
         return clause_mark_[clause_idx];
     }
 
-    /// @brief Remove each clause some flip set touches alone, retesting the
-    /// clauses using the rows of each one removed.
-    /// @return Whether one was removed.
-    bool eliminate_clauses_touched_alone() {
-        // A clause has a flip set to itself only through a kept row it added or
-        // one whose adder is gone.
-        std::vector<std::uint32_t> waiting;
-        std::vector<std::uint8_t> is_waiting(clauses_.size(), 0);
-        const auto wait = [&](std::uint32_t clause_idx) {
-            if (clauses_[clause_idx].present && is_waiting[clause_idx] == 0) {
-                is_waiting[clause_idx] = 1;
-                waiting.push_back(clause_idx);
-            }
-        };
-        for (std::size_t pos = 0; pos < order_.size(); ++pos) {
-            if (added_begin_[pos] != added_begin_[pos + 1]) {
-                wait(order_[pos]);
-            }
-        }
-        for (std::size_t kept_idx = 0; kept_idx < adder_of_kept_.size(); ++kept_idx) {
-            if (!clauses_[adder_of_kept_[kept_idx]].present) {
-                steps_ += users_[kept_idx].size();
-                for (const std::uint32_t user : users_[kept_idx]) {
-                    wait(user);
-                }
-            }
-        }
-        bool eliminated = false;
-        std::vector<std::uint32_t> free_kept_idxs;
-        for (std::size_t i = 0; i < waiting.size() && !found_empty_clause_; ++i) {
-            const std::uint32_t clause_idx = waiting[i];
-            is_waiting[clause_idx] = 0;
-            if (!clauses_[clause_idx].present || !eliminate_if_touched_alone(clause_idx, free_kept_idxs)) {
-                continue;
-            }
-            eliminated = true;
-            for (const std::uint32_t kept_idx : free_kept_idxs) {
-                for (const std::uint32_t user : users_[kept_idx]) {
-                    wait(user);
-                }
-            }
-        }
-        return eliminated;
-    }
-
-    /// @brief Remove clause @p clause_idx if a flip set touches it alone: one
-    /// that changes only kept rows the clause added or whose adder is gone.
-    /// @param free_kept_idxs Set to those kept rows among the ones its rows sum.
-    /// @return Whether it was removed.
-    bool eliminate_if_touched_alone(std::uint32_t clause_idx, std::vector<std::uint32_t>& free_kept_idxs) {
-        ++counters_.num_clauses_tested_alone;
-        const StoredClause& clause = clauses_[clause_idx];
-        free_kept_idxs.clear();
-        ++mark_stamp_;
-        for (const DirectionId direction : clause.row_directions) {
-            steps_ += length(reading_sum_[direction]);
-            reading_sum_[direction].for_each_set_bit([&](const std::size_t kept_idx) {
-                if (kept_mark_[kept_idx] == mark_stamp_) {
-                    return;
-                }
-                kept_mark_[kept_idx] = mark_stamp_;
-                const std::uint32_t adder = adder_of_kept_[kept_idx];
-                if (adder == clause_idx || !clauses_[adder].present) {
-                    free_kept_idxs.push_back(static_cast<std::uint32_t>(kept_idx));
-                }
-            });
-        }
-        if (free_kept_idxs.empty()) {
-            return false;
-        }
-        for (std::size_t i = 0; i < free_kept_idxs.size(); ++i) {
-            unknown_idx_of_kept_[free_kept_idxs[i]] = static_cast<std::uint32_t>(i);
-        }
-        const std::size_t num_words = (free_kept_idxs.size() + 63) / 64;
-        const auto bits_of = [&](DirectionId direction) {
-            UnknownBits bits(num_words, 0);
-            reading_sum_[direction].for_each_set_bit([&](const std::size_t kept_idx) {
-                if (unknown_idx_of_kept_[kept_idx] != none) {
-                    flip(bits, unknown_idx_of_kept_[kept_idx]);
-                }
-            });
-            return bits;
-        };
-        // The other clauses' rows, in an echelon each led by its lowest bit.
-        std::vector<UnknownBits> conditions;
-        std::vector<std::size_t> lead_of_condition;
-        UnknownBits is_lead(num_words, 0);
-        const auto reduce = [&](UnknownBits& bits) {
-            for (std::size_t i = 0; i < conditions.size(); ++i) {
-                if (test(bits, lead_of_condition[i])) {
-                    plus_assign(bits, conditions[i]);
-                }
-            }
-        };
-        std::vector<UnknownBits> own;
-        own.reserve(clause.row_directions.size());
-        for (const DirectionId direction : clause.row_directions) {
-            own.push_back(bits_of(direction));
-        }
-        // The clause's rows reduced against the conditions so far, a condition at a time.
-        std::vector<UnknownBits> own_reduced = own;
-        // Whether a row of the clause is outside the span of the other clauses' rows so far.
-        const auto is_outside = [&] {
-            return std::ranges::any_of(own_reduced, [](const UnknownBits& row) { return any(row); });
-        };
-        const std::size_t clause_stamp = ++mark_stamp_;
-        clause_mark(clause_idx) = clause_stamp;
-        // Whether the clause is removed, and the flip set drawn, depend only on the span of the other users'
-        // rows, so the users are read in turns over the free kept rows, which reaches a full span sooner.
-        bool outside = true;
-        std::vector<std::size_t> next_user(free_kept_idxs.size(), 0);
-        for (bool any_left = true; any_left && outside;) {
-            any_left = false;
-            for (std::size_t i = 0; i < free_kept_idxs.size() && outside; ++i) {
-                const std::vector<std::uint32_t>& users = users_[free_kept_idxs[i]];
-                if (next_user[i] == users.size()) {
-                    continue;
-                }
-                any_left = true;
-                const std::uint32_t user = users[next_user[i]++];
-                ++steps_;
-                if (!clauses_[user].present || clause_mark(user) == clause_stamp) {
-                    continue;
-                }
-                clause_mark(user) = clause_stamp;
-                bool grew = false;
-                for (const DirectionId direction : clauses_[user].row_directions) {
-                    UnknownBits condition = bits_of(direction);
-                    reduce(condition);
-                    if (!any(condition)) {
-                        continue;
-                    }
-                    lead_of_condition.push_back(lowest(condition));
-                    flip(is_lead, lead_of_condition.back());
-                    for (UnknownBits& row : own_reduced) {
-                        if (test(row, lead_of_condition.back())) {
-                            plus_assign(row, condition);
-                        }
-                    }
-                    conditions.push_back(std::move(condition));
-                    grew = true;
-                }
-                // Once the clause's rows are in that span, more rows keep them there.
-                if (grew && !is_outside()) {
-                    outside = false;
-                }
-            }
-        }
-        if (!outside) {
-            for (const std::uint32_t kept_idx : free_kept_idxs) {
-                unknown_idx_of_kept_[kept_idx] = none;
-            }
-            return false;
-        }
-        // Uniform among the choices the other rows allow that change a row of the clause.
-        UnknownBits changed(num_words, 0);
-        do {
-            std::ranges::fill(changed, 0);
-            for (std::size_t i = 0; i < free_kept_idxs.size(); ++i) {
-                if (!test(is_lead, i) && (rng_() & 1U) != 0) {
-                    flip(changed, i);
-                }
-            }
-            for (std::size_t i = conditions.size(); i-- > 0;) {
-                if (odd_overlap(conditions[i], changed)) {
-                    flip(changed, lead_of_condition[i]);
-                }
-            }
-        } while (std::ranges::none_of(own, [&changed](const UnknownBits& row) { return odd_overlap(row, changed); }));
-        std::vector<std::uint8_t> row_changes(own.size(), 0);
-        std::vector<std::uint32_t> changed_kept_idxs;
-        for (std::size_t i = 0; i < own.size(); ++i) {
-            row_changes[i] = odd_overlap(own[i], changed) ? 1 : 0;
-        }
-        for (std::size_t i = 0; i < free_kept_idxs.size(); ++i) {
-            if (test(changed, i)) {
-                changed_kept_idxs.push_back(free_kept_idxs[i]);
-            }
-            unknown_idx_of_kept_[free_kept_idxs[i]] = none;
-        }
-        const std::vector<std::uint32_t> clause_idxs{clause_idx};
-        std::optional<Resolution> resolution =
-            resolve(clause_idxs, [&row_changes](const StoredClause&, std::size_t row_idx) {
-                return row_changes[row_idx] != 0;
-            });
-        assert(resolution.has_value() && resolution->resolvents.empty() && "one clause resolved to something");
-        replace(clause_idxs, std::move(*resolution), reading_flip_set_vars(changed_kept_idxs));
-        ++counters_.num_eliminated;
-        ++counters_.num_eliminated_in_one_clause;
-        return true;
-    }
-
-    /// @brief Whether a choice touching @p count clauses is drawn to be tried.
-    bool is_drawn(std::size_t count) {
-        const double chance = std::exp2(config_.try_from - static_cast<double>(count));
-        if (chance >= 1.0) {
-            return true;
-        }
-        return static_cast<double>(rng_() >> 11) * 0x1.0p-53 < chance;
-    }
-
-    /// @brief Substitute each unit among the clauses for its lowest variable:
-    /// an elimination by the flip set of that variable alone, with the unit as its gate.
-    void substitute_units() {
-        while (!unit_clause_idxs_.empty() && !found_empty_clause_) {
-            const std::uint32_t unit_clause_idx = unit_clause_idxs_.back();
-            unit_clause_idxs_.pop_back();
-            if (!clauses_[unit_clause_idx].present) {
-                continue;
-            }
-            const Var var = lowest_var(clauses_[unit_clause_idx].rows.front());
-            std::vector<std::uint32_t> clause_idxs;
-            for (std::uint32_t clause_idx = 0; clause_idx < clauses_.size(); ++clause_idx) {
-                const StoredClause& clause = clauses_[clause_idx];
-                ++steps_;
-                if (clause.present &&
-                    std::ranges::any_of(clause.rows, [var](const V& row) { return row.get_bit(var); })) {
-                    clause_idxs.push_back(clause_idx);
-                }
-            }
-            std::optional<Resolution> resolution =
-                resolve(clause_idxs, [var](const StoredClause& clause, std::size_t row_idx) {
-                    return clause.rows[row_idx].get_bit(var);
-                });
-            assert(resolution.has_value() && resolution->by_gate &&
-                   "a substitution left more rows than it removed");
-            replace(clause_idxs, std::move(*resolution), {var});
-            ++counters_.num_units_substituted;
-        }
-    }
-
     /// @brief The resolvents an accepted elimination adds, in the order of
     /// their parents' places among the clauses resolved.
     struct Resolution {
         std::vector<Rows> resolvents;
         std::vector<std::array<std::uint32_t, 2>> parents;
-        bool by_gate = false;
     };
 
     /// @brief Split each of @p clause_idxs by the rows @p changes says the flip
@@ -1665,7 +1199,6 @@ private:
             bool found = false;
             for (std::size_t row_idx = 0; row_idx < clause.rows.size(); ++row_idx) {
                 const V& row = clause.rows[row_idx];
-                steps_ += length(row) + steps_per_equation;
                 const bool is_changed = changes(clause, row_idx);
                 if (is_changed && !found) {
                     part.changed.assign_from(row);
@@ -1678,7 +1211,7 @@ private:
                 V& rest = part.rest[part.num_rest++];
                 rest.assign_from(row);
                 if (is_changed) {
-                    plus_assign(rest, part.changed, steps_);
+                    rest.plus_assign(part.changed);
                 }
             }
             assert(found && "the flip set does not touch the clause");
@@ -1686,12 +1219,10 @@ private:
         const std::optional<std::vector<std::uint8_t>> in_gate = find_gate(parts);
 
         Resolution resolution;
-        resolution.by_gate = in_gate.has_value();
-        std::unordered_map<std::string, std::size_t> resolvent_idx_of_key;
+        std::unordered_multimap<std::size_t, std::size_t> resolvent_idxs_by_hash;
         std::size_t rows_added = 0;
         // Whether the resolvents still have no more rows than the clauses removed.
         const auto resolve_pair = [&](const std::size_t i, const std::size_t j) {
-            ++steps_;
             // The same row on both sides resolves to a tautology.
             if (parts[i].changed.equals(parts[j].changed)) {
                 return true;
@@ -1704,33 +1235,36 @@ private:
             std::size_t spanning_idx = 0;
             for (const std::size_t part_idx : {i, j}) {
                 for (const V& row : parts[part_idx].rests()) {
-                    steps_ += length(row) + steps_per_equation;
                     spanning[spanning_idx++].assign_from(row);
                 }
             }
             V& negated_changed = spanning[spanning_idx];
             negated_changed.assign_from(parts[i].changed);
-            plus_assign(negated_changed, parts[j].changed, steps_);
+            negated_changed.plus_assign(parts[j].changed);
             negate(negated_changed);
-            if (!canonical_in_place(spanning, leads_, canonical_work_, steps_)) {
+            if (!canonical_in_place(spanning, leads_, canonical_work_)) {
                 return true;
             }
             const std::vector<std::uint32_t>& by_lead = canonical_work_.by_lead;
-            std::string& key = pair_key_;
-            key.clear();
-            steps_ += by_lead.size() * steps_per_equation;
+            const auto row_at = [&](const std::size_t row_idx) -> const V& {
+                return spanning[by_lead[row_idx]];
+            };
+            std::size_t hash = 0;
             for (const std::uint32_t row_idx : by_lead) {
-                steps_ += length(spanning[row_idx]);
-                append_key(key, spanning[row_idx]);
+                const V& row = spanning[row_idx];
+                hash = hash_with_row(hash, row_hash(row, row.hash_except_last_bit()));
             }
-            if (seen_.contains(key)) {
+            if (is_present(hash, by_lead.size(), row_at)) {
                 return true;
             }
             // By place among the clauses, and not yet by index.
             const std::array<std::uint32_t, 2> parents{static_cast<std::uint32_t>(i),
                                                        static_cast<std::uint32_t>(j)};
-            const auto [found, is_new] = resolvent_idx_of_key.try_emplace(key, resolution.resolvents.size());
-            if (!is_new) {
+            const auto [begin, end] = resolvent_idxs_by_hash.equal_range(hash);
+            const auto found = std::find_if(begin, end, [&](const auto& entry) {
+                return rows_equal(resolution.resolvents[entry.second], by_lead.size(), row_at);
+            });
+            if (found != end) {
                 resolution.parents[found->second] =
                     std::min(resolution.parents[found->second], parents);
                 return true;
@@ -1739,6 +1273,7 @@ private:
             if (rows_added > rows_removed) {
                 return false;
             }
+            resolvent_idxs_by_hash.emplace(hash, resolution.resolvents.size());
             Rows& resolvent = resolution.resolvents.emplace_back();
             resolvent.reserve(by_lead.size());
             for (const std::uint32_t row_idx : by_lead) {
@@ -1801,7 +1336,6 @@ private:
             return resolution.parents[a] < resolution.parents[b];
         });
         Resolution in_order;
-        in_order.by_gate = resolution.by_gate;
         for (const std::size_t i : by_parents) {
             in_order.resolvents.push_back(std::move(resolution.resolvents[i]));
             in_order.parents.push_back(
@@ -1837,19 +1371,16 @@ private:
     std::optional<std::vector<std::uint8_t>> find_gate(std::span<const SplitClause<V>> parts) {
         std::vector<std::size_t> order(parts.size());
         std::iota(order.begin(), order.end(), std::size_t{0});
-        for (std::size_t i = order.size(); i > 1; --i) {
-            std::swap(order[i - 1], order[uniform_below(rng_, i)]);
-        }
+        shuffle_uniformly(order, rng_);
         std::stable_sort(order.begin(), order.end(), [&parts](std::size_t a, std::size_t b) {
             return parts[a].num_rest < parts[b].num_rest;
         });
-        steps_ += parts.size();
 
         GateTable<V>& table = gate_table_;
         table.clear();
         std::vector<std::size_t> members;
         for (const std::size_t i : order) {
-            const typename GateTable<V>::Outcome outcome = table.add(parts[i].rests(), steps_);
+            const typename GateTable<V>::Outcome outcome = table.add(parts[i].rests());
             if (outcome == GateTable<V>::Outcome::over_rank) {
                 continue;
             }
@@ -1857,7 +1388,7 @@ private:
             if (outcome != GateTable<V>::Outcome::covered) {
                 continue;
             }
-            const std::vector<std::uint8_t> is_member = table.minimal_cover(steps_);
+            const std::vector<std::uint8_t> is_member = table.minimal_cover();
             std::vector<std::uint8_t> in_gate(parts.size(), 0);
             for (std::size_t added = 0; added < members.size(); ++added) {
                 in_gate[members[added]] = is_member[added];
@@ -1872,54 +1403,52 @@ private:
     std::size_t num_vars_;
     BveConfig config_;
     Rng& rng_;
-    Leads leads_; ///< Empty between calls of `canonical()`.
+    PivotTable leads_; ///< Empty between calls of `canonical()`.
     // Scratch of `resolve()` and `find_gate()`.
     std::vector<SplitClause<V>> parts_;
     Rows spanning_;
     CanonicalWork canonical_work_;
-    std::string pair_key_;
     GateTable<V> gate_table_;
     std::vector<StoredClause> clauses_; ///< In the order added.
-    std::unordered_map<std::string, std::uint32_t> seen_; ///< Key of a present clause to its index.
+    /// @brief The present clauses' indices, by `hash_of()` their rows.
+    std::unordered_multimap<std::size_t, std::uint32_t> present_clause_idxs_by_hash_;
     std::vector<Elimination> eliminations_;
-    BveCounters counters_;
-    std::size_t steps_ = 0;
     bool found_empty_clause_ = false;
 
     std::vector<Direction> directions_;
     std::vector<DirectionId> free_directions_;
-    std::unordered_map<std::string, DirectionId> direction_of_key_;
-    std::string direction_key_; ///< Scratch.
+    /// @brief The directions in use, by their rows' `hash_except_last_bit()`.
+    std::unordered_multimap<std::size_t, DirectionId> direction_ids_by_hash_;
 
-    // Of a reading.
-    std::size_t reading_id_ = 0; ///< Readings start from 1.
-    bool is_reading_ = false;
-    bool has_reading_flip_sets_ = false;
-    /// @brief Per direction, the kept rows it sums in the reading `reading_of_` names.
-    std::vector<V> reading_sum_;
-    std::vector<std::size_t> reading_of_;
-    std::vector<std::uint32_t> order_; ///< The present clauses, in the reading's order.
+    // Of a pass.
+    std::size_t pass_id_ = 0; ///< Passes start from 1.
+    bool in_pass_ = false;
+    bool has_pass_flip_sets_ = false;
+    /// @brief Per direction, the kept rows it sums in the pass `pass_of_` names.
+    std::vector<V> pass_sum_;
+    std::vector<std::size_t> pass_of_;
+    std::vector<std::uint32_t> order_; ///< The present clauses, in the pass's order.
     std::vector<std::uint32_t> adder_of_kept_; ///< Per kept row, the clause that added it.
     /// @brief The kept rows in echelon form, each row with the kept rows it sums.
-    Leads echelon_leads_;
+    PivotTable echelon_leads_;
     std::vector<V> echelon_rows_;
-    std::vector<V> reading_sums_;
+    std::vector<V> pass_sums_;
     std::vector<Var> echelon_lead_of_;
     V reduced_; ///< Scratch of `hold_row()`.
     /// @brief Per kept row, the variables of a flip set that changes it and no
-    /// other kept row; made at the reading's first elimination.
+    /// other kept row; made at the pass's first elimination.
     std::vector<V> flip_set_of_kept_;
     /// @brief Per place in `order_`, its clause's first kept row; one more at the end.
     std::vector<std::uint32_t> added_begin_;
     /// @brief Per kept row, the clauses with a row summing it, some no longer present.
     std::vector<std::vector<std::uint32_t>> users_;
     std::vector<std::uint32_t> last_user_; ///< Per kept row, the last clause put on its list.
-    std::vector<std::uint32_t> group_of_kept_; ///< Per kept row, `none` in the core span.
-    std::vector<std::uint32_t> group_of_clause_; ///< Per clause, the tail group it is a leftover of.
-    std::vector<std::uint32_t> group_parent_; ///< Union-find over tail groups.
-    std::vector<std::uint32_t> group_size_; ///< Of a root, its tail rows.
+    std::vector<std::uint32_t> group_of_kept_; ///< Per kept row, `none` in the core subspace.
+    std::vector<std::uint32_t> group_of_clause_; ///< Per clause, the group it is a leftover of.
+    std::vector<std::uint32_t> group_parent_; ///< Union-find over groups.
+    std::vector<std::uint32_t> group_size_; ///< Of a root, its group rows.
     std::vector<std::size_t> group_mark_;
-    /// @brief The rows of the clauses held in the core span, as vectors of kept
+    /// @brief The rows of the clauses held in the core subspace, as vectors of kept
     /// rows in reduced form, each led by its highest kept row.
     std::vector<V> held_;
     std::vector<std::uint32_t> held_pivot_; ///< Per held vector, the kept row leading it.
@@ -1928,20 +1457,14 @@ private:
     /// @brief Per kept row, held vectors that have it; some no longer do.
     std::vector<std::vector<std::uint32_t>> held_with_;
     V beyond_held_; ///< Scratch of `beyond_held_in_place()`.
-    std::vector<std::uint8_t> tail_parity_; ///< Scratch of the walk.
-    /// @brief Per kept row, its place among the tail rows or free kept rows in hand; `none` if not one.
+    std::vector<std::uint8_t> group_row_parity_; ///< Scratch of the walk.
+    /// @brief Per kept row, its place among the rows of the group in hand; `none` if not one.
     std::vector<std::uint32_t> unknown_idx_of_kept_;
-    std::vector<std::size_t> kept_mark_;
     std::vector<std::size_t> clause_mark_;
     std::size_t mark_stamp_ = 0;
-    /// @brief Of each choice refused, its clauses and the rows it changes in them.
-    std::unordered_set<std::string> refused_keys_;
     std::vector<std::uint32_t> label_; ///< Per direction, see `label_of()`.
     std::vector<std::size_t> label_at_;
     std::size_t label_stamp_ = 0;
-
-    /// @brief The clauses of one row added and not yet substituted; some are removed since.
-    std::vector<std::uint32_t> unit_clause_idxs_;
 };
 
 template <GF2Vector V>
@@ -1953,8 +1476,6 @@ Clause clause_of(const std::vector<V>& rows, std::size_t num_vars, EquationRepr 
         clause.add_row(std::move(equation));
     }
     assert(clause.rows() == rows.size() && "a canonical clause lost a row");
-    clause.watched0 = 0;
-    clause.watched1 = clause.rows() <= 1 ? 0 : 1;
     return clause;
 }
 
@@ -1963,34 +1484,29 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
                             const std::size_t num_vars, const EquationRepr repr, const BveConfig& config,
                             Rng& rng) {
     using Rows = std::vector<V>;
-    const auto start = std::chrono::steady_clock::now();
     BvePlan plan;
     Formula<V> formula(num_vars, config, rng);
-    BveCounters& counters = formula.counters();
+    BveCounters& counters = plan.counters;
     for (const ClauseId id : active_clause_ids) {
         assert(clauses[id].num_vars() == num_vars && "an active clause is over another numbering");
-        ++counters.clauses_before;
         Rows spanning;
         spanning.reserve(clauses[id].rows());
         for (std::size_t row_idx = 0; row_idx < clauses[id].rows(); ++row_idx) {
             spanning.push_back(gf2_vector_of<V>(clauses[id].row(row_idx)));
         }
-        // A clause whose linear negation holds `0 = 1` is a tautology, and goes.
         std::optional<Rows> rows = formula.canonical_of(std::move(spanning));
-        if (!rows.has_value()) {
-            plan.removed_ids.push_back(id);
-            continue;
-        }
-        counters.equation_bits += equation_bits(*rows);
+        assert(rows.has_value() && "an active clause is a tautology");
+        ++counters.clauses_before;
+        counters.width_before += rows->size();
         formula.add_input_clause(std::move(*rows), id);
     }
     const std::size_t num_input_clauses = formula.clauses().size();
     const IndexSet mentioned_before = formula.mentioned_vars();
-    formula.run_projection();
-    counters.num_steps = formula.steps();
+    formula.run_pass();
 
     plan.found_empty_clause = formula.found_empty_clause();
     plan.eliminations = formula.eliminations();
+    counters.num_eliminated = plan.eliminations.size();
     plan.dropped_col_idxs = IndexSet(num_vars + 1);
     if (!plan.eliminations.empty()) {
         const IndexSet mentioned_after = formula.mentioned_vars();
@@ -2001,16 +1517,15 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
         });
     }
 
-    std::size_t num_left = 0;
     for (std::size_t clause_idx = 0; clause_idx < formula.clauses().size(); ++clause_idx) {
         const typename Formula<V>::StoredClause& clause = formula.clauses()[clause_idx];
+        if (clause.present) {
+            ++counters.clauses_after;
+            counters.width_after += clause.rows.size();
+        }
         if (clause_idx < num_input_clauses) {
-            if (clause.present) {
-                num_left += 1 + clause.duplicate_ids.size();
-            } else {
+            if (!clause.present) {
                 plan.removed_ids.push_back(clause.input_id);
-                plan.removed_ids.insert(plan.removed_ids.end(), clause.duplicate_ids.begin(),
-                                        clause.duplicate_ids.end());
             }
             continue;
         }
@@ -2027,18 +1542,12 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
             .elimination_idx = clause.elimination_idx,
             .removed_clause_idx = clause.removed_clause_idx});
         if (clause.present) {
-            ++num_left;
             counters.num_unit_resolvents += clause.rows.size() == 1 ? 1U : 0U;
             counters.num_resolvents_of_width_at_most_2 += clause.rows.size() <= 2 ? 1U : 0U;
             resolvent.clause = clause_of<V>(clause.rows, num_vars, repr);
         }
     }
     std::ranges::sort(plan.removed_ids);
-    counters.clauses_after = num_left;
-
-    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
-    counters.time_s = elapsed.count();
-    plan.counters = counters;
     return plan;
 }
 
@@ -2047,9 +1556,9 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
 BvePlan build_bve_plan(const std::vector<Clause>& clauses,
                        const ActiveClauseIds active_clause_ids, const std::size_t num_vars,
                        const EquationRepr repr, const BveConfig& config, Rng& rng) {
-    assert(config.try_from >= 0.0 && "the try constant is out of range");
-    assert(config.tail_group_cap >= 1 && config.tail_group_cap <= 16 && config.success_rate >= 0.0 &&
-           config.success_rate <= 1.0 && "the tail group cap or the success rate is out of range");
+    assert(config.group_cap >= 1 && config.group_cap <= 16 && config.max_refusals_in_a_row >= 1 &&
+           config.success_rate >= 0.0 && config.success_rate <= 1.0 &&
+           "the group cap, the refusal limit or the success rate is out of range");
     return with_gf2_vector_of(repr, [&]<GF2Vector V>(std::type_identity<V>) {
         return build_bve_plan_over<V>(clauses, active_clause_ids, num_vars, repr, config, rng);
     });

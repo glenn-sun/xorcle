@@ -18,8 +18,7 @@ namespace xorcle {
 /// is `used_vars[i]`, and each entry's rows are over the numbering the latest
 /// renumbering before it left.
 /// @pre `active_assignment` is indexed by active variable.
-/// @pre Every entry of `used_vars` is `< original_num_vars`, and every row of every
-/// entry's `trail_rows_before` is non-zero with a variable leading bit.
+/// @pre Every entry of `used_vars` is `< original_num_vars`.
 IndexSet reconstruct_original_assignment(
     const IndexSet& active_assignment,
     const std::vector<CompactionHistoryEntry>& compaction_history,

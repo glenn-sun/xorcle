@@ -62,6 +62,11 @@ void Equation::set_eq_false() noexcept {
     interface_->set_eq_false();
 }
 
+void Equation::negate() {
+    assert(interface_ != nullptr && "negate on a null equation handle");
+    interface_->negate();
+}
+
 Equation Equation::compact(const CompactionTransform& transform) const {
     assert(interface_ != nullptr && "compact on a null equation handle");
     assert(interface_->num_bits() == transform.old_num_vars() + 1 &&

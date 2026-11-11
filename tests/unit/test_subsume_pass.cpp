@@ -60,11 +60,11 @@ bool implied(const std::set<std::uint64_t>& forbidden_c, const std::set<std::uin
 Clause random_clause(const EquationRepr repr, const std::size_t num_vars,
                      const std::size_t max_width, Rng& rng) {
     Clause clause(repr, num_vars);
-    const std::size_t width = 1 + static_cast<std::size_t>(random_int(rng, static_cast<int>(max_width)));
+    const std::size_t width = 1 + uniform_below(rng, max_width);
     for (std::size_t i = 0; i < width; ++i) {
         std::vector<std::size_t> bits;
         for (std::size_t bit = 0; bit <= num_vars; ++bit) {
-            if (random_int(rng, 2) == 1) {
+            if (uniform_below(rng, 2) == 1) {
                 bits.push_back(bit);
             }
         }
@@ -118,7 +118,7 @@ TEST_CASE_TEMPLATE("subsumption pass: a pair's relation and its hyperplanes matc
     std::size_t num_strengthened = 0;
     std::size_t num_neither = 0;
     for (std::size_t trial = 0; trial < 3000; ++trial) {
-        const std::size_t num_vars = 3 + static_cast<std::size_t>(random_int(rng, 3));
+        const std::size_t num_vars = 3 + uniform_below(rng, 3);
         const Clause narrower = random_clause(repr, num_vars, 3, rng);
         const Clause wider = random_clause(repr, num_vars, 4, rng);
         if (narrower.rows() == 0 || wider.rows() == 0 || narrower.rows() > wider.rows()) {
@@ -169,15 +169,14 @@ TEST_CASE_TEMPLATE("subsumption pass: a pair's relation and its hyperplanes matc
     CHECK(num_neither > 50);
 }
 
-TEST_CASE("subsumption pass: the work of a check is counted") {
-    // C's one row x0 + x1 against D's rows x0 + 1 and x1: both added, leaving `0 = 1`.
+TEST_CASE("subsumption pass: the rows a check reads are counted") {
+    // C's one row x0 + x1 against D's rows x0 + 1 and x1: both read, leaving `0 = 1`.
     const Clause narrower = make_clause(EquationRepr::dense, 2, {{0, 1}});
     Clause wider = make_clause(EquationRepr::dense, 2, {{0, 2}, {1}});
     wider.reduce_rows();
     PairCheck check(EquationRepr::dense, 2);
     CHECK(check.relate(narrower, wider) == PairRelation::strengthens);
-    CHECK(check.num_row_checks() == 1);
-    CHECK(check.num_row_additions() == 2);
+    CHECK(check.num_rows_read() == 2);
 }
 
 } // namespace xorcle

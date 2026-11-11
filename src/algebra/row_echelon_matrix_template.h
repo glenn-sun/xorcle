@@ -43,6 +43,8 @@ public:
 
     virtual std::size_t pivot_col_idx(std::size_t row_idx) const noexcept = 0;
 
+    virtual std::size_t row_idx_for_col_idx(std::size_t col_idx) const noexcept = 0;
+
     /// @brief Store `v`, leaving it null, unless it is already in the span, which
     /// leaves it `0 = 0`.
     virtual std::optional<std::size_t> add_row_get_row_idx(Equation& v) = 0;
@@ -547,7 +549,7 @@ private:
     }
 
     /// @brief The row holding the pivot in `col_idx`, or where a row leading on it goes.
-    std::size_t row_idx_for_col_idx(std::size_t col_idx) const noexcept {
+    std::size_t row_idx_for_col_idx(std::size_t col_idx) const noexcept override {
         // Counting the pivots below reads a word per 64 columns, which a binary
         // search over the rows beats for 16 words or more.
         if (cols_ <= 1024) [[likely]] {

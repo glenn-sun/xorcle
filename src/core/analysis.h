@@ -5,11 +5,11 @@
 #include <vector>
 
 #include "algebra/equation.h"
+#include "algebra/equation_pool.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "core/trail_basis.h"
-#include "heuristics/decisions/decision_procedure.h"
 #include "util/random.h"
 
 namespace xorcle {
@@ -52,8 +52,7 @@ struct AssertingClause {
     /// @brief Every clause used, in derivation order: the conflicting clause first.
     std::vector<ClauseId> reason_ids;
 
-    /// @brief Each `reason_ids` entry's literal block distance on this trail, or
-    /// empty when none were measured.
+    /// @brief Each `reason_ids` entry's literal block distance on this trail.
     std::vector<std::size_t> reason_lbds;
 
     /// @brief How many decision levels above the root the clause reaches into,
@@ -83,9 +82,6 @@ struct AssertingClause {
 /// the beginning of the trail, taking only the resolutions that strictly shrink
 /// the clause's width.
 ///
-/// With `measure_reason_lbds`, every clause the derivation uses is measured and
-/// fills `reason_lbds`.
-///
 /// With `report_responsible_trail_idxs`, the trail elements responsible for the
 /// clause as learned fill `responsible_trail_idxs`.
 ///
@@ -105,9 +101,8 @@ struct AssertingClause {
 /// is the last in trail order.
 /// @pre Every non-decision trail row carries a reason id in `clauses`.
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
-                                      ClauseId conflict_clause_id, DecisionProcedure& decisions,
-                                      Rng& representative_rng, bool minimize = true,
-                                      bool measure_reason_lbds = false,
+                                      ClauseId conflict_clause_id, Rng& representative_rng,
+                                      bool minimize = true,
                                       bool report_responsible_trail_idxs = false,
                                       bool collect_subsumed = false);
 
@@ -130,9 +125,8 @@ struct ResolvedReason {
     ClauseId clause_id;
 
     /// @brief The clause's literal block distance on this trail, with the trail
-    /// equation it propagated counted at that equation's level, when the step
-    /// was asked to measure it.
-    std::optional<std::size_t> lbd;
+    /// equation it propagated counted at that equation's level.
+    std::size_t lbd;
 
     /// @brief Whether the resolvent's rank dropped to the reason's less one, so
     /// its span is exactly the reason's remaining rows': the resolvent subsumes
@@ -145,12 +139,9 @@ struct ResolutionWorkspace {
     /// @pre The trail is conflicting, and stays as it is while this is used.
     explicit ResolutionWorkspace(const Trail& trail);
 
-    /// @brief A trail-basis row of any contents, out of `spare_rows` while it has one.
-    Equation spare_row();
-
     Equation trail_basis_one; ///< The unit vector at column 0, which is `0 = 1`.
     TrailBasisSpace reason_basis; ///< Empty between steps.
-    std::vector<Equation> spare_rows; ///< Trail-basis rows a step was left with.
+    EquationPool spare_rows; ///< Trail-basis rows a step was left with.
 };
 
 /// @brief One resolution step, in trail-basis coordinates: removes the coordinate
@@ -165,7 +156,7 @@ struct ResolutionWorkspace {
 /// a valid resolvent. A fair coin from `representative_rng` per such row draws
 /// the resolvent uniformly from that family.
 ///
-/// @return The reason clause resolved against, measured when `measure_lbd`.
+/// @return The reason clause resolved against, with its LBD.
 /// @pre `pivot_col_idx` leads row `pivot_row_idx`, its trail step was propagated
 /// with a reason id in `clauses`, and the trail is conflicting.
 /// @pre `workspace` was built on `trail`.
@@ -173,6 +164,6 @@ struct ResolutionWorkspace {
 ResolvedReason resolve_asserting_basis(
     TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx, std::size_t pivot_col_idx,
     const Trail& trail, const std::vector<Clause>& clauses, ResolutionWorkspace& workspace,
-    Rng& representative_rng, bool measure_lbd = false);
+    Rng& representative_rng);
 
 } // namespace xorcle

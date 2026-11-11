@@ -7,7 +7,6 @@
 #include <cstring>
 #include <optional>
 #include <span>
-#include <string>
 
 #include "algebra/equation_repr.h"
 #include "util/index_set.h"
@@ -31,9 +30,44 @@ public:
 
     static constexpr std::size_t word_mask = bits_per_word - 1; ///< Bit offset within a word.
 
+    /// @brief The words a vector of @p num_bits bits stores.
+    static constexpr std::size_t word_count(std::size_t num_bits) noexcept {
+        return (num_bits + word_mask) >> word_shift;
+    }
+
     /// @brief The size of the buffer that holds the words of `num_bits` bits.
     static constexpr std::size_t buffer_bytes(std::size_t num_bits) noexcept {
         return word_count(num_bits) * sizeof(Word);
+    }
+
+    /// @brief The first set bit of @p num_words words, or `std::nullopt` if none is set.
+    static std::optional<std::size_t> leading_bit(const Word* words,
+                                                  std::size_t num_words) noexcept {
+        for (std::size_t w = 0; w < num_words; ++w) {
+            if (words[w] != 0) {
+                return (w << word_shift) + static_cast<std::size_t>(std::countr_zero(words[w]));
+            }
+        }
+        return std::nullopt;
+    }
+
+    /// @brief Copy @p num_words words.
+    /// @pre `num_words >= 1`.
+    static void copy_words(Word* to, const Word* from, std::size_t num_words) noexcept {
+        assert(num_words != 0 && "copy_words of no words");
+        // Up to 8 words, two overlapping fixed-size `std::memcpy`s.
+        if (num_words <= 2) {
+            to[0] = from[0];
+            to[num_words - 1] = from[num_words - 1];
+        } else if (num_words <= 4) {
+            std::memcpy(to, from, 2 * sizeof(Word));
+            std::memcpy(to + num_words - 2, from + num_words - 2, 2 * sizeof(Word));
+        } else if (num_words <= 8) {
+            std::memcpy(to, from, 4 * sizeof(Word));
+            std::memcpy(to + num_words - 4, from + num_words - 4, 4 * sizeof(Word));
+        } else {
+            std::memcpy(to, from, num_words * sizeof(Word));
+        }
     }
 
     /// @brief Construct an all-zeros vector.
@@ -155,16 +189,15 @@ public:
         words_[i >> word_shift] &= ~(Word{1} << (i & word_mask));
     }
 
+    /// @pre `i < num_bits()`.
+    void flip_bit(std::size_t i) noexcept {
+        assert(i < num_bits_ && "flip_bit index is out of range");
+        words_[i >> word_shift] ^= Word{1} << (i & word_mask);
+    }
+
     /// @brief Get index of the first set bit, or `std::nullopt` if none are set.
     std::optional<std::size_t> leading_bit() const noexcept {
-        const Word* words = words_;
-        const std::size_t num_words = word_count(num_bits_);
-        for (std::size_t w = 0; w < num_words; ++w) {
-            if (words[w] != 0) {
-                return (w << word_shift) + static_cast<std::size_t>(std::countr_zero(words[w]));
-            }
-        }
-        return std::nullopt;
+        return leading_bit(words_, word_count(num_bits_));
     }
 
     /// @brief Get index of the first set bit strictly after `i`, or `std::nullopt`.
@@ -272,31 +305,13 @@ public:
     /// @pre `other.num_bits() == num_bits()`.
     void assign_from(const DenseGF2Vector& other) noexcept {
         assert(num_bits_ == other.num_bits_ && "bit count mismatch in assign_from");
-        const std::size_t num_words = word_count(num_bits_);
-        // Below 8 words a plain word loop beats `std::memcpy`.
-        if (num_words < 8) {
-            Word* destination = words_;
-            const Word* source = other.words_;
-            for (std::size_t i = 0; i < num_words; ++i) {
-                destination[i] = source[i];
-            }
-        } else {
-            std::memcpy(words_, other.words_, num_words * sizeof(Word));
-        }
+        copy_words(words_, other.words_, word_count(num_bits_));
     }
 
     /// @brief Overwrite from `num_words()` words packed as `words()` is.
     /// @pre The bits of `words` past `num_bits()` are zero. Not asserted.
     void assign_from_words(const Word* words) noexcept {
-        const std::size_t num_words = word_count(num_bits_);
-        if (num_words < 8) {
-            Word* destination = words_;
-            for (std::size_t i = 0; i < num_words; ++i) {
-                destination[i] = words[i];
-            }
-        } else {
-            std::memcpy(words_, words, num_words * sizeof(Word));
-        }
+        copy_words(words_, words, word_count(num_bits_));
     }
 
     bool equals(const DenseGF2Vector& other) const noexcept {
@@ -315,11 +330,6 @@ public:
     }
 
     std::size_t hash() const noexcept;
-
-    /// @brief Append bytes that determine every bit but the last among vectors of as
-    /// many bits: each nonzero word with its index as four bytes, which are never all ones.
-    /// @pre `num_bits() >= 1`.
-    void append_key_except_last_bit(std::string& key) const;
 
     /// @brief A hash that `equals_except_last_bit()` vectors share.
     /// @pre `num_bits() >= 1`.
@@ -383,10 +393,6 @@ private:
         return !first || *first >= i;
     }
 #endif
-
-    static constexpr std::size_t word_count(std::size_t num_bits) noexcept {
-        return (num_bits + word_mask) >> word_shift;
-    }
 
     std::size_t num_bits_;
     std::size_t capacity_; ///< In words.

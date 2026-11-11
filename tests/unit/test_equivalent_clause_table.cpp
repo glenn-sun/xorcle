@@ -99,7 +99,7 @@ TEST_CASE("equivalent clause table: entries survive growth and removals") {
     for (ClauseId id = 0; id < clauses.size(); id += 2) {
         table.remove(id);
     }
-    // Removed slots are taken again and dropped as the table grows.
+    // Removed ids are entered and removed again.
     for (int round = 0; round < 4; ++round) {
         for (ClauseId id = 0; id < clauses.size(); id += 2) {
             table.enter(id, key(clauses[id]));

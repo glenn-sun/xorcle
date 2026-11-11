@@ -4,8 +4,8 @@
 /// @brief Finding the kept clause whose rows are those of a given clause.
 
 #include <cstddef>
-#include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include "algebra/row_echelon_matrix.h"
@@ -35,42 +35,18 @@ public:
     /// @pre `id` is not entered.
     void enter(ClauseId id, std::size_t key);
 
-    /// @brief Remove the clause's entry, if it has one.
+    /// @pre `id` is entered.
     void remove(ClauseId id);
 
     bool is_entered(ClauseId id) const noexcept {
-        return id < clause_id_to_slot_idx_.size() && clause_id_to_slot_idx_[id] != not_entered;
+        return id < clause_id_to_key_.size() && clause_id_to_key_[id].has_value();
     }
 
-    std::size_t size() const noexcept { return num_entered_; }
+    std::size_t size() const noexcept { return key_to_clause_ids_.size(); }
 
 private:
-    struct Slot {
-        std::size_t key;
-        ClauseId id;
-    };
-
-    static constexpr ClauseId empty_slot = static_cast<ClauseId>(-1);
-    static constexpr ClauseId removed_slot = static_cast<ClauseId>(-2);
-    static constexpr std::uint32_t not_entered = static_cast<std::uint32_t>(-1);
-
-    /// @brief Where the probe for @p key starts.
-    std::size_t first_slot_idx(std::size_t key) const noexcept { return key >> shift_; }
-
-    /// @brief Move the entries to a table four times their number, without the removed slots.
-    void rehash();
-
-    /// @brief Make room for one more entry and for `id` in the slot index.
-    void reserve_for(ClauseId id);
-
-    void fill(std::size_t slot_idx, std::size_t key, ClauseId id);
-
-    /// @brief Open addressing with linear probing over a power of two of slots.
-    std::vector<Slot> slots_;
-    unsigned shift_ = 0;
-    std::vector<std::uint32_t> clause_id_to_slot_idx_;
-    std::size_t num_entered_ = 0;
-    std::size_t num_used_slots_ = 0; ///< Entered or removed.
+    std::unordered_multimap<std::size_t, ClauseId> key_to_clause_ids_;
+    std::vector<std::optional<std::size_t>> clause_id_to_key_;
 };
 
 } // namespace xorcle

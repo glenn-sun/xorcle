@@ -65,24 +65,17 @@ struct ProgressSnapshot {
     std::size_t num_watch_updates = 0;
 };
 
-/// @brief Receives one snapshot per report interval while the solver runs.
-class ProgressReporter {
-public:
-    virtual ~ProgressReporter() = default;
-
-    virtual void report(const ProgressSnapshot& snapshot) = 0;
-};
-
 /// @brief Write progress as aligned DIMACS `c` comment lines, under a
 /// column-name line repeated often enough to stay on screen.
-class ConsoleProgressReporter final : public ProgressReporter {
+class ConsoleProgressReporter {
 public:
     /// @param out Not owned, so it must outlive the reporter.
     /// @param groups Which columns to write; see `progress_group`.
     explicit ConsoleProgressReporter(std::ostream& out,
                                      unsigned groups = progress_group::defaults);
 
-    void report(const ProgressSnapshot& snapshot) override;
+    /// @brief Write one snapshot, taken once per report interval.
+    void report(const ProgressSnapshot& snapshot);
 
 private:
     /// @brief Lines between two column-name lines.

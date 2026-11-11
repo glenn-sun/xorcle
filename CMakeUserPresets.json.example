@@ -3,7 +3,7 @@
     "configurePresets": [
         {
             "name": "sanitize-local-runtimes",
-            "displayName": "sanitize, with GCC's runtimes unpacked into ~/.local",
+            "displayName": "sanitize, with the sanitizer runtimes in a directory of your own",
             "inherits": "sanitize",
             "cacheVariables": {
                 "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined -L$env{HOME}/.local/lib/gcc-sanitizers -Wl,-rpath,$env{HOME}/.local/lib/gcc-sanitizers"

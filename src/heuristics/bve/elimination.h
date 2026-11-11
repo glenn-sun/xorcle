@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file elimination.h
-/// @brief What BVE keeps of an elimination, enough to undo it on an assignment.
+/// @brief What is kept of an elimination, enough to undo it on an assignment.
 
 #include <cstddef>
 #include <cstdint>

@@ -13,17 +13,9 @@ namespace xorcle {
 enum class SearchMode { focused, stable };
 
 struct StabilizeConfig {
-    bool enabled = false;
-    std::size_t interval_conflicts = 1000; ///< The length of the first focused phase.
+    std::size_t interval_conflicts; ///< The length of the first focused phase.
     /// @brief The restarts of focused mode, whose averages see only focused-mode conflicts.
-    RestartConfig focused_restarts{.method = RestartMethod::lbd,
-                                   .lbd_fast_window = 33,
-                                   .lbd_slow_window = 100000,
-                                   .lbd_min_ratio = 1.1,
-                                   .lbd_min_conflicts = 2,
-                                   .lbd_trail_ratio = 0.0};
-
-    bool operator==(const StabilizeConfig&) const = default;
+    RestartConfig focused_restarts;
 };
 
 /// @brief The mode of each search conflict: focused for one interval, then stable and

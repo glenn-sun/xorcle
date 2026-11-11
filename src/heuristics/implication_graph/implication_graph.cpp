@@ -15,10 +15,9 @@ ImplicationGraph::ImplicationGraph(const EquationRepr repr, const std::size_t nu
       num_vars_(num_vars),
       max_pairs_(config.max_pairs),
       max_descendants_(config.max_descendants),
-      false_eqn_(Equation::eq_false(repr, num_vars)),
       rng_(make_rng(default_seed, RngComponent::implication_graph_sample)),
-      reduced_(repr, num_vars),
-      row_sum_(repr, num_vars) {
+      row_sum_(repr, num_vars),
+      spare_rows_(repr, num_vars + 1) {
     assert(max_pairs_ != 0 && max_descendants_ != 0 && "a run must be allowed one of each");
 }
 
@@ -32,10 +31,8 @@ void ImplicationGraph::reconfigure(const std::size_t num_vars) {
         ++numbering_;
     }
     num_vars_ = num_vars;
-    false_eqn_ = Equation::eq_false(repr_, num_vars);
-    reduced_ = RowSpace(repr_, num_vars);
     row_sum_.resize(num_vars);
-    spare_rows_.clear();
+    spare_rows_.clear(num_vars + 1);
     clear_keys();
     key_last_examined_.clear();
     graph_clauses_.clear();
@@ -45,62 +42,15 @@ void ImplicationGraph::reconfigure(const std::size_t num_vars) {
     num_width_2_clauses_ = 0;
 }
 
-Equation ImplicationGraph::spare_row(const std::size_t num_vars) {
-    if (spare_rows_.empty()) {
-        return Equation(repr_, num_vars);
-    }
-    Equation row = std::move(spare_rows_.back());
-    spare_rows_.pop_back();
-    if (row.num_vars() != num_vars) {
-        row.resize(num_vars);
-    }
-    return row;
-}
-
-void ImplicationGraph::clear_span(RowSpace& span) {
-    while (span.rows() != 0) {
-        spare_rows_.push_back(span.pop_row(span.rows() - 1));
-    }
-}
-
-bool ImplicationGraph::reduce_triple(const Clause& clause, const RowSpace& root_span) {
-    if (clause.rows() != 2) {
+bool ImplicationGraph::reduce_triple(const Clause& clause) {
+    // A clause spanning `0 = 1` is satisfied.
+    if (clause.rows() != 2 || clause.pivot_col_idxs().test(num_vars_)) {
         return false;
     }
-    // An empty root trail reduces nothing, and a clause's rows are already as
-    // `reduced_` would hold them.
-    const RowSpace* rows = &clause;
-    if (root_span.rows() != 0) {
-        reduce_into_reduced(clause, root_span);
-        rows = &reduced_;
-    }
-#ifndef NDEBUG
-    if (rows == &clause) {
-        reduce_into_reduced(clause, root_span);
-        assert(reduced_.rows() == 2 && reduced_.row(0) == clause.row(0) &&
-               reduced_.row(1) == clause.row(1) &&
-               "a clause's rows are not as a row space of them holds them");
-    }
-#endif
-    // The root trail either narrows the clause or, once `0 = 1` is in the
-    // linear negation, satisfies it.
-    if (rows->rows() != 2 || rows->pivot_col_idxs().test(num_vars_)) {
-        return false;
-    }
-    row_sum_.assign_from(rows->row(0));
-    row_sum_.plus_assign(rows->row(1));
-    triple_ = {&rows->row(0), &rows->row(1), &row_sum_};
+    row_sum_.assign_from(clause.row(0));
+    row_sum_.plus_assign(clause.row(1));
+    triple_ = {&clause.row(0), &clause.row(1), &row_sum_};
     return true;
-}
-
-void ImplicationGraph::reduce_into_reduced(const Clause& clause, const RowSpace& root_span) {
-    clear_span(reduced_);
-    for (const Equation& stored : clause) {
-        Equation row = spare_row(num_vars_);
-        row.assign_from(stored);
-        root_span.reduce(row);
-        reduced_.add_row(std::move(row));
-    }
 }
 
 std::uint32_t ImplicationGraph::key_hash(const Equation& eqn) noexcept {
@@ -170,7 +120,7 @@ std::size_t ImplicationGraph::vertex_of(const Equation& eqn, const std::uint32_t
 Equation ImplicationGraph::equation_of(const std::size_t vertex) const {
     Equation eqn = key_eqn_[vertex / 2];
     if ((vertex & 1) != 0) {
-        eqn.plus_assign(false_eqn_);
+        eqn.negate();
     }
     return eqn;
 }
@@ -242,11 +192,7 @@ bool ImplicationGraph::mark_descendants(const std::size_t from, std::vector<std:
             // so a unit found in the intersection still holds and a refuted side
             // is still refuted.
             for (std::size_t i = next_begin; i < max_descendants_; ++i) {
-                assert(reached.size() - i <= std::numeric_limits<int>::max() &&
-                       "a distance level outgrew the sampler");
-                const std::size_t pick =
-                    i + static_cast<std::size_t>(
-                            random_int(rng_, static_cast<int>(reached.size() - i)));
+                const std::size_t pick = i + uniform_below(rng_, reached.size() - i);
                 std::swap(reached[i], reached[pick]);
                 if (parent_clause != nullptr) {
                     std::swap((*parent_clause)[i - 1], (*parent_clause)[pick - 1]);
@@ -349,11 +295,7 @@ void ImplicationGraph::sample_pairs(ImplicationGraphRun& summary) {
     // Partial Fisher-Yates: the first `max_pairs_` places end up holding a
     // uniformly random subset of the dirty pairs.
     for (std::size_t i = 0; i < max_pairs_; ++i) {
-        assert(sampled_pairs_.size() - i <= std::numeric_limits<int>::max() &&
-               "the dirty pairs outgrew the sampler");
-        const std::size_t pick =
-            i + static_cast<std::size_t>(
-                    random_int(rng_, static_cast<int>(sampled_pairs_.size() - i)));
+        const std::size_t pick = i + uniform_below(rng_, sampled_pairs_.size() - i);
         std::swap(sampled_pairs_[i], sampled_pairs_[pick]);
     }
     sampled_pairs_.resize(max_pairs_);
@@ -362,18 +304,11 @@ void ImplicationGraph::sample_pairs(ImplicationGraphRun& summary) {
 
 ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
                                           ActiveClauseIds active_clause_ids,
-                                          const RowSpace& root_span,
                                           ImplicationGraphProofRecord* proof) {
     ImplicationGraphRun summary;
     if (proof != nullptr) {
         proof->clear();
     }
-    // A refuted root implies every equation and its negation alike, so reducing
-    // by it would strip the constant bits that tell the two apart.
-    if (root_span.pivot_col_idxs().test(num_vars_)) {
-        return summary;
-    }
-    summary.did_work = true;
 
     clear_keys();
     for (std::vector<Arc>& arcs : arcs_) {
@@ -383,35 +318,27 @@ ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
     graph_clauses_.clear();
     key_last_examined_.clear();
 
-    // A root trail with rows changes what a clause reduces to without
-    // rewriting it, so nothing read or examined before or during this run counts.
-    if (root_span.rows() != 0) {
-        clause_runs_.clear();
-    }
     clause_runs_.resize(clauses.size());
     ++num_runs_;
 
     for (const ClauseId clause_id : active_clause_ids) {
-        if (reduce_triple(clauses[clause_id], root_span)) {
+        if (reduce_triple(clauses[clause_id])) {
             add_clause(clause_id);
         }
     }
 
     if (num_keys_ != 0) {
-        assert(all_arcs_are_clause_backed(clauses, active_clause_ids, root_span) &&
+        assert(all_arcs_are_clause_backed(clauses, active_clause_ids) &&
                "an arc of the implication graph is not witnessed by its clause");
         const auto start = std::chrono::steady_clock::now();
         mark_dirty_pairs();
         sample_pairs(summary);
-        walk_span_intersections(root_span, clauses, active_clause_ids, summary, proof);
+        walk_span_intersections(clauses, active_clause_ids, summary, proof);
         stamp_examined_pairs();
         const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
         summary.span_intersection_time_s += elapsed.count();
-        assert(full_examination_yields(summary, root_span, clauses, active_clause_ids) &&
+        assert(full_examination_yields(summary, clauses, active_clause_ids) &&
                "a clean pair held a unit");
-    }
-    if (root_span.rows() != 0) {
-        clause_runs_.clear();
     }
     assert((proof == nullptr ||
             std::ranges::equal(summary.units, proof->unit_idx_to_step_idx,
@@ -425,7 +352,7 @@ ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
 #ifndef NDEBUG
 bool ImplicationGraph::implication_is_clause_backed(
     const std::size_t from, const std::size_t to, const std::vector<Clause>& clauses,
-    ActiveClauseIds active_clause_ids, const RowSpace& root_span) {
+    ActiveClauseIds active_clause_ids) {
     const std::size_t num_vertices = 2 * num_keys_;
     std::vector<std::size_t> parent(num_vertices, no_index);
     std::vector<std::size_t> parent_arc(num_vertices, no_index);
@@ -454,7 +381,7 @@ bool ImplicationGraph::implication_is_clause_backed(
         if (!active_clause_ids.contains(arc.clause_id)) {
             return false;
         }
-        if (!reduce_triple(clauses[arc.clause_id], root_span)) {
+        if (!reduce_triple(clauses[arc.clause_id])) {
             return false;
         }
         // The arc `tail -> vertex` stands for `tail` refuting the negation of

@@ -1,7 +1,6 @@
 #include <doctest/doctest.h>
 
 #include <cstddef>
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -23,9 +22,7 @@
 #include "heuristics/selection/cyclic.h"
 #include "heuristics_test_support.h"
 #include "io/dimacs.h"
-#include "io/proof_raw.h"
-#include "io/proof_postprocess.h"
-#include "io/proof_raw_file.h"
+#include "io/proof_writer.h"
 #include "io_test_support.h"
 #include "util/random.h"
 #include "util/stats.h"
@@ -119,7 +116,7 @@ bool spans_within(const RowEchelonMatrix& inner, const RowEchelonMatrix& outer) 
 }
 
 std::unique_ptr<Csids> default_decisions(EquationRepr repr, std::size_t num_vars) {
-    return std::make_unique<Csids>(repr, num_vars, default_seed);
+    return std::make_unique<Csids>(repr, num_vars, default_seed, default_csids_config());
 }
 
 /// @brief The learned clause of one conflict, with and without minimization.
@@ -128,21 +125,14 @@ struct BothWays {
     AssertingClause minimized;
 };
 
-BothWays learn_both_ways(const Conflict& conflict, EquationRepr repr) {
-    std::unique_ptr<Csids> plain_decisions = default_decisions(repr, conflict.trail.num_vars());
-    std::unique_ptr<Csids> minimizing_decisions =
-        default_decisions(repr, conflict.trail.num_vars());
+BothWays learn_both_ways(const Conflict& conflict) {
     // A stream each, so both walks draw the same coins.
     Rng plain_rng = make_rng(default_seed, RngComponent::minimize_representative);
     Rng minimizing_rng = make_rng(default_seed, RngComponent::minimize_representative);
     return BothWays{find_asserting_clause(conflict.trail, conflict.clauses,
-                                          conflict.conflict_clause_id(), *plain_decisions,
-                                          plain_rng, /*minimize=*/false,
-                                          /*measure_reason_lbds=*/true),
+                                          conflict.conflict_clause_id(), plain_rng, /*minimize=*/false),
                     find_asserting_clause(conflict.trail, conflict.clauses,
-                                          conflict.conflict_clause_id(), *minimizing_decisions,
-                                          minimizing_rng, /*minimize=*/true,
-                                          /*measure_reason_lbds=*/true)};
+                                          conflict.conflict_clause_id(), minimizing_rng, /*minimize=*/true)};
 }
 
 /// @brief The invariants minimization has to keep, whether or not it shrank the
@@ -175,23 +165,31 @@ void check_minimization_invariants(const BothWays& both, const Trail& trail) {
 
 struct Outcome {
     SolveResult result = SolveResult::unsat;
-    SolverCounters counters;
+    RunStats counters;
 };
 
 Outcome solve_with(EquationRepr repr, std::string_view instance, bool minimize,
-                   RawProofWriter* proof_writer = nullptr) {
+                   ProofWriter* proof_writer = nullptr) {
     ParsedDimacs parsed = parse_dimacs_string(instance, repr);
+    SolverConfig config = default_solver_config();
+    config.renumber = false;
+    config.minimize = minimize;
+    config.otf_subsume = false;
+    config.deletion.reset();
+    config.implication_graph.reset();
+    config.vivify.reset();
+    config.bve.reset();
     Solver solver(repr, parsed.num_vars, parsed.used_vars,
-                  std::make_unique<Cyclic>(parsed.num_vars),
+                  [](const ClauseDatabase& database) {
+                      return std::make_unique<Cyclic>(database);
+                  },
                   default_decisions(repr, parsed.num_vars), std::make_unique<NoRestarts>(),
-                  proof_writer, CompactionConfig{.enabled = false}, ProgressConfig{}, minimize,
-                  DeletionConfig{.enabled = false}, false, false, PropagationConfig{},
-                  ImplicationGraphConfig{.enabled = false});
+                  proof_writer, config);
     for (Clause& clause : parsed.clauses) {
         solver.add_starting_clause(std::move(clause));
     }
     const Solution solution = solver.solve();
-    return Outcome{solution.result, solver.counters()};
+    return Outcome{solution.result, solver.stats()};
 }
 
 } // namespace
@@ -200,7 +198,7 @@ TEST_CASE_TEMPLATE("minimize: the extended example's clause is already minimal",
                    SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const Conflict conflict = make_extended_example(repr);
-    const BothWays both = learn_both_ways(conflict, repr);
+    const BothWays both = learn_both_ways(conflict);
 
     // C = [d + e = 1] v [b + c = 1], whose linear negation is spanned by
     // [b + c = 0] and [d + e = 0].
@@ -216,7 +214,7 @@ TEST_CASE_TEMPLATE("minimize: the extended example's clause is already minimal",
 TEST_CASE_TEMPLATE("minimize: a clause the walk can shrink", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     const Conflict conflict = make_shrinkable_conflict(repr);
-    const BothWays both = learn_both_ways(conflict, repr);
+    const BothWays both = learn_both_ways(conflict);
 
     // The 1-UIP clause is [x2 = 0] v [x5 = 0] v [x0 = 1], negated as
     // [x0 = 0], [x2 = 1], [x5 = 1].
@@ -265,29 +263,20 @@ TEST_CASE_TEMPLATE("minimize: a whole run reaches the same verdict and narrower 
 
 TEST_CASE_TEMPLATE("minimize: a minimizing run's proof checks", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
-    const std::filesystem::path path =
-        scratch_path(repr == EquationRepr::dense ? "minimize_dense.raw" : "minimize_sparse.raw");
     const std::string instance = sign_pattern_instance(4);
-    const std::vector<std::vector<RawRow>> inputs =
+    const std::vector<std::vector<ProofRow>> inputs =
         clause_rows(parse_dimacs_string(instance, repr).clauses);
 
+    std::ostringstream proof;
     {
-        RawProofWriter writer(path, 4, inputs.size());
+        ProofWriter writer(proof, 4);
         const Outcome outcome = solve_with(repr, instance, true, &writer);
         REQUIRE(outcome.result == SolveResult::unsat);
         REQUIRE(outcome.counters.num_minimized_clauses > 0);
-        writer.finalize(true);
     }
 
-    RawProofFileSource source(path);
-    std::ostringstream proof;
-    const PostprocessSummary summary =
-        postprocess_raw_proof(source, 4, inputs.size(), repr, proof, inputs);
-    CHECK(summary.kept_learned > 0);
     LrupChecker checker(repr, 4, inputs);
     CHECK(checker.check(proof.str()) == "");
-
-    std::filesystem::remove(path);
 }
 
 } // namespace xorcle

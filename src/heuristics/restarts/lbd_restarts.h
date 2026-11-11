@@ -21,11 +21,15 @@ class LbdRestarts final : public RestartPolicy {
 public:
     /// @pre `config.lbd_fast_window`, `config.lbd_slow_window` and
     /// `config.lbd_min_conflicts` are all non-zero.
-    explicit LbdRestarts(const RestartConfig& config = {});
+    explicit LbdRestarts(const RestartConfig& config);
 
     bool should_restart_after_conflict(const ConflictSummary& conflict) override;
     void note_restart() override;
     void add_to_stats(RunStats& stats) const override;
+
+    std::size_t num_canceled() const noexcept { return canceled_; }
+    double fast_lbd() const noexcept { return fast_lbd_.value(); }
+    double slow_lbd() const noexcept { return slow_lbd_.value(); }
 
 private:
     Ema fast_lbd_;

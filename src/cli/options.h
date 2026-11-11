@@ -21,14 +21,15 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "algebra/equation_repr.h"
 #include "core/solver.h"
 #include "heuristics/decisions/csids.h"
-#include "heuristics/decisions/decision_procedure.h"
 #include "heuristics/decisions/phase.h"
+#include "heuristics/decisions/saved_trails.h"
 #include "heuristics/deletion/deletion.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/restarts/stabilize.h"
@@ -91,9 +92,9 @@ struct OptionValue<OptionKind::Name> {
 
 /// @brief One member per table row, plus the positional input path.
 struct Options {
-#define XORCLE_OPTION(name, kind, default_value, lo, hi, help)                                     \
+#define XORCLE_OPTION(group, name, kind, default_value, lo, hi, help)                              \
     OptionValue<OptionKind::kind>::type name = default_value;
-#define XORCLE_ENUM_OPTION(name, type, default_value, help) type name = default_value;
+#define XORCLE_ENUM_OPTION(group, name, type, default_value, help) type name = default_value;
 #include "cli/options.inc"
 
     std::string input_path;
@@ -101,20 +102,20 @@ struct Options {
 
 /// @brief Which options the command line actually gave, one flag per table row.
 struct OptionSeen {
-#define XORCLE_OPTION(name, kind, default_value, lo, hi, help) bool name = false;
-#define XORCLE_ENUM_OPTION(name, type, default_value, help) bool name = false;
+#define XORCLE_OPTION(group, name, kind, default_value, lo, hi, help) bool name = false;
+#define XORCLE_ENUM_OPTION(group, name, type, default_value, help) bool name = false;
 #include "cli/options.inc"
 };
 
-// --- Enum values and requirements, as parallel tables ----------------------
+// --- Enum values and option groups, as parallel tables ---------------------
 
 /// @brief One accepted spelling of one enum-valued option.
 ///
 /// The enumerator travels as its underlying value, cast back at the one place
 /// that knows the type.
 struct EnumOptionValue {
-    std::string_view option;   ///< The option's table name, e.g. `"decisions"`.
-    std::string_view spelling; ///< The accepted value, e.g. `"csids"`.
+    std::string_view option;   ///< The option's table name, e.g. `"phase"`.
+    std::string_view spelling; ///< The accepted value, e.g. `"rotate"`.
     int value;
 };
 
@@ -125,35 +126,60 @@ inline constexpr EnumOptionValue enum_option_values[]{
 #include "cli/options.inc"
 };
 
-/// @brief One `XORCLE_REQUIRES` row, for the help text; `validate_options`
-/// reads the same table for the condition itself.
-struct OptionRequirement {
-    std::string_view option;
-    std::string_view needs;
-};
-
-inline constexpr OptionRequirement option_requirements[]{
-#define XORCLE_REQUIRES(option, condition, needs) {#option, needs},
+/// @brief The features whose options are read only when the feature is, one per
+/// `XORCLE_GROUP` row.
+enum class OptionGroup {
+#define XORCLE_GROUP(name, condition, needs) name,
 #include "cli/options.inc"
 };
 
+/// @brief Whether the options of @p group are read under @p options.
+inline bool option_group_is_read(const OptionGroup group, const Options& options) {
+    switch (group) {
+#define XORCLE_GROUP(name, condition, needs)                                                       \
+    case OptionGroup::name:                                                                        \
+        return (condition);
+#include "cli/options.inc"
+    }
+    std::unreachable();
+}
+
+/// @brief What @p group needs to be read, completing "`--option` requires ...".
+inline std::string_view option_group_needs(const OptionGroup group) {
+    switch (group) {
+#define XORCLE_GROUP(name, condition, needs)                                                       \
+    case OptionGroup::name:                                                                        \
+        return needs;
+#include "cli/options.inc"
+    }
+    std::unreachable();
+}
+
+/// @pre @p option names a table row.
+inline OptionGroup option_group_of(const std::string_view option) {
+#define XORCLE_OPTION(group, name, kind, default_value, lo, hi, help)                              \
+    if (option == #name) {                                                                         \
+        return OptionGroup::group;                                                                 \
+    }
+#define XORCLE_ENUM_OPTION(group, name, type, default_value, help)                                 \
+    if (option == #name) {                                                                         \
+        return OptionGroup::group;                                                                 \
+    }
+#include "cli/options.inc"
+    assert(false && "no row of the option table has this name");
+    std::unreachable();
+}
+
 /// @brief What @p option needs to be read at all, or empty when it always is.
 inline std::string requirement_text(const std::string_view option) {
-    std::string text;
-    for (const OptionRequirement& row : option_requirements) {
-        if (row.option != option) {
-            continue;
-        }
-        text += text.empty() ? "requires " : " and ";
-        text += row.needs;
-    }
-    return text;
+    const std::string_view needs = option_group_needs(option_group_of(option));
+    return needs.empty() ? std::string() : "requires " + std::string(needs);
 }
 
 // --- Spelling --------------------------------------------------------------
 
-/// @brief The command-line spelling of a table name: `deletion_lbd_window` becomes
-/// `--deletion-lbd-window`.
+/// @brief The command-line spelling of a table name: `deletion_eviction_rate` becomes
+/// `--deletion-eviction-rate`.
 inline std::string cli_spelling(std::string_view table_name) {
     std::string out = "--";
     for (const char c : table_name) {
@@ -165,7 +191,7 @@ inline std::string cli_spelling(std::string_view table_name) {
 /// @brief The table name of a command-line option name, `--` already stripped.
 ///
 /// Dashes and underscores are interchangeable in an option name, so
-/// `--deletion-lbd-window` and `--deletion_lbd_window` are the same option. The dashed
+/// `--deletion-eviction-rate` and `--deletion_eviction_rate` are the same option. The dashed
 /// form is the one `--help` and the error messages use.
 inline std::string table_name_of(std::string_view spelling) {
     std::string out;
@@ -251,23 +277,30 @@ inline bool parse_option_value(OptionKind::Bool, std::string_view option, const 
     throw CliError(std::string(option) + " expects true or false, got '" + text + "'");
 }
 
-/// @brief The requirement clause of an out-of-range message.
+/// @brief Bounds as `<minimum> lo`, or as `<range> lo..hi` when `hi` constrains.
 ///
-/// An upper bound at the type's maximum is no constraint, so it is reported as a
-/// minimum rather than as a range ending in `18446744073709551615`.
+/// An upper bound at the type's maximum, or infinite, is no constraint, so it is
+/// reported as a minimum rather than as a range ending in `18446744073709551615`.
 template <class T>
-std::string bounds_requirement(const T lo, const T hi) {
-    if (hi == std::numeric_limits<T>::max()) {
-        return "at least " + std::to_string(lo);
+std::string format_bounds(const T lo, const T hi, std::string_view minimum,
+                          std::string_view range) {
+    const auto text = [](const T value) {
+        if constexpr (std::is_floating_point_v<T>) {
+            return format_real(value);
+        } else {
+            return std::to_string(value);
+        }
+    };
+    bool unbounded = false;
+    if constexpr (std::is_floating_point_v<T>) {
+        unbounded = std::isinf(hi);
+    } else {
+        unbounded = hi == std::numeric_limits<T>::max();
     }
-    return "in " + std::to_string(lo) + ".." + std::to_string(hi);
-}
-
-inline std::string bounds_requirement(const double lo, const double hi) {
-    if (std::isinf(hi)) {
-        return "at least " + format_real(lo);
+    if (unbounded) {
+        return std::string(minimum) + " " + text(lo);
     }
-    return "in " + format_real(lo) + ".." + format_real(hi);
+    return std::string(range) + " " + text(lo) + ".." + text(hi);
 }
 
 inline std::uint64_t parse_option_value(OptionKind::U64, std::string_view option,
@@ -275,8 +308,8 @@ inline std::uint64_t parse_option_value(OptionKind::U64, std::string_view option
                                         std::uint64_t hi) {
     const std::uint64_t value = parse_unsigned(option, text);
     if (value < lo || value > hi) {
-        throw CliError(std::string(option) + " must be " + bounds_requirement(lo, hi) + ", got '" +
-                       text + "'");
+        throw CliError(std::string(option) + " must be " +
+                       format_bounds(lo, hi, "at least", "in") + ", got '" + text + "'");
     }
     return value;
 }
@@ -285,8 +318,8 @@ inline std::size_t parse_option_value(OptionKind::Size, std::string_view option,
                                       const std::string& text, std::size_t lo, std::size_t hi) {
     const std::uint64_t value = parse_unsigned(option, text);
     if (value < lo || value > hi) {
-        throw CliError(std::string(option) + " must be " + bounds_requirement(lo, hi) + ", got '" +
-                       text + "'");
+        throw CliError(std::string(option) + " must be " +
+                       format_bounds(lo, hi, "at least", "in") + ", got '" + text + "'");
     }
     return static_cast<std::size_t>(value);
 }
@@ -295,8 +328,8 @@ inline double parse_option_value(OptionKind::Real, std::string_view option, cons
                                  double lo, double hi) {
     const double value = parse_real(option, text);
     if (value < lo || value > hi) {
-        throw CliError(std::string(option) + " must be " + bounds_requirement(lo, hi) + ", got '" +
-                       text + "'");
+        throw CliError(std::string(option) + " must be " +
+                       format_bounds(lo, hi, "at least", "in") + ", got '" + text + "'");
     }
     return value;
 }
@@ -334,46 +367,61 @@ inline std::string option_syntax(OptionKind::Real) { return "X"; }
 inline std::string option_syntax(OptionKind::Text) { return "PATH"; }
 inline std::string option_syntax(OptionKind::Name) { return "NAME"; }
 
-/// @brief How the help text shows a default value.
-inline std::string format_option_default(OptionKind::Bool, bool value) {
+/// @brief How the statistics record a value: the text `--name=` would take to
+/// reproduce it.
+///
+/// Unlike the help text, an unset path records as empty.
+inline std::string format_option_value(OptionKind::Bool, bool value) {
     return value ? "true" : "false";
 }
-inline std::string format_option_default(OptionKind::U64, std::uint64_t value) {
+inline std::string format_option_value(OptionKind::U64, std::uint64_t value) {
     return std::to_string(value);
 }
-inline std::string format_option_default(OptionKind::Size, std::size_t value) {
+inline std::string format_option_value(OptionKind::Size, std::size_t value) {
     return std::to_string(value);
 }
-inline std::string format_option_default(OptionKind::Real, double value) {
+inline std::string format_option_value(OptionKind::Real, double value) {
     return format_real(value);
+}
+inline std::string format_option_value(OptionKind::Text, std::string_view value) {
+    return std::string(value);
+}
+inline std::string format_option_value(OptionKind::Name, std::string_view value) {
+    return std::string(value);
+}
+
+/// @brief How the help text shows a default value: as the statistics record it, but
+/// an unset path as `unset`.
+inline std::string format_option_default(OptionKind::Bool kind, bool value) {
+    return format_option_value(kind, value);
+}
+inline std::string format_option_default(OptionKind::U64 kind, std::uint64_t value) {
+    return format_option_value(kind, value);
+}
+inline std::string format_option_default(OptionKind::Size kind, std::size_t value) {
+    return format_option_value(kind, value);
+}
+inline std::string format_option_default(OptionKind::Real kind, double value) {
+    return format_option_value(kind, value);
+}
+inline std::string format_option_default(OptionKind::Name kind, std::string_view value) {
+    return format_option_value(kind, value);
 }
 inline std::string format_option_default(OptionKind::Text, std::string_view value) {
     return value.empty() ? "unset" : std::string(value);
 }
-inline std::string format_option_default(OptionKind::Name, std::string_view value) {
-    return std::string(value);
-}
 
 /// @brief How the help text states an option's bounds.
-inline std::string format_option_bounds(OptionKind::Bool, bool, bool) { return ""; }
 inline std::string format_option_bounds(OptionKind::U64, std::uint64_t lo, std::uint64_t hi) {
-    if (hi == std::numeric_limits<std::uint64_t>::max()) {
-        return "minimum " + std::to_string(lo);
-    }
-    return "range " + std::to_string(lo) + ".." + std::to_string(hi);
+    return format_bounds(lo, hi, "minimum", "range");
 }
 inline std::string format_option_bounds(OptionKind::Size, std::size_t lo, std::size_t hi) {
-    if (hi == std::numeric_limits<std::size_t>::max()) {
-        return "minimum " + std::to_string(lo);
-    }
-    return "range " + std::to_string(lo) + ".." + std::to_string(hi);
+    return format_bounds(lo, hi, "minimum", "range");
 }
 inline std::string format_option_bounds(OptionKind::Real, double lo, double hi) {
-    if (std::isinf(hi)) {
-        return "minimum " + format_real(lo);
-    }
-    return "range " + format_real(lo) + ".." + format_real(hi);
+    return format_bounds(lo, hi, "minimum", "range");
 }
+inline std::string format_option_bounds(OptionKind::Bool, bool, bool) { return ""; }
 inline std::string format_option_bounds(OptionKind::Text, std::string_view, std::string_view) {
     return "";
 }
@@ -407,11 +455,11 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
         << "linear equations modulo 2. See arXiv:2605.15002 for details.\n"
         << "\nOptions:\n";
 
-#define XORCLE_OPTION(name, kind, default_value, lo, hi, help)                                     \
+#define XORCLE_OPTION(group, name, kind, default_value, lo, hi, help)                              \
     append_option_help(out, #name, option_syntax(OptionKind::kind{}), help,                        \
                        format_option_default(OptionKind::kind{}, default_value),                   \
                        format_option_bounds(OptionKind::kind{}, lo, hi));
-#define XORCLE_ENUM_OPTION(name, type, default_value, help)                                        \
+#define XORCLE_ENUM_OPTION(group, name, type, default_value, help)                                 \
     append_option_help(out, #name, enum_option_spellings(#name), help,                             \
                        enum_option_label(#name, static_cast<int>(default_value)), "");
 #include "cli/options.inc"
@@ -431,13 +479,13 @@ inline void apply_option(Options& options, OptionSeen& seen, const std::string& 
                          const std::string& value) {
     const std::string name = table_name_of(std::string_view(spelling).substr(2));
 
-#define XORCLE_OPTION(option_name, kind, default_value, lo, hi, help)                              \
+#define XORCLE_OPTION(group, option_name, kind, default_value, lo, hi, help)                       \
     if (name == #option_name) {                                                                    \
         options.option_name = parse_option_value(OptionKind::kind{}, spelling, value, lo, hi);     \
         seen.option_name = true;                                                                   \
         return;                                                                                    \
     }
-#define XORCLE_ENUM_OPTION(option_name, type, default_value, help)                                 \
+#define XORCLE_ENUM_OPTION(group, option_name, type, default_value, help)                          \
     if (name == #option_name) {                                                                    \
         options.option_name = parse_enum_option_value<type>(#option_name, value);                  \
         seen.option_name = true;                                                                   \
@@ -449,29 +497,6 @@ inline void apply_option(Options& options, OptionSeen& seen, const std::string& 
 }
 
 // --- The effective configuration, as the statistics record it --------------
-
-/// @brief How the statistics record a value: the text `--name=` would take to
-/// reproduce it.
-///
-/// Unlike the help text, an unset path records as empty.
-inline std::string format_option_value(OptionKind::Bool, bool value) {
-    return value ? "true" : "false";
-}
-inline std::string format_option_value(OptionKind::U64, std::uint64_t value) {
-    return std::to_string(value);
-}
-inline std::string format_option_value(OptionKind::Size, std::size_t value) {
-    return std::to_string(value);
-}
-inline std::string format_option_value(OptionKind::Real, double value) {
-    return format_real(value);
-}
-inline std::string format_option_value(OptionKind::Text, std::string_view value) {
-    return std::string(value);
-}
-inline std::string format_option_value(OptionKind::Name, std::string_view value) {
-    return std::string(value);
-}
 
 /// @brief Every option and its effective value, in table order.
 ///
@@ -487,10 +512,10 @@ inline std::vector<ConfigEntry> option_settings(const Options& options) {
         return ConfigEntry{name, std::move(value), is_default};
     };
 
-#define XORCLE_OPTION(name, kind, default_value, lo, hi, help)                                     \
+#define XORCLE_OPTION(group, name, kind, default_value, lo, hi, help)                              \
     settings.push_back(entry(#name, format_option_value(OptionKind::kind{}, options.name),         \
                              format_option_value(OptionKind::kind{}, default_value)));
-#define XORCLE_ENUM_OPTION(name, type, default_value, help)                                        \
+#define XORCLE_ENUM_OPTION(group, name, type, default_value, help)                                 \
     settings.push_back(entry(#name, enum_option_label(#name, static_cast<int>(options.name)),      \
                              enum_option_label(#name, static_cast<int>(default_value))));
 #include "cli/options.inc"
@@ -501,11 +526,16 @@ inline std::vector<ConfigEntry> option_settings(const Options& options) {
 /// @brief Check the constraints that span more than one option.
 /// @throws CliError if options conflict with each other.
 inline void validate_options(const Options& options, const OptionSeen& seen) {
-    // One check per `XORCLE_REQUIRES` row: an option given where nothing would
-    // read it is refused, so a run never reports a setting it did not act on.
-#define XORCLE_REQUIRES(option, condition, needs)                                                  \
-    if (seen.option && !(condition)) {                                                             \
-        throw CliError(cli_spelling(#option) + " requires " + needs +                              \
+    // An option given where nothing would read it is refused, so a run never
+    // reports a setting it did not act on.
+#define XORCLE_OPTION(group, name, kind, default_value, lo, hi, help)                              \
+    if (seen.name && !option_group_is_read(OptionGroup::group, options)) {                         \
+        throw CliError(cli_spelling(#name) + " " + requirement_text(#name) +                       \
+                       "; nothing would read it here");                                            \
+    }
+#define XORCLE_ENUM_OPTION(group, name, type, default_value, help)                                 \
+    if (seen.name && !option_group_is_read(OptionGroup::group, options)) {                         \
+        throw CliError(cli_spelling(#name) + " " + requirement_text(#name) +                       \
                        "; nothing would read it here");                                            \
     }
 #include "cli/options.inc"
@@ -514,40 +544,8 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
         throw CliError("--report='" + options.report +
                        "' is not a comma-joined list of: " + progress_group_names());
     }
-    if (options.vivify && options.selection == ClauseSelectorName::cyclic &&
-        options.propagate_miss_rate != 0.0) {
-        throw CliError("--vivify requires --propagate-miss-rate=0: it assumes on a trail "
-                       "propagated to a fixed point");
-    }
     if (options.deletion_cadence_coefficient == 0.0) {
         throw CliError("--deletion-cadence-coefficient must be positive");
-    }
-    if (options.deletion && options.deletion_key == DeletionKey::activity &&
-        options.decisions != DecisionProcedureName::csids) {
-        throw CliError("--deletion-key=activity requires --decisions=csids");
-    }
-    // The exact watchlist's cells are packed words.
-    if (options.selection == ClauseSelectorName::exact_watchlist &&
-        options.equation_repr != EquationRepr::dense) {
-        throw CliError("--selection=exact_watchlist requires --equation-repr=dense");
-    }
-    // A switch rather than a parameter, so it is checked against its value,
-    // which the default has already resolved to false under --compact=false.
-    if (options.bve && !options.compact) {
-        throw CliError("--bve requires --compact=true, which drops the variables it eliminates");
-    }
-    // Focused mode's restarts are the only ones under --stabilize.
-    if (options.stabilize && options.restart != RestartMethod::none) {
-        throw CliError("--stabilize requires --restart=none: focused mode restarts by its own "
-                       "--focused-restart-lbd-* options");
-    }
-    if (options.stabilize && options.decisions != DecisionProcedureName::csids) {
-        throw CliError("--stabilize requires --decisions=csids, whose decay and phase the modes set");
-    }
-    if (options.implication_graph && !options.compact) {
-        throw CliError("--implication-graph requires --compact=true: without a compaction after "
-                       "each feed, which basis of the fed units the rule happened to pick would "
-                       "go on steering the search");
     }
 }
 
@@ -601,23 +599,6 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     }
     options.input_path = positionals.front();
 
-    // The rule needs a compaction after each feed, so without compaction the
-    // implication graph resolves to off unless it was given.
-    if (!seen.implication_graph && !options.compact) {
-        options.implication_graph = false;
-    }
-    // BVE drops the variables it eliminates, so without compaction it resolves
-    // to off unless it was given.
-    if (!seen.bve && !options.compact) {
-        options.bve = false;
-    }
-    // Vivification assumes on a trail propagated to a fixed point, so under the
-    // cyclic selector with a miss rate it resolves to off unless it was given.
-    if (!seen.vivify && options.selection == ClauseSelectorName::cyclic &&
-        options.propagate_miss_rate != 0.0) {
-        options.vivify = false;
-    }
-
     validate_options(options, seen);
     return options;
 }
@@ -632,54 +613,36 @@ inline CsidsConfig csids_config(const Options& options) {
                        .bump = options.csids_bump,
                        .intersection_depth = options.csids_intersection_depth,
                        .span = options.csids_span,
-                       .phase_saving = {.recent_trails = options.phase_saving_recent,
-                                        .target = options.phase_saving_target,
+                       .phase = options.phase,
+                       .phase_saving = {.source = options.phase_saving,
                                         .target_reset_conflicts =
                                             options.phase_saving_target_reset,
-                                        .target_on_ties = options.phase_saving_target_on_ties,
-                                        .rotation_interval =
-                                            options.phase == DecisionPhase::rotate
-                                                ? std::optional<std::size_t>(
-                                                      options.phase_rotate_interval)
+                                        .rotation_interval = options.phase_rotate_interval,
+                                        .focused_source =
+                                            options.stabilize
+                                                ? std::optional(options.focused_phase_saving)
                                                 : std::nullopt}};
 }
 
-inline CompactionConfig compaction_config(const Options& options) {
-    return CompactionConfig{.enabled = options.compact};
-}
-
 inline ImplicationGraphConfig implication_graph_config(const Options& options) {
-    return ImplicationGraphConfig{.enabled = options.implication_graph,
-                                  .clause_cadence = options.implication_graph_clause_cadence,
-                                  .cadence = options.implication_graph_cadence,
+    return ImplicationGraphConfig{.cadence = options.implication_graph_cadence,
+                                  .min_new_clauses = options.implication_graph_min_new_clauses,
                                   .max_pairs = options.implication_graph_max_pairs,
                                   .max_descendants = options.implication_graph_max_descendants};
 }
 
 inline BveConfig bve_config(const Options& options) {
-    return BveConfig{.enabled = options.bve,
-                     .try_from = options.bve_try_from,
-                     .tail_group_cap = options.bve_tail_group_cap,
+    return BveConfig{.group_cap = options.bve_group_cap,
+                     .max_refusals_in_a_row = options.bve_max_refusals_in_a_row,
                      .success_rate = options.bve_success_rate};
 }
 
 inline DeletionConfig deletion_config(const Options& options) {
-    return DeletionConfig{.enabled = options.deletion,
-                          .cadence_coefficient = options.deletion_cadence_coefficient,
+    return DeletionConfig{.cadence_coefficient = options.deletion_cadence_coefficient,
                           .cadence_offset = options.deletion_cadence_offset,
                           .wait = options.deletion_wait,
-                          .lbd_window = options.deletion_lbd_window,
                           .eviction_rate = options.deletion_eviction_rate,
                           .key = options.deletion_key};
-}
-
-/// @brief Only the cyclic selector runs an attempt budget; under any other,
-/// propagation runs to a fixed point.
-inline PropagationConfig propagation_config(const Options& options) {
-    return PropagationConfig{.miss_rate = options.selection == ClauseSelectorName::cyclic
-                                              ? options.propagate_miss_rate
-                                              : 0.0,
-                             .window = options.propagate_window};
 }
 
 inline RestartConfig restart_config(const Options& options) {
@@ -694,14 +657,62 @@ inline RestartConfig restart_config(const Options& options) {
 
 inline StabilizeConfig stabilize_config(const Options& options) {
     return StabilizeConfig{
-        .enabled = options.stabilize,
         .interval_conflicts = options.stabilize_interval,
         .focused_restarts = {.method = RestartMethod::lbd,
+                             .luby_unit_conflicts = 0,
                              .lbd_fast_window = options.focused_restart_lbd_fast,
                              .lbd_slow_window = options.focused_restart_lbd_slow,
                              .lbd_min_ratio = options.focused_restart_lbd_min_ratio,
                              .lbd_min_conflicts = options.focused_restart_lbd_min_conflicts,
                              .lbd_trail_ratio = options.focused_restart_lbd_trail_ratio}};
+}
+
+/// @brief The solver's configuration under @p options, each feature present
+/// exactly when its option group is read.
+/// @param progress_reporter Not owned; null reports nothing.
+inline SolverConfig solver_config(const Options& options,
+                                  ConsoleProgressReporter* progress_reporter = nullptr) {
+    SolverConfig config{
+        .renumber = options.compact,
+        .minimize = options.minimize,
+        .bump_responsible_clauses = options.bump_responsible_clauses,
+        .otf_subsume = options.otf_subsume,
+        .lbd_window = options.lbd_window,
+        .attempt_budget = std::nullopt,
+        .deletion = std::nullopt,
+        .implication_graph = std::nullopt,
+        .vivify = std::nullopt,
+        .bve = std::nullopt,
+        .inproc_subsume_strengthen = std::nullopt,
+        .stabilize = std::nullopt,
+        .progress = {.reporter = progress_reporter, .cadence = options.report_cadence}};
+    if (option_group_is_read(OptionGroup::attempt_budget, options)) {
+        config.attempt_budget = PropagationConfig{.miss_rate = options.propagate_miss_rate,
+                                                  .window = options.propagate_window};
+    }
+    if (option_group_is_read(OptionGroup::deletion, options)) {
+        config.deletion = deletion_config(options);
+    }
+    if (option_group_is_read(OptionGroup::implication_graph, options)) {
+        config.implication_graph = implication_graph_config(options);
+    }
+    if (option_group_is_read(OptionGroup::vivify, options)) {
+        config.vivify = VivifyConfig{.rounds = options.vivify_rounds,
+                                     .cadence = options.vivify_cadence,
+                                     .effort = options.vivify_effort};
+    }
+    if (option_group_is_read(OptionGroup::bve, options)) {
+        config.bve = bve_config(options);
+    }
+    if (option_group_is_read(OptionGroup::inproc_subsume_strengthen, options)) {
+        config.inproc_subsume_strengthen =
+            SubsumePassConfig{.cadence = options.inproc_subsume_strengthen_cadence,
+                              .effort = options.inproc_subsume_strengthen_effort};
+    }
+    if (option_group_is_read(OptionGroup::stabilize, options)) {
+        config.stabilize = stabilize_config(options);
+    }
+    return config;
 }
 
 // --- Building the solver -----------------------------------------------------
@@ -710,35 +721,26 @@ inline StabilizeConfig stabilize_config(const Options& options) {
 /// @p used_vars of @p num_vars, with no clauses yet.
 /// @param proof_writer Not owned; null for no proof.
 /// @param progress_reporter Not owned; null reports nothing.
-/// @param selector Replaces the selector @p options names, when non-null.
+/// @param make_selector Replaces the selector @p options names, when non-null.
 /// @pre `used_vars` is strictly ascending and below `num_vars`.
 inline std::unique_ptr<Solver> make_solver(const Options& options, std::size_t num_vars,
                                            std::vector<std::size_t> used_vars,
-                                           RawProofWriter* proof_writer = nullptr,
-                                           ProgressReporter* progress_reporter = nullptr,
-                                           std::unique_ptr<ClauseSelector> selector = nullptr) {
+                                           ProofWriter* proof_writer = nullptr,
+                                           ConsoleProgressReporter* progress_reporter = nullptr,
+                                           ClauseSelectorFactory make_selector = nullptr) {
     const std::size_t num_used_vars = used_vars.size();
-    if (selector == nullptr) {
-        selector = make_clause_selector(options.selection, num_used_vars);
+    if (make_selector == nullptr) {
+        make_selector = [&options, num_used_vars](const ClauseDatabase& database) {
+            return make_clause_selector(options.selection, options.equation_repr, num_used_vars,
+                                        database);
+        };
     }
     return std::make_unique<Solver>(
-        options.equation_repr, num_vars, std::move(used_vars), std::move(selector),
-        make_decision_procedure(options.decisions, options.equation_repr, num_used_vars,
-                                options.seed, options.phase, csids_config(options)),
-        make_restart_policy(restart_config(options)), proof_writer, compaction_config(options),
-        ProgressConfig{.reporter = progress_reporter, .cadence = options.report_cadence},
-        options.minimize, deletion_config(options), options.bump_responsible_clauses, options.subsume,
-        propagation_config(options), implication_graph_config(options),
-        VivifyConfig{.enabled = options.vivify,
-                     .rounds = options.vivify_rounds,
-                     .cadence = options.vivify_cadence,
-                     .force_root_visit = options.vivify && options.vivify_force_root_visit,
-                     .effort = options.vivify_effort},
-        bve_config(options),
-        SubsumePassConfig{.enabled = options.subsume_pass,
-                          .cadence = options.subsume_pass_cadence,
-                          .effort = options.subsume_pass_effort},
-        stabilize_config(options));
+        options.equation_repr, num_vars, std::move(used_vars), make_selector,
+        std::make_unique<Csids>(options.equation_repr, num_used_vars, options.seed,
+                                csids_config(options)),
+        make_restart_policy(restart_config(options)), proof_writer,
+        solver_config(options, progress_reporter));
 }
 
 } // namespace xorcle

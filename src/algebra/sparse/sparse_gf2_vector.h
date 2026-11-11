@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <optional>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "algebra/equation_repr.h"
@@ -64,6 +63,9 @@ public:
 
     /// @pre `i < num_bits()`.
     void reset_bit(std::size_t i);
+
+    /// @pre `i < num_bits()`.
+    void flip_bit(std::size_t i);
 
     /// @brief Get index of the first set bit, or `std::nullopt` if none is set.
     std::optional<std::size_t> leading_bit() const noexcept {
@@ -128,11 +130,6 @@ public:
     bool equals_except_last_bit(const SparseGF2Vector& other) const noexcept;
 
     std::size_t hash() const noexcept;
-
-    /// @brief Append bytes that determine every bit but the last among vectors of as
-    /// many bits: each set bit as four bytes, which are never all ones.
-    /// @pre `num_bits() >= 1`.
-    void append_key_except_last_bit(std::string& key) const;
 
     /// @brief A hash that `equals_except_last_bit()` vectors share.
     /// @pre `num_bits() >= 1`.

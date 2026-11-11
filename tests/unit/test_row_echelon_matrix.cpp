@@ -601,12 +601,7 @@ TEST_CASE_TEMPLATE("clause: to_string", Tag, DenseTag, SparseTag) {
     as_stored.clause_mode = ClausePrintMode::as_linear_negation;
     CHECK(clause.to_string(as_stored) == "[x1 + x2 = 0] ^ [x3 = 1]");
 
-    clause.watched0 = 1;
-    clause.next_watch_search_start = 2;
     const Clause copy = clause;
-    CHECK(copy.watched0 == 1);
-    CHECK(copy.watched1 == 1); // default, untouched
-    CHECK(copy.next_watch_search_start == 2);
     CHECK(copy.to_string() == clause.to_string());
     check_echelon_invariant(copy);
 }

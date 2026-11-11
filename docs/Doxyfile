@@ -14,7 +14,6 @@
 #---------------------------------------------------------------------------
 
 PROJECT_NAME           = Xorcle
-PROJECT_NUMBER         = 0.2.0-dev
 PROJECT_BRIEF          = "A SAT solver for XNF formulas, where clauses are disjunctions of linear equations modulo 2"
 
 OUTPUT_DIRECTORY       = docs
@@ -57,11 +56,12 @@ SORT_MEMBER_DOCS       = NO
 # tree is to find doc comments that no longer match their code.
 QUIET                  = YES
 
-# Coverage warnings off, drift warnings on. WARN_NO_PARAMDOC reports a function
-# whose doc comment leaves a parameter or the return value undocumented, which
-# is what a signature change that outran its comment looks like.
+# Coverage warnings off, drift warnings on: a doc comment may leave a
+# self-explanatory parameter silent, but a `@param` naming no parameter, which is
+# what a signature change that outran its comment looks like, is reported
+# (WARN_IF_DOC_ERROR, on by default).
 WARN_IF_UNDOCUMENTED   = NO
-WARN_NO_PARAMDOC       = YES
+WARN_NO_PARAMDOC       = NO
 
 #---------------------------------------------------------------------------
 # Output formats

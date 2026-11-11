@@ -26,15 +26,13 @@ constexpr std::size_t path_check_vertices = 500;
 } // namespace
 
 void ImplicationGraph::walk_span_intersections(
-    const RowSpace& root_span, [[maybe_unused]] const std::vector<Clause>& clauses,
+    [[maybe_unused]] const std::vector<Clause>& clauses,
     [[maybe_unused]] ActiveClauseIds active_clause_ids,
     ImplicationGraphRun& summary, ImplicationGraphProofRecord* const proof) {
     using Kind = ImplicationGraphProofStep::Kind;
     const std::size_t num_vertices = 2 * num_keys_;
 
-    // Everything below is modulo the root trail span, against which the vertex
-    // equations are already reduced.
-    RowSpace accumulated = root_span;
+    RowSpace accumulated(repr_, num_vars_);
     Equation candidate(repr_, num_vars_);
 
     // Where the vertices have fewer set bits than words, a pair's spans are
@@ -45,8 +43,7 @@ void ImplicationGraph::walk_span_intersections(
         num_key_bits += key_eqn_[key].num_set_bits();
     }
     const bool local_columns =
-        num_key_bits < num_keys_ * ((num_vars_ + DenseGF2Vector::bits_per_word) /
-                                          DenseGF2Vector::bits_per_word);
+        num_key_bits < num_keys_ * DenseGF2Vector::word_count(num_vars_ + 1);
     // The set bits of each key a descendant search has reached, listed when
     // it first does.
     std::vector<std::size_t> key_bits;
@@ -67,6 +64,7 @@ void ImplicationGraph::walk_span_intersections(
     std::vector<std::size_t> local_col_idx_to_col_idx;
     std::vector<std::size_t> bits;
     std::size_t num_span_vars = num_vars_;
+    spare_rows_.resize(num_vars_ + 1);
     // The two sides of the pair the walk is on, and their sum, whose rank gives
     // the dimension of their intersection.
     RowSpace side_a(repr_, num_span_vars);
@@ -75,7 +73,7 @@ void ImplicationGraph::walk_span_intersections(
     const auto use_columns_of = [&](const std::vector<std::size_t>& first,
                                     const std::vector<std::size_t>* const second) {
         for (RowSpace* const span : {&side_a, &side_b, &both_sides}) {
-            clear_span(*span);
+            spare_rows_.give_rows_of(*span);
         }
         if (!local_columns) {
             return;
@@ -107,6 +105,7 @@ void ImplicationGraph::walk_span_intersections(
         }
         num_span_vars = local_col_idx_to_col_idx.size();
         col_idx_to_local_col_idx[num_vars_] = num_span_vars;
+        spare_rows_.resize(num_span_vars + 1);
         side_a = RowSpace(repr_, num_span_vars);
         side_b = RowSpace(repr_, num_span_vars);
         both_sides = RowSpace(repr_, num_span_vars);
@@ -126,7 +125,7 @@ void ImplicationGraph::walk_span_intersections(
     const auto side_span = [&](RowSpace& span,
                                const std::vector<std::size_t>& reached) -> RowSpace& {
         for (const std::size_t vertex : reached) {
-            Equation row = spare_row(num_span_vars);
+            Equation row = spare_rows_.take();
             if (local_columns) {
                 bits.clear();
                 for (std::size_t i = key_bits_begin[vertex / 2]; i < key_bits_end[vertex / 2];
@@ -144,7 +143,7 @@ void ImplicationGraph::walk_span_intersections(
             } else {
                 row.assign_from(key_eqn_[vertex / 2]);
                 if ((vertex & 1) != 0) {
-                    row.plus_assign(false_eqn_);
+                    row.negate();
                 }
             }
             // `partial_reduce` is exactly what `add_row` would do before
@@ -152,7 +151,7 @@ void ImplicationGraph::walk_span_intersections(
             if (span.partial_reduce(row).kind != ReduceResult::Kind::eq_true) {
                 span.add_row(std::move(row));
             } else {
-                spare_rows_.push_back(std::move(row));
+                spare_rows_.give(std::move(row));
             }
         }
         return span;
@@ -218,13 +217,12 @@ void ImplicationGraph::walk_span_intersections(
 #ifndef NDEBUG
         if (num_vertices <= path_check_vertices) {
             for (const std::size_t reached : descendants_) {
-                assert(implication_is_clause_backed(vertex, reached, clauses, active_clause_ids,
-                                                    root_span) &&
+                assert(implication_is_clause_backed(vertex, reached, clauses, active_clause_ids) &&
                        "a descendant is not reached through clause-backed arcs");
             }
             for (const std::size_t reached : other_descendants_) {
-                assert(implication_is_clause_backed(vertex + 1, reached, clauses, active_clause_ids,
-                                                    root_span) &&
+                assert(implication_is_clause_backed(vertex + 1, reached, clauses,
+                                                    active_clause_ids) &&
                        "a descendant is not reached through clause-backed arcs");
             }
         }
@@ -309,23 +307,21 @@ void ImplicationGraph::walk_span_intersections(
             // side rather than of both laid side by side, so the basis is built
             // only for the few pairs whose intersection is more than `0 = 0`.
             for (const Equation& row : here) {
-                Equation copy = spare_row(num_span_vars);
-                copy.assign_from(row);
-                both_sides.add_row(std::move(copy));
+                both_sides.add_row(spare_rows_.copy_of(row));
             }
             for (const Equation& row : there) {
-                Equation copy = spare_row(num_span_vars);
-                copy.assign_from(row);
+                Equation copy = spare_rows_.copy_of(row);
                 if (both_sides.partial_reduce(copy).kind != ReduceResult::Kind::eq_true) {
                     both_sides.add_row(std::move(copy));
                 } else {
-                    spare_rows_.push_back(std::move(copy));
+                    spare_rows_.give(std::move(copy));
                 }
             }
             const std::size_t dim = here.rows() + there.rows() - both_sides.rows();
             if (dim != 0) {
-                for (const Equation& row : span_intersection(here, there)) {
+                for (Equation& row : span_intersection(here, there, spare_rows_)) {
                     intersection.push_back(to_global(row));
+                    spare_rows_.give(std::move(row));
                 }
             }
             assert(intersection.size() == dim && "the span intersection has the wrong dimension");
@@ -411,7 +407,6 @@ void ImplicationGraph::walk_span_intersections(
 
 #ifndef NDEBUG
 bool ImplicationGraph::full_examination_yields(const ImplicationGraphRun& run,
-                                               const RowSpace& root_span,
                                                const std::vector<Clause>& clauses,
                                                ActiveClauseIds active_clause_ids) {
     const Rng rng = rng_;
@@ -420,7 +415,7 @@ bool ImplicationGraph::full_examination_yields(const ImplicationGraphRun& run,
         sampled_pairs_.push_back(vertex);
     }
     ImplicationGraphRun full;
-    walk_span_intersections(root_span, clauses, active_clause_ids, full, nullptr);
+    walk_span_intersections(clauses, active_clause_ids, full, nullptr);
     rng_ = rng;
     a_side_was_truncated_ = a_side_was_truncated_ || full.truncated_sides != 0;
     if (a_side_was_truncated_ || run.at_the_pair_cap || full.units == run.units) {
@@ -428,11 +423,11 @@ bool ImplicationGraph::full_examination_yields(const ImplicationGraphRun& run,
     }
     // A unit of an earlier run that propagation has yet to reach is still a
     // width-1 clause, and the clean pair it came from yields it again.
-    RowSpace known = root_span;
+    RowSpace known(repr_, num_vars_);
     for (const ClauseId clause_id : active_clause_ids) {
         if (clauses[clause_id].rows() == 1) {
             Equation unit = clauses[clause_id].row(0);
-            unit.plus_assign(false_eqn_);
+            unit.negate();
             known.add_row(std::move(unit));
         }
     }
@@ -440,7 +435,7 @@ bool ImplicationGraph::full_examination_yields(const ImplicationGraphRun& run,
     for (const Equation& unit : run.units) {
         known.add_row(unit);
     }
-    return num_known != root_span.rows() &&
+    return num_known != 0 &&
            std::ranges::all_of(full.units, [&known](Equation unit) {
                known.reduce(unit);
                return unit.is_eq_true();
@@ -448,15 +443,14 @@ bool ImplicationGraph::full_examination_yields(const ImplicationGraphRun& run,
 }
 
 bool ImplicationGraph::all_arcs_are_clause_backed(
-    const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
-    const RowSpace& root_span) {
+    const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids) {
     const auto holds = [this](const Equation& eqn) {
         return std::ranges::any_of(triple_, [&eqn](const Equation* row) { return *row == eqn; });
     };
     for (std::size_t from = 0; from < 2 * num_keys_; ++from) {
         for (const Arc& arc : arcs_[from]) {
             if (!active_clause_ids.contains(arc.clause_id) ||
-                !reduce_triple(clauses[arc.clause_id], root_span)) {
+                !reduce_triple(clauses[arc.clause_id])) {
                 return false;
             }
             const Equation head = equation_of(from);

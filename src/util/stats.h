@@ -17,21 +17,22 @@ enum class SolveResult {
 
 /// @brief Which part of the run a statistic belongs to.
 ///
-/// `restart`, `stabilize`, `intersection`, `phase_saving`, `minimize`, `subsume`, `vivify`, `subsume_pass`, `deletion`, `propagate_budget`,
-/// `implication_graph`, `exact_watchlist` and `proof` print only when the run had
+/// `restart`, `stabilize`, `phase_saving`, `minimize`, `subsume`, `vivify`, `subsume_pass`, `deletion`,
+/// `propagate_budget`, `bve` and `implication_graph` print only when the run had
 /// something to say; `RunStats::reports` decides. The CSV writes every field whatever the section
 /// says, so its schema does not move with the options.
 ///
 /// @warning `ConsoleStatsWriter::log` names the sections one by one, in
 /// this order, so that the configuration block can sit between the first two. A
 /// section added here needs a call added there or it prints nowhere.
+///
+/// `solve_time` prints under a heading, each row with its share of the solve time.
 enum class StatsSection {
     instance,
     search,
     restart,
     stabilize,
     clauses,
-    intersection,
     phase_saving,
     minimize,
     subsume,
@@ -41,9 +42,8 @@ enum class StatsSection {
     propagate_budget,
     bve,
     implication_graph,
-    exact_watchlist,
     timing,
-    proof
+    solve_time
 };
 
 /// @brief The value type a `XORCLE_STAT` kind tag stands for.
@@ -65,7 +65,7 @@ struct StatValue<StatKind::Real> {
 
 /// @brief One option's effective value, as the statistics report it.
 struct ConfigEntry {
-    std::string name;  ///< The option's table name, e.g. `deletion_lbd_window`.
+    std::string name;  ///< The option's table name, e.g. `lbd_window`.
     std::string value; ///< Its value as text, e.g. `16`.
     /// @brief Whether the value is the table's own default, which the console
     /// block leaves out.

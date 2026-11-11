@@ -35,6 +35,7 @@ RunStats::reports(const StatsSection section) const {
         case StatsSection::search:
         case StatsSection::clauses:
         case StatsSection::timing:
+        case StatsSection::solve_time:
             return true;
         case StatsSection::restart: {
             // A row with no recorded schedule has nothing to say about one,
@@ -45,21 +46,19 @@ RunStats::reports(const StatsSection section) const {
         }
         case StatsSection::stabilize:
             return config_value(*this, "stabilize") == "true";
-        case StatsSection::intersection: {
-            const std::string depth = config_value(*this, "csids_intersection_depth");
-            return !depth.empty() && depth != "1";
+        case StatsSection::phase_saving: {
+            const std::string phase_saving = config_value(*this, "phase_saving");
+            return !phase_saving.empty() && phase_saving != "none";
         }
-        case StatsSection::phase_saving:
-            return config_value(*this, "phase") == "saved" ||
-                   config_value(*this, "phase") == "rotate";
         case StatsSection::minimize:
             return config_value(*this, "minimize") == "true";
         case StatsSection::subsume:
-            return config_value(*this, "subsume") == "true";
+            return config_value(*this, "otf_subsume") == "true" ||
+                   config_value(*this, "inproc_subsume_strengthen") == "true";
         case StatsSection::vivify:
             return config_value(*this, "vivify") == "true";
         case StatsSection::subsume_pass:
-            return config_value(*this, "subsume_pass") == "true";
+            return config_value(*this, "inproc_subsume_strengthen") == "true";
         case StatsSection::deletion:
             return config_value(*this, "deletion") == "true";
         case StatsSection::propagate_budget: {
@@ -71,10 +70,6 @@ RunStats::reports(const StatsSection section) const {
             return config_value(*this, "bve") == "true";
         case StatsSection::implication_graph:
             return config_value(*this, "implication_graph") == "true";
-        case StatsSection::exact_watchlist:
-            return config_value(*this, "selection") == "exact_watchlist";
-        case StatsSection::proof:
-            return proof_postprocess_time_s > 0.0;
     }
     assert(false && "RunStats::reports: not a statistics section");
     std::unreachable();

@@ -82,7 +82,18 @@ SpanInTrailOrder reinsert_above(const RowSpace& span,
 
 } // namespace
 
-Trail::Trail(EquationRepr repr, std::size_t num_vars) : span_(repr, num_vars), level_end_{0} {}
+Trail::Trail(EquationRepr repr, std::size_t num_vars)
+    : span_(repr, num_vars), spare_rows_(repr, num_vars + 1), level_end_{0} {}
+
+IndexSet Trail::reason_clause_ids(const std::size_t num_clauses) const {
+    IndexSet ids(num_clauses);
+    for (const std::optional<ClauseId>& reason : reasons_) {
+        if (reason.has_value()) {
+            ids.set(*reason);
+        }
+    }
+    return ids;
+}
 
 std::size_t Trail::learn(const Equation& eqn, std::optional<ClauseId> reason, std::size_t level) {
     assert(eqn.num_bits() == span_.cols() &&
@@ -113,16 +124,8 @@ std::size_t Trail::learn(const Equation& eqn, std::optional<ClauseId> reason, st
 
 std::size_t Trail::learn_in_order(const Equation& eqn, std::optional<ClauseId> reason,
                                   std::size_t level) {
-    Equation row;
-    if (spare_rows_.empty()) {
-        row = eqn;
-    } else {
-        row = std::move(spare_rows_.back());
-        spare_rows_.pop_back();
-        row.assign_from(eqn);
-    }
     const std::optional<std::size_t> maybe_inserted_row_idx =
-        span_.add_row_get_row_idx(std::move(row));
+        span_.add_row_get_row_idx(spare_rows_.copy_of(eqn));
     assert(maybe_inserted_row_idx.has_value() && "learned an equation already in the span");
 
     const std::size_t inserted_row_idx = *maybe_inserted_row_idx;
@@ -220,7 +223,7 @@ void Trail::resize(std::size_t num_levels) {
         is_dropped_[row_idx] = row_idx_to_trail_idx_[row_idx] >= kept ? 1 : 0;
     }
     for (Equation& row : span_.pop_rows(is_dropped_)) {
-        spare_rows_.push_back(std::move(row));
+        spare_rows_.give(std::move(row));
     }
     std::erase_if(row_idx_to_trail_idx_,
                   [kept](const std::size_t trail_idx) { return trail_idx >= kept; });

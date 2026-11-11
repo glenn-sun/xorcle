@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "algebra/equation.h"
 #include "algebra/reduce_result.h"
 #include "core/clause_id.h"
@@ -16,6 +18,21 @@ class Trail;
 enum class WatchType {
     zero, ///< The first watch reduced to `0 = 0`.
     one ///< The second watch reduced to `0 = 0`.
+};
+
+/// @brief The rows of a clause's linear negation that propagation watches.
+struct ClauseWatches {
+    ClauseRowIdx watched0 = 0;
+    ClauseRowIdx watched1 = 1;
+
+    /// @brief Where the next cyclic search for a replacement watch starts.
+    ClauseRowIdx next_watch_search_start = 0;
+
+    /// @brief The first two rows, or row 0 twice for a unit clause: a legal pair
+    /// against an empty trail, where no stored row is `0 = 0` and any two are independent.
+    static ClauseWatches first_rows(std::size_t width) {
+        return {.watched0 = 0, .watched1 = width <= 1 ? 0U : 1U, .next_watch_search_start = 0};
+    }
 };
 
 /// @brief How a reduction a handler holds relates to the watch's partial
@@ -52,8 +69,8 @@ public:
     virtual HeldReduction copy_reduced_companion(ClauseId id, WatchType type, Equation& reduced,
                                                  ReduceResult& result) = 0;
 
-    /// @brief Report that a watch of clause `id` moved, called *after*
-    /// `watched0` / `watched1` are updated.
+    /// @brief Report that a watch of clause `id` moved, called *after* its
+    /// `ClauseWatches` are updated.
     /// @param reductions Valid only during the call.
     virtual void update_with_new_watch(ClauseId id, ClauseRowIdx old_watch_row_idx, WatchType type,
                                        const Trail& trail, const WatchReductions& reductions) = 0;

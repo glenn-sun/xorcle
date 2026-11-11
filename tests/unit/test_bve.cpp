@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numeric>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "heuristics/bve/bve.h"
 #include "heuristics/compaction/compaction.h"
 #include "heuristics/compaction/original_variables.h"
+#include "heuristics_test_support.h"
 #include "util/index_set.h"
 #include "util/random.h"
 
@@ -64,8 +66,9 @@ bool satisfies(const Clause& clause, const IndexSet& assignment, std::size_t num
 
 constexpr Seed num_seeds = 20;
 
-BvePlan plan_for(const std::vector<Clause>& clauses, std::size_t num_vars, const BveConfig& config = {},
-                 Seed seed = default_seed, EquationRepr in_repr = repr) {
+BvePlan plan_for(const std::vector<Clause>& clauses, std::size_t num_vars,
+                 const BveConfig& config = default_bve_config(), Seed seed = default_seed,
+                 EquationRepr in_repr = repr) {
     std::vector<ClauseId> ids(clauses.size());
     std::iota(ids.begin(), ids.end(), ClauseId{0});
     const std::vector<std::uint8_t> is_active(clauses.size(), 1);
@@ -108,9 +111,8 @@ void check_sparse_plan(const BvePlan& dense, const std::vector<Clause>& clauses,
             }
         }
     }
-    CHECK(sparse.counters.num_choices_tried == dense.counters.num_choices_tried);
-    CHECK(sparse.counters.num_readings == dense.counters.num_readings);
-    CHECK(sparse.counters.num_steps == dense.counters.num_steps);
+    CHECK(sparse.counters.clauses_after == dense.counters.clauses_after);
+    CHECK(sparse.counters.width_after == dense.counters.width_after);
 }
 
 /// @brief The clauses a plan leaves of @p clauses.
@@ -135,7 +137,7 @@ std::vector<Clause> left_by(const BvePlan& plan, const std::vector<Clause>& clau
 void check_models(const BvePlan& plan, const std::vector<Clause>& clauses, std::size_t num_vars) {
     const std::vector<Clause> left = left_by(plan, clauses);
     const std::vector<CompactionHistoryEntry> history{CompactionHistoryEntry{
-        .eliminations = plan.eliminations, .trail_rows_before = {}, .renumbering = std::nullopt}};
+        .eliminations = plan.eliminations, .renumbering = std::nullopt}};
     std::vector<std::size_t> every_var(num_vars);
     std::iota(every_var.begin(), every_var.end(), std::size_t{0});
     const auto satisfies_all = [num_vars](const std::vector<Clause>& formula,
@@ -194,24 +196,6 @@ std::vector<Clause> paper_example(std::size_t num_vars) {
 
 } // namespace
 
-TEST_CASE("bve: a choice touching n clauses is tried with chance 2^(try_from - n)") {
-    constexpr std::size_t num_vars = 3;
-    const std::vector<Clause> clauses = paper_example(num_vars);
-    BveConfig config;
-    for (Seed seed = 0; seed < num_seeds; ++seed) {
-        CHECK(plan_for(clauses, num_vars, config, seed).counters.num_not_drawn == 0);
-    }
-    // At chance at most 1/2, some choices are not drawn.
-    config.try_from = 0.0;
-    std::size_t num_not_drawn = 0;
-    for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan plan = plan_for(clauses, num_vars, config, seed);
-        num_not_drawn += plan.counters.num_not_drawn;
-        check_models(plan, clauses, num_vars);
-    }
-    CHECK(num_not_drawn > 0);
-}
-
 TEST_CASE("bve: a variable defined by a gate is eliminated through the gate") {
     // y = a and b, read by two more clauses; y is variable 0.
     constexpr std::size_t num_vars = 5;
@@ -232,13 +216,12 @@ TEST_CASE("bve: a variable defined by a gate is eliminated through the gate") {
     }
 
     for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan plan = plan_for(clauses, num_vars, {}, seed);
+        const BvePlan plan = plan_for(clauses, num_vars, default_bve_config(), seed);
         const auto of_y = std::ranges::find_if(plan.eliminations, [](const Elimination& elimination) {
             return elimination.flip_set == std::vector<std::uint32_t>{0};
         });
         REQUIRE(of_y != plan.eliminations.end());
         CHECK(of_y->removed_clauses.size() == 5);
-        CHECK(plan.counters.num_eliminated_by_gate >= 1);
         CHECK(plan.dropped_col_idxs.test(0));
         check_models(plan, clauses, num_vars);
     }
@@ -256,48 +239,10 @@ TEST_CASE("bve: two clauses that contradict on one row resolve to the empty clau
     CHECK(plan.resolvents.front().clause->rows() == 0);
 }
 
-TEST_CASE("bve: a unit among the resolvents is substituted for its lowest variable") {
-    // Eliminating x leaves the unit [y = 1], which then goes out of the third clause.
-    constexpr std::size_t num_vars = 4;
-    const std::vector<Clause> clauses{clause_of(num_vars, {{{0}, true}, {{1}, true}}),
-                                      clause_of(num_vars, {{{0}, false}, {{1}, true}}),
-                                      clause_of(num_vars, {{{1}, false}, {{2}, true}, {{3}, true}}),
-                                      clause_of(num_vars, {{{2}, false}, {{3}, false}, {{1}, false}})};
-
-    // Where z goes first, C and D go with no resolvent and the unit has nothing to go out of.
-    std::size_t num_substituted = 0;
-    for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan plan = plan_for(clauses, num_vars, {}, seed);
-        num_substituted += plan.counters.num_units_substituted;
-        CHECK(plan.counters.num_unit_resolvents == 0);
-        CHECK(plan.dropped_col_idxs.test(0));
-        CHECK(plan.dropped_col_idxs.test(1));
-        check_models(plan, clauses, num_vars);
-    }
-    CHECK(num_substituted >= 1);
-}
-
-TEST_CASE("bve: an input clause equal to a removed one is removed with it") {
-    constexpr std::size_t num_vars = 4;
-    const std::vector<Clause> clauses{clause_of(num_vars, {{{0}, true}, {{1}, true}}),
-                                      clause_of(num_vars, {{{0}, true}, {{1}, true}}),
-                                      clause_of(num_vars, {{{0}, false}, {{2}, true}}),
-                                      clause_of(num_vars, {{{1}, false}, {{3}, true}})};
-
-    for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan plan = plan_for(clauses, num_vars, {}, seed);
-        REQUIRE_FALSE(plan.eliminations.empty());
-        CHECK(std::ranges::is_sorted(plan.removed_ids));
-        CHECK(std::ranges::count(plan.removed_ids, ClauseId{0}) ==
-              std::ranges::count(plan.removed_ids, ClauseId{1}));
-        check_models(plan, clauses, num_vars);
-    }
-}
-
 TEST_CASE("bve: equations over many words eliminate what equations over one word do") {
     for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan one_word = plan_for(example_7_3(4), 4, {}, seed);
-        const BvePlan many_words = plan_for(example_7_3(400), 400, {}, seed);
+        const BvePlan one_word = plan_for(example_7_3(4), 4, default_bve_config(), seed);
+        const BvePlan many_words = plan_for(example_7_3(400), 400, default_bve_config(), seed);
         REQUIRE(one_word.eliminations.size() == many_words.eliminations.size());
         for (std::size_t i = 0; i < one_word.eliminations.size(); ++i) {
             CHECK(one_word.eliminations[i].flip_set == many_words.eliminations[i].flip_set);
@@ -305,17 +250,16 @@ TEST_CASE("bve: equations over many words eliminate what equations over one word
         }
         CHECK(one_word.resolvents.size() == many_words.resolvents.size());
         CHECK(one_word.counters.clauses_after == many_words.counters.clauses_after);
-        CHECK(one_word.counters.num_choices_tried == many_words.counters.num_choices_tried);
     }
 }
 
 TEST_CASE("bve: sparse equations eliminate what dense equations do") {
     for (Seed seed = 0; seed < num_seeds; ++seed) {
         for (const std::size_t num_vars : {std::size_t{4}, std::size_t{400}}) {
-            check_sparse_plan(plan_for(example_7_3(num_vars), num_vars, {}, seed), example_7_3(num_vars), num_vars,
-                              {}, seed);
-            check_sparse_plan(plan_for(paper_example(num_vars), num_vars, {}, seed), paper_example(num_vars),
-                              num_vars, {}, seed);
+            check_sparse_plan(plan_for(example_7_3(num_vars), num_vars, default_bve_config(), seed), example_7_3(num_vars), num_vars,
+                              default_bve_config(), seed);
+            check_sparse_plan(plan_for(paper_example(num_vars), num_vars, default_bve_config(), seed), paper_example(num_vars),
+                              num_vars, default_bve_config(), seed);
         }
     }
 }
@@ -325,7 +269,7 @@ TEST_CASE("bve: models are completed on random formulas, in the variables given 
     const auto below = [&rng](std::size_t bound) { return static_cast<std::size_t>(rng() % bound); };
     std::size_t num_eliminated = 0;
     std::size_t num_flip_sets_of_several = 0;
-    std::size_t num_held_in_core = 0;
+    std::size_t num_unit_resolvents = 0;
     for (std::size_t round = 0; round < 300; ++round) {
         const std::size_t num_vars = 4 + below(5);
         // Each variable's image under a change of variables: itself, and for
@@ -363,35 +307,42 @@ TEST_CASE("bve: models are completed on random formulas, in the variables given 
                 }
                 disjuncts.push_back({vars, below(2) == 0});
             }
-            clauses.push_back(clause_of(num_vars, disjuncts));
+            Clause clause = clause_of(num_vars, disjuncts);
+            clause.reduce_rows();
+            // BVE reads no tautology and no two clauses with one span.
+            if (!clause.pivot_col_idxs().test(num_vars) &&
+                std::ranges::none_of(clauses, [&clause](const Clause& other) { return other.has_rows_of(clause); })) {
+                clauses.push_back(std::move(clause));
+            }
         }
-        // With a cap low enough to bind.
-        BveConfig config;
-        config.tail_group_cap = 1 + below(4);
-        config.success_rate = std::array{0.0, 0.001, 0.1}[below(3)];
+        // With caps low enough to bind.
+        BveConfig config = default_bve_config();
+        config.group_cap = 1 + below(4);
+        config.max_refusals_in_a_row =
+            std::array<std::size_t, 3>{std::numeric_limits<std::size_t>::max(), 1, 3}[below(3)];
         const BvePlan plan = plan_for(clauses, num_vars, config, round);
         check_sparse_plan(plan, clauses, num_vars, config, round);
         num_eliminated += plan.eliminations.size();
         for (const Elimination& elimination : plan.eliminations) {
             num_flip_sets_of_several += elimination.flip_set.size() > 1 ? 1U : 0U;
         }
-        num_held_in_core += plan.counters.num_held_in_core;
+        num_unit_resolvents += plan.counters.num_unit_resolvents;
         check_models(plan, clauses, num_vars);
     }
     CHECK(num_eliminated > 100);
     CHECK(num_flip_sets_of_several > 10);
-    CHECK(num_held_in_core > 10);
+    // A unit resolvent stays among the clauses, for the solver to substitute.
+    CHECK(num_unit_resolvents > 10);
 }
 
 TEST_CASE("bve: projection finds the projection by a flip whose touched clauses share no direction") {
     constexpr std::size_t num_vars = 3;
     const std::vector<Clause> clauses = paper_example(num_vars);
     for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan plan = plan_for(clauses, num_vars, {}, seed);
+        const BvePlan plan = plan_for(clauses, num_vars, default_bve_config(), seed);
         REQUIRE_FALSE(plan.eliminations.empty());
         CHECK(plan.eliminations.front().flip_set == std::vector<std::uint32_t>{2});
         CHECK(plan.eliminations.front().removed_clauses.size() == 3);
-        CHECK(plan.counters.num_tail_groups >= 1);
         check_models(plan, clauses, num_vars);
     }
 }
@@ -400,7 +351,7 @@ TEST_CASE("bve: a clause that a flip set touches alone goes") {
     constexpr std::size_t num_vars = 4;
     const std::vector<Clause> clauses = example_7_2(num_vars);
     for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan plan = plan_for(clauses, num_vars, {}, seed);
+        const BvePlan plan = plan_for(clauses, num_vars, default_bve_config(), seed);
         CHECK(plan.eliminations.size() == 3);
         CHECK(plan.resolvents.empty());
         CHECK(plan.counters.clauses_after == 0);

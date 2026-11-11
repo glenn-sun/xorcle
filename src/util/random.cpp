@@ -1,7 +1,8 @@
 #include "util/random.h"
 
-#include <cassert>
 #include <algorithm>
+#include <bit>
+#include <cassert>
 
 namespace xorcle {
 namespace {
@@ -30,11 +31,19 @@ make_rng(Seed base_seed, RngComponent component) {
     return Rng(derive_seed(base_seed, component));
 }
 
-int
-random_int(Rng& rng, int upper_bound) {
-    assert(upper_bound > 0 && "random_int needs a positive upper bound");
-    std::uniform_int_distribution<int> dist(0, upper_bound - 1);
-    return dist(rng);
+std::size_t
+uniform_below(Rng& rng, std::size_t bound) {
+    assert(bound > 0 && "a draw needs something to draw from");
+    if (bound == 1) {
+        return 0;
+    }
+    const std::uint64_t mask = std::bit_ceil(static_cast<std::uint64_t>(bound)) - 1;
+    while (true) {
+        const std::uint64_t draw = rng() & mask;
+        if (draw < bound) {
+            return static_cast<std::size_t>(draw);
+        }
+    }
 }
 
 IndexSet

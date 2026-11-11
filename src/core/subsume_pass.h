@@ -23,7 +23,7 @@ enum class PairRelation : std::uint8_t {
     strengthens ///< W_C ⊆ W_D + ⟨0 = 1⟩ and not W_C ⊆ W_D: C and D imply a hyperplane of W_D.
 };
 
-/// @brief Reduces one clause's rows against another's, and counts the work.
+/// @brief Reduces one clause's rows against another's, and counts the rows it reads.
 class PairCheck {
 public:
     PairCheck(EquationRepr repr, std::size_t num_vars);
@@ -40,10 +40,6 @@ public:
     /// @pre The last `relate()` was on @p wider and found `strengthens`.
     Clause strengthened(const Clause& wider, Rng& rng) const;
 
-    std::size_t num_row_checks() const noexcept { return num_row_checks_; }
-
-    std::size_t num_row_additions() const noexcept { return num_row_additions_; }
-
     /// @brief Per row of a narrower clause reduced, the rows of the wider clause.
     std::size_t num_rows_read() const noexcept { return num_rows_read_; }
 
@@ -58,8 +54,6 @@ private:
     std::vector<std::uint8_t> reduces_to_eq_false_;
     std::size_t num_narrower_rows_ = 0;
 
-    std::size_t num_row_checks_ = 0;
-    std::size_t num_row_additions_ = 0;
     std::size_t num_rows_read_ = 0;
 };
 

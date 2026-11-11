@@ -4,9 +4,8 @@
 /// @brief Seeded per-component RNG streams, each derived independently from one
 /// user-visible seed.
 ///
-/// @warning The derivation is fixed; `tests/unit/test_random.cpp` pins it.
-/// Reproducing a run in another binary also needs the same standard library,
-/// since `std::uniform_int_distribution` is implementation-defined.
+/// @warning The derivation and every draw are fixed; `tests/unit/test_random.cpp` pins
+/// them, so a seed gives the same search on every platform.
 
 #include <cstddef>
 #include <cstdint>
@@ -39,9 +38,14 @@ Seed derive_seed(Seed base_seed, RngComponent component);
 
 Rng make_rng(Seed base_seed, RngComponent component);
 
-/// @brief A uniform random integer in [0, upper_bound - 1].
-/// @pre `upper_bound > 0`.
-int random_int(Rng& rng, int upper_bound);
+/// @brief A uniform draw from `[0, bound)`, by rejection; nothing is drawn when `bound` is 1.
+/// @pre `bound > 0`.
+std::size_t uniform_below(Rng& rng, std::size_t bound);
+
+/// @brief A uniform draw from the 2^53 multiples of 2^-53 below 1.
+inline double uniform_below_one(Rng& rng) {
+    return static_cast<double>(rng() >> 11) * 0x1.0p-53;
+}
 
 /// @brief Sample a set of `num_rows` clause rows, redrawing until non-empty.
 ///
@@ -55,8 +59,7 @@ IndexSet random_nonzero_coefficients(std::size_t num_rows, Rng& rng);
 template <typename T>
 void shuffle_uniformly(std::vector<T>& items, Rng& rng) {
     for (std::size_t i = items.size(); i > 1; --i) {
-        std::uniform_int_distribution<std::size_t> below(0, i - 1);
-        std::swap(items[i - 1], items[below(rng)]);
+        std::swap(items[i - 1], items[uniform_below(rng, i)]);
     }
 }
 

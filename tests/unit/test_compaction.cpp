@@ -9,6 +9,7 @@
 #include "algebra_test_support.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
+#include "heuristics/bve/elimination.h"
 #include "heuristics/compaction/compaction.h"
 #include "heuristics/compaction/original_variables.h"
 #include "heuristics_test_support.h"
@@ -115,9 +116,6 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
         CHECK(rewritten.rows() == 1);
         CHECK(rewritten.cols() == 5);
         CHECK(bits_of(rewritten.row(0)) == std::vector<std::size_t>{4});
-        CHECK(rewritten.watched0 == 0);
-        CHECK(rewritten.watched1 == 0);
-        CHECK(rewritten.next_watch_search_start == 0);
     }
 
     SUBCASE("rows are reduced by the trail, in the same numbering") {
@@ -129,10 +127,13 @@ TEST_CASE_TEMPLATE("compaction: rewriting the problem", Tag, DenseTag, SparseTag
         CHECK(bits_of(rewritten.row(1)) == std::vector<std::size_t>{3});
     }
 
-    SUBCASE("the history entry records the root trail in row-echelon order") {
-        REQUIRE(plan.history_entry.trail_rows_before.size() == 1);
-        CHECK(bits_of(plan.history_entry.trail_rows_before[0]) ==
-              std::vector<std::size_t>{0, 4});
+    SUBCASE("the history entry eliminates the root unit's leading variable") {
+        // x0 = 1, removed in its linear negation x0 = 0.
+        REQUIRE(plan.history_entry.eliminations.size() == 1);
+        const Elimination& elimination = plan.history_entry.eliminations[0];
+        CHECK(elimination.flip_set == std::vector<std::uint32_t>{0});
+        CHECK(elimination.removed_clauses ==
+              std::vector<std::vector<VarListEquation>>{{VarListEquation{{0}, false}}});
         CHECK_FALSE(plan.history_entry.renumbering.has_value());
     }
 }
@@ -175,9 +176,6 @@ TEST_CASE_TEMPLATE("compaction: merged rows keep a distinct watch pair", Tag, De
 
     const Clause& rewritten = plan.rewritten_clauses[0];
     CHECK(rewritten.rows() == 1);
-    CHECK(rewritten.watched0 == 0);
-    CHECK(rewritten.watched1 == 0);
-    CHECK(rewritten.next_watch_search_start == 0);
 }
 
 TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, SparseTag) {
@@ -245,6 +243,18 @@ TEST_CASE_TEMPLATE("original space: recovering an assignment", Tag, DenseTag, Sp
                 reconstruct_original_assignment(compacted, history, every_var, 4);
             CHECK(set_variables(original) == std::vector<std::size_t>{0, 2});
         }
+    }
+
+    SUBCASE("root units are undone in reverse trail order") {
+        Trail trail(repr, 4);
+        trail.learn(make_equation_with(repr, 4, {0, 1}), ClauseId{0}, trail.level()); // x0 + x1 = 0
+        trail.learn(make_equation_with(repr, 4, {1, 4}), ClauseId{1}, trail.level()); // x1 = 1
+        const std::vector<CompactionHistoryEntry> history{renumbered_entry(trail)};
+
+        // x1 comes back first, and x0 reads it.
+        const IndexSet compacted(2);
+        const IndexSet original = reconstruct_original_assignment(compacted, history, every_var, 4);
+        CHECK(set_variables(original) == std::vector<std::size_t>{0, 1});
     }
 
     SUBCASE("a substitution with no renumbering overwrites its dropped variable in place") {

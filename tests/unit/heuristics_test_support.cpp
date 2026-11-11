@@ -1,10 +1,33 @@
 #include "heuristics_test_support.h"
 
 #include "algebra_test_support.h"
+#include "cli/options.h"
 
 #include <string>
+#include <utility>
 
 namespace xorcle {
+
+CsidsConfig default_csids_config() { return csids_config(Options{}); }
+
+RestartConfig default_restart_config() { return restart_config(Options{}); }
+
+ImplicationGraphConfig default_implication_graph_config() {
+    return implication_graph_config(Options{});
+}
+
+BveConfig default_bve_config() { return bve_config(Options{}); }
+
+DeletionConfig default_deletion_config() { return deletion_config(Options{}); }
+
+SolverConfig default_solver_config() { return solver_config(Options{}); }
+
+CsidsConfig csids_config_deciding(const DecisionPhase phase) {
+    CsidsConfig config = default_csids_config();
+    config.phase = phase;
+    config.phase_saving.source = PhaseSaving::none;
+    return config;
+}
 
 Clause make_clause(EquationRepr repr, std::size_t num_vars,
                    std::initializer_list<std::initializer_list<std::size_t>> rows) {
@@ -34,16 +57,41 @@ std::size_t dimensions_outside_span(const Clause& clause, const RowSpace& span) 
 }
 
 void report_new_watch(WatchUpdateHandler& handler, ClauseId id, const Clause& clause,
-                      ClauseRowIdx old_watch_row_idx, WatchType type, const Trail& trail) {
+                      const ClauseWatches& watches, ClauseRowIdx old_watch_row_idx, WatchType type,
+                      const Trail& trail) {
     const RowSpace& span = trail.span();
-    Equation first = clause.row(clause.watched0);
-    Equation second = clause.row(clause.watched1);
+    Equation first = clause.row(watches.watched0);
+    Equation second = clause.row(watches.watched1);
     WatchReductions reductions;
     reductions.first_result = span.partial_reduce(first);
     reductions.second_result = span.partial_reduce_with_extra(second, first);
     reductions.first = type == WatchType::zero ? &first : nullptr;
     reductions.second = &second;
     handler.update_with_new_watch(id, old_watch_row_idx, type, trail, reductions);
+}
+
+ClauseId add_starting_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause) {
+    const ClauseId id = database.add_starting_clause(std::move(clause));
+    selector.update_with_new_clause(id);
+    return id;
+}
+
+ClauseId add_asserting_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause,
+                              const Trail& trail, const AssertingClauseInfo& info) {
+    const ClauseId id = database.add_asserting_clause(std::move(clause), info.lbd);
+    selector.update_with_asserting_clause(id, trail, info);
+    return id;
+}
+
+void deactivate_clause(ClauseDatabase& database, ClauseSelector& selector, ClauseId id) {
+    database.deactivate_clause(id);
+    selector.update_with_inactive_clause(id);
+}
+
+void renumber(ClauseDatabase& database, ClauseSelector& selector,
+              const CompactionTransform& transform, const Trail& trail) {
+    database.renumber(transform);
+    selector.update_with_renumbering(transform, trail);
 }
 
 std::string sign_pattern_instance(std::size_t num_vars) {

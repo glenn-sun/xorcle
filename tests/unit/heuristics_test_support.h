@@ -7,11 +7,31 @@
 
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
+#include "algebra/compaction_transform.h"
+#include "core/clause_database.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
+#include "core/solver.h"
 #include "core/watch.h"
+#include "heuristics/bve/bve.h"
+#include "heuristics/decisions/csids.h"
+#include "heuristics/deletion/deletion.h"
+#include "heuristics/implication_graph/implication_graph.h"
+#include "heuristics/restarts/restart_policy.h"
+#include "heuristics/selection/clause_selector.h"
 
 namespace xorcle {
+
+/// @brief Each configuration as an empty command line gives it.
+CsidsConfig default_csids_config();
+RestartConfig default_restart_config();
+ImplicationGraphConfig default_implication_graph_config();
+BveConfig default_bve_config();
+DeletionConfig default_deletion_config();
+SolverConfig default_solver_config();
+
+/// @brief `default_csids_config()` deciding in @p phase, without phase saving.
+CsidsConfig csids_config_deciding(DecisionPhase phase);
 
 /// @brief Build a clause from its rows, each given as a list of set bits in the
 /// linear negation, where bit `num_vars` is the constant bit.
@@ -52,6 +72,21 @@ public:
 /// @brief Report to `handler` that a watch of `clause` moved, with the reductions
 /// of its watches by `trail` that the propagator would hand over.
 void report_new_watch(WatchUpdateHandler& handler, ClauseId id, const Clause& clause,
-                      ClauseRowIdx old_watch_row_idx, WatchType type, const Trail& trail);
+                      const ClauseWatches& watches, ClauseRowIdx old_watch_row_idx, WatchType type,
+                      const Trail& trail);
+
+/// @brief Add a starting clause to `database` and tell `selector`, as the solver does.
+ClauseId add_starting_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause);
+
+/// @brief Add a learned clause to `database` and tell `selector`, as the solver does.
+ClauseId add_asserting_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause,
+                              const Trail& trail, const AssertingClauseInfo& info);
+
+/// @brief Deactivate a clause of `database` and tell `selector`, as the solver does.
+void deactivate_clause(ClauseDatabase& database, ClauseSelector& selector, ClauseId id);
+
+/// @brief Renumber `database` and tell `selector`, as the solver does.
+void renumber(ClauseDatabase& database, ClauseSelector& selector,
+              const CompactionTransform& transform, const Trail& trail);
 
 } // namespace xorcle

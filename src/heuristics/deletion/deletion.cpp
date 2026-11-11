@@ -4,7 +4,6 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
-#include <optional>
 
 #include "util/index_set.h"
 
@@ -15,15 +14,15 @@ namespace {
 /// @brief Whether `left` is deleted before `right`, ordered totally so that a tie
 /// does not depend on the sort.
 bool deleted_first(const DeletionState& state, ClauseId left, ClauseId right) {
-    if (state.key == DeletionKey::activity) {
-        const double left_activity = state.activity->clause_activity(left);
-        const double right_activity = state.activity->clause_activity(right);
+    if (state.config.key == DeletionKey::activity) {
+        const double left_activity = state.activity.clause_activity(left);
+        const double right_activity = state.activity.clause_activity(right);
         if (left_activity != right_activity) {
             return left_activity < right_activity;
         }
     } else {
-        const double left_lbd = state.selector.clause_lbd(left);
-        const double right_lbd = state.selector.clause_lbd(right);
+        const double left_lbd = state.database.record(left).lbd;
+        const double right_lbd = state.database.record(right).lbd;
         if (left_lbd != right_lbd) {
             return left_lbd > right_lbd;
         }
@@ -37,25 +36,9 @@ std::size_t allowed_unused_passes(double lbd, double wait) {
     return static_cast<std::size_t>(std::lround(std::pow(2.0, wait - lbd)));
 }
 
-bool is_deletion_candidate(const ClauseSelector& selector, ClauseId id, double wait) {
-    assert(selector.is_clause_learned(id) && "a starting clause is never a deletion candidate");
-    return selector.is_clause_out_of_unused_passes(id) ||
-           allowed_unused_passes(selector.clause_lbd(id), wait) == 0;
-}
-
-void update_with_reason_use(ClauseSelector& selector, ClauseId id, std::size_t measured_lbd,
-                            const DeletionConfig& config) {
-    if (!selector.is_clause_learned(id)) {
-        return;
-    }
-    selector.set_clause_used_since_deletion(id, true);
-    const bool was_candidate = is_deletion_candidate(selector, id, config.wait);
-    const double weight = 1.0 / static_cast<double>(config.lbd_window);
-    selector.set_clause_lbd(id, (1.0 - weight) * selector.clause_lbd(id) +
-                                    weight * static_cast<double>(measured_lbd));
-    if (was_candidate) {
-        selector.set_clause_out_of_unused_passes(id, false);
-        selector.set_clause_unused_passes(id, 0);
+void update_with_reason_use(ClauseRecord& record) {
+    if (record.learned) {
+        record.used_since_deletion = true;
     }
 }
 
@@ -68,49 +51,42 @@ std::size_t conflicts_between_deletion_passes(const DeletionConfig& config,
 }
 
 DeletionPlan build_deletion_plan(const DeletionState& state) {
-    assert((state.key != DeletionKey::activity || state.activity != nullptr) &&
-           "the activity key has no activity source");
-    assert(state.eviction_rate >= 0.0 && state.eviction_rate <= 1.0 &&
+    assert(state.config.eviction_rate >= 0.0 && state.config.eviction_rate <= 1.0 &&
            "the eviction rate is not a fraction");
 
-    IndexSet is_locked(state.selector.num_clauses()); // over clause ids
-    for (const std::optional<ClauseId>& reason : state.trail.reasons()) {
-        if (reason.has_value()) {
-            is_locked.set(*reason);
-        }
-    }
+    const IndexSet is_locked = state.trail.reason_clause_ids(state.database.num_clauses());
 
     DeletionPlan plan;
-    plan.unused_passes.resize(state.selector.active_clause_ids().max_size());
+    plan.unused_passes.resize(state.database.active_clause_ids().max_size());
     std::size_t num_planned = 0;
     std::vector<ClauseId> candidates;
 
-    for (const ClauseId id : state.selector.active_clause_ids()) {
+    for (const ClauseId id : state.database.active_clause_ids()) {
+        const ClauseRecord& record = state.database.record(id);
         std::size_t& unused_passes = plan.unused_passes[num_planned++];
-        unused_passes = state.selector.clause_unused_passes(id);
-        if (!state.selector.is_clause_learned(id) || is_locked.test(id)) {
+        unused_passes = record.unused_passes;
+        if (!record.learned) {
             continue;
         }
-        if (is_deletion_candidate(state.selector, id, state.wait)) {
-            candidates.push_back(id);
-            continue;
-        }
-        if (state.selector.is_clause_used_since_deletion(id)) {
+        assert(record.lbd_measured && "a learned clause has no LBD");
+        if (record.used_since_deletion) {
             unused_passes = 0;
             continue;
         }
-        ++unused_passes;
-        const std::size_t allowed =
-            allowed_unused_passes(state.selector.clause_lbd(id), state.wait);
-        if (unused_passes >= allowed) {
-            plan.out_of_unused_passes.push_back(id);
+        if (is_locked.test(id)) {
+            continue;
         }
+        if (unused_passes >= allowed_unused_passes(record.lbd, state.config.wait)) {
+            candidates.push_back(id);
+            continue;
+        }
+        ++unused_passes;
     }
 
     plan.unused_passes.resize(num_planned);
 
     const auto delete_count = static_cast<std::size_t>(
-        std::floor(static_cast<double>(candidates.size()) * state.eviction_rate));
+        std::floor(static_cast<double>(candidates.size()) * state.config.eviction_rate));
     std::sort(candidates.begin(), candidates.end(),
               [&](ClauseId left, ClauseId right) { return deleted_first(state, left, right); });
     plan.deleted.assign(candidates.begin(),

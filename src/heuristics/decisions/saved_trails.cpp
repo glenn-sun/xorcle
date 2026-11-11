@@ -2,12 +2,21 @@
 
 #include <algorithm>
 #include <cassert>
-#include <chrono>
 #include <utility>
 
 namespace xorcle {
 
 namespace {
+
+bool uses_target(PhaseSaving source) {
+    return source == PhaseSaving::both || source == PhaseSaving::target_only ||
+           source == PhaseSaving::rotate;
+}
+
+bool uses_recent(PhaseSaving source) {
+    return source == PhaseSaving::both || source == PhaseSaving::recent_only ||
+           source == PhaseSaving::rotate;
+}
 
 bool holds_false(const RowSpace& space) {
     return space.pivot_col_idxs().test(space.cols() - 1);
@@ -48,7 +57,7 @@ bool PhaseRotation::update_with_conflict() noexcept {
         return false;
     }
     conflicts_in_step_ = 0;
-    if (++step_idx_ == num_phase_orders) {
+    if (++step_idx_ == rotation_steps.size()) {
         step_idx_ = 0;
         ++cycle_;
     }
@@ -59,39 +68,28 @@ SavedTrails::SavedTrails(EquationRepr repr, std::size_t num_vars, const PhaseSav
     : repr_(repr),
       num_vars_(num_vars),
       config_(config),
+      keeps_target_(uses_target(config.source) ||
+                    (config.focused_source.has_value() && uses_target(*config.focused_source))),
+      keeps_recent_(uses_recent(config.source) ||
+                    (config.focused_source.has_value() && uses_recent(*config.focused_source))),
       candidate_(repr, num_vars),
-      work_row_(repr, num_vars) {
-    if (config.rotation_interval.has_value()) {
-        rotation_.emplace(*config.rotation_interval);
+      work_row_(repr, num_vars),
+      spare_rows_(repr, num_vars + 1) {
+    if (config.source == PhaseSaving::rotate || config.focused_source == PhaseSaving::rotate) {
+        rotation_.emplace(config.rotation_interval);
     }
 }
 
-bool SavedTrails::consults_trails() const noexcept {
-    if (!rotation_.has_value()) {
-        return true;
+
+void SavedTrails::note_unconsulted_decision() {
+    assert(!consults_trails() && "a decision a saved trail was consulted for is counted by narrow()");
+    if (mode_source() == PhaseSaving::rotate) {
+        ++counters_.rotation_step_decisions[rotation_->step_idx()];
     }
-    const bool target = config_.target && mode_ == SearchMode::stable;
-    switch (rotation_->order()) {
-        case PhaseOrder::falsify:
-            return false;
-        case PhaseOrder::target_falsify:
-            return target;
-        case PhaseOrder::recent_falsify:
-            return config_.recent_trails > 0;
-        case PhaseOrder::target_recent_falsify:
-            return target || config_.recent_trails > 0;
-    }
-    return true;
+    ++counters_.open_sides;
 }
 
-void SavedTrails::note_falsify_decision() {
-    assert(!consults_trails() && "only a decision no trail is consulted for is the falsify order's");
-    ++counters_.order_decisions[static_cast<std::size_t>(rotation_->order())];
-    ++counters_.falsify_sides;
-}
-
-void SavedTrails::reconfigure(std::size_t num_vars) {
-    clear();
+void SavedTrails::reset_workspace(std::size_t num_vars) {
     num_vars_ = num_vars;
     candidate_ = RowSpace(repr_, num_vars);
     work_row_ = Equation(repr_, num_vars);
@@ -99,63 +97,107 @@ void SavedTrails::reconfigure(std::size_t num_vars) {
     kernel_kept_.clear();
     kernel_residues_.clear();
     kernel_combinations_.clear();
-    spare_rows_.clear();
+    spare_rows_.clear(num_vars + 1);
 }
 
 void SavedTrails::reinitialize(std::size_t num_vars) {
-    reconfigure(num_vars);
     target_ = {};
-    recent_.clear();
+    recent_ = {};
+    reset_workspace(num_vars);
     conflicts_since_target_reset_ = 0;
-    if (config_.rotation_interval.has_value()) {
-        rotation_.emplace(*config_.rotation_interval);
+    if (rotation_.has_value()) {
+        rotation_.emplace(config_.rotation_interval);
     }
     counters_ = {};
     trail_ = nullptr;
 }
 
-void SavedTrails::clear() {
-    target_.level_ends.clear();
-    drop_spans(target_);
-    for (SavedTrail& saved : recent_) {
-        saved.level_ends.clear();
-        drop_spans(saved);
-    }
-    ++counters_.cleared;
+void SavedTrails::update_with_substitution(const RowSpace& root_span,
+                                           [[maybe_unused]] const IndexSet& dropped_col_idxs) {
+    rewrite(target_, root_span);
+    rewrite(recent_, root_span);
+#ifndef NDEBUG
+    const auto carries_no_dropped_variable = [&dropped_col_idxs](const SavedTrail& saved) {
+        for (std::size_t row_idx = 0; row_idx < saved.num_rows(); ++row_idx) {
+            for (const std::size_t bit : saved.rows[row_idx].bits()) {
+                if (dropped_col_idxs.test(bit)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    assert(carries_no_dropped_variable(target_) &&
+           carries_no_dropped_variable(recent_) &&
+           "a rewritten saved row carries a dropped variable");
+#endif
 }
 
-void SavedTrails::drop_spans(SavedTrail& saved) {
+void SavedTrails::update_with_renumbering(const CompactionTransform& transform) {
+    assert(transform.old_num_vars() == num_vars_ &&
+           "the transform was built for a different active variable numbering");
+    const auto renumber = [&transform, this](SavedTrailWithSpans& saved) {
+        if (saved.trail_mod_span.has_value()) {
+            spare_rows_.give_rows_of(*saved.trail_mod_span);
+            saved.trail_mod_span.reset();
+        }
+        saved.renumber(transform);
+        if (saved.span.has_value()) {
+            saved.span->compact(transform);
+        }
+    };
+    renumber(target_);
+    renumber(recent_);
+    reset_workspace(transform.new_num_vars());
+}
+
+void SavedTrails::rewrite(SavedTrailWithSpans& saved, const RowSpace& root_span) {
+    drop_spans(saved);
+    if (saved.num_rows() == 0) {
+        saved.level_ends.clear();
+        return;
+    }
+    saved.substitute(root_span);
+    saved.span.emplace(repr_, num_vars_);
+    RowSpace& span = *saved.span;
+    std::size_t num_kept = 0;
+    std::size_t row_idx = 0;
+    for (std::size_t level_idx = 0; level_idx < saved.level_ends.size(); ++level_idx) {
+        const std::size_t kept_below = num_kept;
+        for (; row_idx < saved.level_ends[level_idx]; ++row_idx) {
+            Equation row = spare_rows_.copy_of(saved.rows[row_idx]);
+            if (!span.add_row_or_keep(row).has_value()) {
+                spare_rows_.give(std::move(row));
+                continue;
+            }
+            if (num_kept != row_idx) {
+                std::swap(saved.rows[num_kept], saved.rows[row_idx]);
+            }
+            ++num_kept;
+        }
+        if (holds_false(span)) {
+            // The levels below were consistent before this one came.
+            num_kept = kept_below;
+            saved.level_ends.resize(level_idx);
+            saved.level_stamps.resize(level_idx + 1);
+            spare_rows_.give_rows_of(span);
+            for (std::size_t kept_idx = 0; kept_idx < num_kept; ++kept_idx) {
+                span.add_row(spare_rows_.copy_of(saved.rows[kept_idx]));
+            }
+            break;
+        }
+        saved.level_ends[level_idx] = num_kept;
+    }
+    assert(!holds_false(span) && "a rewritten saved trail holds 0 = 1");
+}
+
+void SavedTrails::drop_spans(SavedTrailWithSpans& saved) {
     for (std::optional<RowSpace>* space : {&saved.span, &saved.trail_mod_span}) {
         if (space->has_value()) {
-            recycle_rows(**space);
+            spare_rows_.give_rows_of(**space);
             space->reset();
         }
     }
-}
-
-void SavedTrails::save(SavedTrail& saved, const Trail& trail,
-                       std::span<const std::size_t> level_stamps, std::size_t num_levels,
-                       std::size_t end) {
-    const std::size_t base = trail.rows_at_level(0);
-    if (saved.rows.size() < end - base) {
-        saved.rows.resize(end - base);
-    }
-    for (std::size_t trail_idx = base; trail_idx < end; ++trail_idx) {
-        Equation& row = saved.rows[trail_idx - base];
-        if (row.num_bits() == trail.span().cols()) {
-            row.assign_from(trail.row(trail_idx));
-        } else {
-            row = trail.row(trail_idx);
-        }
-    }
-    saved.level_ends.resize(num_levels);
-    for (std::size_t level = 1; level <= num_levels; ++level) {
-        saved.level_ends[level - 1] = std::min(trail.rows_at_level(level), end) - base;
-    }
-    const std::span<const std::size_t> stamps = level_stamps.first(num_levels + 1);
-    saved.level_stamps.assign(stamps.begin(), stamps.end());
-    saved.root_rows = base;
-    drop_spans(saved);
 }
 
 void SavedTrails::update_with_conflict(const Trail& trail,
@@ -165,27 +207,24 @@ void SavedTrails::update_with_conflict(const Trail& trail,
     assert(trail.span().pivot_col_idxs().test(trail.span().cols() - 1) &&
            "a conflict's trail ends in its 0 = 1");
     trail_ = &trail;
-    if (rotation_.has_value() && rotation_->update_with_conflict()) {
-        ++counters_.rotations;
+    if (rotation_.has_value()) {
+        rotation_->update_with_conflict();
     }
-    if (config_.recent_trails > 0) {
-        if (recent_.size() < config_.recent_trails) {
-            recent_.emplace_back();
-        }
-        std::rotate(recent_.begin(), recent_.end() - 1, recent_.end());
+    if (keeps_recent_) {
         // Its last row is the conflict's `0 = 1`.
-        save(recent_.front(), trail, level_stamps, level, trail.rows_at_level(level) - 1);
+        recent_.save(trail, level_stamps, level, trail.rows_at_level(level) - 1);
+        drop_spans(recent_);
     }
-    if (config_.target) {
+    if (keeps_target_) {
         if (++conflicts_since_target_reset_ >= config_.target_reset_conflicts) {
             conflicts_since_target_reset_ = 0;
             target_.level_ends.clear();
             drop_spans(target_);
         }
         const std::size_t below = trail.rows_at_level(level - 1) - trail.rows_at_level(0);
-        if (below > target_.num_rows() ||
-            (config_.target_on_ties && below > 0 && below == target_.num_rows())) {
-            save(target_, trail, level_stamps, level - 1, trail.rows_at_level(level - 1));
+        if (below > target_.num_rows()) {
+            target_.save(trail, level_stamps, level - 1, trail.rows_at_level(level - 1));
+            drop_spans(target_);
         }
     }
 }
@@ -195,50 +234,32 @@ void SavedTrails::narrow(RowSpace& space, std::span<const ClauseId> clause_ids,
                          std::span<const std::size_t> level_stamps) {
     assert(!level_stamps.empty() && space.rows() > 0 && !holds_false(space) &&
            "phase saving narrows a nonempty space without 0 = 1, knowing the level stamps");
-    assert(consults_trails() && "phase saving narrows only under an order naming a kept trail");
-    const auto start = std::chrono::steady_clock::now();
-    ++counters_.decisions;
-    if (rotation_.has_value()) {
-        ++counters_.order_decisions[static_cast<std::size_t>(rotation_->order())];
+    assert(consults_trails() && "phase saving narrows only when a saved trail is consulted");
+    if (mode_source() == PhaseSaving::rotate) {
+        ++counters_.rotation_step_decisions[rotation_->step_idx()];
     }
-    Equation false_row = spare_copy(space.row(0));
+    Equation false_row = spare_rows_.copy_of(space.row(0));
     false_row.set_eq_false();
     space.add_row(std::move(false_row));
-    counters_.dimension_before += directions(space);
 
-    std::vector<std::pair<SavedTrail*, bool>>& trails = trails_;
+    std::vector<SavedTrailWithSpans*>& trails = trails_;
     trails.clear();
-    const PhaseOrder order =
-        rotation_.has_value() ? rotation_->order() : PhaseOrder::target_recent_falsify;
-    const bool target = mode_ == SearchMode::stable && target_.num_rows() > 0;
-    if (target && order != PhaseOrder::recent_falsify) {
-        trails.emplace_back(&target_, true);
+    const PhaseSaving consulted = source();
+    if (uses_target(consulted) && target_.num_rows() > 0) {
+        trails.push_back(&target_);
     }
-    if (order != PhaseOrder::target_falsify) {
-        for (SavedTrail& saved : recent_) {
-            if (saved.num_rows() > 0) {
-                trails.emplace_back(&saved, false);
-            }
-        }
+    if (uses_recent(consulted) && recent_.num_rows() > 0) {
+        trails.push_back(&recent_);
     }
     assert((trails.empty() || (trail_ != nullptr && &trail_->span() == &trail_span)) &&
            "phase saving narrows against the trail it saves from");
 
     bool decided = false;
-    for (const auto& [saved, is_target] : trails) {
-        ClauseStepCounters& step = is_target ? counters_.target_clause_step
-                                             : counters_.recent_clause_step;
+    for (SavedTrailWithSpans* const saved : trails) {
         for (std::size_t clause_idx = 0; clause_idx < clause_ids.size(); ++clause_idx) {
             const ClauseStep result =
                 clause_step(space, clauses[clause_ids[clause_idx]], *saved, trail_span);
-            if (result == ClauseStep::trivial) {
-                ++step.trivial;
-            } else if (result == ClauseStep::inconsistent) {
-                ++step.inconsistent;
-            } else {
-                ++step.accepted;
-                ++(clause_idx == 0 ? counters_.clause_step_top_clause
-                                   : counters_.clause_step_partner);
+            if (result == ClauseStep::accepted) {
                 decided = true;
                 break;
             }
@@ -248,10 +269,9 @@ void SavedTrails::narrow(RowSpace& space, std::span<const ClauseId> clause_ids,
         }
     }
     if (!decided) {
-        for (const auto& [saved, is_target] : trails) {
+        for (SavedTrailWithSpans* const saved : trails) {
             narrowing(space, *saved, level_stamps);
             if (directions(candidate_) > 0) {
-                ++(is_target ? counters_.target_narrowing : counters_.recent_narrowing);
                 decided = true;
                 break;
             }
@@ -259,31 +279,27 @@ void SavedTrails::narrow(RowSpace& space, std::span<const ClauseId> clause_ids,
     }
     if (decided) {
         std::swap(space, candidate_);
-    } else {
-        ++counters_.none;
     }
-    recycle_rows(candidate_);
+    spare_rows_.give_rows_of(candidate_);
 
     // The draw depends on the basis, so the space is drawn from in its canonical form.
     space.reduce_rows();
-    counters_.dimension_after += directions(space);
     if (holds_false(space)) {
-        ++(rotation_.has_value() ? counters_.falsify_sides : counters_.uniform_sides);
+        ++counters_.open_sides;
     }
-    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
-    counters_.time_s += elapsed.count();
 }
 
 SavedTrails::ClauseStep SavedTrails::clause_step(const RowSpace& space, const Clause& clause,
-                                                 SavedTrail& saved, const RowSpace& trail_span) {
+                                                 SavedTrailWithSpans& saved,
+                                                 const RowSpace& trail_span) {
     build_span(saved);
     // `span^±(neg(C)) ∩ span(S)`, then its rows modulo U, and of those the combinations
     // in `span^±(V)` modulo U, which `space` holds.
     kernel_rows_.clear();
     for (const Equation& row : clause) {
-        kernel_rows_.push_back(spare_copy(row));
+        kernel_rows_.push_back(spare_rows_.copy_of(row));
     }
-    kernel_rows_.push_back(spare_copy(clause.row(0)));
+    kernel_rows_.push_back(spare_rows_.copy_of(clause.row(0)));
     kernel_rows_.back().set_eq_false();
     keep_kernel(kernel_rows_, [&saved](Equation& row) { saved.span->reduce(row); });
     for (Equation& row : kernel_rows_) {
@@ -321,7 +337,7 @@ SavedTrails::ClauseStep SavedTrails::clause_step(const RowSpace& space, const Cl
     return holds_false(candidate_) ? ClauseStep::inconsistent : ClauseStep::accepted;
 }
 
-void SavedTrails::narrowing(const RowSpace& space, SavedTrail& saved,
+void SavedTrails::narrowing(const RowSpace& space, SavedTrailWithSpans& saved,
                             std::span<const std::size_t> level_stamps) {
     update_trail_mod_span(saved, level_stamps);
     // A combination of the space's rows lies in the span of the saved trail and the
@@ -329,7 +345,7 @@ void SavedTrails::narrowing(const RowSpace& space, SavedTrail& saved,
     // rows reduced by it is zero.
     kernel_rows_.clear();
     for (const Equation& row : space) {
-        kernel_rows_.push_back(spare_copy(row));
+        kernel_rows_.push_back(spare_rows_.copy_of(row));
     }
     keep_kernel(kernel_rows_, [&saved](Equation& row) {
         saved.span->reduce(row);
@@ -349,7 +365,7 @@ void SavedTrails::narrowing(const RowSpace& space, SavedTrail& saved,
 #endif
 }
 
-void SavedTrails::build_span(SavedTrail& saved) {
+void SavedTrails::build_span(SavedTrailWithSpans& saved) {
     if (saved.span.has_value()) {
         return;
     }
@@ -368,14 +384,14 @@ void SavedTrails::build_span(SavedTrail& saved) {
     }
     std::ranges::sort(span_order_);
     for (const auto& [leading_col_idx, row_idx] : span_order_) {
-        saved.span->add_row(spare_copy(row_idx < saved.num_rows()
+        saved.span->add_row(spare_rows_.copy_of(row_idx < saved.num_rows()
                                            ? saved.rows[row_idx]
                                            : trail.row(row_idx - saved.num_rows())));
     }
     assert(!holds_false(*saved.span) && "a saved trail holds 0 = 1");
 }
 
-void SavedTrails::update_trail_mod_span(SavedTrail& saved,
+void SavedTrails::update_trail_mod_span(SavedTrailWithSpans& saved,
                                         std::span<const std::size_t> level_stamps) {
     const Trail& trail = *trail_;
     build_span(saved);
@@ -408,19 +424,11 @@ void SavedTrails::update_trail_mod_span(SavedTrail& saved,
         if (!pivot_col_idx.has_value()) {
             continue;
         }
-        // The rows are in pivot order, and the last row added is the one to go.
-        std::size_t low = 0;
-        std::size_t high = reduced.rows();
-        while (high - low > 1) {
-            const std::size_t mid = (low + high) / 2;
-            if (reduced.pivot_col_idx(mid) <= *pivot_col_idx) {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
-        assert(reduced.pivot_col_idx(low) == *pivot_col_idx && "a kept row is missing");
-        spare_rows_.push_back(reduced.pop_row(low));
+        // The last row added is the one to go.
+        const std::size_t row_idx = reduced.row_idx_for_col_idx(*pivot_col_idx);
+        assert(row_idx < reduced.rows() && reduced.pivot_col_idx(row_idx) == *pivot_col_idx &&
+               "a kept row is missing");
+        spare_rows_.give(reduced.pop_row(row_idx));
     }
     // A row of a level shared with the saved trail, among the rows that level had when
     // saved, is a saved row plus rows before it, so it adds nothing to the reduced rows.
@@ -442,13 +450,13 @@ void SavedTrails::update_trail_mod_span(SavedTrail& saved,
         }
         work_row_.assign_from(trail.row(trail_idx));
         saved.span->reduce(work_row_);
-        Equation row = spare_copy(work_row_);
+        Equation row = spare_rows_.copy_of(work_row_);
         const std::optional<std::size_t> row_idx = reduced.add_row_or_keep(row);
         if (row_idx.has_value()) {
             saved.trail_mod_span_pivot_col_idxs.emplace_back(reduced.pivot_col_idx(*row_idx));
         } else {
             saved.trail_mod_span_pivot_col_idxs.emplace_back(std::nullopt);
-            spare_rows_.push_back(std::move(row));
+            spare_rows_.give(std::move(row));
         }
     }
     saved.trail_mod_span_stamps.assign(level_stamps.begin(), level_stamps.end());
@@ -465,7 +473,7 @@ void SavedTrails::keep_kernel(std::vector<Equation>& rows, const Residue& residu
     kernel_leads_.clear();
     kernel_kept_.clear();
     for (Equation& row : rows) {
-        Equation residual = spare_copy(row);
+        Equation residual = spare_rows_.copy_of(row);
         residue(residual);
         std::optional<std::size_t> lead = residual.leading_bit();
         for (; lead.has_value(); lead = residual.leading_bit()) {
@@ -482,13 +490,13 @@ void SavedTrails::keep_kernel(std::vector<Equation>& rows, const Residue& residu
             kernel_residues_.push_back(std::move(residual));
             kernel_combinations_.push_back(std::move(row));
         } else {
-            spare_rows_.push_back(std::move(residual));
+            spare_rows_.give(std::move(residual));
             kernel_kept_.push_back(std::move(row));
         }
     }
     for (std::vector<Equation>* basis : {&kernel_residues_, &kernel_combinations_}) {
         for (Equation& row : *basis) {
-            spare_rows_.push_back(std::move(row));
+            spare_rows_.give(std::move(row));
         }
         basis->clear();
     }
@@ -497,29 +505,13 @@ void SavedTrails::keep_kernel(std::vector<Equation>& rows, const Residue& residu
 }
 
 void SavedTrails::set_candidate(std::vector<Equation>& rows) {
-    recycle_rows(candidate_);
+    spare_rows_.give_rows_of(candidate_);
     for (Equation& row : rows) {
         if (!candidate_.add_row_or_keep(row).has_value()) {
-            spare_rows_.push_back(std::move(row));
+            spare_rows_.give(std::move(row));
         }
     }
     rows.clear();
-}
-
-Equation SavedTrails::spare_copy(const Equation& source) {
-    if (spare_rows_.empty()) {
-        return source;
-    }
-    Equation row = std::move(spare_rows_.back());
-    spare_rows_.pop_back();
-    row.assign_from(source);
-    return row;
-}
-
-void SavedTrails::recycle_rows(RowSpace& space) {
-    while (space.rows() != 0) {
-        spare_rows_.push_back(space.pop_row(space.rows() - 1));
-    }
 }
 
 } // namespace xorcle

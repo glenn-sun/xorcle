@@ -42,12 +42,13 @@ public:
     /// for the caller to modify.
     /// @pre `clause.cols() == trail.span().cols()`, matching this propagator's
     /// own variable count, and `clause.repr() == trail.repr()`.
-    /// @pre `clause.rows() >= 1`; a non-unit clause has two distinct watches in
-    /// range and `next_watch_search_start < clause.rows()`.
+    /// @pre `clause.rows() >= 1`; for a non-unit clause, `watches` names two distinct
+    /// rows in range and `next_watch_search_start < clause.rows()`.
     /// @pre A non-empty `trigger_hint` names a trigger that holds, its companion
     /// watch is not `0 = 1` modulo the span, and it is empty when the clause is
     /// unit. A `WatchType::one` hint may name a second watch in the span plus the first.
-    Equation* unit_propagate_one_clause(ClauseId id, Clause& clause, const Trail& trail,
+    Equation* unit_propagate_one_clause(ClauseId id, const Clause& clause, ClauseWatches& watches,
+                                        const Trail& trail,
                                         std::optional<WatchType> trigger_hint,
                                         std::size_t& num_watch_updates,
                                         WatchUpdateHandler& handler,
@@ -80,7 +81,8 @@ private:
 
 #ifndef NDEBUG
     /// @brief Overwrites both scratch equations.
-    void debug_assert_watch_hint_holds(const Clause& clause, const Trail& trail, WatchType hint);
+    void debug_assert_watch_hint_holds(const Clause& clause, const ClauseWatches& watches,
+                                       const Trail& trail, WatchType hint);
 
     /// @brief Check what a handler copied out against reducing `row` afresh.
     static void debug_assert_is_held_reduction(const Equation& row, const Trail& trail,
@@ -98,10 +100,6 @@ private:
 
     /// @brief One clause row's coefficients, before they join `used_row_idxs`.
     IndexSet row_coefficients_;
-
-    /// @brief A preallocated `0 = 1`; adding it to a falsified clause row undoes
-    /// the linear negation, recovering the equation the clause implies.
-    Equation false_equation_;
 
     bool found_satisfied_ = false;
     std::size_t satisfying_row_idx_ = 0;

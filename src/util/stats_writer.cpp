@@ -99,9 +99,26 @@ ConsoleStatsWriter::log(const RunStats& stats) {
         if (!stats.reports(want)) {
             return;
         }
+        if (want == StatsSection::solve_time) {
+            output << "c Solve time by phase (s, share of the solve time):\n";
+        }
+        const auto append_row = [&stats, &output, want](const char* label, std::string value,
+                                                        const double share_of) {
+            if (want != StatsSection::solve_time) {
+                append_stat(output, label, value);
+                return;
+            }
+            const std::optional<double> share = divide_or_nullopt(100.0 * share_of,
+                                                                  stats.solve_time_s);
+            if (share.has_value()) {
+                value += " (" + format_ratio(*share, 2) + "%)";
+            }
+            output << "c   " << label << ": " << value << "\n";
+        };
 #define XORCLE_STAT(section, kind, name, csv_name, label)                                          \
     if (StatsSection::section == want) {                                                           \
-        append_stat(output, label, stat_text(StatKind::kind{}, stats.name));                       \
+        append_row(label, stat_text(StatKind::kind{}, stats.name),                                 \
+                   static_cast<double>(stats.name));                                               \
     }
 #include "util/stats_fields.inc"
     };
@@ -131,7 +148,6 @@ ConsoleStatsWriter::log(const RunStats& stats) {
     append_section(StatsSection::restart);
     append_section(StatsSection::stabilize);
     append_section(StatsSection::clauses);
-    append_section(StatsSection::intersection);
     append_section(StatsSection::phase_saving);
     append_section(StatsSection::minimize);
     append_section(StatsSection::subsume);
@@ -141,9 +157,8 @@ ConsoleStatsWriter::log(const RunStats& stats) {
     append_section(StatsSection::propagate_budget);
     append_section(StatsSection::bve);
     append_section(StatsSection::implication_graph);
-    append_section(StatsSection::exact_watchlist);
     append_section(StatsSection::timing);
-    append_section(StatsSection::proof);
+    append_section(StatsSection::solve_time);
 
     // --- Derived, each omitted when its denominator is zero ---
     append_ratio(output, "Propagations per conflict",
@@ -164,11 +179,6 @@ ConsoleStatsWriter::log(const RunStats& stats) {
     append_ratio(output, "Propagations per second",
                  divide_or_nullopt(static_cast<double>(stats.num_propagations), stats.solve_time_s),
                  "", 1);
-    if (stats.reports(StatsSection::subsume_pass)) {
-        append_ratio(output, "Subsumption pass time share",
-                     divide_or_nullopt(100.0 * stats.subsume_pass_time_s, stats.solve_time_s), "%",
-                     2);
-    }
 
     std::cout << output.str();
     write_verdict(std::cout, stats);

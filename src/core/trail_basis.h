@@ -2,9 +2,9 @@
 
 #include <cstddef>
 #include <optional>
-#include <vector>
 
 #include "algebra/equation.h"
+#include "algebra/equation_pool.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/trail.h"
 
@@ -37,11 +37,10 @@ public:
                                                       std::size_t trail_idx);
 
     /// @brief Add the rows of `from_RowSpace()` of the reason clause of the row at
-    /// `trail_idx`, each built in a row of `spare_rows` while it has one.
-    /// @pre As `reason_coordinates()`, with this space's trail, and every spare
-    /// row has `cols()` bits.
-    void add_reason_rows(const RowSpace& reason, std::size_t trail_idx,
-                         std::vector<Equation>& spare_rows);
+    /// `trail_idx`, each built from `pool`, which gets back any already spanned.
+    /// @pre As `reason_coordinates()`, with this space's trail, and `pool` has this
+    /// space's representation and as many bits as it has columns.
+    void add_reason_rows(const RowSpace& reason, std::size_t trail_idx, EquationPool& pool);
 
     /// @brief Overwrite `row` with row `row_idx` of `coordinates` in these columns,
     /// reading any index past `last_trail_idx` as the conflict's `0 = 1` in column 0.
@@ -51,15 +50,11 @@ public:
     void assign_coordinates_row(Equation& row, const TrailCoordinates& coordinates,
                                 std::size_t row_idx, std::size_t last_trail_idx) const;
 
-    /// @brief Convert back out of trail-basis coordinates.
+    /// @brief Add each row to `row_space`, converted back out of trail-basis coordinates.
     ///
     /// Round-trips through `from_RowSpace()` preserve the *span*, not the rows.
-    /// @pre The trail has not been learned into or backjumped since.
-    RowSpace to_RowSpace() const;
-
-    /// @brief Add each row to `row_space`, converted as `to_RowSpace()` converts it.
-    /// @pre As `to_RowSpace()`, and `row_space` is over the trail's variables and
-    /// in its representation.
+    /// @pre The trail has not been learned into or backjumped since, and `row_space`
+    /// is over the trail's variables and in its representation.
     void add_rows_to(RowSpace& row_space) const;
 
     /// @brief The level to backjump to, in `[0, trail.level()]`: `0` is the root,
@@ -100,9 +95,9 @@ private:
     std::size_t levels_reached(std::optional<std::size_t> extra_col_idx) const;
 
     /// @brief Add each row of `coordinates`, read as `assign_coordinates_row()`
-    /// reads it and built in a row of `spare_rows` while it has one.
+    /// reads it and built from `pool`, which gets back any already spanned.
     void add_coordinates_rows(const TrailCoordinates& coordinates, std::size_t last_trail_idx,
-                              std::vector<Equation>& spare_rows);
+                              EquationPool& pool);
 
     /// @brief Each row of `rs` as the trail indices of the span rows summing to it.
     static TrailCoordinates coordinates_of(const RowSpace& rs, const Trail& trail);

@@ -19,6 +19,8 @@
 
 namespace xorcle {
 
+class EquationPool;
+
 /// @brief A matrix over GF(2) in row-echelon form.
 ///
 /// Rows are guaranteed linearly independent. Wraps a
@@ -54,6 +56,13 @@ public:
     std::size_t pivot_col_idx(std::size_t row_idx) const noexcept {
         assert(row_idx < rows() && "row index is out of range");
         return interface_->pivot_col_idx(row_idx);
+    }
+
+    /// @brief The row whose pivot column is `col_idx`, or where a row leading on it goes.
+    /// @pre `col_idx < cols()`.
+    std::size_t row_idx_for_col_idx(std::size_t col_idx) const noexcept {
+        assert(col_idx < cols() && "column index is out of range");
+        return interface_->row_idx_for_col_idx(col_idx);
     }
 
     /// @brief Does nothing if `v` is already in the span.
@@ -302,21 +311,6 @@ class Clause : public RowSpace {
 public:
     using RowSpace::RowSpace;
 
-    std::size_t watched0 = 0; ///< Index of the first watched equation.
-    std::size_t watched1 = 1; ///< Index of the second watched equation.
-
-    /// @brief Where the next cyclic search for a replacement watch starts.
-    std::size_t next_watch_search_start = 0;
-
-    /// @brief The decision level whose span was found to satisfy this clause.
-    ///
-    /// Spans nest, so a clause satisfied at a level stays satisfied at every
-    /// deeper one.
-    std::size_t satisfied_level = 0;
-    /// @brief The stamp `satisfied_level` carried then, which tells it from the
-    /// level of the same depth a later branch builds; `0` is no record.
-    std::size_t satisfied_stamp = 0;
-
     std::string to_string(const PrintMode& mode = {}) const;
 };
 
@@ -326,15 +320,15 @@ public:
 std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
                                         const RowEchelonMatrix& right);
 
-/// @brief `span_intersection()` working in the rows of `spare_rows` while it has
-/// them, and leaving there the rows it does not return.
+/// @brief `span_intersection()` building its rows from `pool`, and giving back
+/// there the rows it does not return.
 ///
 /// A CSIDS decision calls it for each clause it walks past that shares a pivot
 /// column, 5 a decision on tseitin and 9 on ascon (2026-10-13).
-/// @pre As `span_intersection()`, and every spare row has `left.cols()` bits.
+/// @pre As `span_intersection()`, and `pool` has `left`'s representation and as
+/// many bits as `left` has columns.
 std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
-                                        const RowEchelonMatrix& right,
-                                        std::vector<Equation>& spare_rows);
+                                        const RowEchelonMatrix& right, EquationPool& pool);
 
 std::unique_ptr<RowEchelonMatrixInterface> make_row_echelon_matrix_interface(
     EquationRepr repr, std::size_t cols);

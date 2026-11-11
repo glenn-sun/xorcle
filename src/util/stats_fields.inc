@@ -39,12 +39,12 @@ XORCLE_STAT(search, Count, num_dropped_vars, "dropped_vars", "Variables dropped"
 XORCLE_STAT(search, Count, num_substituted_clauses, "substituted_clauses", "Clauses rewritten by a compaction")
 XORCLE_STAT(search, Count, num_tautologies_at_input, "tautologies_at_input", "Tautologies dropped at input")
 XORCLE_STAT(search, Count, num_equivalent_clauses, "equivalent_clauses", "Equivalent clauses evicted")
-XORCLE_STAT(search, Count, num_equivalent_clauses_at_input, "equivalent_clauses_at_input", "Equivalent clauses evicted at input")
-XORCLE_STAT(search, Count, num_equivalent_clauses_at_subsumption, "equivalent_clauses_at_subsumption", "Equivalent clauses evicted at a subsumption")
-XORCLE_STAT(search, Count, num_equivalent_clauses_at_substitution, "equivalent_clauses_at_substitution", "Equivalent clauses evicted at a substitution")
-XORCLE_STAT(search, Count, num_equivalent_starting_learned_pairs, "equivalent_starting_learned_pairs", "Equivalent pairs of a starting and a learned clause")
-XORCLE_STAT(search, Count, num_equivalent_learned_pairs, "equivalent_learned_pairs", "Equivalent pairs of learned clauses")
-XORCLE_STAT(search, Count, peak_carrier_entries, "peak_carrier_entries", "Peak column-to-clause entries")
+XORCLE_STAT(search, Count, num_forced_restarts, "forced_restarts", "Forced restarts")
+XORCLE_STAT(search, Count, forced_restart_rows, "forced_restart_rows", "Trail rows above the root forced restarts dropped")
+XORCLE_STAT(search, Count, num_replayed_decisions, "replayed_decisions", "Decisions replayed")
+XORCLE_STAT(search, Count, num_replay_implied_decisions, "replay_implied_decisions", "Saved decisions the trail implied at their replay")
+XORCLE_STAT(search, Count, num_replay_refuted_decisions, "replay_refuted_decisions", "Saved decisions the trail refuted at their replay")
+XORCLE_STAT(search, Count, num_replays_ended_by_conflict, "replays_ended_by_conflict", "Replays a conflict ended")
 
 // --- Restarts, reported only when a schedule is in force --------------------
 
@@ -55,68 +55,26 @@ XORCLE_STAT(restart, Real, slow_lbd, "slow_lbd", "Slow LBD average")
 
 // --- Stable and focused modes, reported only under --stabilize -------------
 
-XORCLE_STAT(stabilize, Count, stabilize_switches, "stabilize_switches", "Mode switches")
 XORCLE_STAT(stabilize, Count, focused_restarts, "focused_restarts", "Restarts in focused mode")
-XORCLE_STAT(stabilize, Count, focused_conflicts, "focused_conflicts", "Conflicts in focused mode")
-XORCLE_STAT(stabilize, Count, focused_decisions, "focused_decisions", "Decisions in focused mode")
-XORCLE_STAT(stabilize, Count, focused_propagations, "focused_propagations", "Propagations in focused mode")
-XORCLE_STAT(stabilize, Real, focused_time_s, "focused_time_s", "Time in focused mode (s)")
-XORCLE_STAT(stabilize, Count, stable_conflicts, "stable_conflicts", "Conflicts in stable mode")
-XORCLE_STAT(stabilize, Count, stable_decisions, "stable_decisions", "Decisions in stable mode")
-XORCLE_STAT(stabilize, Count, stable_propagations, "stable_propagations", "Propagations in stable mode")
-XORCLE_STAT(stabilize, Real, stable_time_s, "stable_time_s", "Time in stable mode (s)")
-XORCLE_STAT(stabilize, Real, focused_time_share, "focused_time_share", "Share of the time in focused mode")
+XORCLE_STAT(stabilize, Count, focused_canceled_restarts, "focused_canceled_restarts", "Canceled restarts in focused mode")
+XORCLE_STAT(stabilize, Real, focused_fast_lbd, "focused_fast_lbd", "Fast LBD average in focused mode")
+XORCLE_STAT(stabilize, Real, focused_slow_lbd, "focused_slow_lbd", "Slow LBD average in focused mode")
 
 // --- The clause database ---------------------------------------------------
 
 XORCLE_STAT(clauses, Count, learned_clauses, "learned_clauses", "Learned clauses")
 XORCLE_STAT(clauses, Count, clauses_in_database, "clauses_in_database", "Clauses in database")
-XORCLE_STAT(clauses, Count, clauses_allocated, "clauses_allocated", "Clauses allocated")
 XORCLE_STAT(clauses, Real, average_learned_lbd, "average_learned_lbd", "Average learned LBD")
-XORCLE_STAT(clauses, Count, learned_equation_bits, "learned_equation_bits", "Learned equation bits")
 XORCLE_STAT(clauses, Count, learned_width_1, "learned_width_1", "Learned width-1 clauses")
 XORCLE_STAT(clauses, Count, learned_width_2, "learned_width_2", "Learned width-2 clauses")
-XORCLE_STAT(clauses, Count, subsume_narrowed_to_width_2, "subsume_narrowed_to_width_2", "Subsumption replacements of width at most 2")
-XORCLE_STAT(clauses, Count, compaction_narrowed_to_width_2, "compaction_narrowed_to_width_2", "Compaction narrowings to width at most 2")
-
-// --- Decisions from clause intersections, reported only at a depth above 1 --
-
-XORCLE_STAT(intersection, Count, intersection_decisions, "intersection_decisions", "Decisions from an intersection")
-XORCLE_STAT(intersection, Count, intersected_clauses, "intersected_clauses", "Clauses intersected below the top")
-XORCLE_STAT(intersection, Count, intersection_dimension_before, "intersection_dimension_before", "Dimension before intersecting")
-XORCLE_STAT(intersection, Count, intersection_dimension_after, "intersection_dimension_after", "Dimension after intersecting")
-XORCLE_STAT(intersection, Count, intersection_dimension_one, "intersection_dimension_one", "Intersections of dimension one")
-XORCLE_STAT(intersection, Count, intersection_empty, "intersection_empty", "Clauses with an empty intersection")
-XORCLE_STAT(intersection, Count, intersection_skipped, "intersection_skipped", "Empty intersections found from the pivot columns alone")
-XORCLE_STAT(intersection, Count, intersection_passed_satisfied_clauses, "intersection_passed_satisfied_clauses", "Satisfied clauses passed while intersecting")
-XORCLE_STAT(intersection, Count, intersection_propagating_clauses, "intersection_propagating_clauses", "Propagating clauses found while intersecting")
-XORCLE_STAT(intersection, Real, intersection_time_s, "intersection_time_s", "Intersection time (s), also in the decision time")
 
 // --- Phase saving, reported only when it is on -----------------------------
 
-XORCLE_STAT(phase_saving, Count, phase_saving_decisions, "phase_saving_decisions", "Decisions phase saving chose the space of")
-XORCLE_STAT(phase_saving, Count, phase_saving_clause_step_target, "phase_saving_clause_step_target", "Decided by the clause step with the target trail")
-XORCLE_STAT(phase_saving, Count, phase_saving_clause_step_target_trivial, "phase_saving_clause_step_target_trivial", "Clause step, target trail: clauses rejected as trivial")
-XORCLE_STAT(phase_saving, Count, phase_saving_clause_step_target_inconsistent, "phase_saving_clause_step_target_inconsistent", "Clause step, target trail: clauses rejected as inconsistent")
-XORCLE_STAT(phase_saving, Count, phase_saving_clause_step_recent, "phase_saving_clause_step_recent", "Decided by the clause step with a recent trail")
-XORCLE_STAT(phase_saving, Count, phase_saving_clause_step_recent_trivial, "phase_saving_clause_step_recent_trivial", "Clause step, recent trails: clauses rejected as trivial")
-XORCLE_STAT(phase_saving, Count, phase_saving_clause_step_recent_inconsistent, "phase_saving_clause_step_recent_inconsistent", "Clause step, recent trails: clauses rejected as inconsistent")
-XORCLE_STAT(phase_saving, Count, phase_saving_clause_step_top_clause, "phase_saving_clause_step_top_clause", "Clause steps accepting the top clause")
-XORCLE_STAT(phase_saving, Count, phase_saving_clause_step_partner, "phase_saving_clause_step_partner", "Clause steps accepting a partner")
-XORCLE_STAT(phase_saving, Count, phase_saving_narrowing_target, "phase_saving_narrowing_target", "Decided by narrowing with the target trail")
-XORCLE_STAT(phase_saving, Count, phase_saving_narrowing_recent, "phase_saving_narrowing_recent", "Decided by narrowing with a recent trail")
-XORCLE_STAT(phase_saving, Count, phase_saving_none, "phase_saving_none", "Decided with neither step")
-XORCLE_STAT(phase_saving, Count, phase_saving_uniform_sides, "phase_saving_uniform_sides", "Decisions whose side was drawn uniformly")
-XORCLE_STAT(phase_saving, Count, phase_saving_falsify_sides, "phase_saving_falsify_sides", "Decisions whose side was the falsify side, by rotation")
-XORCLE_STAT(phase_saving, Count, phase_saving_rotations, "phase_saving_rotations", "Steps of the rotation ended")
-XORCLE_STAT(phase_saving, Count, phase_saving_decisions_target_recent_falsify, "phase_saving_decisions_target_recent_falsify", "Decisions under the order T-R-F, by rotation")
-XORCLE_STAT(phase_saving, Count, phase_saving_decisions_falsify, "phase_saving_decisions_falsify", "Decisions under the order F, by rotation")
-XORCLE_STAT(phase_saving, Count, phase_saving_decisions_target_falsify, "phase_saving_decisions_target_falsify", "Decisions under the order T-F, by rotation")
-XORCLE_STAT(phase_saving, Count, phase_saving_decisions_recent_falsify, "phase_saving_decisions_recent_falsify", "Decisions under the order R-F, by rotation")
-XORCLE_STAT(phase_saving, Count, phase_saving_dimension_before, "phase_saving_dimension_before", "Dimension modulo U before phase saving")
-XORCLE_STAT(phase_saving, Count, phase_saving_dimension_after, "phase_saving_dimension_after", "Dimension modulo U after phase saving")
-XORCLE_STAT(phase_saving, Count, phase_saving_cleared, "phase_saving_cleared", "Saved trails cleared by a substitution")
-XORCLE_STAT(phase_saving, Real, phase_saving_time_s, "phase_saving_time_s", "Phase saving time (s), also in the intersection time")
+XORCLE_STAT(phase_saving, Count, phase_saving_open_sides, "phase_saving_open_sides", "Decisions whose side was left to --phase")
+XORCLE_STAT(phase_saving, Count, phase_saving_decisions_both, "phase_saving_decisions_both", "Decisions in the rotation's step both")
+XORCLE_STAT(phase_saving, Count, phase_saving_decisions_none, "phase_saving_decisions_none", "Decisions in the rotation's step none")
+XORCLE_STAT(phase_saving, Count, phase_saving_decisions_target_only, "phase_saving_decisions_target_only", "Decisions in the rotation's step target-only")
+XORCLE_STAT(phase_saving, Count, phase_saving_decisions_recent_only, "phase_saving_decisions_recent_only", "Decisions in the rotation's step recent-only")
 
 // --- Clause minimization, reported only when it ran -------------------------
 
@@ -124,79 +82,21 @@ XORCLE_STAT(minimize, Count, num_minimized_clauses, "minimized_clauses", "Minimi
 XORCLE_STAT(minimize, Count, minimize_width_before, "minimize_width_before", "Width before minimizing")
 XORCLE_STAT(minimize, Count, minimize_width_after, "minimize_width_after", "Width after minimizing")
 
-// --- On-the-fly subsumption, reported only when it ran ----------------------
+// --- Subsumption, reported only when it ran ----------------------------------
 
-XORCLE_STAT(subsume, Count, num_subsumed_clauses, "subsumed_clauses", "Subsumed clauses")
-XORCLE_STAT(subsume, Count, num_subsumed_conflicting_clauses, "subsumed_conflicting_clauses", "Subsumed conflicting clauses")
-XORCLE_STAT(subsume, Count, num_subsume_replacements, "subsume_replacements", "Subsumption replacements")
+XORCLE_STAT(subsume, Count, num_subsumed_clauses, "subsumed_clauses", "Clauses subsumed, or strengthened by the subsumption pass")
 
 // --- Vivification, reported only when it ran --------------------------------
 
 XORCLE_STAT(vivify, Count, vivify_passes, "vivify_passes", "Vivification passes")
-XORCLE_STAT(vivify, Count, vivify_candidates, "vivify_candidates", "Candidates, summed over passes")
-XORCLE_STAT(vivify, Count, vivify_unchanged, "vivify_unchanged", "Clauses left out as gone through, summed over passes")
-XORCLE_STAT(vivify, Count, vivify_orders, "vivify_orders", "Orders tried")
-XORCLE_STAT(vivify, Count, vivify_assumed, "vivify_assumed", "Rows assumed")
-XORCLE_STAT(vivify, Count, vivify_implied, "vivify_implied", "Equations the assumptions implied")
-XORCLE_STAT(vivify, Count, vivify_attempt_props, "vivify_attempt_props", "Propagation attempts under assumptions")
 XORCLE_STAT(vivify, Count, vivify_narrowed, "vivify_narrowed", "Clauses narrowed")
 XORCLE_STAT(vivify, Count, vivify_width_before, "vivify_width_before", "Their width before")
 XORCLE_STAT(vivify, Count, vivify_width_after, "vivify_width_after", "Their width after")
 XORCLE_STAT(vivify, Count, vivify_units, "vivify_units", "Narrowed to a unit")
-XORCLE_STAT(vivify, Count, vivify_narrowed_to_width_2, "vivify_narrowed_to_width_2", "Narrowed to width 2")
-XORCLE_STAT(vivify, Count, vivify_by_refutation, "vivify_by_refutation", "Narrowed at a refuted row")
-XORCLE_STAT(vivify, Count, vivify_by_conflict, "vivify_by_conflict", "Narrowed at a conflict, to the rows assumed")
-XORCLE_STAT(vivify, Count, vivify_replacement_uses, "vivify_replacement_uses", "Conflict analyses resolving with a narrowed clause")
-XORCLE_STAT(vivify, Count, vivify_root_satisfied, "vivify_root_satisfied", "Orders on a clause the root satisfies")
-XORCLE_STAT(vivify, Count, vivify_forced_visits, "vivify_forced_visits", "Root visits forced for a pass")
-XORCLE_STAT(vivify, Count, vivify_forced_visit_rows, "vivify_forced_visit_rows", "Trail rows above the root they dropped")
-XORCLE_STAT(vivify, Count, vivify_replayed, "vivify_replayed", "Decisions replayed")
-XORCLE_STAT(vivify, Count, vivify_replay_skipped, "vivify_replay_skipped", "Decisions not replayed, the trail deciding them")
-XORCLE_STAT(vivify, Count, num_equivalent_clauses_at_vivification, "equivalent_clauses_at_vivification", "Narrowings a kept clause already had")
-XORCLE_STAT(vivify, Count, vivify_budget_stops, "vivify_budget_stops", "Passes the budget stopped")
-XORCLE_STAT(vivify, Real, vivify_time_s, "vivify_time_s", "Vivification time (s)")
 
 // --- The subsumption pass, reported only when it ran -------------------------
 
 XORCLE_STAT(subsume_pass, Count, subsume_pass_passes, "subsume_pass_passes", "Subsumption passes")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_forced_visits, "subsume_pass_forced_visits", "Root visits forced for a subsumption pass")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_visits_as_wider, "subsume_pass_visits_as_wider", "Clauses visited as the wider clause")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_visits_as_narrower, "subsume_pass_visits_as_narrower", "Clauses visited as the narrower clause")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_entries_scanned, "subsume_pass_entries_scanned", "Index entries scanned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_containment_tests, "subsume_pass_containment_tests", "Leading-column containment tests")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_row_checks, "subsume_pass_row_checks", "Rows of a narrower clause reduced")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_row_additions, "subsume_pass_row_additions", "Row additions in those reductions")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_rows_read, "subsume_pass_rows_read", "Rows of a wider clause read, per row reduced")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_budget_stops, "subsume_pass_budget_stops", "Passes their budget stopped")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_subsumed_wider_ss, "subsume_pass_subsumed_wider_ss", "Subsumed, visited wider, starting by starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_subsumed_wider_sl, "subsume_pass_subsumed_wider_sl", "Subsumed, visited wider, learned by starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_subsumed_wider_ls, "subsume_pass_subsumed_wider_ls", "Subsumed, visited wider, starting by learned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_subsumed_wider_ll, "subsume_pass_subsumed_wider_ll", "Subsumed, visited wider, learned by learned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_subsumed_narrower_ss, "subsume_pass_subsumed_narrower_ss", "Subsumed, visited narrower, starting by starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_subsumed_narrower_sl, "subsume_pass_subsumed_narrower_sl", "Subsumed, visited narrower, learned by starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_subsumed_narrower_ls, "subsume_pass_subsumed_narrower_ls", "Subsumed, visited narrower, starting by learned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_subsumed_narrower_ll, "subsume_pass_subsumed_narrower_ll", "Subsumed, visited narrower, learned by learned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_strengthened_wider_ss, "subsume_pass_strengthened_wider_ss", "Strengthened, visited wider, starting by starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_strengthened_wider_sl, "subsume_pass_strengthened_wider_sl", "Strengthened, visited wider, learned by starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_strengthened_wider_ls, "subsume_pass_strengthened_wider_ls", "Strengthened, visited wider, starting by learned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_strengthened_wider_ll, "subsume_pass_strengthened_wider_ll", "Strengthened, visited wider, learned by learned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_strengthened_narrower_ss, "subsume_pass_strengthened_narrower_ss", "Strengthened, visited narrower, starting by starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_strengthened_narrower_sl, "subsume_pass_strengthened_narrower_sl", "Strengthened, visited narrower, learned by starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_strengthened_narrower_ls, "subsume_pass_strengthened_narrower_ls", "Strengthened, visited narrower, starting by learned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_strengthened_narrower_ll, "subsume_pass_strengthened_narrower_ll", "Strengthened, visited narrower, learned by learned")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_rows_removed, "subsume_pass_rows_removed", "Rows removed, subsumed clauses whole")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_units, "subsume_pass_units", "Strengthened to a unit")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_promotions, "subsume_pass_promotions", "Learned subsumers promoted to starting")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_equivalent_clauses, "subsume_pass_equivalent_clauses", "Strengthenings a kept clause already had")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_hits_width_2, "subsume_pass_hits_width_2", "Hits on a wider clause of width up to 2")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_hits_width_3, "subsume_pass_hits_width_3", "Hits on a wider clause of width 3")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_hits_width_4_6, "subsume_pass_hits_width_4_6", "Hits on a wider clause of width 4 to 6")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_hits_width_7, "subsume_pass_hits_width_7", "Hits on a wider clause of width 7 and up")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_hits_lbd_2, "subsume_pass_hits_lbd_2", "Hits on a learned wider clause of LBD up to 2")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_hits_lbd_6, "subsume_pass_hits_lbd_6", "Hits on a learned wider clause of LBD above 2 up to 6")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_hits_lbd_15, "subsume_pass_hits_lbd_15", "Hits on a learned wider clause of LBD above 6 up to 15")
-XORCLE_STAT(subsume_pass, Count, subsume_pass_hits_lbd_16, "subsume_pass_hits_lbd_16", "Hits on a learned wider clause of LBD above 15")
-XORCLE_STAT(subsume_pass, Real, subsume_pass_time_s, "subsume_pass_time_s", "Subsumption pass time (s)")
 
 // --- Clause deletion, reported only when it ran -----------------------------
 
@@ -205,92 +105,53 @@ XORCLE_STAT(deletion, Count, num_deleted_clauses, "deleted_clauses", "Deleted cl
 
 // --- Deferred propagation, reported only under a budget ---------------------
 
-XORCLE_STAT(propagate_budget, Count, num_deferred_runs, "deferred_runs", "Deferred propagation runs")
 XORCLE_STAT(propagate_budget, Count, num_out_of_order_learns, "out_of_order_learns", "Out-of-order learns")
 XORCLE_STAT(propagate_budget, Count, num_undone_decisions, "undone_decisions", "Decisions undone by a missed propagation")
-XORCLE_STAT(propagate_budget, Count, num_decision_propagations, "decision_propagations", "Decision-time propagations")
-XORCLE_STAT(propagate_budget, Count, num_decision_conflicts, "decision_conflicts", "Decision-time conflicts")
-XORCLE_STAT(propagate_budget, Real, mean_budget_fraction, "mean_budget_fraction", "Mean attempt budget (clause fraction)")
-XORCLE_STAT(propagate_budget, Real, final_budget_fraction, "final_budget_fraction", "Final attempt budget (clause fraction)")
 
 // --- BVE, reported only when it is on ----------------------------------------
 
 XORCLE_STAT(bve, Count, bve_passes, "bve_passes", "BVE passes")
 XORCLE_STAT(bve, Count, bve_eliminated, "bve_eliminated", "BVE eliminations")
-XORCLE_STAT(bve, Count, bve_eliminated_by_gate, "bve_eliminated_by_gate", "Of those, by a gate")
-XORCLE_STAT(bve, Count, bve_eliminated_in_one_clause, "bve_eliminated_in_one_clause", "Of those, of a clause with none to resolve against")
-XORCLE_STAT(bve, Count, bve_units_substituted, "bve_units_substituted", "Units BVE substituted")
-XORCLE_STAT(bve, Count, bve_clauses_tested_alone, "bve_clauses_tested_alone", "Clauses BVE tested for a flip set that touches them alone")
 XORCLE_STAT(bve, Count, bve_clauses_before, "bve_clauses_before", "Clauses before the first BVE pass")
 XORCLE_STAT(bve, Count, bve_clauses_after, "bve_clauses_after", "Clauses after the last BVE pass")
-XORCLE_STAT(bve, Count, bve_equation_bits, "bve_equation_bits", "Equation bits before the first BVE pass")
-XORCLE_STAT(bve, Count, bve_steps, "bve_steps", "BVE steps")
-XORCLE_STAT(bve, Count, bve_steps_to_keep_rows, "bve_steps_to_keep_rows", "BVE steps choosing the kept rows")
-XORCLE_STAT(bve, Real, bve_time_s, "bve_time_s", "BVE time (s)")
-XORCLE_STAT(bve, Count, bve_readings, "bve_readings", "BVE readings in random orders")
-XORCLE_STAT(bve, Count, bve_readings_eliminating, "bve_readings_eliminating", "Of those, eliminating")
-XORCLE_STAT(bve, Count, bve_tail_groups, "bve_tail_groups", "BVE tail groups")
-XORCLE_STAT(bve, Count, bve_tail_rows, "bve_tail_rows", "BVE tail rows")
-XORCLE_STAT(bve, Count, bve_held_in_core, "bve_held_in_core", "BVE clauses held in the core span by the tail group cap")
-XORCLE_STAT(bve, Count, bve_choices_tried, "bve_choices_tried", "BVE tail group choices tried")
-XORCLE_STAT(bve, Count, bve_not_drawn, "bve_not_drawn", "Of those, not drawn to be tried")
-XORCLE_STAT(bve, Count, bve_not_accepted, "bve_not_accepted", "Of those, resolved and not accepted")
-XORCLE_STAT(bve, Count, bve_choices_accepted, "bve_choices_accepted", "Of those, accepted")
-XORCLE_STAT(bve, Count, vars_at_first_decision, "vars_at_first_decision", "Variables left at the first decision")
+XORCLE_STAT(bve, Count, bve_width_before, "bve_width_before", "Total width before the first BVE pass")
+XORCLE_STAT(bve, Count, bve_width_after, "bve_width_after", "Total width after the last BVE pass")
 
 // --- The implication graph, reported only when it ran -----------------------
 
 XORCLE_STAT(implication_graph, Count, implication_graph_runs, "implication_graph_runs", "Implication graph runs")
-XORCLE_STAT(implication_graph, Count, implication_graph_edges_visited, "implication_graph_edges_visited", "Arcs the descendant searches visited")
-XORCLE_STAT(implication_graph, Count, implication_graph_pairs_eligible, "implication_graph_pairs_eligible", "Vertex pairs with an out-arc on either side")
 XORCLE_STAT(implication_graph, Count, implication_graph_pairs_examined, "implication_graph_pairs_examined", "Of those, the pairs the rule examined")
-XORCLE_STAT(implication_graph, Count, implication_graph_refuted_sides, "implication_graph_refuted_sides", "Sides of the examined pairs whose span holds 0 = 1")
-XORCLE_STAT(implication_graph, Count, implication_graph_runs_at_the_pair_cap, "implication_graph_runs_at_the_pair_cap", "Runs the pair cap stopped short")
-XORCLE_STAT(implication_graph, Count, implication_graph_truncated_sides, "implication_graph_truncated_sides", "Sides the descendant cap truncated")
 XORCLE_STAT(implication_graph, Count, implication_graph_units_fed, "implication_graph_units_fed", "Units fed to the root trail")
-XORCLE_STAT(implication_graph, Count, implication_graph_runs_after_a_conflict, "implication_graph_runs_after_a_conflict", "Runs past the first conflict")
-XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_clauses, "implication_graph_runs_due_to_clauses", "Runs the clause interval made due")
-XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_conflicts, "implication_graph_runs_due_to_conflicts", "Runs the conflict interval made due")
-XORCLE_STAT(implication_graph, Count, implication_graph_runs_due_to_a_feed, "implication_graph_runs_due_to_a_feed", "Runs an earlier run's units made due")
-XORCLE_STAT(implication_graph, Count, implication_graph_follow_ups_suppressed, "implication_graph_follow_ups_suppressed", "Follow-up runs too few clauses reaching width at most 2 withheld")
-XORCLE_STAT(implication_graph, Count, implication_graph_conflicts_waited, "implication_graph_conflicts_waited", "Conflicts spent waiting for the root trail")
-XORCLE_STAT(implication_graph, Count, implication_graph_max_conflicts_waited, "implication_graph_max_conflicts_waited", "Longest wait for the root trail, in conflicts")
-XORCLE_STAT(implication_graph, Count, implication_graph_width_2_clauses, "implication_graph_width_2_clauses", "Width-2 clauses in the graph")
-XORCLE_STAT(implication_graph, Count, implication_graph_vertex_pairs, "implication_graph_vertex_pairs", "Vertex pairs in the graph, one per equation and its negation")
-XORCLE_STAT(implication_graph, Real, implication_graph_span_intersection_time_s, "implication_graph_span_intersection_time_s", "Span-intersection time (s), also in the graph time")
-XORCLE_STAT(implication_graph, Real, implication_graph_time_s, "implication_graph_time_s", "Implication graph time (s)")
-
-// --- The exact watchlist, reported only when it selects ----------------------
-
-XORCLE_STAT(exact_watchlist, Count, exact_touches, "exact_touches", "Cells swept")
-XORCLE_STAT(exact_watchlist, Count, exact_skips, "exact_skips", "Cells left unswept, their pair unable to trigger")
-XORCLE_STAT(exact_watchlist, Count, exact_fixups, "exact_fixups", "Second cells reduced by their first")
-XORCLE_STAT(exact_watchlist, Count, exact_row_additions, "exact_row_additions", "Row additions in sweeps")
-XORCLE_STAT(exact_watchlist, Count, exact_triggers, "exact_triggers", "Clauses queued")
-XORCLE_STAT(exact_watchlist, Count, exact_saves, "exact_saves", "Cells saved")
-XORCLE_STAT(exact_watchlist, Count, exact_restores, "exact_restores", "Cells restored")
-XORCLE_STAT(exact_watchlist, Count, exact_rebuilds, "exact_rebuilds", "Cells rebuilt")
-XORCLE_STAT(exact_watchlist, Count, exact_cleanups, "exact_cleanups", "Bucket cleanups")
-XORCLE_STAT(exact_watchlist, Count, exact_cleanup_entries, "exact_cleanup_entries", "Bucket entries cleanups read")
-XORCLE_STAT(exact_watchlist, Count, exact_cleanup_dropped, "exact_cleanup_dropped", "Stale bucket entries dropped")
-XORCLE_STAT(exact_watchlist, Count, exact_peak_bucket_entries, "exact_peak_bucket_entries", "Peak bucket entries")
-XORCLE_STAT(exact_watchlist, Count, exact_touches_ahead, "exact_touches_ahead", "Cells swept ahead of their sweep, as a trigger's partner")
-XORCLE_STAT(exact_watchlist, Count, exact_sweeps_started, "exact_sweeps_started", "Sweeps started")
-XORCLE_STAT(exact_watchlist, Count, exact_sweeps_finished, "exact_sweeps_finished", "Sweeps finished")
-XORCLE_STAT(exact_watchlist, Count, exact_sweeps_dropped, "exact_sweeps_dropped", "Paused sweeps dropped at backjumps")
+XORCLE_STAT(implication_graph, Count, implication_graph_new_width_2_clauses, "implication_graph_new_width_2_clauses", "Width-2 clauses new since the last run, summed over the points a run was due")
+XORCLE_STAT(implication_graph, Count, implication_graph_skipped_runs, "implication_graph_skipped_runs", "Due runs skipped for too few new width-2 clauses")
+XORCLE_STAT(implication_graph, Count, implication_graph_points_new_0, "implication_graph_points_new_0", "Due points with no new width-2 clause")
+XORCLE_STAT(implication_graph, Count, implication_graph_points_new_1_9, "implication_graph_points_new_1_9", "Due points with 1-9 new width-2 clauses")
+XORCLE_STAT(implication_graph, Count, implication_graph_points_new_10_49, "implication_graph_points_new_10_49", "Due points with 10-49 new width-2 clauses")
+XORCLE_STAT(implication_graph, Count, implication_graph_points_new_50_99, "implication_graph_points_new_50_99", "Due points with 50-99 new width-2 clauses")
+XORCLE_STAT(implication_graph, Count, implication_graph_points_new_100, "implication_graph_points_new_100", "Due points with 100 or more new width-2 clauses")
 
 // --- Timing ----------------------------------------------------------------
 
 XORCLE_STAT(timing, Real, parse_time_s, "parse_time_s", "Parse time (s)")
 XORCLE_STAT(timing, Real, solve_time_s, "solve_time_s", "Solve time (s)")
-XORCLE_STAT(timing, Real, decision_time_s, "decision_time_s", "Decision time (s), also in the solve time")
 
-// --- The proof, reported only once post-processing has run ------------------
+// --- Solve time by phase, which sums to the solve time ----------------------
 //
-// The console block prints before post-processing, so that the verdict does not
-// wait on it; the `c Proof:` line reports this time there instead. The CSV row
-// is written afterwards and carries it as a column.
+// Each phase's own time: a technique's propagation and the units it feeds are the
+// technique's; a renumbering is the substitution's wherever it runs; a decision
+// includes phase saving's save of the trail at each conflict, and opening its level
+// is propagation; a forced restart's save is the replay's.
 
-XORCLE_STAT(proof, Real, proof_postprocess_time_s, "proof_postprocess_time_s", "Proof post-processing time (s)")
+XORCLE_STAT(solve_time, Real, decision_time_s, "decision_time_s", "Decisions")
+XORCLE_STAT(solve_time, Real, propagation_time_s, "propagation_time_s", "Propagation")
+XORCLE_STAT(solve_time, Real, analysis_time_s, "analysis_time_s", "Conflict analysis")
+XORCLE_STAT(solve_time, Real, deletion_time_s, "deletion_time_s", "Deletion")
+XORCLE_STAT(solve_time, Real, substitution_time_s, "substitution_time_s", "Substitution and renumbering")
+XORCLE_STAT(solve_time, Real, bve_time_s, "bve_time_s", "BVE")
+XORCLE_STAT(solve_time, Real, subsume_pass_time_s, "subsume_pass_time_s", "Subsumption pass")
+XORCLE_STAT(solve_time, Real, vivify_time_s, "vivify_time_s", "Vivification")
+XORCLE_STAT(solve_time, Real, implication_graph_time_s, "implication_graph_time_s", "Implication graph")
+XORCLE_STAT(solve_time, Real, replay_time_s, "replay_time_s", "Replay")
+XORCLE_STAT(solve_time, Real, other_time_s, "other_time_s", "Other")
 
 #undef XORCLE_STAT

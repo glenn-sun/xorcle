@@ -2,7 +2,7 @@
 /// @brief Pins the RNG stream derivation to fixed, externally measured values.
 ///
 /// Every expected value here was produced by running a separate reference
-/// implementation of `derive_seed`, `random_int` and
+/// implementation of `derive_seed`, `uniform_below` and
 /// `random_nonzero_coefficients`, not by running the code under test, so these
 /// are real fixtures rather than a snapshot of current behaviour. The
 /// differential harness requires identical conflict counts from matching seeds,
@@ -10,6 +10,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -84,26 +85,52 @@ TEST_CASE("random: make_rng seeds from derive_seed") {
     }
 }
 
-TEST_CASE("random: random_int reproduces its reference phase draws") {
+TEST_CASE("random: uniform_below reproduces its reference draws") {
     struct Case {
         Seed base;
+        std::size_t bound;
         const char* draws;
     };
 
-    // 32 consecutive `random_int(rng, 2)` draws off the decision_phase stream.
+    // 32 consecutive `uniform_below(rng, bound)` draws off the decision_phase stream.
     const std::vector<Case> cases = {
-        {0, "01011000110101001100101001000110"},
-        {1, "00001010010011010011000111111000"},
-        {42, "11101101100111001100010100010010"},
+        {0, 2, "01011000110101001100101001000110"},
+        {1, 2, "00001010010011010011000111111000"},
+        {42, 2, "11101101100111001100010100010010"},
+        {0, 5, "03140221123021214442234131404321"},
+        {42, 5, "33210310413223324002142040421230"},
     };
 
     for (const Case& c : cases) {
         CAPTURE(c.base);
+        CAPTURE(c.bound);
         Rng rng = make_rng(c.base, RngComponent::decision_phase);
         for (const char* p = c.draws; *p != '\0'; ++p) {
-            CHECK(random_int(rng, 2) == (*p - '0'));
+            CHECK(uniform_below(rng, c.bound) == static_cast<std::size_t>(*p - '0'));
         }
     }
+
+    SUBCASE("a wider bound, and the stream after it") {
+        Rng rng = make_rng(0, RngComponent::decision_phase);
+        for (const std::size_t want : std::vector<std::size_t>{976, 891, 142, 461, 625, 508}) {
+            CHECK(uniform_below(rng, 1000) == want);
+        }
+        CHECK(rng() == 14038817480646164320ULL);
+    }
+
+    SUBCASE("a bound of one draws nothing") {
+        Rng rng = make_rng(0, RngComponent::decision_phase);
+        Rng untouched = rng;
+        CHECK(uniform_below(rng, 1) == 0);
+        CHECK(rng() == untouched());
+    }
+}
+
+TEST_CASE("random: shuffle_uniformly reproduces its reference order") {
+    Rng rng = make_rng(0, RngComponent::decision_phase);
+    std::vector<int> items = {0, 1, 2, 3, 4, 5, 6, 7};
+    shuffle_uniformly(items, rng);
+    CHECK(items == std::vector<int>{4, 2, 6, 7, 1, 5, 3, 0});
 }
 
 TEST_CASE("random: random_nonzero_coefficients reproduces its reference draws") {

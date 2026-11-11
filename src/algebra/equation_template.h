@@ -37,6 +37,8 @@ public:
 
     virtual void set_eq_false() noexcept = 0;
 
+    virtual void negate() = 0;
+
     virtual void assign_bits(std::span<const std::size_t> bits) = 0;
 
     virtual std::optional<std::size_t> leading_bit() const noexcept = 0;
@@ -113,6 +115,8 @@ public:
         vector_.set_zero();
         vector_.set_bit(vector_.num_bits() - 1);
     }
+
+    void negate() override { vector_.flip_bit(vector_.num_bits() - 1); }
 
     void assign_bits(std::span<const std::size_t> bits) override { vector_.assign_bits(bits); }
 

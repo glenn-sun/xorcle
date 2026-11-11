@@ -11,34 +11,16 @@
 #include <vector>
 
 #include "algebra/compaction_transform.h"
-#include "algebra/dense/dense_gf2_vector.h"
 #include "algebra/equation.h"
+#include "algebra/gf2_vector.h"
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "core/trail.h"
 #include "core/watch.h"
 #include "heuristics/selection/clause_selector.h"
+#include "heuristics/selection/exact_watchlist_cells.h"
 
 namespace xorcle {
-
-struct ExactWatchlistCounters {
-    std::size_t touches = 0; ///< Cells a sweep added its trail row to.
-    std::size_t touches_ahead = 0; ///< Touches of a triggered pair's partner ahead of its sweep.
-    std::size_t skips = 0; ///< Cells a sweep left alone because their pair cannot trigger.
-    std::size_t fixups = 0; ///< Second cells reduced by their first after its key moved onto theirs.
-    std::size_t row_additions = 0; ///< Row additions made by sweeps and fix-ups.
-    std::size_t triggers = 0; ///< Clauses a sweep found triggered, or queued on the side.
-    std::size_t saves = 0; ///< Cells copied onto a level's save stack.
-    std::size_t restores = 0; ///< Saved cells a backjump copied back.
-    std::size_t rebuilds = 0; ///< Cells rebuilt from their watches, on a watch move or a backjump.
-    std::size_t cleanups = 0; ///< Sweeps of every bucket for stale entries.
-    std::size_t cleanup_entries = 0; ///< Bucket entries those sweeps read.
-    std::size_t cleanup_dropped = 0; ///< Stale bucket entries those sweeps dropped.
-    std::size_t peak_bucket_entries = 0;
-    std::size_t sweeps_started = 0;
-    std::size_t sweeps_finished = 0;
-    std::size_t sweeps_dropped = 0; ///< Paused sweeps a backjump dropped.
-};
 
 /// @brief Queues a clause exactly when its watch pair becomes dependent modulo the
 /// trail span, with that trigger as the hint.
@@ -57,12 +39,13 @@ struct ExactWatchlistCounters {
 /// watch it moves. A `B` it wrote after reading one may differ from the reduction of
 /// its watch by an element of the span, and leads where that does.
 ///
-/// @pre Dense equations, and complete propagation: every learned equation is the last
-/// row of the trail, at its top level.
-class ExactWatchlist final : public ClauseSelector {
+/// @pre Equations of `V`'s representation, and complete propagation: every learned
+/// equation is the last row of the trail, at its top level.
+template <GF2Vector V>
+class ExactWatchlistTemplate final : public ClauseSelector {
 public:
     /// @param num_vars The variable count of the starting clauses.
-    explicit ExactWatchlist(std::size_t num_vars);
+    ExactWatchlistTemplate(std::size_t num_vars, const ClauseDatabase& database);
 
     /// @brief The next triggered clause: first from the side queue, else from the
     /// oldest paused sweep; `std::nullopt` once both are empty.
@@ -90,18 +73,13 @@ public:
     /// variable was dropped.
     void update_with_renumbering(const CompactionTransform& transform, const Trail& trail) override;
 
-    const ExactWatchlistCounters& counters() const noexcept { return counters_; }
-
-    void add_to_stats(RunStats& stats) const override;
-
-protected:
-    /// @brief Store a clause, build its cells against the trail as last reported, and
-    /// queue it on the side if it is already triggered.
-    void add_clause(Clause clause) override;
-
     /// @pre `reduced_eqn` is the row `trail` stores for its last equation, and every
     /// earlier one was reported here too; a new level opens only at quiescence.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
+
+    /// @brief Build the clause's cells against the trail as last reported, and queue it
+    /// on the side if it is already triggered.
+    void update_with_new_clause(ClauseId id) override;
 
     void update_with_inactive_clause(ClauseId id) override;
 
@@ -109,7 +87,8 @@ protected:
     void update_with_narrowed_clause(ClauseId id) override;
 
 private:
-    using Word = DenseGF2Vector::Word;
+    using Cells = ExactWatchlistCells<V>;
+    using Row = Cells::Row;
 
     enum class Trigger : std::uint8_t {
         none,
@@ -125,15 +104,15 @@ private:
         std::vector<std::uint32_t> cells;
     };
 
-    /// @brief A cell's words from its leading word on, and its key, as they stood before
-    /// its first change at a level, or, with `word_offset == rebuild_entry`, a mark that it
-    /// has no such state to return to and must be rebuilt.
+    /// @brief A cell and its key as they stood before its first change at a level, the
+    /// cell kept at `offset` in `cells_`, or, with `offset == rebuild_entry`, a mark that
+    /// it has no such state to return to and must be rebuilt.
     struct SaveEntry {
         std::uint32_t cell;
         std::uint32_t gen;
         std::uint32_t key;
         std::uint32_t prev_stamp;
-        std::size_t word_offset;
+        std::size_t offset;
     };
 
     static constexpr std::uint32_t zero_key = UINT32_MAX; ///< The cell is `0 = 0`.
@@ -148,9 +127,6 @@ private:
         std::uint32_t restore_rebuild = 0;
     };
 
-    Word* cell_words(std::uint32_t cell) { return words_.data() + cell * num_words_; }
-    const Word* cell_words(std::uint32_t cell) const { return words_.data() + cell * num_words_; }
-
     std::uint32_t constant_key() const { return static_cast<std::uint32_t>(num_cols_ - 1); }
     std::size_t top_level() const { return level_stamp_.size() - 1; }
 
@@ -164,21 +140,20 @@ private:
     /// @brief Build a pair's cells again, from its clause as it now stands.
     /// @pre The selector is at the root, with no pivot.
     void rebuild_pair(std::uint32_t pair);
-    const Word* watch_row(std::uint32_t cell) const;
-    void build_first(std::uint32_t cell, const Word* watch);
-    void build_second(std::uint32_t cell, const Word* watch);
+    const Row* watch_row(std::uint32_t cell) const;
+    void build_first(std::uint32_t cell, const Row* watch);
+    void build_second(std::uint32_t cell, const Row* watch);
 
     /// @brief Make `reduced` the cell, in place of building it from its watch.
     void take_reduction(std::uint32_t cell, const Equation& reduced, const ReduceResult& result);
 
-    /// @brief Reduce `words`, leading on `lead`, by the span until its lead is not a
+    /// @brief Reduce `cell`, leading on `lead`, by the span until its lead is not a
     /// pivot; the key it ends on.
-    std::uint32_t reduce_by_span(Word* words, std::size_t lead, std::size_t& row_additions) const;
+    std::uint32_t reduce_by_span(Row* cell, std::size_t lead) const;
 
     /// @brief As `reduce_by_span`, and by `first` too while the lead is `first_key`.
-    std::uint32_t reduce_by_span_and_first(Word* words, std::size_t lead, const Word* first,
-                                           std::uint32_t first_key,
-                                           std::size_t& row_additions) const;
+    std::uint32_t reduce_by_span_and_first(Row* cell, std::size_t lead, const Row* first,
+                                           std::uint32_t first_key) const;
 
     void place(std::uint32_t cell) {
         const std::uint32_t key = key_[cell];
@@ -192,7 +167,6 @@ private:
     /// many entries as the last cleanup kept, plus one per column no substitution
     /// has emptied.
     void maybe_clean_buckets() {
-        counters_.peak_bucket_entries = std::max(counters_.peak_bucket_entries, bucket_entries_);
         if (bucket_entries_ > cleanup_threshold_) {
             clean_buckets();
         }
@@ -200,10 +174,10 @@ private:
 
     void clean_buckets();
 
-    /// @brief The first word a save keeps of a cell with `key`: the words below its lead
+    /// @brief The first bit a save keeps of a cell with `key`: the bits below its lead
     /// are zero, and stay zero while its watch stands.
-    std::size_t saved_first_word(std::uint32_t key) const {
-        return key == zero_key ? 0 : static_cast<std::size_t>(key) >> DenseGF2Vector::word_shift;
+    static std::size_t saved_from_bit(std::uint32_t key) {
+        return key == zero_key ? 0 : static_cast<std::size_t>(key);
     }
 
     void save(std::uint32_t cell, std::size_t level);
@@ -246,11 +220,10 @@ private:
 #endif
 
     std::size_t num_cols_ = 0;
-    std::size_t num_words_ = 0;
     std::size_t num_dropped_vars_ = 0; ///< Since the last renumbering.
 
     /// @brief Two cells per pair, `A` then `B`; a unit clause uses only `A`.
-    std::vector<Word> words_;
+    Cells cells_;
     std::vector<std::uint32_t> key_;
     std::vector<CellUndo> undo_;
     std::vector<std::uint8_t> in_active_clause_; ///< Per cell.
@@ -271,7 +244,7 @@ private:
     std::vector<std::uint32_t> cleanup_stamp_;
     std::uint32_t cleanup_epoch_ = 0;
 
-    std::vector<const Word*> pivot_row_; ///< Per column, the trail row pivoting on it.
+    std::vector<const Row*> pivot_row_; ///< Per column, the trail row pivoting on it.
     std::vector<std::uint32_t> pivot_col_idxs_; ///< In trail order, with the constant's omitted.
     std::vector<std::size_t> level_pivot_mark_;
     /// @brief A queue, oldest first, over `[paused_head_, paused_end_)`; the other
@@ -281,10 +254,8 @@ private:
     std::size_t paused_end_ = 0;
 
     std::vector<SaveEntry> saves_;
-    std::vector<Word> save_words_; ///< The saved cells' words are its first `num_save_words_`.
-    std::size_t num_save_words_ = 0;
     std::vector<std::size_t> level_save_mark_;
-    std::vector<std::size_t> level_save_word_mark_;
+    std::vector<std::size_t> level_cells_save_mark_; ///< `cells_.save_mark()` at each level.
     std::vector<std::uint32_t> level_stamp_; ///< Fresh at every opening of a level.
     std::uint32_t next_stamp_ = 1;
     std::uint32_t restore_epoch_ = 0;
@@ -298,8 +269,6 @@ private:
     std::vector<ClauseId> side_queue_;
     std::size_t side_queue_head_ = 0;
     std::vector<std::uint8_t> in_side_queue_;
-
-    ExactWatchlistCounters counters_;
 
 #ifndef NDEBUG
     std::size_t debug_events_ = 0;

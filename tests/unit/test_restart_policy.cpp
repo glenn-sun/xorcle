@@ -16,6 +16,7 @@
 #include "heuristics/restarts/luby.h"
 #include "heuristics/restarts/restart_policy.h"
 #include "heuristics/restarts/stabilize.h"
+#include "heuristics_test_support.h"
 
 namespace xorcle {
 
@@ -75,7 +76,7 @@ TEST_CASE("luby_value: the hand-computed sequence") {
 }
 
 TEST_CASE("Luby: budgets are the unit times the sequence") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::luby;
     config.luby_unit_conflicts = 100;
 
@@ -86,7 +87,7 @@ TEST_CASE("Luby: budgets are the unit times the sequence") {
 }
 
 TEST_CASE("Luby: a unit of 1 reproduces the sequence directly") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::luby;
     config.luby_unit_conflicts = 1;
 
@@ -96,7 +97,7 @@ TEST_CASE("Luby: a unit of 1 reproduces the sequence directly") {
 }
 
 TEST_CASE("Luby: an enormous unit saturates rather than wrapping") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::luby;
     config.luby_unit_conflicts = std::numeric_limits<std::size_t>::max();
 
@@ -110,7 +111,7 @@ TEST_CASE("Luby: an enormous unit saturates rather than wrapping") {
 
 TEST_CASE("make_restart_policy: dispatches on the configured method") {
     SUBCASE("none is the default and yields a disabled policy") {
-        const RestartConfig config;
+        const RestartConfig config = default_restart_config();
         CHECK(config.method == RestartMethod::none);
         auto policy = make_restart_policy(config);
         REQUIRE(policy != nullptr);
@@ -118,7 +119,7 @@ TEST_CASE("make_restart_policy: dispatches on the configured method") {
     }
 
     SUBCASE("luby") {
-        RestartConfig config;
+        RestartConfig config = default_restart_config();
         config.method = RestartMethod::luby;
         config.luby_unit_conflicts = 2;
         auto policy = make_restart_policy(config);
@@ -127,7 +128,7 @@ TEST_CASE("make_restart_policy: dispatches on the configured method") {
     }
 
     SUBCASE("lbd") {
-        RestartConfig config;
+        RestartConfig config = default_restart_config();
         config.method = RestartMethod::lbd;
         auto policy = make_restart_policy(config);
         REQUIRE(policy != nullptr);
@@ -136,7 +137,7 @@ TEST_CASE("make_restart_policy: dispatches on the configured method") {
 }
 
 TEST_CASE("LbdRestarts: a steady stream of clauses never restarts") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::lbd;
 
     // Both averages read back the same constant exactly, so no margin above 1
@@ -148,7 +149,7 @@ TEST_CASE("LbdRestarts: a steady stream of clauses never restarts") {
 }
 
 TEST_CASE("LbdRestarts: clauses turning worse than the run's average restart") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::lbd;
 
     LbdRestarts policy(config);
@@ -167,7 +168,7 @@ TEST_CASE("LbdRestarts: clauses turning worse than the run's average restart") {
 }
 
 TEST_CASE("LbdRestarts: a trail far above average blocks the restart") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::lbd;
 
     LbdRestarts policy(config);
@@ -190,7 +191,7 @@ TEST_CASE("LbdRestarts: a trail far above average blocks the restart") {
 }
 
 TEST_CASE("LbdRestarts: a zero trail ratio never blocks") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::lbd;
     config.lbd_trail_ratio = 0.0;
 
@@ -206,7 +207,7 @@ TEST_CASE("LbdRestarts: a zero trail ratio never blocks") {
 }
 
 TEST_CASE("LbdRestarts: the minimum interval is waited out after a restart") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::lbd;
     config.lbd_min_conflicts = 500;
 
@@ -229,7 +230,7 @@ TEST_CASE("LbdRestarts: the minimum interval is waited out after a restart") {
 }
 
 TEST_CASE("restart policies: note_restart is what advances the schedule") {
-    RestartConfig config;
+    RestartConfig config = default_restart_config();
     config.method = RestartMethod::luby;
     config.luby_unit_conflicts = 10;
 

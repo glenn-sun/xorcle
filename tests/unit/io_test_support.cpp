@@ -7,7 +7,7 @@
 
 #include <unistd.h>
 
-#include "io/proof_raw_file.h"
+#include "io/proof_writer.h"
 
 namespace xorcle {
 
@@ -16,11 +16,11 @@ std::filesystem::path scratch_path(std::string_view name) {
            ("xorcle_test_" + std::to_string(::getpid()) + "_" + std::string{name});
 }
 
-std::vector<std::vector<RawRow>> clause_rows(const std::vector<Clause>& clauses) {
-    std::vector<std::vector<RawRow>> rows;
+std::vector<std::vector<ProofRow>> clause_rows(const std::vector<Clause>& clauses) {
+    std::vector<std::vector<ProofRow>> rows;
     rows.reserve(clauses.size());
     for (const Clause& clause : clauses) {
-        std::vector<RawRow>& out = rows.emplace_back();
+        std::vector<ProofRow>& out = rows.emplace_back();
         for (const Equation& row : clause) {
             out.push_back(row.bits());
         }
@@ -28,11 +28,11 @@ std::vector<std::vector<RawRow>> clause_rows(const std::vector<Clause>& clauses)
     return rows;
 }
 
-std::vector<std::vector<RawRow>> clause_rows(const ParsedDimacs& parsed) {
-    std::vector<std::vector<RawRow>> rows;
+std::vector<std::vector<ProofRow>> clause_rows(const ParsedDimacs& parsed) {
+    std::vector<std::vector<ProofRow>> rows;
     rows.reserve(parsed.clauses.size());
     for (const Clause& clause : parsed.clauses) {
-        std::vector<RawRow>& out = rows.emplace_back();
+        std::vector<ProofRow>& out = rows.emplace_back();
         for (const Equation& row : clause) {
             out.push_back(lift_row(row, parsed.used_vars, parsed.num_vars));
         }
@@ -41,7 +41,7 @@ std::vector<std::vector<RawRow>> clause_rows(const ParsedDimacs& parsed) {
 }
 
 LrupChecker::LrupChecker(EquationRepr repr, std::size_t num_vars,
-                         const std::vector<std::vector<RawRow>>& inputs)
+                         const std::vector<std::vector<ProofRow>>& inputs)
     : repr_(repr), num_vars_(num_vars), max_id_(inputs.size()) {
     for (std::size_t index = 0; index < inputs.size(); ++index) {
         clauses_.emplace(index + 1, inputs[index]);
@@ -103,7 +103,7 @@ std::string LrupChecker::check_line(const std::vector<std::string>& tokens) {
     }
 
     RowSpace basis(repr_, num_vars_);
-    for (const RawRow& clause_row : rows) {
+    for (const ProofRow& clause_row : rows) {
         basis.add_row(equation(clause_row));
     }
     bool verified = false;
@@ -131,8 +131,8 @@ std::string LrupChecker::check_line(const std::vector<std::string>& tokens) {
 }
 
 LrupChecker::Status LrupChecker::propagate(const Rows& rows, RowSpace& basis) const {
-    std::vector<RawRow> residues;
-    for (const RawRow& clause_row : rows) {
+    std::vector<ProofRow> residues;
+    for (const ProofRow& clause_row : rows) {
         Equation reduced = equation(clause_row);
         basis.reduce(reduced);
         if (reduced.leading_bit()) {
@@ -142,12 +142,12 @@ LrupChecker::Status LrupChecker::propagate(const Rows& rows, RowSpace& basis) co
     if (residues.empty()) {
         return Status::conflict;
     }
-    for (const RawRow& residue : residues) {
+    for (const ProofRow& residue : residues) {
         if (residue != residues[0]) {
             return Status::none;
         }
     }
-    const RawRow deduced = negate(residues[0]);
+    const ProofRow deduced = negate(residues[0]);
     if (contains(basis, residues[0]) || contains(basis, deduced)) {
         return Status::none;
     }
@@ -155,20 +155,20 @@ LrupChecker::Status LrupChecker::propagate(const Rows& rows, RowSpace& basis) co
     return Status::deduced;
 }
 
-bool LrupChecker::contains(const RowSpace& basis, const RawRow& bits) const {
+bool LrupChecker::contains(const RowSpace& basis, const ProofRow& bits) const {
     Equation reduced = equation(bits);
     basis.reduce(reduced);
     return !reduced.leading_bit().has_value();
 }
 
-Equation LrupChecker::equation(const RawRow& bits) const {
+Equation LrupChecker::equation(const ProofRow& bits) const {
     Equation out = make_equation(repr_, num_vars_);
     out.assign_bits(bits);
     return out;
 }
 
-RawRow LrupChecker::negate(const RawRow& bits) const {
-    RawRow out = bits;
+ProofRow LrupChecker::negate(const ProofRow& bits) const {
+    ProofRow out = bits;
     if (!out.empty() && out.back() == num_vars_) {
         out.pop_back();
     } else {
@@ -177,8 +177,8 @@ RawRow LrupChecker::negate(const RawRow& bits) const {
     return out;
 }
 
-RawRow LrupChecker::parse_token(const std::string& token) const {
-    RawRow bits;
+ProofRow LrupChecker::parse_token(const std::string& token) const {
+    ProofRow bits;
     std::size_t position = 0;
     const bool constant = !token.empty() && token[0] == '-';
     if (constant) {

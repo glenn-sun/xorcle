@@ -24,8 +24,11 @@ add_library(xorcle_core
     src/algebra/dense/dense_gf2_vector.cpp
     src/algebra/sparse/sparse_gf2_vector.cpp
     src/core/analysis.cpp
+    src/core/clause_database.cpp
     src/core/implication_graph_proof.cpp
     src/core/propagation.cpp
+    src/core/root_visit.cpp
+    src/core/saved_trail.cpp
     src/core/solver.cpp
     src/core/subsume_pass.cpp
     src/core/trail.cpp
@@ -38,8 +41,6 @@ add_library(xorcle_core
     src/heuristics/decisions/clause_decisions.cpp
     src/heuristics/decisions/csids.cpp
     src/heuristics/decisions/saved_trails.cpp
-    src/heuristics/decisions/decision_procedure.cpp
-    src/heuristics/decisions/fixed_literals.cpp
     src/heuristics/decisions/phase.cpp
     src/heuristics/deletion/deletion.cpp
     src/heuristics/implication_graph/implication_graph.cpp
@@ -52,8 +53,7 @@ add_library(xorcle_core
     src/heuristics/selection/cyclic.cpp
     src/heuristics/selection/exact_watchlist.cpp
     src/io/dimacs.cpp
-    src/io/proof_postprocess.cpp
-    src/io/proof_raw_file.cpp
+    src/io/proof_writer.cpp
     src/util/index_set.cpp
     src/util/progress_reporter.cpp
     src/util/random.cpp

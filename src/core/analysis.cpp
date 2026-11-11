@@ -50,7 +50,7 @@ bool resolution_narrows(const TrailBasisSpace& basis, std::size_t pivot_row_idx,
     // The step brings in the reason's rows without `0 = 1`, and the pivot row plus
     // `0 = 1` plus one reason row with it. Once the others lie in `basis`, any
     // reason row with `0 = 1` stands for the one echelonization would pick.
-    Equation brought_in = workspace.spare_row();
+    Equation brought_in = workspace.spare_rows.take();
     Equation with_one;
     bool narrows = true;
     for (std::size_t reason_row_idx = 0; narrows && reason_row_idx < reason.rows();
@@ -60,8 +60,7 @@ bool resolution_narrows(const TrailBasisSpace& basis, std::size_t pivot_row_idx,
             if (!with_one.is_null()) {
                 brought_in.plus_assign(with_one);
             } else {
-                with_one = workspace.spare_row();
-                with_one.assign_from(brought_in);
+                with_one = workspace.spare_rows.copy_of(brought_in);
                 brought_in.plus_assign(basis.row(pivot_row_idx));
                 brought_in.plus_assign(workspace.trail_basis_one);
             }
@@ -71,9 +70,9 @@ bool resolution_narrows(const TrailBasisSpace& basis, std::size_t pivot_row_idx,
     }
     assert((!narrows || !with_one.is_null()) &&
            "the reason does not reach the conflict's 0 = 1");
-    workspace.spare_rows.push_back(std::move(brought_in));
+    workspace.spare_rows.give(std::move(brought_in));
     if (!with_one.is_null()) {
-        workspace.spare_rows.push_back(std::move(with_one));
+        workspace.spare_rows.give(std::move(with_one));
     }
     return narrows;
 }
@@ -81,21 +80,13 @@ bool resolution_narrows(const TrailBasisSpace& basis, std::size_t pivot_row_idx,
 } // namespace
 
 ResolutionWorkspace::ResolutionWorkspace(const Trail& trail)
-    : trail_basis_one(make_trail_basis_one(trail)), reason_basis(trail) {}
-
-Equation ResolutionWorkspace::spare_row() {
-    if (spare_rows.empty()) {
-        return Equation::with_num_bits(reason_basis.repr(), reason_basis.cols());
-    }
-    Equation row = std::move(spare_rows.back());
-    spare_rows.pop_back();
-    return row;
-}
+    : trail_basis_one(make_trail_basis_one(trail)), reason_basis(trail),
+      spare_rows(trail.repr(), reason_basis.cols()) {}
 
 ResolvedReason resolve_asserting_basis(
     TrailBasisSpace& asserting_basis, std::size_t pivot_row_idx, std::size_t pivot_col_idx,
     const Trail& trail, const std::vector<Clause>& clauses, ResolutionWorkspace& workspace,
-    Rng& representative_rng, bool measure_lbd) {
+    Rng& representative_rng) {
     assert(pivot_row_idx < asserting_basis.rows() && "the pivot row is out of range");
     assert(asserting_basis.row(pivot_row_idx).leading_bit() ==
                std::optional<std::size_t>{pivot_col_idx} &&
@@ -132,25 +123,22 @@ ResolvedReason resolve_asserting_basis(
     Equation reason_row = reason_basis.pop_first_row();
     // The popped row leads at column 0, in the conflict's level; the equation
     // the reason propagated counts at its own level instead.
-    const std::optional<std::size_t> reason_lbd =
-        measure_lbd
-            ? std::optional<std::size_t>{reason_basis.literal_block_distance_with(pivot_col_idx)}
-            : std::nullopt;
+    const std::size_t reason_lbd = reason_basis.literal_block_distance_with(pivot_col_idx);
 
     // The explicit `+ [0 = 1]` is the linear negation, valid because on a
     // conflicting trail column 0 is provably `0 = 1`. Without it the loop does
     // not terminate.
     asserting_row.plus_assign(reason_row);
     asserting_row.plus_assign(workspace.trail_basis_one);
-    workspace.spare_rows.push_back(std::move(reason_row));
+    workspace.spare_rows.give(std::move(reason_row));
     if (!asserting_basis.add_row_or_keep(asserting_row).has_value()) {
-        workspace.spare_rows.push_back(std::move(asserting_row));
+        workspace.spare_rows.give(std::move(asserting_row));
     }
     const std::size_t num_extra_reason_rows = reason_basis.rows();
     while (reason_basis.rows() != 0) {
         Equation extra_row = reason_basis.pop_first_row();
         if (!asserting_basis.add_row_or_keep(extra_row).has_value()) {
-            workspace.spare_rows.push_back(std::move(extra_row));
+            workspace.spare_rows.give(std::move(extra_row));
         }
     }
 
@@ -198,10 +186,9 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
 }
 
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
-                                      ClauseId conflict_clause_id, DecisionProcedure& decisions,
-                                      Rng& representative_rng, bool minimize,
-                                      bool measure_reason_lbds,
-                                      bool report_responsible_trail_idxs, bool collect_subsumed) {
+                                      ClauseId conflict_clause_id, Rng& representative_rng,
+                                      bool minimize, bool report_responsible_trail_idxs,
+                                      bool collect_subsumed) {
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail.level() > 0 && "a root conflict is UNSAT and is not analysed");
     assert(trail_is_conflicting(trail) &&
@@ -216,10 +203,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
         TrailBasisSpace::from_RowSpace(clauses[conflict_clause_id], trail);
     const std::size_t conflict_clause_width = asserting_basis.rows();
 
-    std::vector<std::size_t> reason_lbds;
-    if (measure_reason_lbds) {
-        reason_lbds.push_back(asserting_basis.literal_block_distance());
-    }
+    std::vector<std::size_t> reason_lbds{asserting_basis.literal_block_distance()};
 
     ResolutionWorkspace workspace(trail);
 
@@ -261,10 +245,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     const auto accept_resolution = [&](const ResolvedReason& reason,
                                        std::size_t trail_idx) {
         reason_ids.push_back(reason.clause_id);
-        if (measure_reason_lbds) {
-            reason_lbds.push_back(*reason.lbd);
-        }
-        decisions.update_with_resolved_clause(reason.clause_id);
+        reason_lbds.push_back(reason.lbd);
         if (collect_subsumed) {
             last_resolution_records_begin = subsumed_reasons.size();
             maybe_record_subsumed_conflicting();
@@ -286,14 +267,9 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
 
         ++resolution_steps;
         assert(resolution_steps < asserting_basis.cols() && "conflict analysis did not terminate");
-        if (resolution_steps == 1) {
-            // The other operand of the first resolution, resolved like any reason.
-            // A conflicting clause that already asserts is resolved with nothing.
-            decisions.update_with_resolved_clause(conflict_clause_id);
-        }
         const ResolvedReason reason =
             resolve_asserting_basis(asserting_basis, 0, *pivot_col_idx, trail, clauses,
-                                    workspace, representative_rng, measure_reason_lbds);
+                                    workspace, representative_rng);
         assert(asserting_basis.rows() > 0 && "resolution derived the empty clause below the root");
         accept_resolution(reason, asserting_basis.cols() - 1 - *pivot_col_idx);
     }
@@ -324,7 +300,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                 Rng rng_copy = representative_rng;
                 TrailBasisSpace resolved = asserting_basis;
                 resolve_asserting_basis(resolved, frozen, *pivot_col_idx, trail, clauses,
-                                        workspace, rng_copy, false);
+                                        workspace, rng_copy);
                 assert(narrows == (resolved.rows() < asserting_basis.rows()) &&
                        "the narrowing test disagrees with the resolution");
             }
@@ -340,7 +316,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                 }
                 const ResolvedReason reason = resolve_asserting_basis(
                     asserting_basis, frozen, *pivot_col_idx, trail, clauses, workspace,
-                    representative_rng, measure_reason_lbds);
+                    representative_rng);
                 accept_resolution(reason, trail_idx);
                 continue;
             }
@@ -353,14 +329,11 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                 TrailBasisSpace resolved = asserting_basis;
                 const ResolvedReason reason = resolve_asserting_basis(
                     resolved, frozen, *pivot_col_idx, trail, clauses, workspace,
-                    representative_rng, measure_reason_lbds);
+                    representative_rng);
                 if (reason.subsumes_reason) {
                     record_replacement(resolved, reason.clause_id, trail_idx,
                                        reason_ids.size() + 1, to_clause(resolved), false);
                 }
-            } else {
-                // The coins the discarded resolution would have drawn.
-                representative_rng.discard((frozen + 63) / 64);
             }
         }
         ++frozen;
@@ -399,8 +372,8 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     assert((asserting_clause.rows() != 1 || asserting_level == 0) &&
            "a unit asserting clause must assert at the root");
 
-    assert((reason_lbds.empty() || reason_lbds.size() == reason_ids.size()) &&
-           "a measured reason is missing its literal block distance");
+    assert(reason_lbds.size() == reason_ids.size() &&
+           "a reason is missing its literal block distance");
 
     return AssertingClause{std::move(asserting_clause),
                           asserting_level,

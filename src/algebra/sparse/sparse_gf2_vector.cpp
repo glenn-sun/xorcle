@@ -40,6 +40,17 @@ void SparseGF2Vector::reset_bit(std::size_t i) {
     }
 }
 
+void SparseGF2Vector::flip_bit(std::size_t i) {
+    assert(i < num_bits_ && "flip_bit index is out of range");
+    const Bit bit = static_cast<Bit>(i);
+    const auto it = std::lower_bound(bits_.begin(), bits_.end(), bit);
+    if (it != bits_.end() && *it == bit) {
+        bits_.erase(it);
+    } else {
+        bits_.insert(it, bit);
+    }
+}
+
 void SparseGF2Vector::plus_assign(const SparseGF2Vector& other) {
     assert(num_bits_ == other.num_bits_ && "bit count mismatch in plus_assign");
     // Symmetric difference of two ascending bit lists
@@ -95,12 +106,6 @@ bool SparseGF2Vector::equals_except_last_bit(const SparseGF2Vector& other) const
     assert(num_bits_ != 0 && num_bits_ == other.num_bits_ &&
            "bit count mismatch in equals_except_last_bit");
     return std::ranges::equal(bits_except_last_bit(), other.bits_except_last_bit());
-}
-
-void SparseGF2Vector::append_key_except_last_bit(std::string& key) const {
-    assert(num_bits_ != 0 && "append_key_except_last_bit on a vector of no bits");
-    const std::span<const Bit> bits = bits_except_last_bit();
-    key.append(reinterpret_cast<const char*>(bits.data()), bits.size() * sizeof(Bit));
 }
 
 std::size_t SparseGF2Vector::hash() const noexcept {
