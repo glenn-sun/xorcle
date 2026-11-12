@@ -53,43 +53,33 @@ XORCLE_OPTION(always, seed, U64, 0, 0, UINT64_MAX, "RNG seed")
 // --- Compaction ------------------------------------------------------------
 
 XORCLE_OPTION(always, compact, Bool, true, false, true,
-              "renumber the variables once those the root units dropped would shorten an\n"
-              "equation by a word and 5% of its words")
+              "renumber variables to drop columns that are all-zero")
 
 // --- Decisions -------------------------------------------------------------
 
 XORCLE_OPTION(always, csids_initial, Real, 1.0, 0.0, INFINITY,
               "initial activity of asserting clauses")
-XORCLE_OPTION(always, csids_bump, Real, 1.0, 0.0, INFINITY, "activity bump per resolution step")
+XORCLE_OPTION(always, csids_bump, Real, 1.0, 0.0, INFINITY,
+              "activity bump per use in conflict analysis")
 XORCLE_OPTION(always, csids_decay, Real, 0.98, 0.0, 1.0, "activity decay per conflict")
 XORCLE_OPTION(always, csids_intersection_depth, Size, 50, 1, SIZE_MAX,
-              "decide from the intersection, modulo the trail, of the top clause's linear\n"
-              "negation with those of the open clauses below it, trying this many clauses\n"
-              "in all (1: the top clause alone)")
+              "intersect top N clauses by activity before sampling (1: no intersection)")
 
-XORCLE_ENUM_OPTION(always, csids_span, CsidsSpan, CsidsSpan::plain,
-                   "intersect each clause's span(neg(C), U) (plain), or that span with 0 = 1\n"
-                   "added (plus_minus), whose decisions are directions the trail does not\n"
-                   "settle, the falsify side the one in the top clause's span")
-XORCLE_ENUM_VALUE(csids_span, "plain", CsidsSpan::plain)
-XORCLE_ENUM_VALUE(csids_span, "plus_minus", CsidsSpan::plus_minus)
+XORCLE_OPTION(always, csids_intersection_allow_negation, Bool, false, false, true,
+              "make intersection agnostic to the polarity of equations")
 
-XORCLE_OPTION(always, bump_responsible_clauses, Bool, false, false, true,
-              "also bump the reason clauses of the learned clause's responsible trail\n"
-              "elements")
+XORCLE_OPTION(always, csids_bump_learned_positions, Bool, false, false, true,
+              "bump the reason clauses at the learned clause's trail positions")
 
-XORCLE_ENUM_OPTION(always, phase, DecisionPhase, DecisionPhase::falsify,
-                   "the side of a decision wherever no saved trail chooses it: the sampled\n"
-                   "equation (falsify), its negation (satisfy), or either at random (random)")
-XORCLE_ENUM_VALUE(phase, "falsify", DecisionPhase::falsify)
-XORCLE_ENUM_VALUE(phase, "satisfy", DecisionPhase::satisfy)
-XORCLE_ENUM_VALUE(phase, "random", DecisionPhase::random)
+XORCLE_ENUM_OPTION(always, phase_default, DecisionPhase, DecisionPhase::falsify,
+                   "in decisions, falsify a clause's equation (towards unit propagation), "
+                   "satisfy the equation (and the clause), or choose randomly")
+XORCLE_ENUM_VALUE(phase_default, "falsify", DecisionPhase::falsify)
+XORCLE_ENUM_VALUE(phase_default, "satisfy", DecisionPhase::satisfy)
+XORCLE_ENUM_VALUE(phase_default, "random", DecisionPhase::random)
 
 XORCLE_ENUM_OPTION(always, phase_saving, PhaseSaving, PhaseSaving::rotate,
-                   "the saved trails that narrow a decision's space: the target trail, the\n"
-                   "longest trail below a conflict level, then the last conflict's trail\n"
-                   "(both), one of them (target-only, recent-only), neither (none), or both,\n"
-                   "none, target-only and recent-only in turn as the conflicts go (rotate)")
+                   "which saved trails to use for deciding the phase of a sampled equation")
 XORCLE_ENUM_VALUE(phase_saving, "both", PhaseSaving::both)
 XORCLE_ENUM_VALUE(phase_saving, "target-only", PhaseSaving::target_only)
 XORCLE_ENUM_VALUE(phase_saving, "recent-only", PhaseSaving::recent_only)
@@ -103,37 +93,29 @@ XORCLE_GROUP(phase_target,
                  (options.stabilize && (options.focused_phase_saving == PhaseSaving::both ||
                                         options.focused_phase_saving == PhaseSaving::target_only ||
                                         options.focused_phase_saving == PhaseSaving::rotate)),
-             "--phase-saving=both, target-only or rotate, or one of them as --focused-phase-saving")
+             "--phase-saving=both|target-only|rotate or "
+             "--focused-phase-saving=both|target-only|rotate")
 XORCLE_GROUP(phase_rotate,
              options.phase_saving == PhaseSaving::rotate ||
                  (options.stabilize && options.focused_phase_saving == PhaseSaving::rotate),
-             "--phase-saving=rotate, or --stabilize=true with --focused-phase-saving=rotate")
+             "--phase-saving=rotate or --focused-phase-saving=rotate")
 XORCLE_OPTION(phase_target, phase_saving_target_reset, Size, 1000, 1, SIZE_MAX,
               "conflicts between resets of the target trail")
-XORCLE_OPTION(phase_rotate, phase_rotate_interval, Size, 1000, 1, SIZE_MAX,
-              "conflicts in each step of the rotation's first cycle; every step of cycle c\n"
-              "lasts c times as many")
+XORCLE_OPTION(phase_rotate, phase_rotate_starting_interval, Size, 1000, 1, SIZE_MAX,
+              "starting number of conflicts for phase rotation steps")
 
 // --- Selection -------------------------------------------------------------
 
 XORCLE_ENUM_OPTION(always, selection, ClauseSelectorName, ClauseSelectorName::exact_watchlist,
-                   "which clause to try propagating from next")
+                   "method to pick which clause to try propagating from next")
 XORCLE_ENUM_VALUE(selection, "cyclic", ClauseSelectorName::cyclic)
-XORCLE_ENUM_VALUE(selection, "exact_watchlist", ClauseSelectorName::exact_watchlist)
+XORCLE_ENUM_VALUE(selection, "exact-watchlist", ClauseSelectorName::exact_watchlist)
 
 // --- Propagation -----------------------------------------------------------
 
 XORCLE_GROUP(cyclic, options.selection == ClauseSelectorName::cyclic, "--selection=cyclic")
-XORCLE_GROUP(attempt_budget,
-             options.selection == ClauseSelectorName::cyclic && options.propagate_miss_rate != 0.0,
-             "--selection=cyclic and a nonzero --propagate-miss-rate")
 XORCLE_OPTION(cyclic, propagate_miss_rate, Real, 0.05, 0.0, 1.0,
-              "target fraction of propagated equations learned out of order; 0 propagates\n"
-              "to a fixed point")
-
-XORCLE_OPTION(attempt_budget, propagate_window, Size, 2000, 1, SIZE_MAX,
-              "learned equations over which the attempt budget decays by a factor of e\n"
-              "when none is missed")
+              "target fraction of propagated equations learned out of order")
 
 // --- Restarts --------------------------------------------------------------
 
@@ -161,16 +143,15 @@ XORCLE_OPTION(restart_lbd, restart_lbd_trail_ratio, Real, 1.4, 0.0, INFINITY,
 // --- Stable and focused modes ---------------------------------------------
 
 XORCLE_OPTION(always, stabilize, Bool, false, false, true,
-              "alternate a focused mode, which restarts by the LBD rule, decays activity\n"
-              "by --focused-decay and saves phases by --focused-phase-saving, with stable\n"
-              "mode, the search as configured; phases last 1, 4, 4, 9, 9, ... intervals")
+              "alternate between stable mode (standard config) and focused mode (customize "
+              "with --focused-restart-lbd-*, --focused-decay, and --focused-phase-saving)")
 XORCLE_GROUP(stabilize, options.stabilize, "--stabilize=true")
 XORCLE_OPTION(stabilize, stabilize_interval, Size, 1000, 1, SIZE_MAX,
               "conflicts in the first focused phase")
 XORCLE_OPTION(stabilize, focused_decay, Real, 0.5, 0.0, 1.0,
               "activity decay per conflict in focused mode")
 XORCLE_ENUM_OPTION(stabilize, focused_phase_saving, PhaseSaving, PhaseSaving::recent_only,
-                   "--phase-saving in focused mode")
+                   "phase saving preference in focused mode")
 XORCLE_ENUM_VALUE(focused_phase_saving, "both", PhaseSaving::both)
 XORCLE_ENUM_VALUE(focused_phase_saving, "target-only", PhaseSaving::target_only)
 XORCLE_ENUM_VALUE(focused_phase_saving, "recent-only", PhaseSaving::recent_only)
@@ -196,12 +177,12 @@ XORCLE_OPTION(always, minimize, Bool, true, false, true,
 // --- On-the-fly subsumption -------------------------------------------------
 
 XORCLE_OPTION(always, otf_subsume, Bool, true, false, true,
-              "replace the clauses the resolvents of conflict analysis subsume")
+              "replace the clauses that the resolvents of conflict analysis subsume")
 
 // --- LBD -------------------------------------------------------------------
 
 XORCLE_OPTION(always, lbd_window, Size, 2, 1, SIZE_MAX,
-              "window of the average of the LBDs measured at a clause's uses as a reason")
+              "window of each clause's recent average LBD")
 
 // --- Deletion --------------------------------------------------------------
 
@@ -209,17 +190,16 @@ XORCLE_OPTION(always, deletion, Bool, true, false, true,
               "periodically delete some learned clauses")
 XORCLE_GROUP(deletion, options.deletion, "--deletion=true")
 XORCLE_OPTION(deletion, deletion_cadence_coefficient, Real, 0.25, 0.0, INFINITY,
-              "conflicts between deletion passes are this times the square root of the "
-              "conflicts so far plus --deletion-cadence-offset (positive)")
+              "at conflict M, wait X * sqrt(M + --deletion-cadence-offset) conflicts before "
+              "the next deletion pass (must be positive)")
 XORCLE_OPTION(deletion, deletion_cadence_offset, Size, 5000, 0, SIZE_MAX,
-              "conflicts added to the conflicts so far under the square root of "
-              "--deletion-cadence-coefficient")
+              "at conflict M, wait --deletion-cadence-coefficient * sqrt(M + N) conflicts "
+              "before the next deletion pass")
 XORCLE_OPTION(deletion, deletion_wait, Real, 6.0, 0.0, 62.0,
-              "a learned clause may go unused for round(2^(wait - LBD)) consecutive deletion "
+              "a learned clause may go unused for round(2^(X - LBD)) consecutive deletion "
               "passes before it can be deleted")
 XORCLE_OPTION(deletion, deletion_eviction_rate, Real, 0.5, 0.0, 1.0,
-              "fraction of the deletion candidates a deletion pass evicts, worst first by "
-              "--deletion-key")
+              "fraction of the deletion candidates that a deletion pass evicts")
 
 XORCLE_ENUM_OPTION(deletion, deletion_key, DeletionKey, DeletionKey::activity,
                    "which score orders a deletion pass")
@@ -228,104 +208,76 @@ XORCLE_ENUM_VALUE(deletion_key, "activity", DeletionKey::activity)
 
 // --- BVE ---------------------------------------------------------------------
 
-XORCLE_OPTION(always, bve, Bool, true, false, true,
-              "bounded variable elimination before the first decision, of hyperplanes\n"
-              "chosen by projection onto spans of the clauses")
+XORCLE_OPTION(always, bve, Bool, true, false, true, "bounded projection as preprocessing")
 XORCLE_GROUP(bve, options.bve, "--bve=true")
-XORCLE_OPTION(bve, bve_group_cap, Size, 10, 1, 16,
-              "the most rows a BVE group may hold")
+XORCLE_OPTION(bve, bve_residual_dimensions, Size, 10, 1, 16,
+              "during BVE's search for appropriate hyperplanes, max dimensions outside core "
+              "for a clause group")
 XORCLE_OPTION(bve, bve_max_refusals_in_a_row, Size, 5, 1, SIZE_MAX,
               "BVE gives up a group after this many hyperplanes refused in a row")
 XORCLE_OPTION(bve, bve_success_rate, Real, 0.01, 0.0, 1.0,
-              "the least fraction of the clauses present at a BVE pass's start that it\n"
-              "must remove for another pass to follow")
-XORCLE_ENUM_OPTION(bve, bve_core_shrinking, BveCoreShrinking, BveCoreShrinking::none,
-                   "how a BVE gate search shrinks its first core: keep it (none), or solve\n"
-                   "again on the core until it stops shrinking (repeat)")
-XORCLE_ENUM_VALUE(bve_core_shrinking, "none", BveCoreShrinking::none)
-XORCLE_ENUM_VALUE(bve_core_shrinking, "repeat", BveCoreShrinking::repeat)
+              "stop BVE when fraction of changed clauses drops below this threshold")
 XORCLE_OPTION(bve, bve_gate_max_conflicts, Size, 100, 1, SIZE_MAX,
-              "the most conflicts one solve of a BVE gate search may take; a first solve\n"
-              "that reaches it finds no gate")
-XORCLE_OPTION(bve, bve_gate_max_table_cost, Size, 500000, 0, SIZE_MAX,
-              "the largest clauses^2 x max(1, 2^(rank - 6)) of a BVE gate search done by its\n"
-              "truth table; a dearer one goes to the gate solver")
-XORCLE_OPTION(bve, bve_gate_max_clause_share, Real, 0.1, 0.0, 1.0,
-              "the largest share of the present clauses a BVE try may touch and still search\n"
-              "for a gate; a try touching more resolves every pair")
-XORCLE_OPTION(bve, bve_root_equations, Bool, true, false, true,
-              "add the equations a one-sided BVE gate makes false at the root as unit clauses")
+              "maximum number of conflicts for BVE gate search")
+XORCLE_OPTION(bve, bve_gate_units, Bool, true, false, true,
+              "allow one-sided BVE gates to add units")
 
 // --- The implication graph --------------------------------------------------
 
 XORCLE_OPTION(always, implication_graph, Bool, true, false, true,
-              "add to the root trail the equations that hold on both sides of a vertex of\n"
-              "the implication graph of the width-2 clauses")
+              "form the implication graph of width-2 clauses to learn new units")
 XORCLE_GROUP(implication_graph, options.implication_graph, "--implication-graph=true")
 XORCLE_OPTION(implication_graph, implication_graph_cadence, Size, 1000, 1, SIZE_MAX,
-              "conflicts between implication graph runs, a due run forcing a restart\n"
-              "with replay")
+              "conflicts between implication graph runs")
 XORCLE_OPTION(implication_graph, implication_graph_min_new_clauses, Size, 50, 0, SIZE_MAX,
-              "width-2 clauses new since the last implication graph run below which a due\n"
-              "run is skipped; 0 skips none")
+              "skip implication graph run if fewer than this many new width-2 clauses have "
+              "been learned")
 XORCLE_OPTION(implication_graph, implication_graph_max_pairs, Size, 10000, 1, SIZE_MAX,
-              "vertex pairs one implication graph run examines, sampled uniformly from\n"
-              "the pairs with an out-arc on either side")
+              "number of vertex pairs that one implication graph run searches")
 XORCLE_OPTION(implication_graph, implication_graph_max_descendants, Size, 100, 1, SIZE_MAX,
-              "descendants one side's search keeps, whole distance levels first and a\n"
-              "uniform sample of the level that would overrun this")
+              "number of descendants searched in implication graph")
 
 // --- Vivification ----------------------------------------------------------
 
 XORCLE_OPTION(always, vivify, Bool, true, false, true,
-              "vivification: at root visits, narrow clauses by assuming rows of their linear\n"
-              "negation")
+              "strengthen clauses by attempting unit propagation from subsets of their negation")
 XORCLE_GROUP(vivify, options.vivify, "--vivify=true")
-XORCLE_OPTION(vivify, vivify_rounds, Size, 2, 1, SIZE_MAX,
-              "random bases a vivification pass tries on a clause, each on the clause as the\n"
-              "last left it; a pass walks the clauses of width 3 and up in one uniform order\n"
-              "and tries a clause of width w with probability 2^(3 - w)")
+XORCLE_OPTION(vivify, vivify_bases, Size, 2, 1, SIZE_MAX,
+              "number of different random bases tried on a clause during vivification")
 XORCLE_OPTION(vivify, vivify_cadence, Size, 1000, 0, SIZE_MAX,
-              "conflicts after a vivification pass before the next may run")
+              "conflicts between vivification passes")
 XORCLE_OPTION(vivify, vivify_effort, Real, 0.01, 0.0, INFINITY,
-              "rows a vivification pass may assume and imply, per row the search decided or\n"
-              "implied since the last pass")
+              "vivification effort relative to amount of main search work")
 
 // --- The subsumption pass ---------------------------------------------------
 
 XORCLE_OPTION(always, inproc_subsume_strengthen, Bool, false, false, true,
-              "a subsumption and strengthening pass at root visits: a clause whose span\n"
-              "holds another's is deleted, and one whose span plus 0 = 1 holds another's\n"
-              "loses a row; a pass due above the root forces a restart with replay")
+              "detect subsumption and strengthening as inprocessing")
 XORCLE_GROUP(inproc_subsume_strengthen, options.inproc_subsume_strengthen,
              "--inproc-subsume-strengthen=true")
 XORCLE_OPTION(inproc_subsume_strengthen, inproc_subsume_strengthen_cadence, Size, 1000, 0,
               SIZE_MAX,
-              "conflicts after a subsumption pass before the next may run")
+              "conflicts between subsumption/strengthening passes")
 XORCLE_OPTION(inproc_subsume_strengthen, inproc_subsume_strengthen_effort, Real, 10.0, 0.0,
               INFINITY,
-              "rows a subsumption pass may read in its checks, per row the search decided\n"
-              "or implied since the last pass; it visits the narrower clauses narrowest\n"
-              "first")
+              "subsumption/strengthening effort relative to amount of main search work")
 
 // --- Output ----------------------------------------------------------------
 
-XORCLE_OPTION(always, proof, Text, "", "", "", "write an LRUP(⊕) proof here")
-XORCLE_GROUP(proof, !options.proof.empty(), "--proof=PATH")
+XORCLE_OPTION(always, proof, Text, "", "", "", "output path for LRUP(⊕) proof")
+XORCLE_GROUP(proof, !options.proof.empty(), "--proof set")
 XORCLE_ENUM_OPTION(proof, proof_format, ProofFormat, ProofFormat::binary,
-                   "how the proof is written")
+                   "format of the proof file")
 XORCLE_ENUM_VALUE(proof_format, "binary", ProofFormat::binary)
 XORCLE_ENUM_VALUE(proof_format, "text", ProofFormat::text)
 XORCLE_OPTION(always, stats_file, Text, "", "", "",
-              "append CSV statistics here instead of printing them")
-XORCLE_GROUP(console, options.stats_file.empty(),
-             "statistics on the console, which --stats-file replaces")
+              "output path for CSV statistics, suppresses CLI statistics")
+XORCLE_GROUP(console, options.stats_file.empty(), "--stats-file unset")
 XORCLE_GROUP(report_columns, options.stats_file.empty() && options.report_cadence != 0,
-             "statistics on the console, which --stats-file replaces, and --report-cadence=N "
-             "with N above zero")
+             "--stats-file unset and --report-cadence > 0")
 XORCLE_OPTION(console, report_cadence, Size, 100, 0, SIZE_MAX,
               "conflicts between progress report lines (0 = off)")
-XORCLE_OPTION(report_columns, report, Name, "default", "", "",
+XORCLE_OPTION(report_columns, report_type, Name, "default", "", "",
               "progress columns (default/search/deletion/propagation/all, comma-joined)")
 
 #undef XORCLE_OPTION

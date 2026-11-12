@@ -19,6 +19,14 @@
 
 namespace xorcle {
 
+namespace {
+
+/// @brief Learned equations over which the attempt budget falls by a factor of `e` when none
+/// of them is missed: 2000.
+constexpr std::size_t attempt_budget_window = 2000;
+
+} // namespace
+
 #ifndef NDEBUG
 namespace {
 
@@ -324,7 +332,6 @@ std::size_t Solver::attempt_budget() {
 std::optional<Solution> Solver::handle_conflict() {
     ++stats_.num_conflicts;
     if (replay_.is_pending()) {
-        stats_.num_replays_ended_by_conflict += replay_.has_replayed ? 1U : 0U;
         end_replay();
     }
     assert(trail_.level() == conflict_level_ &&
@@ -366,8 +373,7 @@ void Solver::handle_non_root_conflict() {
                  .has_value()) &&
            "a kept clause has the learned clause's span after propagation to a fixed point");
     if (minimize_) {
-        stats_.minimize_width_before += learned.width_before_minimize;
-        stats_.minimize_width_after += learned.clause.rows();
+        minimize_width_removed_ += learned.width_before_minimize - learned.clause.rows();
         stats_.num_minimized_clauses +=
             learned.clause.rows() < learned.width_before_minimize ? 1U : 0U;
     }
@@ -455,8 +461,6 @@ void Solver::handle_non_root_conflict() {
     }
 
     const AssertingClauseInfo learned_info{.lbd = learned.lbd, .removed_levels = removed_levels};
-    stats_.learned_width_1 += learned.clause.rows() == 1 ? 1U : 0U;
-    stats_.learned_width_2 += learned.clause.rows() == 2 ? 1U : 0U;
     add_asserting_clause_to_database(std::move(learned.clause), learned_info);
     ++num_active_clauses_;
     equivalent_clauses_.enter(new_clause_id, learned_key);
@@ -536,7 +540,7 @@ void Solver::handle_non_root_conflict() {
             continue;
         }
         remove_clause(record.clause_id);
-        ++stats_.num_subsumed_clauses;
+        ++stats_.num_otf_subsumed_clauses;
     }
     assert(debug_no_two_clauses_share_a_span() && "two active clauses have one span");
 }
@@ -847,8 +851,6 @@ ProgressSnapshot Solver::progress_snapshot() const {
                                             sum_trail_length_at_last_report_),
         .remaining_vars = active_num_vars() - trail_.rows_at_level(0),
         .decisions = decisions_->counters().decisions,
-        .decision_level = trail_.level(),
-        .trail_length = trail_.span().rows(),
         .num_restarts = stats_.num_restarts,
         .num_deleted_clauses = stats_.num_deleted_clauses,
         .num_attempt_props = propagation_counters_.num_attempt_props,
@@ -957,7 +959,6 @@ void Solver::apply_substitution(SubstitutionPlan plan) {
     dropped_col_idxs_.or_with(trail_.span().pivot_col_idxs());
     num_dropped_vars_ += trail_.span().rows();
     stats_.num_dropped_vars += trail_.span().rows();
-    stats_.num_substituted_clauses += plan.rewritten_clause_ids.size();
     compaction_history_.push_back(std::move(plan.history_entry));
 
     // Its arcs are backed by clauses that may since have been rewritten.
@@ -978,7 +979,6 @@ void Solver::apply_substitution(SubstitutionPlan plan) {
     if (replay_.is_pending()) {
         replay_.decisions.substitute(root_trail.span());
     }
-    ++stats_.num_compactions;
 }
 
 void Solver::maybe_renumber() {
@@ -1026,7 +1026,6 @@ void Solver::apply_renumbering() {
         replay_.decisions.renumber(transform);
     }
     compaction_history_.back().renumbering = transform;
-    ++stats_.num_renumberings;
     phase_timer_.switch_to(outer);
 }
 
@@ -1086,7 +1085,6 @@ void Solver::apply_deletion(const DeletionPlan& plan) {
         deactivate_clause(clause_id);
     }
 
-    ++stats_.num_deletion_passes;
     stats_.num_deleted_clauses += plan.deleted.size();
 }
 
@@ -1104,30 +1102,18 @@ bool Solver::implication_graph_is_due() {
     if (num_new >= implication_graph_config_->min_new_clauses) {
         return true;
     }
-    count_implication_graph_point();
     ++stats_.implication_graph_skipped_runs;
     implication_graph_run_is_owed_ = false;
     conflicts_at_last_implication_graph_point_ = stats_.num_conflicts;
     return false;
 }
 
-void Solver::count_implication_graph_point() {
-    const std::size_t num_new = clause_database_.num_clauses_reaching_width_2() -
-                                width_2_clauses_at_last_implication_graph_run_;
-    stats_.implication_graph_new_width_2_clauses += num_new;
-    std::size_t& points = num_new == 0    ? stats_.implication_graph_points_new_0
-                          : num_new < 10  ? stats_.implication_graph_points_new_1_9
-                          : num_new < 50  ? stats_.implication_graph_points_new_10_49
-                          : num_new < 100 ? stats_.implication_graph_points_new_50_99
-                                          : stats_.implication_graph_points_new_100;
-    ++points;
-}
-
 void Solver::run_implication_graph() {
     assert(trail_.level() == 0 && trail_.span().rows() == 0 &&
            "the implication graph runs on a substituted root");
     phase_timer_.switch_to(SolverPhase::implication_graph);
-    count_implication_graph_point();
+    implication_graph_new_width_2_clauses_ +=
+        clause_database_.num_clauses_reaching_width_2() - width_2_clauses_at_last_implication_graph_run_;
     implication_graph_run_is_owed_ = false;
     conflicts_at_last_implication_graph_point_ = stats_.num_conflicts;
     width_2_clauses_at_last_implication_graph_run_ =
@@ -1139,7 +1125,7 @@ void Solver::run_implication_graph() {
     const std::vector<Equation>& units = summary.units;
 
     ++stats_.implication_graph_runs;
-    stats_.implication_graph_pairs_examined += summary.pairs_examined;
+    implication_graph_pairs_examined_ += summary.pairs_examined;
     if (units.empty()) {
         return;
     }
@@ -1163,15 +1149,13 @@ bool Solver::run_bve() {
 
     BvePlan plan = build_bve_plan(clause_database_.clauses(), clause_database_.active_clause_ids(),
                                   active_num_vars_, repr_, *bve_config_, proof_writer_ != nullptr, bve_rng_);
-    if (stats_.bve_passes++ == 0) {
-        stats_.bve_clauses_before = plan.counters.clauses_before;
-        stats_.bve_width_before = plan.counters.width_before;
-    }
+    ++stats_.bve_passes;
     stats_.bve_eliminated += plan.counters.num_eliminated;
-    stats_.bve_clauses_after = plan.counters.clauses_after;
-    stats_.bve_width_after = plan.counters.width_after;
-    stats_.bve_gate_searches += plan.counters.num_gate_searches;
-    stats_.bve_gates += plan.counters.num_gates;
+    stats_.bve_clause_count_difference += static_cast<std::int64_t>(plan.counters.clauses_after) -
+                                          static_cast<std::int64_t>(plan.counters.clauses_before);
+    stats_.bve_total_width_difference += static_cast<std::int64_t>(plan.counters.width_after) -
+                                         static_cast<std::int64_t>(plan.counters.width_before);
+    stats_.bve_gate_successes += plan.counters.num_eliminated_by_gate;
     stats_.bve_root_equations += plan.counters.num_root_equations;
     stats_.bve_gate_time_s += plan.counters.gate_time_s;
     // Another BVE pass follows one that removed at least `success_rate` of the clauses it read.
@@ -1264,7 +1248,6 @@ bool Solver::run_bve() {
         implication_graph_->reconfigure(active_num_vars_);
     }
     did_complete_sweep_ = false;
-    ++stats_.num_compactions;
 
     selector_->update_with_substitution(rewritten_clause_ids, dropped_col_idxs_, trail_);
     decisions_->update_with_substitution(trail_.span(), dropped_col_idxs_,
@@ -1489,6 +1472,8 @@ Solution Solver::search() {
 #ifndef NDEBUG
     has_solved_ = true;
 #endif
+    width_1_clauses_at_input_ = clause_database_.num_clauses_reaching_width_1();
+    width_2_clauses_at_input_ = clause_database_.num_clauses_reaching_width_2();
     assert(active_clause_count_is_consistent() &&
            "the starting clauses left the live-clause count wrong");
 
@@ -1500,7 +1485,7 @@ Solution Solver::search() {
     }
 
     if (attempt_budget_config_.has_value()) {
-        budget_.emplace(attempt_budget_config_->miss_rate, attempt_budget_config_->window,
+        budget_.emplace(attempt_budget_config_->miss_rate, attempt_budget_window,
                         std::max<std::size_t>(1, clause_database_.num_clauses()));
     }
 
@@ -1583,7 +1568,6 @@ Solution Solver::complete_satisfying_assignment() {
     RowSpace complete = trail_.span();
     Equation unit(repr_, active_num_vars_);
     Equation reduced(repr_, active_num_vars_);
-    std::size_t num_filled = 0;
     for (std::size_t var = 0; var < active_num_vars_; ++var) {
         unit.assign_bits(std::span<const std::size_t>(&var, 1));
         reduced.assign_from(unit);
@@ -1592,10 +1576,8 @@ Solution Solver::complete_satisfying_assignment() {
         // leads too, and takes its value from the compaction history instead.
         if (complete.partial_reduce(reduced).kind == ReduceResult::Kind::leading) {
             complete.add_row(unit);
-            num_filled += dropped_col_idxs_.test(var) ? 0U : 1U;
         }
     }
-    decisions_->note_filled_decisions(num_filled);
     assert(complete.rows() == active_num_vars_ && "the completed trail is not a total assignment");
     assert(every_active_clause_is_satisfied(complete) &&
            "the model reported as satisfying falsifies an active clause");
@@ -1619,6 +1601,28 @@ RunStats Solver::stats() const {
     stats.unused_vars = original_num_vars_ - used_vars_.size();
     stats.active_vars = active_num_vars();
     stats.clauses_in_database = num_active_clauses();
+    stats.learned_width_1 =
+        clause_database_.num_clauses_reaching_width_1() - width_1_clauses_at_input_;
+    stats.learned_width_2 =
+        clause_database_.num_clauses_reaching_width_2() - width_2_clauses_at_input_;
+    if (stats.num_minimized_clauses != 0) {
+        stats.minimize_average_width_removed = static_cast<double>(minimize_width_removed_) /
+                                               static_cast<double>(stats.num_minimized_clauses);
+    }
+    if (stats.vivify_narrowed != 0) {
+        stats.vivify_average_width_removed = static_cast<double>(vivify_width_removed_) /
+                                             static_cast<double>(stats.vivify_narrowed);
+    }
+    if (stats.implication_graph_units_fed != 0) {
+        stats.implication_graph_pairs_per_unit =
+            static_cast<double>(implication_graph_pairs_examined_) /
+            static_cast<double>(stats.implication_graph_units_fed);
+    }
+    if (stats.implication_graph_runs != 0) {
+        stats.implication_graph_average_new_width_2_clauses =
+            static_cast<double>(implication_graph_new_width_2_clauses_) /
+            static_cast<double>(stats.implication_graph_runs);
+    }
     stats.average_learned_lbd = num_asserting_clauses_ == 0
                                     ? 0.0
                                     : static_cast<double>(sum_learned_lbd_) /

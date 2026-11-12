@@ -124,7 +124,6 @@ void Solver::run_subsume_pass() {
     phase_timer_.switch_to(SolverPhase::subsume_pass);
     conflicts_at_last_subsume_pass_ = stats_.num_conflicts;
     subsume_pass_has_run_ = true;
-    ++stats_.subsume_pass_passes;
     const std::size_t rows = search_rows();
     // Rows read in the checks.
     const double budget =
@@ -189,12 +188,13 @@ void Solver::run_subsume_pass() {
     // Act on a hit of `narrower_id` on `wider_id`.
     const auto apply = [&](const ClauseId narrower_id, const ClauseId wider_id,
                            const PairRelation relation) {
-        ++stats_.num_subsumed_clauses;
         if (relation == PairRelation::subsumes) {
+            ++stats_.num_inproc_subsumed_clauses;
             redirect_clause_state(wider_id, narrower_id);
             remove_clause(wider_id);
             return;
         }
+        ++stats_.num_inproc_strengthened_clauses;
         Clause strengthened =
             check.strengthened(clause_database_.clause(wider_id), subsume_pass_rng_);
         std::vector<ClauseId> hints;

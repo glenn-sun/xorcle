@@ -101,8 +101,6 @@ struct DecisionResult {
 
 struct DecisionCounters {
     std::size_t decisions = 0;
-    /// @brief Variables the solver assigned when completing a model.
-    std::size_t fallback_decisions = 0;
 };
 
 
@@ -223,10 +221,6 @@ public:
     const DecisionCounters& counters() const noexcept { return counters_; }
 
     void add_to_stats(RunStats& stats) const;
-
-    /// @brief Record decisions the solver made itself, completing a model the
-    /// clauses no longer constrain.
-    void note_filled_decisions(std::size_t num_decisions);
 
     std::size_t num_vars() const noexcept { return num_vars_; }
     EquationRepr repr() const noexcept { return repr_; }

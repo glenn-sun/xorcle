@@ -58,7 +58,6 @@ public:
     /// @brief Count a conflict, and return whether it ended the step.
     bool update_with_conflict() noexcept;
 
-    std::size_t step_idx() const noexcept { return step_idx_; }
     PhaseSaving source() const noexcept { return rotation_steps[step_idx_]; }
 
 private:
@@ -70,8 +69,6 @@ private:
 
 struct PhaseSavingCounters {
     std::size_t open_sides = 0; ///< Decisions whose side is left to `DecisionPhase`.
-    /// @brief Decisions under each of `rotation_steps`.
-    std::array<std::size_t, rotation_steps.size()> rotation_step_decisions{};
 };
 
 /// @brief The trails phase saving keeps, and the choice of a decision's space by them.

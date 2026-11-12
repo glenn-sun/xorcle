@@ -123,8 +123,13 @@ public:
         return num_active_clauses_by_width_;
     }
 
-    /// @brief Clauses that entered the database at width 2 or were narrowed to it,
+    /// @brief Clauses that entered the database at width 1 or were narrowed to it,
     /// over the whole solve.
+    std::size_t num_clauses_reaching_width_1() const noexcept {
+        return num_clauses_reaching_width_1_;
+    }
+
+    /// @brief As `num_clauses_reaching_width_1()`, of width 2.
     std::size_t num_clauses_reaching_width_2() const noexcept {
         return num_clauses_reaching_width_2_;
     }
@@ -141,8 +146,9 @@ public:
     /// @brief Add a learned clause of LBD @p lbd under the next id, which it returns.
     ClauseId add_asserting_clause(Clause clause, std::size_t lbd);
 
-    /// @brief Change the clause at @p id in place; a width-2 clause counts in
-    /// `num_clauses_reaching_width_2()` only if it was another width before.
+    /// @brief Change the clause at @p id in place; a width-1 or width-2 clause counts
+    /// in `num_clauses_reaching_width_1()` or `num_clauses_reaching_width_2()` only if
+    /// it was another width before.
     void replace_clause(ClauseId id, Clause clause);
 
     /// @brief Put a new clause at the id of an active clause it takes the place of,
@@ -215,6 +221,7 @@ private:
     std::vector<ClauseId> listed_clause_ids_;
     std::size_t num_inactive_listed_ = 0; ///< Inactive ids still in `listed_clause_ids_`.
     std::vector<std::size_t> num_active_clauses_by_width_;
+    std::size_t num_clauses_reaching_width_1_ = 0;
     std::size_t num_clauses_reaching_width_2_ = 0;
 
     std::vector<std::uint8_t> clause_spans_eq_false_;

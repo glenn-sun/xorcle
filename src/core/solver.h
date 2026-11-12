@@ -48,10 +48,6 @@ struct PropagationConfig {
     /// @brief The fraction of propagated equations the attempt budget steers
     /// toward learning out of order.
     double miss_rate;
-
-    /// @brief Learned equations over which the attempt budget falls by a factor
-    /// of `e` when none of them is missed.
-    std::size_t window;
 };
 
 /// @brief When and how vivification narrows clauses.
@@ -413,9 +409,6 @@ private:
     /// and is not due.
     bool implication_graph_is_due();
 
-    /// @brief Count a point a run was due at, skipped or not.
-    void count_implication_graph_point();
-
     /// @brief Read the implication graph and add the units it finds to the root.
     /// @pre The trail is at the root, quiescent and empty.
     void run_implication_graph();
@@ -742,6 +735,12 @@ private:
     /// backjumps, for the means the progress line reports over an interval.
     std::size_t sum_conflict_level_ = 0;
     std::size_t sum_conflict_trail_length_ = 0;
+    /// @brief The database's clauses reaching width 1 and 2 before the search, which are
+    /// the starting clauses of those widths; the rest are learned.
+    std::size_t width_1_clauses_at_input_ = 0;
+    std::size_t width_2_clauses_at_input_ = 0;
+    /// @brief Summed over the learned clauses: the rows minimization took off.
+    std::size_t minimize_width_removed_ = 0;
 
     ProgressConfig progress_;
 
@@ -776,6 +775,9 @@ private:
     /// counted at the last run.
     std::size_t conflicts_at_last_implication_graph_point_ = 0;
     std::size_t width_2_clauses_at_last_implication_graph_run_ = 0;
+    /// @brief Summed over the runs, and over the points a run was due.
+    std::size_t implication_graph_pairs_examined_ = 0;
+    std::size_t implication_graph_new_width_2_clauses_ = 0;
 
     std::optional<VivifyConfig> vivify_;
     Rng vivify_rng_;
@@ -784,6 +786,7 @@ private:
     std::size_t search_rows_at_last_vivify_pass_ = 0;
     bool vivify_has_run_ = false;
     std::size_t num_vivify_rows_assumed_ = 0; ///< Over all passes, for their budgets.
+    std::size_t vivify_width_removed_ = 0; ///< Summed over the clauses vivified.
 
     /// @brief What a forced restart saved for its replay.
     struct Replay {
@@ -799,7 +802,6 @@ private:
         std::size_t next_level = 0; ///< The position of the next level in the saved list.
         /// @brief From the forced restart to a conflict or the step after the last level.
         bool under_way = false;
-        bool has_replayed = false; ///< Whether the first decision's step has run.
 
         bool is_pending() const noexcept { return under_way; }
 

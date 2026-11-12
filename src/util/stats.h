@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -17,7 +18,7 @@ enum class SolveResult {
 
 /// @brief Which part of the run a statistic belongs to.
 ///
-/// `restart`, `stabilize`, `phase_saving`, `minimize`, `subsume`, `vivify`, `subsume_pass`, `deletion`,
+/// `restart`, `stabilize`, `phase_saving`, `minimize`, `otf_subsume`, `vivify`, `subsume_pass`, `deletion`,
 /// `propagate_budget`, `bve` and `implication_graph` print only when the run had
 /// something to say; `RunStats::reports` decides. The CSV writes every field whatever the section
 /// says, so its schema does not move with the options.
@@ -35,7 +36,7 @@ enum class StatsSection {
     clauses,
     phase_saving,
     minimize,
-    subsume,
+    otf_subsume,
     vivify,
     subsume_pass,
     deletion,
@@ -49,7 +50,9 @@ enum class StatsSection {
 /// @brief The value type a `XORCLE_STAT` kind tag stands for.
 struct StatKind {
     struct Count {};
+    struct SignedCount {};
     struct Real {};
+    struct Average {};
 };
 
 template <typename Kind>
@@ -57,10 +60,22 @@ struct StatValue;
 template <>
 struct StatValue<StatKind::Count> {
     using type = std::size_t;
+    static constexpr type initial = 0;
+};
+template <>
+struct StatValue<StatKind::SignedCount> {
+    using type = std::int64_t;
+    static constexpr type initial = 0;
 };
 template <>
 struct StatValue<StatKind::Real> {
     using type = double;
+    static constexpr type initial = 0.0;
+};
+template <>
+struct StatValue<StatKind::Average> {
+    using type = std::optional<double>;
+    static constexpr type initial = std::nullopt;
 };
 
 /// @brief One option's effective value, as the statistics report it.
@@ -91,7 +106,7 @@ struct RunStats {
     std::optional<IndexSet> sat_assignment;
 
 #define XORCLE_STAT(section, kind, name, csv_name, label)                                          \
-    StatValue<StatKind::kind>::type name = {};
+    StatValue<StatKind::kind>::type name = StatValue<StatKind::kind>::initial;
 #include "util/stats_fields.inc"
 
     /// @brief Whether the run had anything to report from @p section.

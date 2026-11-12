@@ -127,7 +127,6 @@ enum class Visit { quiet, propagated, conflict };
 struct SolveResult {
     std::optional<std::vector<ClauseIdx>> core;
     GateRefutation refutation;
-    bool capped;
 };
 
 class GateSolver {
@@ -174,13 +173,13 @@ public:
                     return root_core(conflicting);
                 }
                 if (num_conflicts == max_conflicts_) {
-                    return {.core = std::nullopt, .refutation = {}, .capped = true};
+                    return {.core = std::nullopt, .refutation = {}};
                 }
                 learn(conflicting);
                 continue;
             }
             if (!decide()) {
-                return {.core = std::nullopt, .refutation = {}, .capped = false};
+                return {.core = std::nullopt, .refutation = {}};
             }
         }
     }
@@ -473,7 +472,7 @@ private:
             }
         }
         std::ranges::reverse(used);
-        return {.core = std::move(core), .refutation = refutation_of(used), .capped = false};
+        return {.core = std::move(core), .refutation = refutation_of(used)};
     }
 
     /// @brief The lemmas the empty clause resolved from @p reasons needs, in the order learned.
@@ -584,8 +583,7 @@ private:
 } // namespace
 
 GateSearch search_gate(const std::vector<std::vector<DenseGF2Vector>>& clauses,
-                       const std::size_t num_bits, const BveCoreShrinking shrinking,
-                       const std::size_t max_conflicts, Rng& rng) {
+                       const std::size_t num_bits, const std::size_t max_conflicts, Rng& rng) {
     assert(num_bits >= 1 && max_conflicts >= 1 && "a gate search over no bits or with no conflicts");
     GateSolver solver(clauses, num_bits, max_conflicts, rng);
     GateSearch search;
@@ -597,23 +595,8 @@ GateSearch search_gate(const std::vector<std::vector<DenseGF2Vector>>& clauses,
     if (!first.core.has_value()) {
         return search;
     }
-    std::vector<ClauseIdx> core = std::move(*first.core);
+    search.core = std::move(*first.core);
     search.refutation = std::move(first.refutation);
-    if (shrinking == BveCoreShrinking::repeat) {
-        while (true) {
-            SolveResult again = solver.solve(core);
-            if (again.capped) {
-                break;
-            }
-            assert(again.core.has_value() && "a core is satisfiable");
-            if (again.core->size() >= core.size()) {
-                break;
-            }
-            core = std::move(*again.core);
-            search.refutation = std::move(again.refutation);
-        }
-    }
-    search.core = std::move(core);
     return search;
 }
 
@@ -730,8 +713,7 @@ GateSearch GateTable::search(const std::vector<std::vector<DenseGF2Vector>>& cla
 
 GateSearch search_gate_hybrid(const std::vector<std::vector<DenseGF2Vector>>& clauses,
                               const std::size_t num_bits, const std::size_t max_table_cost,
-                              const BveCoreShrinking shrinking, const std::size_t max_conflicts,
-                              GateTable& table, Rng& rng) {
+                              const std::size_t max_conflicts, GateTable& table, Rng& rng) {
     assert(num_bits >= 1 && max_conflicts >= 1 && "a gate search over no bits or with no conflicts");
     const std::size_t rank = num_bits - 1;
     const std::size_t num_clauses = clauses.size();
@@ -745,7 +727,7 @@ GateSearch search_gate_hybrid(const std::vector<std::vector<DenseGF2Vector>>& cl
     if (by_table) {
         return table.search(clauses, num_bits, rng);
     }
-    return search_gate(clauses, num_bits, shrinking, max_conflicts, rng);
+    return search_gate(clauses, num_bits, max_conflicts, rng);
 }
 
 GateRefutation refute_gate(const std::vector<std::vector<DenseGF2Vector>>& clauses,
@@ -757,8 +739,7 @@ GateRefutation refute_gate(const std::vector<std::vector<DenseGF2Vector>>& claus
     for (const ClauseIdx idx : gate) {
         gate_clauses.push_back(clauses[idx]);
     }
-    GateSearch search = search_gate(gate_clauses, num_bits, BveCoreShrinking::none,
-                                    std::numeric_limits<std::size_t>::max(), rng);
+    GateSearch search = search_gate(gate_clauses, num_bits, std::numeric_limits<std::size_t>::max(), rng);
     assert(search.core.has_value() && "a gate is satisfiable");
     // From places among the gate's clauses to places among all of them.
     const auto remap = [&](std::vector<std::uint32_t>& reasons) {

@@ -70,6 +70,7 @@ void ClauseDatabase::replace_clause(ClauseId id, Clause clause) {
     if (clause_active_[id] != 0) {
         count_width(replaced.rows(), false);
         count_width(clauses_[id].rows(), true);
+        num_clauses_reaching_width_1_ += replaced.rows() != 1 && clauses_[id].rows() == 1 ? 1U : 0U;
         num_clauses_reaching_width_2_ += replaced.rows() != 2 && clauses_[id].rows() == 2 ? 1U : 0U;
     }
     if (clause_active_[id] != 0 && clause_entered_[id] != 0) {
@@ -82,8 +83,10 @@ void ClauseDatabase::replace_clause(ClauseId id, Clause clause) {
 
 void ClauseDatabase::replace_with_new_clause(const ClauseId id, Clause clause) {
     assert(is_clause_active(id) && "a new clause took the id of an inactive one");
+    const bool width_1_uncounted = clauses_[id].rows() == 1 && clause.rows() == 1;
     const bool width_2_uncounted = clauses_[id].rows() == 2 && clause.rows() == 2;
     replace_clause(id, std::move(clause));
+    num_clauses_reaching_width_1_ += width_1_uncounted ? 1U : 0U;
     num_clauses_reaching_width_2_ += width_2_uncounted ? 1U : 0U;
 }
 
@@ -284,6 +287,7 @@ ClauseId ClauseDatabase::add_clause(Clause clause) {
     const ClauseId id = clauses_.size();
     clause_spans_eq_false_.push_back(0);
     count_width(clause.rows(), true);
+    num_clauses_reaching_width_1_ += clause.rows() == 1 ? 1U : 0U;
     num_clauses_reaching_width_2_ += clause.rows() == 2 ? 1U : 0U;
     records_.push_back(ClauseRecord{.watches = ClauseWatches::first_rows(clause.rows())});
     clauses_.push_back(std::move(clause));

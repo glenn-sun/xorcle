@@ -44,7 +44,7 @@ std::string console_output(const RunStats& stats) {
 std::vector<ConfigEntry> sample_config() {
     return {
         ConfigEntry{"seed", "12345", false},
-        ConfigEntry{"csids_span", "plain", true},
+        ConfigEntry{"csids_intersection_allow_negation", "false", true},
         ConfigEntry{"restart", "none", true},
         ConfigEntry{"minimize", "true", true},
         ConfigEntry{"deletion", "false", false},
@@ -65,26 +65,20 @@ RunStats sample_stats() {
 
     stats.num_conflicts = 17;
     stats.decisions = 40;
-    stats.fallback_decisions = 3;
     stats.num_propagations = 200;
     stats.num_attempt_props = 900;
     stats.num_watch_updates = 83;
-    stats.num_compactions = 4;
+    stats.num_dropped_vars = 4;
 
     stats.num_restarts = 2;
     stats.num_canceled_restarts = 5;
-    stats.fast_lbd = 3.25;
-    stats.slow_lbd = 4.5;
 
-    stats.learned_clauses = 17;
     stats.clauses_in_database = 41;
     stats.average_learned_lbd = 2.5;
 
     stats.num_minimized_clauses = 11;
-    stats.minimize_width_before = 146;
-    stats.minimize_width_after = 90;
+    stats.minimize_average_width_removed = 5.25;
 
-    stats.num_deletion_passes = 4;
     stats.num_deleted_clauses = 6;
 
     stats.parse_time_s = 0.002;
@@ -158,7 +152,7 @@ TEST_CASE("stats: to_string(SolveResult) uses the CSV spellings") {
 
 TEST_CASE("stats: config_value reads the recorded configuration") {
     const RunStats stats = sample_stats();
-    CHECK(config_value(stats, "csids_span") == "plain");
+    CHECK(config_value(stats, "csids_intersection_allow_negation") == "false");
     CHECK(config_value(stats, "deletion") == "false");
     CHECK(config_value(stats, "absent") == "");
 }
@@ -202,49 +196,37 @@ TEST_CASE("ConsoleStatsWriter: the UNSAT format") {
         "c   deletion = false\n"
         "c Conflicts: 17\n"
         "c Decisions: 40\n"
-        "c Fallback decisions: 3\n"
         "c Propagations: 200\n"
         "c Attempted propagations: 900\n"
         "c Watch updates: 83\n"
-        "c Compactions: 4\n"
-        "c Compactions that renumbered: 0\n"
-        "c Variables dropped: 0\n"
-        "c Clauses rewritten by a compaction: 0\n"
+        "c Variables dropped: 4\n"
         "c Tautologies dropped at input: 0\n"
-        "c Equivalent clauses evicted: 0\n"
-        "c Forced restarts: 0\n"
-        "c Trail rows above the root forced restarts dropped: 0\n"
-        "c Decisions replayed: 0\n"
-        "c Saved decisions the trail implied at their replay: 0\n"
-        "c Saved decisions the trail refuted at their replay: 0\n"
-        "c Replays a conflict ended: 0\n"
-        "c Learned clauses: 17\n"
-        "c Clauses in database: 41\n"
+        "c Equivalent clauses removed: 0\n"
+        "c Replayed restarts for inprocessing: 0\n"
+        "c Propagations per conflict: 11.765\n"
+        "c Attempts per propagation, watch update, or conflict: 3.000\n"
+        "c Clauses in final database: 41\n"
         "c Average learned LBD: 2.500\n"
-        "c Learned width-1 clauses: 0\n"
-        "c Learned width-2 clauses: 0\n"
+        "c Learned units (all sources): 0\n"
+        "c Learned width-2 clauses (all sources): 0\n"
         "c Minimized clauses: 11\n"
-        "c Width before minimizing: 146\n"
-        "c Width after minimizing: 90\n"
+        "c Average width removed per minimized clause: 5.250\n"
         "c Parse time (s): 0.002\n"
         "c Solve time (s): 0.013\n"
-        "c Solve time by phase (s, share of the solve time):\n"
+        "c Conflicts per second: 1328.1\n"
+        "c Propagations per second: 15625.0\n"
+        "c Solve time by phase (s):\n"
         "c   Decisions: 0.000 (0.00%)\n"
         "c   Propagation: 0.000 (0.00%)\n"
         "c   Conflict analysis: 0.000 (0.00%)\n"
         "c   Deletion: 0.000 (0.00%)\n"
-        "c   Substitution and renumbering: 0.000 (0.00%)\n"
+        "c   Substitution and compaction: 0.000 (0.00%)\n"
         "c   BVE: 0.000 (0.00%)\n"
-        "c   Subsumption pass: 0.000 (0.00%)\n"
+        "c   Subsumption and strengthening: 0.000 (0.00%)\n"
         "c   Vivification: 0.000 (0.00%)\n"
         "c   Implication graph: 0.000 (0.00%)\n"
         "c   Replay: 0.000 (0.00%)\n"
         "c   Other: 0.000 (0.00%)\n"
-        "c Propagations per conflict: 11.765\n"
-        "c Attempts per propagation, watch update or conflict: 3.000\n"
-        "c Fallback decision rate: 7.50%\n"
-        "c Conflicts per second: 1328.1\n"
-        "c Propagations per second: 15625.0\n"
         "s UNSATISFIABLE\n";
     CHECK(console_output(sample_stats()) == expected);
 }
@@ -264,19 +246,21 @@ TEST_CASE("ConsoleStatsWriter: the solve time by phase, each with its share") {
     stats.replay_time_s = 0.02;
     stats.other_time_s = 0.01;
     CHECK(console_output(stats).find("c Solve time (s): 2.000\n"
-                                     "c Solve time by phase (s, share of the solve time):\n"
+                                     "c Conflicts per second: 8.5\n"
+                                     "c Propagations per second: 100.0\n"
+                                     "c Solve time by phase (s):\n"
                                      "c   Decisions: 0.250 (12.50%)\n"
                                      "c   Propagation: 1.200 (60.00%)\n"
                                      "c   Conflict analysis: 0.400 (20.00%)\n"
                                      "c   Deletion: 0.010 (0.50%)\n"
-                                     "c   Substitution and renumbering: 0.020 (1.00%)\n"
+                                     "c   Substitution and compaction: 0.020 (1.00%)\n"
                                      "c   BVE: 0.030 (1.50%)\n"
-                                     "c   Subsumption pass: 0.004 (0.20%)\n"
+                                     "c   Subsumption and strengthening: 0.004 (0.20%)\n"
                                      "c   Vivification: 0.050 (2.50%)\n"
                                      "c   Implication graph: 0.006 (0.30%)\n"
                                      "c   Replay: 0.020 (1.00%)\n"
                                      "c   Other: 0.010 (0.50%)\n"
-                                     "c Propagations per conflict:") != std::string::npos);
+                                     "s UNSATISFIABLE\n") != std::string::npos);
 
     // With no solve time there is no share to give.
     stats.solve_time_s = 0.0;
@@ -307,7 +291,7 @@ TEST_CASE("CsvStatsWriter: the solve time by phase has a column per phase") {
     CHECK(value("deletion_time_s") == "0");
     CHECK(value("substitution_time_s") == "0");
     CHECK(value("bve_time_s") == "0");
-    CHECK(value("subsume_pass_time_s") == "0");
+    CHECK(value("inproc_subsume_strengthen_time_s") == "0");
     CHECK(value("vivify_time_s") == "0");
     CHECK(value("implication_graph_time_s") == "0");
     CHECK(value("replay_time_s") == "0");
@@ -325,12 +309,10 @@ TEST_CASE("ConsoleStatsWriter: a run at every default says so in one line") {
 
 TEST_CASE("ConsoleStatsWriter: the deletion lines appear only when it ran") {
     RunStats stats = sample_stats();
-    CHECK(console_output(stats).find("c Deletion passes:") == std::string::npos);
+    CHECK(console_output(stats).find("c Deleted clauses:") == std::string::npos);
 
     stats.config = {ConfigEntry{"deletion", "true", true}};
-    const std::string output = console_output(stats);
-    CHECK(output.find("c Deletion passes: 4\n"
-                      "c Deleted clauses: 6\n") != std::string::npos);
+    CHECK(console_output(stats).find("c Deleted clauses: 6\n") != std::string::npos);
 }
 
 TEST_CASE("ConsoleStatsWriter: the restart lines appear only under a schedule") {
@@ -340,9 +322,44 @@ TEST_CASE("ConsoleStatsWriter: the restart lines appear only under a schedule") 
     stats.config = {ConfigEntry{"restart", "lbd", false}};
     const std::string output = console_output(stats);
     CHECK(output.find("c Restarts: 2\n"
-                      "c Canceled restarts: 5\n"
-                      "c Fast LBD average: 3.250\n"
-                      "c Slow LBD average: 4.500\n") != std::string::npos);
+                      "c Restarts cancelled by long trails: 5\n"
+                      "c Clauses in final database:") != std::string::npos);
+}
+
+TEST_CASE("stats: an average with no denominator prints no line, and 0 in the CSV") {
+    RunStats stats = sample_stats();
+    stats.config = {ConfigEntry{"vivify", "true", true}};
+    stats.vivify_narrowed = 0;
+    CHECK(console_output(stats).find("c Clauses vivified: 0\n"
+                                     "c Parse time (s):") != std::string::npos);
+
+    stats.vivify_narrowed = 4;
+    stats.vivify_average_width_removed = 1.5;
+    CHECK(console_output(stats).find("c Clauses vivified: 4\n"
+                                     "c Average width removed per vivified clause: 1.500\n") !=
+          std::string::npos);
+
+    const TempFile temp;
+    {
+        CsvStatsWriter writer(temp.path());
+        writer.log(sample_stats());
+    }
+    const std::string csv = read_file(temp.path());
+    const std::vector<std::string> header = header_of(csv);
+    const std::vector<std::string> row = row_of(csv);
+    const auto it = std::find(header.begin(), header.end(), "vivify_average_width_removed");
+    REQUIRE(it != header.end());
+    CHECK(row[static_cast<std::size_t>(it - header.begin())] == "0");
+}
+
+TEST_CASE("stats: a difference prints its sign") {
+    RunStats stats = sample_stats();
+    stats.config = {ConfigEntry{"bve", "true", true}};
+    stats.bve_clause_count_difference = -3;
+    stats.bve_total_width_difference = 2;
+    CHECK(console_output(stats).find("c Difference in clause count after BVE: -3\n"
+                                     "c Difference in total width after BVE: 2\n") !=
+          std::string::npos);
 }
 
 TEST_CASE("ConsoleStatsWriter: zero denominators omit their ratio lines") {
@@ -352,8 +369,7 @@ TEST_CASE("ConsoleStatsWriter: zero denominators omit their ratio lines") {
 
     const std::string output = console_output(stats);
     for (const char* ratio : {"Propagations per conflict", "Attempts per propagation",
-                              "Fallback decision rate", "Conflicts per second",
-                              "Propagations per second"}) {
+                              "Conflicts per second", "Propagations per second"}) {
         CAPTURE(ratio);
         CHECK(output.find(ratio) == std::string::npos);
     }
@@ -449,12 +465,12 @@ TEST_CASE("CsvStatsWriter: the header names the configuration and every field") 
         return std::find(header.begin(), header.end(), name) - header.begin();
     };
     CHECK(row[static_cast<std::size_t>(column("num_vars"))] == "12");
-    CHECK(row[static_cast<std::size_t>(column("clauses_in_database"))] == "41");
+    CHECK(row[static_cast<std::size_t>(column("final_clauses"))] == "41");
     CHECK(row[static_cast<std::size_t>(column("average_learned_lbd"))] == "2.5");
-    CHECK(row[static_cast<std::size_t>(column("compactions"))] == "4");
+    CHECK(row[static_cast<std::size_t>(column("dropped_vars"))] == "4");
     // Written even though this run reported no deletion section on the console.
-    CHECK(row[static_cast<std::size_t>(column("deletion_passes"))] == "4");
-    CHECK(row[static_cast<std::size_t>(column("canceled_restarts"))] == "5");
+    CHECK(row[static_cast<std::size_t>(column("deleted_clauses"))] == "6");
+    CHECK(row[static_cast<std::size_t>(column("cancelled_restarts"))] == "5");
 }
 
 TEST_CASE("CsvStatsWriter: rows append under one header") {
@@ -486,6 +502,19 @@ TEST_CASE("CsvStatsWriter: a value carrying a comma is quoted") {
     stats.file = "a,file.xnf";
     writer.log(stats);
     CHECK(read_file(temp.path()).find("\"a,file.xnf\"") != std::string::npos);
+}
+
+TEST_CASE("CsvStatsWriter: a file with other columns is refused") {
+    const TempFile temp;
+    {
+        std::ofstream out(temp.path());
+        out << "run_id,something_else\n";
+    }
+    CsvStatsWriter writer(temp.path());
+    CHECK_THROWS_WITH(writer.log(sample_stats()),
+                      (temp.path() + " has columns this build does not write; give a new "
+                                     "--stats-file or remove it")
+                          .c_str());
 }
 
 } // namespace xorcle

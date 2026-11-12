@@ -1,6 +1,7 @@
 #include "io/dimacs.h"
 
 #include <algorithm>
+#include <cassert>
 #include <charconv>
 #include <cstddef>
 #include <fstream>
@@ -176,9 +177,7 @@ std::vector<std::size_t> parse_clause_token(std::string_view token, std::size_t 
 
     const bool rhs_is_zero = token.front() == '-';
     const std::string_view body = rhs_is_zero ? token.substr(1) : token;
-    if (body.empty()) {
-        fail(origin, line_number, "empty XOR expression in token: " + std::string{token});
-    }
+    assert(!body.empty() && "a token holding '+' left nothing after its leading '-'");
     if (body.contains('-')) {
         fail(origin, line_number, "'-' inside an XOR expression in token: " +
                                       std::string{token});
@@ -385,7 +384,7 @@ ParsedDimacs parse_dimacs(std::istream& input, EquationRepr repr, std::string_vi
                               std::to_string(header.num_clauses) + ", found " +
                               std::to_string(num_clauses);
         if (num_xor_lines != 0) {
-            message += ", of which " + std::to_string(num_xor_lines) + " are XOR lines";
+            message += ", including " + std::to_string(num_xor_lines) + " XOR lines";
         }
         fail(origin, 0, message);
     }

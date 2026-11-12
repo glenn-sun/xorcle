@@ -83,9 +83,6 @@ SavedTrails::SavedTrails(EquationRepr repr, std::size_t num_vars, const PhaseSav
 
 void SavedTrails::note_unconsulted_decision() {
     assert(!consults_trails() && "a decision a saved trail was consulted for is counted by narrow()");
-    if (mode_source() == PhaseSaving::rotate) {
-        ++counters_.rotation_step_decisions[rotation_->step_idx()];
-    }
     ++counters_.open_sides;
 }
 
@@ -235,9 +232,6 @@ void SavedTrails::narrow(RowSpace& space, std::span<const ClauseId> clause_ids,
     assert(!level_stamps.empty() && space.rows() > 0 && !holds_false(space) &&
            "phase saving narrows a nonempty space without 0 = 1, knowing the level stamps");
     assert(consults_trails() && "phase saving narrows only when a saved trail is consulted");
-    if (mode_source() == PhaseSaving::rotate) {
-        ++counters_.rotation_step_decisions[rotation_->step_idx()];
-    }
     Equation false_row = spare_rows_.copy_of(space.row(0));
     false_row.set_eq_false();
     space.add_row(std::move(false_row));

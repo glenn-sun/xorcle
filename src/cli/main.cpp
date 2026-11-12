@@ -106,8 +106,8 @@ RunStats run_once(const Options& options) {
     // statistics to a file reports nothing here: the file is the output then.
     std::unique_ptr<ConsoleProgressReporter> progress_reporter;
     if (options.report_cadence != 0 && options.stats_file.empty()) {
-        const std::optional<unsigned> groups = parse_progress_groups(options.report);
-        assert(groups.has_value() && "validate_options() should have checked --report");
+        const std::optional<unsigned> groups = parse_progress_groups(options.report_type);
+        assert(groups.has_value() && "validate_options() should have checked --report-type");
         progress_reporter = std::make_unique<ConsoleProgressReporter>(std::cout, *groups);
     }
 
@@ -144,7 +144,6 @@ RunStats run_once(const Options& options) {
     stats.result = solution.result;
     stats.sat_assignment = std::move(solution.assignment);
     stats.start_clauses = start_clauses;
-    stats.learned_clauses = solver->num_clauses() - start_clauses;
 
     stats.parse_time_s = parse_elapsed.count();
     stats.solve_time_s = elapsed.count();

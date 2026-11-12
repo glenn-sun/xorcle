@@ -40,8 +40,6 @@ LbdRestarts::should_restart_after_conflict(const ConflictSummary& conflict) {
 void
 LbdRestarts::add_to_stats(RunStats& stats) const {
     stats.num_canceled_restarts = num_canceled();
-    stats.fast_lbd = fast_lbd();
-    stats.slow_lbd = slow_lbd();
 }
 
 void

@@ -73,7 +73,6 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         procedure.update_with_resolved_clause(1);
         CHECK(procedure.make_decision(empty, clauses, active).equation.has_value());
         CHECK(procedure.decision_clause_hint() == std::optional<ClauseId>{1});
-        CHECK(procedure.counters().fallback_decisions == 0);
     }
 
     SUBCASE("a new asserting clause enters above every starting clause") {
@@ -211,10 +210,6 @@ TEST_CASE_TEMPLATE("csids: activity drives the clause choice", Tag, DenseTag, Sp
         CHECK_FALSE(fallback.make_decision(empty, no_clauses, no_active).equation.has_value());
         CHECK(fallback.decision_clause_hint() == std::nullopt);
         CHECK(fallback.counters().decisions == 0);
-
-        fallback.note_filled_decisions(4);
-        CHECK(fallback.counters().decisions == 4);
-        CHECK(fallback.counters().fallback_decisions == 4);
     }
 
     SUBCASE("reinitialize restores the sampling stream") {

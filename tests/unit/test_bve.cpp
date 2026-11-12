@@ -198,7 +198,7 @@ std::vector<Clause> paper_example(std::size_t num_vars) {
 
 TEST_CASE("bve: a variable defined by a gate is eliminated through the gate") {
     // y = a and b, read by two more clauses; y is variable 0.
-    constexpr std::size_t num_vars = 5;
+    constexpr std::size_t num_vars = 10;
     std::vector<Clause> clauses{
         clause_of(num_vars, {{{0}, false}, {{1}, true}}),
         clause_of(num_vars, {{{0}, false}, {{2}, true}}),
@@ -206,8 +206,17 @@ TEST_CASE("bve: a variable defined by a gate is eliminated through the gate") {
         clause_of(num_vars, {{{0}, true}, {{3}, true}}),
         clause_of(num_vars, {{{0}, false}, {{4}, true}})};
     // Seven sign patterns over each of three triples, which no flip set of the other variables touches
-    // without touching many clauses.
-    for (const auto& triple : std::vector<std::vector<std::size_t>>{{1, 2, 3}, {1, 2, 4}, {2, 3, 4}}) {
+    // without touching many clauses, and over every triple of variables 5 to 9, so that y's clauses
+    // are few enough among them for a gate search.
+    std::vector<std::vector<std::size_t>> triples{{1, 2, 3}, {1, 2, 4}, {2, 3, 4}};
+    for (std::size_t a = 5; a < num_vars; ++a) {
+        for (std::size_t b = a + 1; b < num_vars; ++b) {
+            for (std::size_t c = b + 1; c < num_vars; ++c) {
+                triples.push_back({a, b, c});
+            }
+        }
+    }
+    for (const std::vector<std::size_t>& triple : triples) {
         for (std::size_t signs = 1; signs < 8; ++signs) {
             clauses.push_back(clause_of(num_vars, {{{triple[0]}, (signs & 1U) != 0},
                                                    {{triple[1]}, (signs & 2U) != 0},
@@ -215,16 +224,13 @@ TEST_CASE("bve: a variable defined by a gate is eliminated through the gate") {
         }
     }
 
-    // y's clauses are more than the default share of these few.
-    BveConfig config = default_bve_config();
-    config.gate_max_clause_share = 1.0;
     for (Seed seed = 0; seed < num_seeds; ++seed) {
-        const BvePlan plan = plan_for(clauses, num_vars, config, seed);
+        const BvePlan plan = plan_for(clauses, num_vars, default_bve_config(), seed);
         const auto of_y = std::ranges::find_if(plan.eliminations, [](const Elimination& elimination) {
             return elimination.flip_set == std::vector<std::uint32_t>{0};
         });
         REQUIRE(of_y != plan.eliminations.end());
-        CHECK(plan.counters.num_gates > 0);
+        CHECK(plan.counters.num_eliminated_by_gate > 0);
         CHECK(of_y->removed_clauses.size() == 5);
         CHECK(plan.dropped_col_idxs.test(0));
         check_models(plan, clauses, num_vars);
@@ -324,7 +330,6 @@ TEST_CASE("bve: models are completed on random formulas, in the variables given 
         config.group_cap = 1 + below(4);
         config.max_refusals_in_a_row =
             std::array<std::size_t, 3>{std::numeric_limits<std::size_t>::max(), 1, 3}[below(3)];
-        config.gate_max_clause_share = std::array<double, 2>{1.0, config.gate_max_clause_share}[below(2)];
         const BvePlan plan = plan_for(clauses, num_vars, config, round);
         check_sparse_plan(plan, clauses, num_vars, config, round);
         num_eliminated += plan.eliminations.size();

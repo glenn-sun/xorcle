@@ -175,14 +175,17 @@ SolveResult run_and_check(const std::string& text, const std::vector<std::string
 
         const RunStats counters = solver->stats();
         tally.counters.num_conflicts += counters.num_conflicts;
-        tally.counters.num_compactions += counters.num_compactions;
-        tally.counters.num_deletion_passes += counters.num_deletion_passes;
-        tally.counters.num_subsumed_clauses += counters.num_subsumed_clauses;
+        tally.counters.num_dropped_vars += counters.num_dropped_vars;
+        tally.counters.num_deleted_clauses += counters.num_deleted_clauses;
+        tally.counters.num_otf_subsumed_clauses += counters.num_otf_subsumed_clauses;
+        tally.counters.num_inproc_subsumed_clauses += counters.num_inproc_subsumed_clauses;
+        tally.counters.num_inproc_strengthened_clauses += counters.num_inproc_strengthened_clauses;
         tally.counters.num_equivalent_clauses += counters.num_equivalent_clauses;
         tally.counters.num_restarts += counters.num_restarts;
         tally.counters.num_undone_decisions += counters.num_undone_decisions;
         tally.counters.implication_graph_units_fed += counters.implication_graph_units_fed;
-        tally.counters.subsume_pass_passes += counters.subsume_pass_passes;
+        tally.counters.subsume_pass_time_s += counters.subsume_pass_time_s;
+        tally.counters.deletion_time_s += counters.deletion_time_s;
     }
 
     REQUIRE(solution.result == expected.value_or(solution.result));
@@ -240,9 +243,9 @@ TEST_CASE("fuzz: past one word, the exact watchlist's answers check") {
     }
     CHECK(tally.sat > 0);
     CHECK(tally.unsat > 0);
-    CHECK(tally.counters.num_compactions > 0);
-    CHECK(tally.counters.num_deletion_passes > 0);
-    CHECK(tally.counters.num_subsumed_clauses > 0);
+    CHECK(tally.counters.num_dropped_vars > 0);
+    CHECK(tally.counters.num_deleted_clauses > 0);
+    CHECK(tally.counters.num_otf_subsumed_clauses > 0);
 }
 
 // Each configuration runs every instance, so a failure names both; the seeds
@@ -253,6 +256,8 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
         std::string name;
         std::vector<std::string> flags;
         std::size_t RunStats::*exercised = nullptr;
+        /// @brief Or the time of a pass that need change nothing to have run.
+        double RunStats::*exercised_time = nullptr;
     };
     // Deletion passes and the graph are due every few conflicts.
     const std::vector<std::string> often = {"--deletion-cadence-coefficient=0.1",
@@ -263,50 +268,48 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
     often_without_graph.emplace_back("--implication-graph=false");
     const std::vector<Configuration> configurations = {
         {"defaults", {}},
-        {"defaults, often", often, &RunStats::num_deletion_passes},
-        {"no graph, often", often_without_graph, &RunStats::num_deletion_passes},
+        {"defaults, often", often, nullptr, &RunStats::deletion_time_s},
+        {"no graph, often", often_without_graph, nullptr, &RunStats::deletion_time_s},
         {"cyclic, complete", {"--selection=cyclic", "--propagate-miss-rate=0"}},
-        {"cyclic, miss rate 0.05",
-         {"--selection=cyclic", "--propagate-window=4"}},
+        {"cyclic, miss rate 0.05", {"--selection=cyclic"}},
         {"sparse", {"--equation-repr=sparse"}},
         {"cyclic, sparse",
          {"--selection=cyclic", "--equation-repr=sparse", "--propagate-miss-rate=0.5",
-          "--propagate-window=1", "--csids-intersection-depth=8"},
-         &RunStats::num_undone_decisions},
+          "--csids-intersection-depth=8"}},
         {"luby",
          {"--restart=luby", "--restart-luby-unit=1"},
          &RunStats::num_restarts},
-        {"span plus-minus", {"--csids-span=plus_minus"}},
+        {"span plus-minus", {"--csids-intersection-allow-negation=true"}},
         {"span plus-minus, random side, no phase saving",
-         {"--csids-span=plus_minus", "--phase=random", "--phase-saving=none"}},
-        {"phase saving", {"--phase-saving=both", "--phase=random"}},
+         {"--csids-intersection-allow-negation=true", "--phase-default=random", "--phase-saving=none"}},
+        {"phase saving", {"--phase-saving=both", "--phase-default=random"}},
         {"phase saving, span plus-minus",
-         {"--phase-saving=both", "--phase=random", "--csids-span=plus_minus"}},
+         {"--phase-saving=both", "--phase-default=random", "--csids-intersection-allow-negation=true"}},
         {"phase saving, target reset often",
-         {"--phase-saving=both", "--phase=random", "--phase-saving-target-reset=10"}},
+         {"--phase-saving=both", "--phase-default=random", "--phase-saving-target-reset=10"}},
         {"phase saving, top clause alone",
-         {"--phase-saving=both", "--phase=random", "--csids-intersection-depth=1"}},
+         {"--phase-saving=both", "--phase-default=random", "--csids-intersection-depth=1"}},
         {"phase saving, luby restarts, no recent trail",
-         {"--phase-saving=target-only", "--phase=random", "--restart=luby"}},
+         {"--phase-saving=target-only", "--phase-default=random", "--restart=luby"}},
         {"phase saving, no target, sparse",
-         {"--phase-saving=recent-only", "--phase=random", "--selection=cyclic",
+         {"--phase-saving=recent-only", "--phase-default=random", "--selection=cyclic",
           "--equation-repr=sparse"}},
         {"phase saving, target reset every conflict",
-         {"--phase-saving=both", "--phase=random", "--phase-saving-target-reset=1"}},
-        {"phase rotation, short steps", {"--phase-saving=rotate", "--phase-rotate-interval=2"}},
+         {"--phase-saving=both", "--phase-default=random", "--phase-saving-target-reset=1"}},
+        {"phase rotation, short steps", {"--phase-saving=rotate", "--phase-rotate-starting-interval=2"}},
         {"phase rotation, span plus-minus",
-         {"--phase-saving=rotate", "--phase-rotate-interval=3", "--csids-span=plus_minus"}},
+         {"--phase-saving=rotate", "--phase-rotate-starting-interval=3", "--csids-intersection-allow-negation=true"}},
         {"phase saving, recent trail alone, falsify side", {"--phase-saving=recent-only"}},
         {"stable and focused modes, short phases", {"--stabilize=true", "--stabilize-interval=2"}},
         {"stable and focused modes under rotation",
          {"--stabilize=true", "--stabilize-interval=3", "--phase-saving=rotate",
-          "--phase-rotate-interval=2"}},
+          "--phase-rotate-starting-interval=2"}},
         {"stable and focused modes, luby restarts in stable mode",
          {"--stabilize=true", "--stabilize-interval=2", "--restart=luby", "--restart-luby-unit=2"}},
         {"stable and focused modes, both with LBD restarts, focused mode rotating",
          {"--stabilize=true", "--stabilize-interval=2", "--restart=lbd",
           "--restart-lbd-min-conflicts=3", "--phase-saving=both",
-          "--focused-phase-saving=rotate", "--phase-rotate-interval=2"}},
+          "--focused-phase-saving=rotate", "--phase-rotate-starting-interval=2"}},
         {"stable and focused modes, trail blocking, slow average 1000",
          {"--stabilize=true", "--stabilize-interval=1", "--focused-restart-lbd-slow=1000",
           "--focused-restart-lbd-min-conflicts=3", "--focused-restart-lbd-trail-ratio=1.4"}},
@@ -337,14 +340,17 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
         CHECK(tally.sat > 0);
         CHECK(tally.unsat > 0);
         CHECK(tally.counters.num_conflicts > 0);
-        CHECK(tally.counters.num_compactions > 0);
-        CHECK(tally.counters.num_subsumed_clauses > 0);
+        CHECK(tally.counters.num_dropped_vars > 0);
+        CHECK(tally.counters.num_otf_subsumed_clauses > 0);
         const bool graph_off = std::ranges::find(configuration.flags,
                                                  "--implication-graph=false") !=
                                configuration.flags.end();
         CHECK((tally.counters.implication_graph_units_fed > 0) != graph_off);
         if (configuration.exercised != nullptr) {
             CHECK(tally.counters.*configuration.exercised > 0);
+        }
+        if (configuration.exercised_time != nullptr) {
+            CHECK(tally.counters.*configuration.exercised_time > 0.0);
         }
         num_evictions += tally.counters.num_equivalent_clauses;
     }
@@ -364,11 +370,11 @@ TEST_CASE("fuzz: vivification leaves the verdict, the models and the proofs righ
         {"new or narrowed, two rounds",
          {"--vivify=true", "--vivify-cadence=0", "--vivify-effort=1000"}},
         {"four rounds, ten conflicts apart",
-         {"--vivify=true", "--vivify-cadence=10", "--vivify-rounds=4", "--vivify-effort=1000"}},
+         {"--vivify=true", "--vivify-cadence=10", "--vivify-bases=4", "--vivify-effort=1000"}},
         {"one round, a conflict apart",
-         {"--vivify=true", "--vivify-cadence=1", "--vivify-rounds=1", "--vivify-effort=1000"}},
+         {"--vivify=true", "--vivify-cadence=1", "--vivify-bases=1", "--vivify-effort=1000"}},
         {"forced restarts, one round, a conflict apart",
-         {"--vivify=true", "--vivify-cadence=0", "--vivify-rounds=1", "--vivify-effort=1000"}},
+         {"--vivify=true", "--vivify-cadence=0", "--vivify-bases=1", "--vivify-effort=1000"}},
         {"the default effort",
          {"--vivify=true", "--vivify-cadence=5"}},
     };
@@ -418,11 +424,9 @@ TEST_CASE("fuzz: vivification leaves the verdict, the models and the proofs righ
             }
             const RunStats counters = solver->stats();
             total.vivify_narrowed += counters.vivify_narrowed;
-            total.vivify_units += counters.vivify_units;
             total.num_equivalent_clauses += counters.num_equivalent_clauses;
         }
-        MESSAGE(arm.name << ": narrowed " << total.vivify_narrowed << ", units "
-                         << total.vivify_units << ", equivalent clauses "
+        MESSAGE(arm.name << ": narrowed " << total.vivify_narrowed << ", equivalent clauses "
                          << total.num_equivalent_clauses << ", sat " << num_sat << ", unsat "
                          << num_unsat);
         CHECK(num_sat > 0);
@@ -449,7 +453,7 @@ TEST_CASE("fuzz: the subsumption pass leaves every answer right and checked") {
           "--inproc-subsume-strengthen-effort=1000000"}},
         {"cyclic with a miss rate, sparse",
          {"--inproc-subsume-strengthen=true", "--inproc-subsume-strengthen-cadence=2", "--selection=cyclic",
-          "--equation-repr=sparse", "--propagate-miss-rate=0.5", "--propagate-window=1"}},
+          "--equation-repr=sparse", "--propagate-miss-rate=0.5"}},
         {"a conflict apart, the default effort",
          {"--inproc-subsume-strengthen=true", "--inproc-subsume-strengthen-cadence=1"}},
         {"every root visit, effort 1",
@@ -469,13 +473,14 @@ TEST_CASE("fuzz: the subsumption pass leaves every answer right and checked") {
             run_and_check(text, flags, tally,
                           wide ? std::nullopt : std::optional(enumerated_verdict(text)));
         }
-        MESSAGE(arm.name << ": passes " << tally.counters.subsume_pass_passes
-                         << ", subsumed or strengthened " << tally.counters.num_subsumed_clauses
+        MESSAGE(arm.name << ": subsumed " << tally.counters.num_inproc_subsumed_clauses
+                         << ", strengthened " << tally.counters.num_inproc_strengthened_clauses
                          << ", sat " << tally.sat
                          << ", unsat " << tally.unsat);
         CHECK(tally.sat > 0);
         CHECK(tally.unsat > 0);
-        CHECK(tally.counters.subsume_pass_passes > 0);
+        // The pass ran.
+        CHECK(tally.counters.subsume_pass_time_s > 0.0);
     }
 }
 

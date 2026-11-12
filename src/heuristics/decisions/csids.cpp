@@ -352,24 +352,13 @@ void Csids::update_with_narrowed_clause(ClauseId id) {
     heap_.insert(id);
 }
 
-void Csids::note_filled_decisions(std::size_t num_decisions) {
-    counters_.decisions += num_decisions;
-    counters_.fallback_decisions += num_decisions;
-}
-
 void Csids::apply_decision_phase(Equation& eqn) const {
     apply_phase(eqn, decision_phase_, phase_rng_);
 }
 
 void Csids::add_to_stats(RunStats& stats) const {
     stats.decisions = counters_.decisions;
-    stats.fallback_decisions = counters_.fallback_decisions;
-    const PhaseSavingCounters& saved = saved_trails_.counters();
-    stats.phase_saving_open_sides = saved.open_sides;
-    stats.phase_saving_decisions_both = saved.rotation_step_decisions[0];
-    stats.phase_saving_decisions_none = saved.rotation_step_decisions[1];
-    stats.phase_saving_decisions_target_only = saved.rotation_step_decisions[2];
-    stats.phase_saving_decisions_recent_only = saved.rotation_step_decisions[3];
+    stats.phase_saving_open_sides = saved_trails_.counters().open_sides;
 }
 
 double Csids::clause_activity(ClauseId id) const {

@@ -55,17 +55,17 @@ TEST_CASE("options: the documented defaults") {
     CHECK(options.equation_repr == EquationRepr::dense);
     CHECK(options.seed == default_seed);
     CHECK(options.compact == true);
-    CHECK(options.phase == DecisionPhase::falsify);
+    CHECK(options.phase_default == DecisionPhase::falsify);
     CHECK(options.phase_saving == PhaseSaving::rotate);
     CHECK(options.selection == ClauseSelectorName::exact_watchlist);
     CHECK(options.restart == RestartMethod::none);
     CHECK(options.deletion == true);
     CHECK(options.deletion_key == DeletionKey::activity);
-    CHECK(options.bump_responsible_clauses == false);
+    CHECK(options.csids_bump_learned_positions == false);
     CHECK(options.implication_graph == true);
     CHECK(options.proof.empty());
     CHECK(options.stats_file.empty());
-    CHECK(options.report == "default");
+    CHECK(options.report_type == "default");
 }
 
 TEST_CASE("options: --name=value sets each kind") {
@@ -76,7 +76,7 @@ TEST_CASE("options: --name=value sets each kind") {
                                               "--csids-initial=2.5",
                                               "--csids-decay=0.5",
                                               "--csids-bump=0",
-                                              "--phase=satisfy",
+                                              "--phase-default=satisfy",
                                               "--deletion=false",
                                               "--otf-subsume=false",
                                               "--restart=luby",
@@ -89,7 +89,7 @@ TEST_CASE("options: --name=value sets each kind") {
     CHECK(options.csids_initial == doctest::Approx(2.5));
     CHECK(options.csids_decay == doctest::Approx(0.5));
     CHECK(options.csids_bump == doctest::Approx(0.0));
-    CHECK(options.phase == DecisionPhase::satisfy);
+    CHECK(options.phase_default == DecisionPhase::satisfy);
     CHECK(options.deletion == false);
     CHECK(options.otf_subsume == false);
     CHECK(options.restart == RestartMethod::luby);
@@ -143,10 +143,10 @@ TEST_CASE("options: values outside the table's bounds are rejected") {
 }
 
 TEST_CASE("options: an unknown enum value lists the accepted spellings") {
-    const std::string message = rejection_message<CliError>({"--phase=unsat"});
-    CHECK(contains(message, "--phase='unsat' is not one of"));
+    const std::string message = rejection_message<CliError>({"--phase-default=unsat"});
+    CHECK(contains(message, "--phase-default='unsat' is not one of"));
     CHECK(contains(message, "falsify|satisfy|random"));
-    CHECK(contains(rejection_message<CliError>({"--phase=sat"}), "is not one of"));
+    CHECK(contains(rejection_message<CliError>({"--phase-default=sat"}), "is not one of"));
     CHECK(contains(rejection_message<CliError>({"--selection=exact"}), "is not one of"));
 }
 
@@ -170,7 +170,7 @@ TEST_CASE("options: --proof goes with compaction on or off") {
 }
 
 TEST_CASE("options: enum labels are the first spelling naming an enumerator") {
-    CHECK(enum_option_label("phase", static_cast<int>(DecisionPhase::falsify)) == "falsify");
+    CHECK(enum_option_label("phase_default", static_cast<int>(DecisionPhase::falsify)) == "falsify");
     CHECK(enum_option_label("selection", static_cast<int>(ClauseSelectorName::cyclic)) == "cyclic");
     CHECK(enum_option_spellings("equation_repr") == "dense|sparse");
     CHECK(enum_option_spellings("restart") == "none|luby|lbd");
@@ -191,9 +191,9 @@ TEST_CASE("options: --help is generated from the table") {
                              "; minimum 1]"));
     CHECK(contains(text, "--csids-decay=X"));
     CHECK(contains(text, "[default: " + format_real(Options{}.csids_decay) + "; range 0..1]"));
-    CHECK(contains(text, "--phase=falsify|satisfy|random"));
+    CHECK(contains(text, "--phase-default=falsify|satisfy|random"));
     CHECK(contains(text, "--phase-saving=both|target-only|recent-only|none|rotate"));
-    CHECK(contains(text, "--selection=cyclic|exact_watchlist"));
+    CHECK(contains(text, "--selection=cyclic|exact-watchlist"));
     CHECK(contains(text, "--proof=PATH"));
     CHECK(contains(text, "--stats-file=PATH"));
     CHECK(contains(text, "--help, -h"));
@@ -208,17 +208,18 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--deletion-key=lbd|activity"));
 
     // The requirement table feeds the help, so a refusal is never a surprise.
-    CHECK(contains(text, "plus --deletion-cadence-offset (positive); requires --deletion=true"));
+    CHECK(contains(text, "deletion pass (must be positive); requires --deletion=true"));
     CHECK(contains(text, "fast/slow ratio needed for LBD restart; requires --restart=lbd"));
 
     CHECK(contains(text, "--restart=none|luby|lbd"));
     CHECK(contains(text, "restart schedule"));
     CHECK(contains(text, "conflicts for a luby value of 1"));
     CHECK(contains(text, "window of the fast LBD average"));
+    // A help of several lines continues under its first.
+    CHECK(contains(text, "of its recent\n      average (0 never blocks); requires --restart=lbd"));
 
     CHECK(contains(text, "--lbd-window=N"));
-    CHECK(contains(text,
-                   "window of the average of the LBDs measured at a clause's uses as a reason"));
+    CHECK(contains(text, "window of each clause's recent average LBD"));
 }
 
 TEST_CASE("options: the luby budget is a positive count") {
@@ -230,7 +231,7 @@ TEST_CASE("options: the luby budget is a positive count") {
 
 
 TEST_CASE("options: the exact watchlist takes deletion, subsumption and sparse rows") {
-    const Options options = parse_with_input({"--selection=exact_watchlist"});
+    const Options options = parse_with_input({"--selection=exact-watchlist"});
     CHECK(options.deletion);
     CHECK(options.otf_subsume);
     CHECK_FALSE(solver_config(options).attempt_budget.has_value());
@@ -241,7 +242,7 @@ TEST_CASE("options: the exact watchlist takes deletion, subsumption and sparse r
 
 TEST_CASE("options: deletion's parameters are checked") {
     CHECK(contains(rejection_message<CliError>({"--deletion-cadence-coefficient=0"}),
-                   "--deletion-cadence-coefficient must be positive"));
+                   "--deletion-cadence-coefficient must be > 0, got '0'"));
     CHECK(contains(rejection_message<CliError>({"--deletion-eviction-rate=1.5"}),
                    "--deletion-eviction-rate"));
     CHECK_NOTHROW(parse_with_input({"--deletion-eviction-rate=0"}));
@@ -336,7 +337,8 @@ TEST_CASE("options: --stabilize's focused mode takes its own restarts and phase 
                                     "--focused-phase-saving=target-only",
                                     "--phase-saving-target-reset=10"}));
     CHECK_NOTHROW(parse_with_input({"--phase-saving=none", "--stabilize=true",
-                                    "--focused-phase-saving=rotate", "--phase-rotate-interval=10"}));
+                                    "--focused-phase-saving=rotate",
+                                    "--phase-rotate-starting-interval=10"}));
     CHECK_FALSE(csids_config(parse_with_input({})).phase_saving.focused_source.has_value());
     CHECK(csids_config(parse_with_input({"--stabilize=true"})).phase_saving.focused_source ==
           PhaseSaving::recent_only);
@@ -358,13 +360,13 @@ TEST_CASE("options: --stabilize's focused mode takes its own restarts and phase 
     CHECK(restart_config(options).method == RestartMethod::none);
 }
 
-TEST_CASE("options: --report takes the progress group names") {
-    CHECK(parse_with_input({"--report=all"}).report == "all");
-    CHECK(parse_with_input({"--report=search,deletion"}).report == "search,deletion");
+TEST_CASE("options: --report-type takes the progress group names") {
+    CHECK(parse_with_input({"--report-type=all"}).report_type == "all");
+    CHECK(parse_with_input({"--report-type=search,deletion"}).report_type == "search,deletion");
 
     // The vocabulary is not in the table, so validation is what enforces it.
-    const std::string message = rejection_message<CliError>({"--report=nope"});
-    CHECK(message.find("--report='nope'") != std::string::npos);
+    const std::string message = rejection_message<CliError>({"--report-type=nope"});
+    CHECK(message.find("--report-type='nope'") != std::string::npos);
     CHECK(message.find("default, search, deletion, propagation, all") != std::string::npos);
 }
 
@@ -374,7 +376,7 @@ TEST_CASE("options: the recorded configuration is the whole table") {
     // One entry per row, in table order, so a statistics row records the recipe.
     CHECK(settings.size() > 20);
     CHECK(settings.front().name == "equation_repr");
-    CHECK(settings.back().name == "report");
+    CHECK(settings.back().name == "report_type");
 
     const auto value_of = [&settings](const std::string& name) {
         for (const ConfigEntry& entry : settings) {
@@ -388,7 +390,7 @@ TEST_CASE("options: the recorded configuration is the whole table") {
     CHECK(value_of("implication_graph_cadence") ==
           std::to_string(Options{}.implication_graph_cadence));
     CHECK(value_of("csids_decay") == format_real(Options{}.csids_decay));
-    CHECK(value_of("phase") == "falsify");
+    CHECK(value_of("phase_default") == "falsify");
     CHECK(value_of("phase_saving") == "rotate");
     // An unset path records as empty, not as the help text's "unset".
     CHECK(value_of("proof") == "");
@@ -431,24 +433,32 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
               .starts_with("--deletion-cadence-coefficient requires"));
     CHECK(refusal({"--deletion=false", "--deletion-cadence-offset=0"})
               .starts_with("--deletion-cadence-offset requires"));
-    CHECK(refusal({"--stats-file=s.csv", "--report=all"}).starts_with("--report requires"));
-    CHECK(refusal({"--report-cadence=0", "--report=all"}).starts_with("--report requires"));
+    CHECK(refusal({"--stats-file=s.csv", "--report-type=all"})
+              .starts_with("--report-type requires --stats-file unset and --report-cadence > 0"));
+    CHECK(refusal({"--report-cadence=0", "--report-type=all"}).starts_with("--report-type requires"));
+    CHECK(refusal({"--stats-file=s.csv", "--report-cadence=10"})
+              .starts_with("--report-cadence requires --stats-file unset"));
 
-    CHECK(parse_with_input({"--csids-span=plus_minus", "--phase=satisfy"}).phase ==
-          DecisionPhase::satisfy);
-    CHECK(parse_with_input({"--csids-span=plus_minus"}).csids_span == CsidsSpan::plus_minus);
+    CHECK(parse_with_input({"--csids-intersection-allow-negation=true", "--phase-default=satisfy"})
+              .phase_default == DecisionPhase::satisfy);
+    CHECK(csids_config(parse_with_input({"--csids-intersection-allow-negation=true"})).span ==
+          CsidsSpan::plus_minus);
+    CHECK(csids_config(parse_with_input({})).span == CsidsSpan::plain);
     CHECK(refusal({"--phase-saving=recent-only", "--phase-saving-target-reset=10"})
-              .starts_with("--phase-saving-target-reset requires --phase-saving=both, "
-                           "target-only or rotate"));
+              .starts_with("--phase-saving-target-reset requires "
+                           "--phase-saving=both|target-only|rotate or "
+                           "--focused-phase-saving=both|target-only|rotate"));
     CHECK_NOTHROW(parse_with_input({"--phase-saving=target-only", "--phase-saving-target-reset=10"}));
-    CHECK(refusal({"--phase-saving=both", "--phase-rotate-interval=10"})
-              .starts_with("--phase-rotate-interval requires --phase-saving=rotate"));
-    CHECK_NOTHROW(parse_with_input({"--phase-rotate-interval=10", "--csids-span=plus_minus"}));
-    const Options coin_flip = parse_with_input({"--phase-saving=both", "--phase=random"});
+    CHECK(refusal({"--phase-saving=both", "--phase-rotate-starting-interval=10"})
+              .starts_with("--phase-rotate-starting-interval requires --phase-saving=rotate or "
+                           "--focused-phase-saving=rotate"));
+    CHECK_NOTHROW(parse_with_input(
+        {"--phase-rotate-starting-interval=10", "--csids-intersection-allow-negation=true"}));
+    const Options coin_flip = parse_with_input({"--phase-saving=both", "--phase-default=random"});
     CHECK(coin_flip.phase_saving == PhaseSaving::both);
-    CHECK(coin_flip.phase == DecisionPhase::random);
-    CHECK(refusal({"--phase=saved"}).starts_with("--phase"));
-    CHECK(refusal({"--phase=rotate"}).starts_with("--phase"));
+    CHECK(coin_flip.phase_default == DecisionPhase::random);
+    CHECK(refusal({"--phase-default=saved"}).starts_with("--phase-default"));
+    CHECK(refusal({"--phase-default=rotate"}).starts_with("--phase-default"));
 
     CHECK(refusal({"--implication-graph=false", "--implication-graph-min-new-clauses=8"})
               .starts_with("--implication-graph-min-new-clauses requires --implication-graph=true"));
@@ -468,20 +478,11 @@ TEST_CASE("options: an option nothing would read is refused, not ignored") {
     CHECK(parse_with_input({"--deletion-wait=8"}).deletion_wait == doctest::Approx(8.0));
     CHECK(parse_with_input({"--restart=lbd", "--restart-lbd-min-ratio=1.2"}).restart_lbd_min_ratio ==
           doctest::Approx(1.2));
-    CHECK(refusal({"--selection=exact_watchlist", "--propagate-miss-rate=1"})
+    CHECK(refusal({"--selection=exact-watchlist", "--propagate-miss-rate=1"})
               .starts_with("--propagate-miss-rate requires --selection=cyclic"));
     CHECK(parse_with_input({"--selection=cyclic", "--propagate-miss-rate=0.5"})
               .propagate_miss_rate == doctest::Approx(0.5));
-    CHECK(refusal({"--selection=cyclic", "--propagate-miss-rate=0", "--propagate-window=500"})
-              .starts_with("--propagate-window requires --selection=cyclic and a nonzero "
-                           "--propagate-miss-rate"));
-    CHECK(refusal({"--propagate-window=500"})
-              .starts_with("--propagate-window requires --selection=cyclic and a nonzero "
-                           "--propagate-miss-rate"));
-    CHECK(parse_with_input({"--selection=cyclic", "--propagate-miss-rate=0.02",
-                            "--propagate-window=500"})
-              .propagate_window == 500);
-    CHECK(parse_with_input({"--report=all"}).report == "all");
+    CHECK(parse_with_input({"--report-type=all"}).report_type == "all");
 }
 
 TEST_CASE("options: only the cyclic selector reads the miss rate") {

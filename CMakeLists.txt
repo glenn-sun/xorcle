@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.31)
 project(xorcle VERSION 0.2.0 LANGUAGES CXX)
 
-# Nothing on this branch is released. `PROJECT_VERSION` is where it is heading,
-# and the `-dev` suffix is what says it has not arrived; a release drops it.
-set(XORCLE_VERSION "${PROJECT_VERSION}-dev")
+# The version `--version` and the `--help` header report.
+set(XORCLE_VERSION "${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -214,15 +214,13 @@ bool Solver::vivify_replace(const ClauseId id, VivifyNarrowing narrowing,
     assert(debug_is_narrowing(narrowed, id) &&
            "a clause was to be replaced by one that does not imply it");
     ++stats_.vivify_narrowed;
-    stats_.vivify_width_before += width;
-    stats_.vivify_width_after += narrowed.rows();
+    vivify_width_removed_ += width - narrowed.rows();
     if (narrowed.rows() == 1) {
         // Fed once the pass is over: a unit met above the root would be learned there.
         const ClauseId proof_line = write_proof_line(narrowed, narrowing.proof_hints);
         Equation unit = narrowed.row(0);
         unit.negate();
         units.emplace_back(std::move(unit), proof_line);
-        ++stats_.vivify_units;
         return false;
     }
     return put_narrowing_in_place(id, std::move(narrowed), narrowing.proof_hints);
@@ -310,7 +308,6 @@ void Solver::vivify_pass() {
         return;
     }
 
-    ++stats_.vivify_passes;
     // The assumptions and what they imply are not the search's.
     const PropagationCounters search_counters = std::exchange(propagation_counters_, {});
 

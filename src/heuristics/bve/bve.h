@@ -21,7 +21,6 @@
 #include "algebra/row_echelon_matrix.h"
 #include "core/clause_id.h"
 #include "heuristics/bve/elimination.h"
-#include "heuristics/bve/gate_solver.h"
 #include "util/index_set.h"
 #include "util/random.h"
 
@@ -38,19 +37,8 @@ struct BveConfig {
     /// pass must remove for another to follow.
     double success_rate;
 
-    BveCoreShrinking core_shrinking;
-
     /// @brief The most conflicts one solve of a gate search may take.
     std::size_t gate_max_conflicts;
-
-    /// @brief The largest cost, `clauses² × max(1, 2^(rank - 6))`, of a gate search done
-    /// by its truth table rather than the gate solver.
-    ///
-    /// Any bound from 4e5 to 1e6 gives the gate searches their least total time.
-    std::size_t gate_max_table_cost;
-
-    /// @brief The largest share of the present clauses a try may touch and still search for a gate.
-    double gate_max_clause_share;
 
     /// @brief Whether a one-sided gate's root equations are added as unit clauses.
     bool root_equations;
@@ -65,8 +53,7 @@ struct BveCounters {
     std::size_t width_after = 0; ///< Of the clauses after, summed.
     std::size_t num_unit_resolvents = 0; ///< Among the clauses left.
     std::size_t num_resolvents_of_width_at_most_2 = 0; ///< Among the clauses left, units included.
-    std::size_t num_gate_searches = 0;
-    std::size_t num_gates = 0;
+    std::size_t num_eliminated_by_gate = 0; ///< Of `num_eliminated`, those whose resolution found a gate.
     /// @brief Equations one-sided gates make false at the root, added as unit clauses.
     std::size_t num_root_equations = 0;
     double gate_time_s = 0.0; ///< Of the gate searches.
@@ -133,8 +120,7 @@ struct BvePlan {
 /// @pre `active_clause_ids` are ids of `clauses`, each over `num_vars` variables
 /// in representation `repr`; none is a tautology, and no two have one span.
 /// @pre `1 <= config.group_cap <= 16`, `config.max_refusals_in_a_row >= 1`,
-/// `0 <= config.success_rate <= 1`, `config.gate_max_conflicts >= 1` and
-/// `0 <= config.gate_max_clause_share <= 1`.
+/// `0 <= config.success_rate <= 1` and `config.gate_max_conflicts >= 1`.
 BvePlan build_bve_plan(const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
                        std::size_t num_vars, EquationRepr repr, const BveConfig& config,
                        bool with_proof, Rng& rng);

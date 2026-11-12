@@ -118,11 +118,9 @@ void Solver::force_restart() {
     }
     replay_.kept_in_place_of.clear();
     replay_.next_level = 0;
-    replay_.has_replayed = false;
     replay_.under_way = true;
 
     ++stats_.num_forced_restarts;
-    stats_.forced_restart_rows += trail_.span().rows() - trail_.rows_at_level(0);
     // The backjump can queue clauses, so the loop propagates the root before the visit.
     backjump_to(0);
 }
@@ -143,20 +141,13 @@ void Solver::end_replay() {
 
 Solver::DecisionStep Solver::replay_decision_step() {
     phase_timer_.switch_to(SolverPhase::replay);
-    replay_.has_replayed = true;
     while (replay_.next_level < replay_.decision_clause_ids.size()) {
         const std::size_t level_idx = replay_.next_level++;
         Equation& decision_eqn = replay_.decisions.rows[level_idx];
         const ReduceResult::Kind kind = trail_.span().partial_reduce(decision_eqn).kind;
-        if (kind == ReduceResult::Kind::eq_true) {
-            ++stats_.num_replay_implied_decisions;
+        if (kind == ReduceResult::Kind::eq_true || kind == ReduceResult::Kind::eq_false) {
             continue;
         }
-        if (kind == ReduceResult::Kind::eq_false) {
-            ++stats_.num_replay_refuted_decisions;
-            continue;
-        }
-        ++stats_.num_replayed_decisions;
         // The hint only says where the cyclic selector's next sweep starts, so a
         // decision clause the visit deleted is simply none.
         std::optional<ClauseId> decision_clause = replay_.decision_clause_ids[level_idx];

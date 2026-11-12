@@ -33,6 +33,15 @@ namespace {
 using Var = std::uint32_t;
 constexpr Var no_var = static_cast<Var>(-1);
 
+/// @brief The largest cost, `clauses² × max(1, 2^(rank - 6))`, of a gate search done by its
+/// truth table rather than the gate solver: 5e5, as any bound from 4e5 to 1e6 gives the gate
+/// searches their least total time.
+constexpr std::size_t gate_max_table_cost = 500'000;
+
+/// @brief The largest share of the present clauses a try may touch and still search for a
+/// gate: 10%.
+constexpr double gate_max_clause_share = 0.1;
+
 /// @brief Index of a direction: an equation without its constant.
 using DirectionId = std::uint32_t;
 
@@ -284,8 +293,7 @@ public:
     const std::vector<StoredClause>& clauses() const noexcept { return clauses_; }
     const std::vector<Elimination>& eliminations() const noexcept { return eliminations_; }
     bool found_empty_clause() const noexcept { return found_empty_clause_; }
-    std::size_t num_gate_searches() const noexcept { return num_gate_searches_; }
-    std::size_t num_gates() const noexcept { return num_gates_; }
+    std::size_t num_eliminated_by_gate() const noexcept { return num_eliminated_by_gate_; }
     std::size_t num_root_equations() const noexcept { return num_root_equations_; }
     double gate_time_s() const noexcept { return gate_time_s_; }
     const std::vector<Derivation>& derivations() const noexcept { return derivations_; }
@@ -1045,6 +1053,7 @@ private:
     struct Resolution {
         std::vector<Rows> resolvents;
         std::vector<std::array<std::uint32_t, 2>> parents;
+        bool by_gate = false;
     };
 
     /// @brief Split each of @p clause_idxs by the rows @p changes says the flip
@@ -1205,6 +1214,7 @@ private:
             return resolution.parents[a] < resolution.parents[b];
         });
         Resolution in_order;
+        in_order.by_gate = in_gate.has_value();
         for (const std::size_t i : by_parents) {
             in_order.resolvents.push_back(std::move(resolution.resolvents[i]));
             in_order.parents.push_back(
@@ -1217,6 +1227,7 @@ private:
     void replace(const std::vector<std::uint32_t>& clause_idxs, Resolution resolution,
                  std::vector<std::uint32_t> flip_set) {
         Elimination record{.flip_set = std::move(flip_set), .removed_clauses = {}};
+        num_eliminated_by_gate_ += resolution.by_gate ? 1U : 0U;
         for (std::size_t i = 0; i < resolution.resolvents.size(); ++i) {
             found_empty_clause_ = found_empty_clause_ || resolution.resolvents[i].empty();
             add(std::move(resolution.resolvents[i]), resolution.parents[i]);
@@ -1234,8 +1245,8 @@ private:
 
     /// @brief The members of a gate among @p parts, the clauses @p clause_idxs
     /// split; nothing if their rests are satisfiable together, if the gate solver
-    /// reaches its conflict cap, or if they are more than
-    /// `config_.gate_max_clause_share` of the present clauses.
+    /// reaches its conflict cap, or if they are more than `gate_max_clause_share` of the
+    /// present clauses.
     ///
     /// With `config_.root_equations`, a one-sided gate's root equations are added
     /// as unit clauses. `search_gate_hybrid()` reads each rest as its coordinates
@@ -1243,7 +1254,7 @@ private:
     std::optional<std::vector<std::uint8_t>> find_gate(std::span<const SplitClause<V>> parts,
                                                        const std::vector<std::uint32_t>& clause_idxs) {
         if (static_cast<double>(parts.size()) >
-            config_.gate_max_clause_share * static_cast<double>(present_clause_idxs_by_hash_.size())) {
+            gate_max_clause_share * static_cast<double>(present_clause_idxs_by_hash_.size())) {
             return std::nullopt;
         }
         const auto start = std::chrono::steady_clock::now();
@@ -1284,16 +1295,13 @@ private:
                 }
             }
         }
-        GateSearch search = search_gate_hybrid(rests, rank + 1, config_.gate_max_table_cost,
-                                               config_.core_shrinking, config_.gate_max_conflicts,
-                                               gate_table_, rng_);
-        ++num_gate_searches_;
+        GateSearch search = search_gate_hybrid(rests, rank + 1, gate_max_table_cost,
+                                               config_.gate_max_conflicts, gate_table_, rng_);
         gate_time_s_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         if (!search.core.has_value()) {
             return std::nullopt;
         }
         const std::vector<std::uint32_t>& core = *search.core;
-        ++num_gates_;
         if (config_.root_equations) {
             const std::vector<Equation> root_negations = changed_shared_equations_of(parts, core);
             // A table's gate comes without a refutation; the gate solver gives the proof's lines.
@@ -1400,8 +1408,7 @@ private:
     CanonicalWork canonical_work_;
     V direction_; ///< Scratch of `find_gate()`.
     GateTable gate_table_;
-    std::size_t num_gate_searches_ = 0;
-    std::size_t num_gates_ = 0;
+    std::size_t num_eliminated_by_gate_ = 0;
     std::size_t num_root_equations_ = 0;
     double gate_time_s_ = 0.0;
     std::vector<Derivation> derivations_;
@@ -1501,8 +1508,7 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
     formula.run_pass();
 
     plan.found_empty_clause = formula.found_empty_clause();
-    counters.num_gate_searches = formula.num_gate_searches();
-    counters.num_gates = formula.num_gates();
+    counters.num_eliminated_by_gate = formula.num_eliminated_by_gate();
     counters.num_root_equations = formula.num_root_equations();
     counters.gate_time_s = formula.gate_time_s();
     plan.eliminations = formula.eliminations();
@@ -1614,9 +1620,7 @@ BvePlan build_bve_plan(const std::vector<Clause>& clauses,
                        const EquationRepr repr, const BveConfig& config, const bool with_proof, Rng& rng) {
     assert(config.group_cap >= 1 && config.group_cap <= 16 && config.max_refusals_in_a_row >= 1 &&
            config.success_rate >= 0.0 && config.success_rate <= 1.0 && config.gate_max_conflicts >= 1 &&
-           config.gate_max_clause_share >= 0.0 && config.gate_max_clause_share <= 1.0 &&
-           "the group cap, the refusal limit, the success rate, the gate conflict cap or the gate "
-           "clause share is out of range");
+           "the group cap, the refusal limit, the success rate or the gate conflict cap is out of range");
     return with_gf2_vector_of(repr, [&]<GF2Vector V>(std::type_identity<V>) {
         return build_bve_plan_over<V>(clauses, active_clause_ids, num_vars, repr, config, with_proof, rng);
     });

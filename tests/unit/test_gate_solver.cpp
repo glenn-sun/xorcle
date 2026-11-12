@@ -203,7 +203,6 @@ TEST_CASE("gate solver: verdicts and cores agree with brute force, under the con
     Rng rng = make_rng(default_seed, RngComponent::bve_draw);
     std::size_t num_unsat = 0;
     std::size_t num_sat = 0;
-    std::size_t num_shrunk = 0;
     std::size_t num_capped = 0;
     std::size_t num_finished_under_small_cap = 0;
     for (std::size_t round = 0; round < 3000; ++round) {
@@ -221,52 +220,38 @@ TEST_CASE("gate solver: verdicts and cores agree with brute force, under the con
         const bool expected_sat = satisfiable(clauses, all, num_coordinates);
         const std::size_t small_cap = 1 + uniform_below(rng, 3);
         for (const std::size_t max_conflicts : {std::size_t{1000}, small_cap}) {
-            // Both shrinkings start from one stream, so they solve the first time alike and
-            // `none` keeps the first core that `repeat` starts from.
-            const Rng start = rng;
-            std::size_t first_core_size = 0;
-            for (const BveCoreShrinking shrinking : {BveCoreShrinking::none, BveCoreShrinking::repeat}) {
-                Rng solve_rng = start;
-                const GateSearch search = search_gate(clauses, num_coordinates + 1, shrinking, max_conflicts, solve_rng);
-                if (max_conflicts == 1000) {
-                    REQUIRE(search.core.has_value() == !expected_sat);
-                    (expected_sat ? num_sat : num_unsat) += 1;
-                } else if (!expected_sat && !search.core.has_value()) {
-                    ++num_capped;
-                    continue;
-                } else {
-                    ++num_finished_under_small_cap;
-                }
+            Rng solve_rng = rng;
+            const GateSearch search = search_gate(clauses, num_coordinates + 1, max_conflicts, solve_rng);
+            if (max_conflicts == 1000) {
                 REQUIRE(search.core.has_value() == !expected_sat);
-                if (expected_sat) {
-                    continue;
-                }
-                const std::vector<std::uint32_t>& core = *search.core;
-                REQUIRE(std::ranges::is_sorted(core));
-                if (shrinking == BveCoreShrinking::none) {
-                    first_core_size = core.size();
-                } else {
-                    CHECK(core.size() <= first_core_size);
-                    num_shrunk += core.size() < first_core_size ? 1U : 0U;
-                }
-                CHECK_FALSE(satisfiable(clauses, core, num_coordinates));
-                // The refutation cites only the core and replays as LRUP(⊕) lines.
-                for (const GateRefutation::Lemma& lemma : search.refutation.lemmas) {
-                    for (const std::uint32_t reason : lemma.reasons) {
-                        CHECK((reason >= num_clauses || std::ranges::binary_search(core, reason)));
-                    }
-                }
-                CHECK(refutation_replays(clauses, search.refutation, {}, num_coordinates + 1));
-                CHECK(lifted_refutation_replays(clauses, core, search.refutation, num_coordinates));
+                (expected_sat ? num_sat : num_unsat) += 1;
+            } else if (!expected_sat && !search.core.has_value()) {
+                ++num_capped;
+                continue;
+            } else {
+                ++num_finished_under_small_cap;
             }
+            REQUIRE(search.core.has_value() == !expected_sat);
+            if (expected_sat) {
+                continue;
+            }
+            const std::vector<std::uint32_t>& core = *search.core;
+            REQUIRE(std::ranges::is_sorted(core));
+            CHECK_FALSE(satisfiable(clauses, core, num_coordinates));
+            // The refutation cites only the core and replays as LRUP(⊕) lines.
+            for (const GateRefutation::Lemma& lemma : search.refutation.lemmas) {
+                for (const std::uint32_t reason : lemma.reasons) {
+                    CHECK((reason >= num_clauses || std::ranges::binary_search(core, reason)));
+                }
+            }
+            CHECK(refutation_replays(clauses, search.refutation, {}, num_coordinates + 1));
+            CHECK(lifted_refutation_replays(clauses, core, search.refutation, num_coordinates));
         }
     }
     CHECK(num_sat > 1000);
     CHECK(num_unsat > 1000);
     CHECK(num_capped > 10);
     CHECK(num_finished_under_small_cap > 1000);
-    // A repeated solve on a first core seldom shrinks it on formulas this small.
-    CHECK(num_shrunk > 0);
 }
 
 TEST_CASE("gate search: the hybrid agrees with brute force, its table gates are minimal and refute") {
@@ -290,8 +275,8 @@ TEST_CASE("gate search: the hybrid agrees with brute force, its table gates are 
         const std::size_t num_words = std::size_t{1} << (std::max<std::size_t>(num_coordinates, 6) - 6);
         const std::size_t cost = num_clauses * num_clauses * num_words;
         for (const std::size_t max_table_cost : {std::size_t{0}, cost - 1, cost, std::numeric_limits<std::size_t>::max()}) {
-            const GateSearch search = search_gate_hybrid(clauses, num_coordinates + 1, max_table_cost,
-                                                         BveCoreShrinking::none, 1000, table, rng);
+            const GateSearch search = search_gate_hybrid(clauses, num_coordinates + 1, max_table_cost, 1000,
+                                                         table, rng);
             CHECK(search.by_table == (max_table_cost >= cost));
             REQUIRE(search.core.has_value() == !expected_sat);
             if (expected_sat) {
@@ -336,7 +321,7 @@ TEST_CASE("gate solver: an empty clause is a core by itself") {
     Row x_is_zero(3);
     x_is_zero.set_bit(0);
     const std::vector<Rows> clauses{{x_is_zero}, {}, {x_is_zero}};
-    const GateSearch search = search_gate(clauses, 3, BveCoreShrinking::none, 1, rng);
+    const GateSearch search = search_gate(clauses, 3, 1, rng);
     REQUIRE(search.core.has_value());
     CHECK(*search.core == std::vector<std::uint32_t>{1});
 }

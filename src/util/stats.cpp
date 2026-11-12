@@ -52,9 +52,8 @@ RunStats::reports(const StatsSection section) const {
         }
         case StatsSection::minimize:
             return config_value(*this, "minimize") == "true";
-        case StatsSection::subsume:
-            return config_value(*this, "otf_subsume") == "true" ||
-                   config_value(*this, "inproc_subsume_strengthen") == "true";
+        case StatsSection::otf_subsume:
+            return config_value(*this, "otf_subsume") == "true";
         case StatsSection::vivify:
             return config_value(*this, "vivify") == "true";
         case StatsSection::subsume_pass:

@@ -481,20 +481,19 @@ TEST_CASE_TEMPLATE("deletion: a run deletes, and deletes the same way twice", Ta
     const RunStats first = solve_deleting(repr, every_conflict);
     const RunStats second = solve_deleting(repr, every_conflict);
 
-    CHECK(first.num_deletion_passes != 0);
     CHECK(first.num_deleted_clauses != 0);
 
     CHECK(first.num_conflicts == second.num_conflicts);
     CHECK(first.num_propagations == second.num_propagations);
-    CHECK(first.num_deletion_passes == second.num_deletion_passes);
     CHECK(first.num_deleted_clauses == second.num_deleted_clauses);
 }
 
 TEST_CASE_TEMPLATE("deletion: a run whose learned clauses never run out deletes none", Tag,
                    DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
+    // The same cadence at the default wait deletes.
+    CHECK(solve_deleting(repr, every_conflict).num_deleted_clauses != 0);
     const RunStats counters = solve_deleting(repr, every_conflict, 62.0);
-    CHECK(counters.num_deletion_passes != 0);
     CHECK(counters.num_deleted_clauses == 0);
 }
 
@@ -503,8 +502,7 @@ TEST_CASE_TEMPLATE("deletion: a longer pass cadence deletes less often", Tag, De
     const RunStats often = solve_deleting(repr, every_conflict);
     const RunStats seldom = solve_deleting(repr, 1000.0);
 
-    CHECK(often.num_deletion_passes > seldom.num_deletion_passes);
-    CHECK(seldom.num_deletion_passes == 0);
+    CHECK(often.num_deleted_clauses > seldom.num_deleted_clauses);
     CHECK(seldom.num_deleted_clauses == 0);
 }
 

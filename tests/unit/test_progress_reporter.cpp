@@ -20,7 +20,7 @@ namespace xorcle {
 namespace {
 
 constexpr const char* expected_default_header =
-    "c   time  conflicts  confl/s    props  clauses  avg level  avg trail  vars left";
+    "c   time      confl  confl/s    props  clauses    avg lvl    avg trl    var rem";
 
 ProgressSnapshot sample_snapshot() {
     return ProgressSnapshot{.time_s = 1.5,
@@ -32,8 +32,6 @@ ProgressSnapshot sample_snapshot() {
                             .average_trail_length = 41.5,
                             .remaining_vars = 128,
                             .decisions = 2048,
-                            .decision_level = 17,
-                            .trail_length = 41,
                             .num_restarts = 3,
                             .num_deleted_clauses = 640,
                             .num_attempt_props = 31415,
@@ -115,7 +113,7 @@ TEST_CASE("progress: a group adds its columns to the default ones") {
                                                           "640"});
 }
 
-TEST_CASE("progress: --report names map onto the groups") {
+TEST_CASE("progress: --report-type names map onto the groups") {
     CHECK(parse_progress_groups("default") == progress_group::defaults);
     CHECK(parse_progress_groups("all") == progress_group::all);
     // The default columns are what makes a line readable, so they are never off.

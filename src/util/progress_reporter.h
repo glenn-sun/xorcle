@@ -27,14 +27,14 @@ inline constexpr unsigned all = defaults | search | deletion | propagation;
 
 } // namespace progress_group
 
-/// @brief Parse a `--report=` list, e.g. `default,deletion`.
+/// @brief Parse a `--report-type=` list, e.g. `default,deletion`.
 /// @return The mask, or `std::nullopt` if a name is not one of `default`,
 /// `search`, `deletion`, `propagation` or `all`.
 /// @note `defaults` is always included: the columns that track progress are in
 /// every line, whatever else is asked for.
 std::optional<unsigned> parse_progress_groups(std::string_view text);
 
-/// @brief The accepted `--report=` names, comma-joined, for help and errors.
+/// @brief The accepted `--report-type=` names, comma-joined, for help and errors.
 std::string progress_group_names();
 
 /// @brief The solver state one progress line reports.
@@ -55,8 +55,6 @@ struct ProgressSnapshot {
     std::size_t remaining_vars = 0;
 
     std::size_t decisions = 0;
-    std::size_t decision_level = 0;
-    std::size_t trail_length = 0;
     std::size_t num_restarts = 0;
 
     std::size_t num_deleted_clauses = 0;

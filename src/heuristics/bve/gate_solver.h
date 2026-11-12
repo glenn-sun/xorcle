@@ -14,12 +14,6 @@
 
 namespace xorcle {
 
-/// @brief How a gate search shrinks its first core.
-enum class BveCoreShrinking {
-    none, ///< Keep the first core.
-    repeat ///< Solve again on the core until it stops shrinking.
-};
-
 /// @brief The derivation of the empty clause from a gate, by LRUP(⊕) lines.
 ///
 /// A reason below the number of clauses given names that clause; one at or above names
@@ -45,8 +39,7 @@ struct GateSearch {
     bool by_table = false;
 };
 
-/// @brief Whether @p clauses are unsatisfiable together, and if so a core of them
-/// that @p shrinking shrinks.
+/// @brief Whether @p clauses are unsatisfiable together, and if so a core of them.
 ///
 /// Each solve is CDCL(⊕) as in arXiv:2605.15002, without restarts or deletion.
 /// Propagation is complete: a cyclic selector visits the clauses, each tracking two
@@ -62,8 +55,7 @@ struct GateSearch {
 /// @pre `num_bits >= 1` and `max_conflicts >= 1`; each clause's rows have
 /// `num_bits` bits and are independent, and their span does not hold `0 = 1`.
 GateSearch search_gate(const std::vector<std::vector<DenseGF2Vector>>& clauses,
-                       std::size_t num_bits, BveCoreShrinking shrinking,
-                       std::size_t max_conflicts, Rng& rng);
+                       std::size_t num_bits, std::size_t max_conflicts, Rng& rng);
 
 /// @brief The truth table of the points the clauses added so far forbid, with its
 /// buffers kept from one gate search to the next.
@@ -98,8 +90,7 @@ private:
 /// @pre As `search_gate()`'s.
 GateSearch search_gate_hybrid(const std::vector<std::vector<DenseGF2Vector>>& clauses,
                               std::size_t num_bits, std::size_t max_table_cost,
-                              BveCoreShrinking shrinking, std::size_t max_conflicts,
-                              GateTable& table, Rng& rng);
+                              std::size_t max_conflicts, GateTable& table, Rng& rng);
 
 /// @brief The refutation of @p gate, by the gate solver without a conflict cap.
 ///

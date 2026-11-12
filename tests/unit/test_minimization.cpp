@@ -249,16 +249,13 @@ TEST_CASE_TEMPLATE("minimize: a whole run reaches the same verdict and narrower 
 
     // Off, the counters stay untouched.
     CHECK(off.counters.num_minimized_clauses == 0);
-    CHECK(off.counters.minimize_width_before == 0);
-    CHECK(off.counters.minimize_width_after == 0);
+    CHECK(!off.counters.minimize_average_width_removed.has_value());
 
-    // On, every non-root conflict is counted, and the total width can only
-    // have fallen.
-    CHECK(on.counters.minimize_width_before > 0);
-    CHECK(on.counters.minimize_width_after <= on.counters.minimize_width_before);
+    // On, a minimized clause has lost at least a row.
     CHECK(on.counters.num_minimized_clauses <= on.counters.num_conflicts);
-    CHECK((on.counters.num_minimized_clauses > 0) ==
-          (on.counters.minimize_width_after < on.counters.minimize_width_before));
+    CHECK(on.counters.minimize_average_width_removed.has_value() ==
+          (on.counters.num_minimized_clauses > 0));
+    CHECK(on.counters.minimize_average_width_removed.value_or(1.0) >= 1.0);
 }
 
 TEST_CASE_TEMPLATE("minimize: a minimizing run's proof checks", Tag, DenseTag, SparseTag) {

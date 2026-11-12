@@ -115,7 +115,7 @@ struct OptionSeen {
 /// The enumerator travels as its underlying value, cast back at the one place
 /// that knows the type.
 struct EnumOptionValue {
-    std::string_view option;   ///< The option's table name, e.g. `"phase"`.
+    std::string_view option;   ///< The option's table name, e.g. `"phase_saving"`.
     std::string_view spelling; ///< The accepted value, e.g. `"rotate"`.
     int value;
 };
@@ -435,7 +435,13 @@ inline void append_option_help(std::ostream& out, std::string_view table_name,
                                const std::string& syntax, std::string_view help,
                                const std::string& default_text, const std::string& bounds) {
     out << "  " << cli_spelling(table_name) << "=" << syntax << "\n";
-    out << "      " << help;
+    out << "      ";
+    for (const char c : help) {
+        out << c;
+        if (c == '\n') {
+            out << "      ";
+        }
+    }
     // `validate_options` enforces the same rows.
     if (const std::string requires_text = requirement_text(table_name); !requires_text.empty()) {
         out << "; " << requires_text;
@@ -541,12 +547,13 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     }
 #include "cli/options.inc"
 
-    if (!parse_progress_groups(options.report).has_value()) {
-        throw CliError("--report='" + options.report +
+    if (!parse_progress_groups(options.report_type).has_value()) {
+        throw CliError("--report-type='" + options.report_type +
                        "' is not a comma-joined list of: " + progress_group_names());
     }
     if (options.deletion_cadence_coefficient == 0.0) {
-        throw CliError("--deletion-cadence-coefficient must be positive");
+        throw CliError("--deletion-cadence-coefficient must be > 0, got '" +
+                       format_real(options.deletion_cadence_coefficient) + "'");
     }
 }
 
@@ -613,12 +620,13 @@ inline CsidsConfig csids_config(const Options& options) {
                        .focused_decay = options.focused_decay,
                        .bump = options.csids_bump,
                        .intersection_depth = options.csids_intersection_depth,
-                       .span = options.csids_span,
-                       .phase = options.phase,
+                       .span = options.csids_intersection_allow_negation ? CsidsSpan::plus_minus
+                                                                         : CsidsSpan::plain,
+                       .phase = options.phase_default,
                        .phase_saving = {.source = options.phase_saving,
                                         .target_reset_conflicts =
                                             options.phase_saving_target_reset,
-                                        .rotation_interval = options.phase_rotate_interval,
+                                        .rotation_interval = options.phase_rotate_starting_interval,
                                         .focused_source =
                                             options.stabilize
                                                 ? std::optional(options.focused_phase_saving)
@@ -633,14 +641,11 @@ inline ImplicationGraphConfig implication_graph_config(const Options& options) {
 }
 
 inline BveConfig bve_config(const Options& options) {
-    return BveConfig{.group_cap = options.bve_group_cap,
+    return BveConfig{.group_cap = options.bve_residual_dimensions,
                      .max_refusals_in_a_row = options.bve_max_refusals_in_a_row,
                      .success_rate = options.bve_success_rate,
-                     .core_shrinking = options.bve_core_shrinking,
                      .gate_max_conflicts = options.bve_gate_max_conflicts,
-                     .gate_max_table_cost = options.bve_gate_max_table_cost,
-                     .gate_max_clause_share = options.bve_gate_max_clause_share,
-                     .root_equations = options.bve_root_equations};
+                     .root_equations = options.bve_gate_units};
 }
 
 inline DeletionConfig deletion_config(const Options& options) {
@@ -681,7 +686,7 @@ inline SolverConfig solver_config(const Options& options,
     SolverConfig config{
         .renumber = options.compact,
         .minimize = options.minimize,
-        .bump_responsible_clauses = options.bump_responsible_clauses,
+        .bump_responsible_clauses = options.csids_bump_learned_positions,
         .otf_subsume = options.otf_subsume,
         .lbd_window = options.lbd_window,
         .attempt_budget = std::nullopt,
@@ -692,9 +697,8 @@ inline SolverConfig solver_config(const Options& options,
         .inproc_subsume_strengthen = std::nullopt,
         .stabilize = std::nullopt,
         .progress = {.reporter = progress_reporter, .cadence = options.report_cadence}};
-    if (option_group_is_read(OptionGroup::attempt_budget, options)) {
-        config.attempt_budget = PropagationConfig{.miss_rate = options.propagate_miss_rate,
-                                                  .window = options.propagate_window};
+    if (options.selection == ClauseSelectorName::cyclic && options.propagate_miss_rate != 0.0) {
+        config.attempt_budget = PropagationConfig{.miss_rate = options.propagate_miss_rate};
     }
     if (option_group_is_read(OptionGroup::deletion, options)) {
         config.deletion = deletion_config(options);
@@ -703,7 +707,7 @@ inline SolverConfig solver_config(const Options& options,
         config.implication_graph = implication_graph_config(options);
     }
     if (option_group_is_read(OptionGroup::vivify, options)) {
-        config.vivify = VivifyConfig{.rounds = options.vivify_rounds,
+        config.vivify = VivifyConfig{.rounds = options.vivify_bases,
                                      .cadence = options.vivify_cadence,
                                      .effort = options.vivify_effort};
     }

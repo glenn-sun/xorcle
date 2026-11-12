@@ -21,23 +21,21 @@ struct Column {
 /// @brief The columns, in print order; the header and every line share them.
 constexpr Column columns[]{
     {"time", 7, progress_group::defaults},
-    {"conflicts", 11, progress_group::defaults},
+    {"confl", 11, progress_group::defaults},
     {"confl/s", 9, progress_group::defaults},
     {"props", 9, progress_group::defaults},
     {"clauses", 9, progress_group::defaults},
-    {"avg level", 11, progress_group::defaults},
-    {"avg trail", 11, progress_group::defaults},
-    {"vars left", 11, progress_group::defaults},
+    {"avg lvl", 11, progress_group::defaults},
+    {"avg trl", 11, progress_group::defaults},
+    {"var rem", 11, progress_group::defaults},
 
-    {"decisions", 12, progress_group::search},
-    {"level", 8, progress_group::search},
-    {"trail", 8, progress_group::search},
-    {"restarts", 10, progress_group::search},
+    {"decs", 12, progress_group::search},
+    {"restart", 10, progress_group::search},
 
-    {"deleted", 10, progress_group::deletion},
+    {"delete", 10, progress_group::deletion},
 
-    {"attempts", 13, progress_group::propagation},
-    {"watch updates", 16, progress_group::propagation},
+    {"attmpts", 13, progress_group::propagation},
+    {"wtch up", 16, progress_group::propagation},
 };
 
 std::string format_fixed(const double value, const int precision) {
@@ -59,8 +57,6 @@ std::array<std::string, std::size(columns)> cells_of(const ProgressSnapshot& sna
         std::to_string(snapshot.remaining_vars),
 
         std::to_string(snapshot.decisions),
-        std::to_string(snapshot.decision_level),
-        std::to_string(snapshot.trail_length),
         std::to_string(snapshot.num_restarts),
 
         std::to_string(snapshot.num_deleted_clauses),
