@@ -17,10 +17,6 @@ compile_commands.json
 # Machine-local presets; CMakeUserPresets.json.example shows the pattern.
 CMakeUserPresets.json
 
-# Benchmark instances, none committed
-/benchmarks/generated/
-/benchmarks/external/
-
 # Generated documentation
 /docs/html/
 /docs/latex/
@@ -44,6 +40,3 @@ perf.data*
 *.profraw
 *.profdata
 callgrind.out.*
-
-# Paper
-/paper/
