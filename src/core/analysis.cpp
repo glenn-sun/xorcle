@@ -187,7 +187,7 @@ std::vector<ClauseId> find_root_conflict_reasons(const Trail& trail,
 
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
                                       ClauseId conflict_clause_id, Rng& representative_rng,
-                                      bool minimize, bool report_responsible_trail_idxs,
+                                      bool minimize, bool report_positions,
                                       bool collect_subsumed) {
     assert(trail.span().rows() > 0 && "a conflicting trail cannot be empty");
     assert(trail.level() > 0 && "a root conflict is UNSAT and is not analysed");
@@ -348,12 +348,12 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
     // Only the trail-basis coordinates carry it; the clause itself does not.
     const std::size_t lbd = asserting_basis.literal_block_distance();
 
-    std::vector<std::size_t> responsible_trail_idxs;
-    if (report_responsible_trail_idxs) {
-        responsible_trail_idxs.reserve(asserting_basis.rows());
+    std::vector<std::size_t> positions;
+    if (report_positions) {
+        positions.reserve(asserting_basis.rows());
         for (const Equation& row : asserting_basis) {
             assert(row.leading_bit().has_value() && "a stored row is zero");
-            responsible_trail_idxs.push_back(asserting_basis.cols() - 1 - *row.leading_bit());
+            positions.push_back(asserting_basis.cols() - 1 - *row.leading_bit());
         }
     }
 
@@ -381,7 +381,7 @@ AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clau
                           std::move(reason_lbds),
                           lbd,
                           width_before_minimize,
-                          std::move(responsible_trail_idxs),
+                          std::move(positions),
                           std::move(subsumed_reasons)};
 }
 

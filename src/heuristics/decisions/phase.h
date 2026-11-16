@@ -10,7 +10,7 @@ namespace xorcle {
 
 /// @brief The side of a decision wherever no saved trail chooses it.
 enum class DecisionPhase {
-    satisfy, ///< Decide the linear negation of the sampled row.
+    satisfy, ///< Decide the negation of the sampled row.
     falsify, ///< Decide the sampled row as it is stored.
     random ///< Choose per decision, from the phase RNG stream.
 };

@@ -510,14 +510,14 @@ void ExactWatchlistTemplate<V>::update_with_new_equation(const Equation& reduced
     // Every earlier row was reported, so the new one is the last: complete
     // propagation never learns below the top level.
     assert(pivot_col_idxs_.size() + 1 == span.rows() &&
-           "an equation was learned out of order, which only a propagation budget does");
+           "an equation was learned out of order, which only incomplete propagation does");
     const std::size_t trail_idx = span.rows() - 1;
     const std::size_t level = trail.level();
     assert(trail.level_of(trail_idx) == level && "an equation was learned below the top level");
     assert((level == top_level() || level == top_level() + 1) && "a decision level was skipped");
     if (level > top_level()) {
         assert(paused_head_ == paused_end_ && side_queue_head_ == side_queue_.size() &&
-               "a decision was taken before propagation was quiescent");
+               "a decision was taken before propagation reached a fixed point");
         open_level();
     }
     const Equation& row = trail.row(trail_idx);
@@ -699,7 +699,7 @@ void ExactWatchlistTemplate<V>::restore(std::size_t level) {
             place(cell);
         }
     }
-    // A copied cell is as it stood at quiescence; only a rebuilt one can trigger.
+    // A copied cell is as it stood at the fixed point; only a rebuilt one can trigger.
     for (const std::uint32_t cell : rebuilt_cells_) {
         if (in_active_clause_[cell] != 0) {
             maybe_queue(cell >> 1);
@@ -715,7 +715,7 @@ void ExactWatchlistTemplate<V>::update_with_backjump(std::size_t level, const Tr
     if (level == top_level()) {
         return;
     }
-    // Propagation was quiescent before each dropped level's decision, so nothing
+    // Propagation was at a fixed point before each dropped level's decision, so nothing
     // queued since holds any more, and every paused sweep is the top level's.
 #ifndef NDEBUG
     const std::size_t top_pivot_mark = level_pivot_mark_[top_level()];
@@ -746,7 +746,7 @@ void ExactWatchlistTemplate<V>::update_with_substitution(std::span<const ClauseI
     assert(trail.span().rows() == 0 && trail.span().cols() == num_cols_ &&
            "a substitution leaves an empty trail over the same numbering");
     assert(top_level() == 0 && saves_.empty() && "a substitution runs at the root");
-    assert(paused_head_ == paused_end_ && "a substitution runs at quiescence");
+    assert(paused_head_ == paused_end_ && "a substitution runs at a fixed point");
     assert(dropped_col_idxs.size() == num_cols_ &&
            "the dropped variables are over another numbering");
     num_dropped_vars_ = dropped_col_idxs.count();
@@ -797,7 +797,7 @@ void ExactWatchlistTemplate<V>::update_with_renumbering(const CompactionTransfor
                                              const Trail& trail) {
     assert(trail.span().rows() == 0 && "a renumbering follows a substitution");
     assert(top_level() == 0 && saves_.empty() && "a renumbering runs at the root");
-    assert(paused_head_ == paused_end_ && "a renumbering runs at quiescence");
+    assert(paused_head_ == paused_end_ && "a renumbering runs at a fixed point");
     assert(pivot_col_idxs_.empty() && retired_pairs_.empty() &&
            "a renumbering follows the substitution's update");
     assert(transform.old_num_vars() + 1 == num_cols_ && "the transform is over another numbering");

@@ -56,12 +56,12 @@ XORCLE_STAT(stabilize, Real, focused_slow_lbd, "focused_slow_lbd", "Slow LBD ave
 
 XORCLE_STAT(clauses, Count, clauses_in_database, "final_clauses", "Clauses in final database")
 XORCLE_STAT(clauses, Real, average_learned_lbd, "average_learned_lbd", "Average learned LBD")
-XORCLE_STAT(clauses, Count, learned_width_1, "learned_units", "Learned units (all sources)")
+XORCLE_STAT(clauses, Count, learned_units, "learned_units", "Learned units (all sources)")
 XORCLE_STAT(clauses, Count, learned_width_2, "learned_width_2", "Learned width-2 clauses (all sources)")
 
 // --- Phase saving, reported only when it is on -----------------------------
 
-XORCLE_STAT(phase_saving, Count, phase_saving_open_sides, "phase_default_decisions", "Decisions left to --phase-default")
+XORCLE_STAT(phase_saving, Count, phase_default_decisions, "phase_default_decisions", "Decisions left to --phase-default")
 
 // --- Clause minimization, reported only when it ran -------------------------
 
@@ -74,13 +74,13 @@ XORCLE_STAT(otf_subsume, Count, num_otf_subsumed_clauses, "otf_subsumed_clauses"
 
 // --- Vivification, reported only when it ran --------------------------------
 
-XORCLE_STAT(vivify, Count, vivify_narrowed, "vivified_clauses", "Clauses vivified")
+XORCLE_STAT(vivify, Count, vivified_clauses, "vivified_clauses", "Clauses vivified")
 XORCLE_STAT(vivify, Average, vivify_average_width_removed, "vivify_average_width_removed", "Average width removed per vivified clause")
 
-// --- The subsumption pass, reported only when it ran -------------------------
+// --- Inprocessing subsumption and strengthening, reported only when they ran --
 
-XORCLE_STAT(subsume_pass, Count, num_inproc_subsumed_clauses, "inproc_subsumed_clauses", "Clauses subsumed as inprocessing")
-XORCLE_STAT(subsume_pass, Count, num_inproc_strengthened_clauses, "inproc_strengthened_clauses", "Clauses strengthened as inprocessing")
+XORCLE_STAT(inproc_subsume_strengthen, Count, num_inproc_subsumed_clauses, "inproc_subsumed_clauses", "Clauses subsumed as inprocessing")
+XORCLE_STAT(inproc_subsume_strengthen, Count, num_inproc_strengthened_clauses, "inproc_strengthened_clauses", "Clauses strengthened as inprocessing")
 
 // --- Clause deletion, reported only when it ran -----------------------------
 
@@ -94,18 +94,18 @@ XORCLE_STAT(propagate_budget, Count, num_undone_decisions, "undone_decisions", "
 // --- BVE, reported only when it is on ----------------------------------------
 
 XORCLE_STAT(bve, Count, bve_passes, "bve_passes", "BVE passes")
-XORCLE_STAT(bve, Count, bve_eliminated, "bve_successes", "BVE successful projections")
+XORCLE_STAT(bve, Count, bve_successes, "bve_successes", "BVE successful projections")
 XORCLE_STAT(bve, SignedCount, bve_clause_count_difference, "bve_clause_count_difference", "Difference in clause count after BVE")
 XORCLE_STAT(bve, SignedCount, bve_total_width_difference, "bve_total_width_difference", "Difference in total width after BVE")
 XORCLE_STAT(bve, Count, bve_gate_successes, "bve_gate_successes", "BVE successful projections via gate detection")
-XORCLE_STAT(bve, Count, bve_root_equations, "bve_gate_units", "Units from one-sided gates")
+XORCLE_STAT(bve, Count, bve_gate_units, "bve_gate_units", "Units from one-sided gates")
 XORCLE_STAT(bve, Real, bve_gate_time_s, "bve_gate_time_s", "Time of the gate searches (s)")
 
 // --- The implication graph, reported only when it ran -----------------------
 
 XORCLE_STAT(implication_graph, Count, implication_graph_runs, "implication_graph_runs", "Implication graph runs")
 XORCLE_STAT(implication_graph, Average, implication_graph_pairs_per_unit, "implication_graph_pairs_per_unit", "Attempted vertex pairs per learned unit")
-XORCLE_STAT(implication_graph, Count, implication_graph_units_fed, "implication_graph_units_learned", "Units learned from implication graph")
+XORCLE_STAT(implication_graph, Count, implication_graph_units_learned, "implication_graph_units_learned", "Units learned from implication graph")
 XORCLE_STAT(implication_graph, Average, implication_graph_average_new_width_2_clauses, "implication_graph_average_new_width_2_clauses", "Average new width-2 clauses for implication graph runs")
 XORCLE_STAT(implication_graph, Count, implication_graph_skipped_runs, "implication_graph_skipped_runs", "Skipped implication graph runs")
 
@@ -127,7 +127,7 @@ XORCLE_STAT(solve_time, Real, analysis_time_s, "analysis_time_s", "Conflict anal
 XORCLE_STAT(solve_time, Real, deletion_time_s, "deletion_time_s", "Deletion")
 XORCLE_STAT(solve_time, Real, substitution_time_s, "substitution_time_s", "Substitution and compaction")
 XORCLE_STAT(solve_time, Real, bve_time_s, "bve_time_s", "BVE")
-XORCLE_STAT(solve_time, Real, subsume_pass_time_s, "inproc_subsume_strengthen_time_s", "Subsumption and strengthening")
+XORCLE_STAT(solve_time, Real, inproc_subsume_strengthen_time_s, "inproc_subsume_strengthen_time_s", "Subsumption and strengthening")
 XORCLE_STAT(solve_time, Real, vivify_time_s, "vivify_time_s", "Vivification")
 XORCLE_STAT(solve_time, Real, implication_graph_time_s, "implication_graph_time_s", "Implication graph")
 XORCLE_STAT(solve_time, Real, replay_time_s, "replay_time_s", "Replay")

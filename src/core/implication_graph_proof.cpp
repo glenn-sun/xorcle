@@ -3,7 +3,7 @@
 ///
 /// Each unit is a width-1 clause, and the checker takes a line only if unit
 /// propagation from the line's own rows falsifies a clause, so a line replays
-/// the arcs the run followed, one width-2 clause at a time. See
+/// the edges the run followed, one width-2 clause at a time. See
 /// arXiv:2605.15002 for LRUP(⊕).
 
 #include <cassert>
@@ -33,16 +33,16 @@ std::vector<Equation> Solver::lift_clause(const ClauseId id) const {
     return rows;
 }
 
-Solver::Citations Solver::replay_arcs(std::span<const ClauseId> arcs, HintTrail& trail) {
+Solver::Citations Solver::replay_edges(std::span<const ClauseId> edges, HintTrail& trail) {
     Citations cited;
-    for (const ClauseId arc : arcs) {
-        const std::vector<Equation> rows = lift_clause(arc);
+    for (const ClauseId edge : edges) {
+        const std::vector<Equation> rows = lift_clause(edge);
         const Hint hint = trail.cite(rows);
-        assert(hint != Hint::not_unit && "an arc's clause does not propagate on the replay");
+        assert(hint != Hint::not_unit && "an edge's clause does not propagate on the replay");
         if (hint == Hint::known) {
             continue;
         }
-        cited.hints.push_back(proof_id_of_clause_[arc]);
+        cited.hints.push_back(proof_id_of_clause_[edge]);
         if (hint == Hint::conflicting) {
             cited.conflicted = true;
             return cited;
@@ -54,7 +54,7 @@ Solver::Citations Solver::replay_arcs(std::span<const ClauseId> arcs, HintTrail&
             [[maybe_unused]] const Hint again = trail.cite(rows);
             assert(again == Hint::conflicting &&
                    "a refuted trail does not falsify the clause that refuted it");
-            cited.hints.push_back(proof_id_of_clause_[arc]);
+            cited.hints.push_back(proof_id_of_clause_[edge]);
             cited.conflicted = true;
             return cited;
         }
@@ -88,25 +88,25 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
     };
     // Every step's line proves the width-1 clause of its equation, so citing it
     // is citing that one row.
-    const auto cite_step = [&](const std::size_t index) {
-        Equation row = lifted(record.steps[index].equation);
+    const auto cite_step = [&](const std::size_t step_idx) {
+        Equation row = lifted(record.steps[step_idx].equation);
         row.negate();
         const Hint hint = trail.cite(std::span<const Equation>(&row, 1));
         assert(hint != Hint::known && hint != Hint::not_unit &&
                "an earlier step's unit is no use to the line citing it");
-        hints.push_back(step_line[index]);
+        hints.push_back(step_line[step_idx]);
         return hint == Hint::conflicting;
     };
-    const auto replay = [&](std::span<const ClauseId> arcs) {
-        const Citations cited = replay_arcs(arcs, trail);
+    const auto replay = [&](std::span<const ClauseId> edges) {
+        const Citations cited = replay_edges(edges, trail);
         hints.insert(hints.end(), cited.hints.begin(), cited.hints.end());
         return cited.conflicted;
     };
 
-    for (std::size_t index = 0; index < record.steps.size(); ++index) {
-        const ImplicationGraphProofStep& step = record.steps[index];
-        const std::span<const ClauseId> arcs(record.arcs.data() + step.arcs_begin,
-                                             step.arcs_end - step.arcs_begin);
+    for (std::size_t step_idx = 0; step_idx < record.steps.size(); ++step_idx) {
+        const ImplicationGraphProofStep& step = record.steps[step_idx];
+        const std::span<const ClauseId> edges(record.edges.data() + step.edges_begin,
+                                             step.edges_end - step.edges_begin);
         Equation negated = lifted(step.equation);
         negated.negate();
 
@@ -117,18 +117,18 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
             case Kind::refuted:
                 // Assume what the run refuted, and follow it to `0 = 1`.
                 rows.push_back(negated);
-                trail.restart(rows);
-                conflicted = replay(arcs);
+                trail.begin_line(rows);
+                conflicted = replay(edges);
                 break;
             case Kind::reaches_refuted:
                 rows.push_back(negated);
-                trail.restart(rows);
-                conflicted = replay(arcs) || cite_step(step.source);
+                trail.begin_line(rows);
+                conflicted = replay(edges) || cite_step(step.source);
                 break;
             case Kind::one_side:
                 rows.push_back(negated);
-                trail.restart(rows);
-                conflicted = cite_step(step.source) || replay(arcs);
+                trail.begin_line(rows);
+                conflicted = cite_step(step.source) || replay(edges);
                 break;
             case Kind::both_sides: {
                 // Neither side is refuted, so the two halves of the case split
@@ -136,23 +136,23 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
                 const Equation assumed = lifted(step.assumed);
                 Equation negated_assumed = assumed;
                 negated_assumed.negate();
-                const std::span<const ClauseId> other_arcs(
-                    record.arcs.data() + step.other_arcs_begin,
-                    step.other_arcs_end - step.other_arcs_begin);
+                const std::span<const ClauseId> other_edges(
+                    record.edges.data() + step.other_edges_begin,
+                    step.other_edges_end - step.other_edges_begin);
 
                 const std::vector<Equation> first_rows{assumed, negated};
                 const std::vector<Equation> second_rows{negated_assumed, negated};
 
                 rows = first_rows;
-                trail.restart(rows);
-                [[maybe_unused]] const bool first = replay(arcs);
+                trail.begin_line(rows);
+                [[maybe_unused]] const bool first = replay(edges);
                 assert(first && "one half of a two-sided unit reaches no conflict");
                 const ClauseId first_line = write();
 
                 rows = second_rows;
                 hints.clear();
-                trail.restart(rows);
-                [[maybe_unused]] const bool second = replay(other_arcs);
+                trail.begin_line(rows);
+                [[maybe_unused]] const bool second = replay(other_edges);
                 assert(second && "the other half of a two-sided unit reaches no conflict");
                 const ClauseId second_line = write();
 
@@ -160,14 +160,14 @@ std::vector<ClauseId> Solver::write_implication_graph_lines(
                 // other half then falsifies.
                 rows = {negated};
                 hints = {first_line, second_line};
-                trail.restart(rows);
+                trail.begin_line(rows);
                 conflicted = trail.cite(first_rows) == Hint::propagated &&
                              trail.cite(second_rows) == Hint::conflicting;
                 break;
             }
         }
         assert(conflicted && "a unit the implication graph found has no replay that conflicts");
-        step_line[index] = write();
+        step_line[step_idx] = write();
     }
     std::vector<ClauseId> unit_lines;
     unit_lines.reserve(record.unit_idx_to_step_idx.size());

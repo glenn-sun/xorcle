@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file compaction.h
-/// @brief Dropping the leading variables of all known units: a substitution
+/// @brief Dropping the leading variables of all root units: a substitution
 /// each time, and a renumbering once it shortens the equations.
 
 #include <cstddef>

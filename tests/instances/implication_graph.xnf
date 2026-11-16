@@ -4,8 +4,9 @@ c With the unit x2 = 1, the three width-2 clauses say that x3 = 1 implies x4 = 1
 c x4 + x5 = 1, whose sum is 0 = 1, so x3 = 0. Root propagation reaches nothing from them, and
 c the graph's first run is owed at the first root visit, before any decision; the option lets
 c it run with three width-2 clauses rather than fifty, and BVE would refute the instance itself.
-c The first clause is rewritten by the unit x2 = 1 before the run, so the graph cites a rewritten
-c clause, and x1 is unused, so its lines are renumbered back to the file's variables.
+c The first width-2 clause, -3 -2+4, is rewritten by the unit x2 = 1 before the run, so the graph
+c cites a rewritten clause, and x1 is unused, so its lines are renumbered back to the file's
+c variables.
 c The eight remaining clauses are every sign pattern over x6, x7, x8 with x3 added to each,
 c so once x3 = 0 is substituted only search refutes them.
 p xnf 8 12

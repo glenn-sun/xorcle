@@ -196,7 +196,7 @@ ConsoleStatsWriter::log(const RunStats& stats) {
     append_section(StatsSection::minimize);
     append_section(StatsSection::otf_subsume);
     append_section(StatsSection::vivify);
-    append_section(StatsSection::subsume_pass);
+    append_section(StatsSection::inproc_subsume_strengthen);
     append_section(StatsSection::deletion);
     append_section(StatsSection::propagate_budget);
     append_section(StatsSection::bve);
@@ -262,8 +262,7 @@ CsvStatsWriter::ensure_header(const RunStats& stats) {
         return;
     }
 
-    // Appending a row under a header that names other columns silently
-    // misaligns every field, so the run stops instead.
+    // A row is never appended under a header that names other columns.
     std::ifstream existing(path_);
     std::string first_line;
     if (!existing || !std::getline(existing, first_line)) {

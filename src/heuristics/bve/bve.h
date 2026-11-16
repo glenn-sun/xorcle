@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file bve.h
-/// @brief Bounded variable elimination by projection onto spans of the clauses.
+/// @brief Bounded projection (BVE), onto hyperplanes chosen from the spans of the clauses.
 ///
 /// A direction is an equation without its constant, and a clause contains the
 /// directions of the sums of its equations. A flip set is a set of variables: it
@@ -28,7 +28,7 @@ namespace xorcle {
 
 struct BveConfig {
     /// @brief The most rows a group may hold.
-    std::size_t group_cap;
+    std::size_t residual_dimensions;
 
     /// @brief Refusals in a row after which a group is given up.
     std::size_t max_refusals_in_a_row;
@@ -40,8 +40,8 @@ struct BveConfig {
     /// @brief The most conflicts one solve of a gate search may take.
     std::size_t gate_max_conflicts;
 
-    /// @brief Whether a one-sided gate's root equations are added as unit clauses.
-    bool root_equations;
+    /// @brief Whether the units a one-sided gate implies at the root are added as unit clauses.
+    bool gate_units;
 };
 
 /// @brief What one BVE pass did.
@@ -55,7 +55,7 @@ struct BveCounters {
     std::size_t num_resolvents_of_width_at_most_2 = 0; ///< Among the clauses left, units included.
     std::size_t num_eliminated_by_gate = 0; ///< Of `num_eliminated`, those whose resolution found a gate.
     /// @brief Equations one-sided gates make false at the root, added as unit clauses.
-    std::size_t num_root_equations = 0;
+    std::size_t num_gate_units = 0;
     double gate_time_s = 0.0; ///< Of the gate searches.
 };
 
@@ -75,18 +75,18 @@ struct BvePlan {
         std::size_t idx;
     };
 
-    /// @brief A clause derived on the way to a root equation, and the clauses its line cites.
+    /// @brief A clause derived on the way to a gate unit, and the clauses its line cites.
     struct Lemma {
         Clause clause;
         std::vector<Parent> reasons;
     };
 
-    /// @brief A resolvent, or a root equation of a one-sided gate as a unit clause: the
+    /// @brief A resolvent, or a unit of a one-sided gate as a unit clause: the
     /// clause if the pass left it, and else where its rows are among the clauses a
     /// later elimination removed.
     struct Resolvent {
         std::array<Parent, 2> parents; ///< Of a resolvent.
-        /// @brief Of a root equation, its line's lemmas and the clauses it cites, in replay order.
+        /// @brief Of a gate unit, its line's lemmas and the clauses it cites, in replay order.
         std::vector<Lemma> lemmas;
         std::vector<Parent> reasons;
         std::optional<Clause> clause;
@@ -94,7 +94,7 @@ struct BvePlan {
         std::size_t removed_clause_idx = 0;
     };
 
-    /// @brief Every resolvent and root equation the pass derived, in the order derived.
+    /// @brief Every resolvent and gate unit the pass derived, in the order derived.
     std::vector<Resolvent> resolvents;
 
     /// @brief In the order eliminated.
@@ -107,7 +107,7 @@ struct BvePlan {
 };
 
 /// @brief One pass: eliminate by flip sets chosen by projection, accepting an
-/// elimination when its resolvents have no more rows in total than the clauses it removes.
+/// elimination when its resolvents' total width is at most that of the clauses it removes.
 ///
 /// The clauses are read in a uniformly random order, which splits the span of
 /// their directions into a core subspace and groups; the hyperplanes containing
@@ -115,11 +115,11 @@ struct BvePlan {
 /// clauses touched first, until `config.max_refusals_in_a_row` are refused in a
 /// row. See arXiv:2605.15002 for projection onto a span.
 ///
-/// @param with_proof Whether each root equation's plan carries the lines that derive it.
+/// @param with_proof Whether each gate unit's plan carries the lines that derive it.
 /// @param rng Drawn from for the order and for each choice among equals.
 /// @pre `active_clause_ids` are ids of `clauses`, each over `num_vars` variables
 /// in representation `repr`; none is a tautology, and no two have one span.
-/// @pre `1 <= config.group_cap <= 16`, `config.max_refusals_in_a_row >= 1`,
+/// @pre `1 <= config.residual_dimensions <= 16`, `config.max_refusals_in_a_row >= 1`,
 /// `0 <= config.success_rate <= 1` and `config.gate_max_conflicts >= 1`.
 BvePlan build_bve_plan(const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids,
                        std::size_t num_vars, EquationRepr repr, const BveConfig& config,

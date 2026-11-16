@@ -132,7 +132,7 @@ TEST_CASE("implication graph: an equation whose descendants span 0 = 1 is refute
     CHECK(summary.edges_visited > 0);
     CHECK(graph.num_width_2_clauses() == 3);
     CHECK(graph.num_vertex_pairs() == 6);
-    // `[x1 = 0]` has no out-arc, so that one equation is the whole of its side.
+    // `[x1 = 0]` has no out-edge, so that one equation is the whole of its side.
     CHECK(summary.refuted_sides == 1);
     REQUIRE(units.size() == 1);
     const std::vector<std::size_t> x1_is_zero{0};
@@ -143,7 +143,7 @@ TEST_CASE("implication graph: an equation whose descendants span 0 = 1 is refute
 // the clauses a v b, a v c and a v d spell out a -> b, a -> c and ~a -> d. Then
 // d is in the span of a's descendants and in the span of ~a's, so it holds; no
 // equation here reaches its own negation and no two descendants of a side are
-// negations of each other. Of the seven pairs only a, ~a has an out-arc on both
+// negations of each other. Of the seven pairs only a, ~a has an out-edge on both
 // sides; ~d is refuted by a span, since d is the sum of the b and c it reaches.
 TEST_CASE("implication graph: an equation can hold on both sides without a path") {
     const std::size_t num_vars = 3;
@@ -167,7 +167,7 @@ TEST_CASE("implication graph: an equation can hold on both sides without a path"
 // a = [x1 = 1] implies [x2 = 0], [x3 = 0] and [x2 + x3 = 1], whose sum is
 // `0 = 1`, so a cannot hold. No two of the three are negations of each other, so
 // a reaches no equation together with its negation and never reaches ~a. ~a has
-// no out-arc, so its own span is just ~a, and the intersection is exactly that.
+// no out-edge, so its own span is just ~a, and the intersection is exactly that.
 TEST_CASE("implication graph: a span refutes an equation no pair of descendants does") {
     const std::size_t num_vars = 3;
     std::vector<Clause> clauses;
@@ -339,7 +339,7 @@ TEST_CASE("implication graph: a rewritten clause makes the pairs that reach it d
 
 // x2 -> x3 and x1 -> x2 yield nothing. `x3 -> not x2` then refutes `[x2 = 1]`
 // at the first pair of the second run, and `[x1 = 1]`, whose pair comes later,
-// is refuted through its arc to it.
+// is refuted through its edge to it.
 TEST_CASE("implication graph: a dirty pair is refuted through a vertex refuted in the same run") {
     const std::size_t num_vars = 6;
     std::vector<Clause> clauses;
@@ -406,7 +406,7 @@ TEST_CASE("implication graph: a pair the pair cap left out stays dirty") {
 }
 
 // The refuted side above, read again for what a proof of its unit would replay.
-TEST_CASE("implication graph: a refuted side records the arcs it was refuted through") {
+TEST_CASE("implication graph: a refuted side records the edges it was refuted through") {
     const std::size_t num_vars = 3;
     std::vector<Clause> clauses;
     clauses.push_back(make_clause(repr, num_vars, {{0, 3}, {1, 3}}));
@@ -423,13 +423,13 @@ TEST_CASE("implication graph: a refuted side records the arcs it was refuted thr
     REQUIRE(fed.size() == 1);
     CHECK(fed[0]->kind == ImplicationGraphProofStep::Kind::refuted);
     CHECK(fed[0]->equation == units[0]);
-    CHECK(fed[0]->arcs_end > fed[0]->arcs_begin);
-    for (std::size_t i = fed[0]->arcs_begin; i < fed[0]->arcs_end; ++i) {
-        CHECK(record.arcs[i] < clauses.size());
+    CHECK(fed[0]->edges_end > fed[0]->edges_begin);
+    for (std::size_t i = fed[0]->edges_begin; i < fed[0]->edges_end; ++i) {
+        CHECK(record.edges[i] < clauses.size());
     }
 }
 
-// The pair with an out-arc on both sides comes first, so its unit is the one
+// The pair with an out-edge on both sides comes first, so its unit is the one
 // fed; the pair of that unit and its negation is read afterwards and refutes the
 // negation, which is a step the record keeps and no unit.
 TEST_CASE("implication graph: a unit on both sides records a replay per side") {
@@ -449,8 +449,8 @@ TEST_CASE("implication graph: a unit on both sides records a replay per side") {
     REQUIRE(fed.size() == 1);
     CHECK(fed[0]->kind == ImplicationGraphProofStep::Kind::both_sides);
     CHECK(fed[0]->equation == units[0]);
-    CHECK(fed[0]->arcs_end > fed[0]->arcs_begin);
-    CHECK(fed[0]->other_arcs_end > fed[0]->other_arcs_begin);
+    CHECK(fed[0]->edges_end > fed[0]->edges_begin);
+    CHECK(fed[0]->other_edges_end > fed[0]->other_edges_begin);
     CHECK(record.steps.size() > fed.size());
 }
 
@@ -580,7 +580,7 @@ namespace {
 /// @brief The solver's proof of @p clauses, under the default options but with BVE off, which
 /// would rewrite the clauses before the graph reads them.
 std::string solver_proof(const std::vector<Clause>& clauses, std::size_t num_vars,
-                         std::size_t& num_units_fed) {
+                         std::size_t& num_units_learned) {
     std::ostringstream help;
     const std::optional<Options> options = parse_options(
         {"--bve=false", "--implication-graph-min-new-clauses=0", "instance.xnf"}, help);
@@ -595,7 +595,7 @@ std::string solver_proof(const std::vector<Clause>& clauses, std::size_t num_var
         solver->add_starting_clause(clause);
     }
     solver->solve();
-    num_units_fed = solver->stats().implication_graph_units_fed;
+    num_units_learned = solver->stats().implication_graph_units_learned;
     writer.flush();
     return proof.str();
 }
@@ -632,9 +632,9 @@ TEST_CASE("implication graph: the solver's proof lines check") {
             continue;
         }
 
-        std::size_t num_units_fed = 0;
-        const std::string text = solver_proof(clauses, num_vars, num_units_fed);
-        CHECK(num_units_fed >= first.units.size());
+        std::size_t num_units_learned = 0;
+        const std::string text = solver_proof(clauses, num_vars, num_units_learned);
+        CHECK(num_units_learned >= first.units.size());
         std::size_t num_graph_lines = record.steps.size();
         for (const ImplicationGraphProofStep& step : record.steps) {
             num_graph_lines += step.kind == ImplicationGraphProofStep::Kind::both_sides ? 2 : 0;
@@ -668,9 +668,9 @@ TEST_CASE("implication graph: the solver's proof checks when a run feeds a refut
         repr);
     REQUIRE(parsed.num_vars == num_vars);
 
-    std::size_t num_units_fed = 0;
-    const std::string text = solver_proof(parsed.clauses, num_vars, num_units_fed);
-    CHECK(num_units_fed > 0);
+    std::size_t num_units_learned = 0;
+    const std::string text = solver_proof(parsed.clauses, num_vars, num_units_learned);
+    CHECK(num_units_learned > 0);
     CAPTURE(text);
     LrupChecker checker(repr, num_vars, clause_rows(parsed.clauses));
     CHECK(checker.check(text).empty());

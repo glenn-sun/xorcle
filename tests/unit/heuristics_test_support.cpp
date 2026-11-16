@@ -76,9 +76,9 @@ ClauseId add_starting_clause(ClauseDatabase& database, ClauseSelector& selector,
     return id;
 }
 
-ClauseId add_asserting_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause,
+ClauseId add_learned_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause,
                               const Trail& trail, const AssertingClauseInfo& info) {
-    const ClauseId id = database.add_asserting_clause(std::move(clause), info.lbd);
+    const ClauseId id = database.add_learned_clause(std::move(clause), info.lbd);
     selector.update_with_asserting_clause(id, trail, info);
     return id;
 }

@@ -164,10 +164,10 @@ void ImplicationGraph::walk_span_intersections(
     // that way needs no span of its own. Marks are filled in the order the
     // pairs come, so this catches whatever the order has already settled.
     std::vector<std::uint8_t> refuted_mark(num_vertices, 0);
-    const auto inherited_refutation = [&](const std::size_t v) -> const Arc* {
-        for (const Arc& arc : arcs_[v]) {
-            if (refuted_mark[arc.target] != 0) {
-                return &arc;
+    const auto inherited_refutation = [&](const std::size_t v) -> const Edge* {
+        for (const Edge& edge : edges_[v]) {
+            if (refuted_mark[edge.target] != 0) {
+                return &edge;
             }
         }
         return nullptr;
@@ -182,7 +182,7 @@ void ImplicationGraph::walk_span_intersections(
     if (proof != nullptr) {
         refuted_step.assign(num_vertices, no_proof_step);
     }
-    const auto record_refutation = [&](const std::size_t v, const Arc* const inherited,
+    const auto record_refutation = [&](const std::size_t v, const Edge* const inherited,
                                        const std::vector<ClauseId>& replay) {
         refuted_mark[v] = 1;
         if (proof == nullptr) {
@@ -190,17 +190,17 @@ void ImplicationGraph::walk_span_intersections(
         }
         ImplicationGraphProofStep step;
         step.equation = equation_of(v ^ 1);
-        step.arcs_begin = proof->arcs.size();
+        step.edges_begin = proof->edges.size();
         if (inherited != nullptr) {
             step.kind = Kind::reaches_refuted;
             step.source = refuted_step[inherited->target];
             assert(step.source != no_proof_step && "a refuted vertex went without a step");
-            proof->arcs.push_back(inherited->clause_id);
+            proof->edges.push_back(inherited->clause_id);
         } else {
             step.kind = Kind::refuted;
-            proof->arcs.insert(proof->arcs.end(), replay.begin(), replay.end());
+            proof->edges.insert(proof->edges.end(), replay.begin(), replay.end());
         }
-        step.arcs_end = proof->arcs.size();
+        step.edges_end = proof->edges.size();
         refuted_step[v] = proof->steps.size();
         proof->steps.push_back(std::move(step));
     };
@@ -218,23 +218,23 @@ void ImplicationGraph::walk_span_intersections(
         if (num_vertices <= path_check_vertices) {
             for (const std::size_t reached : descendants_) {
                 assert(implication_is_clause_backed(vertex, reached, clauses, active_clause_ids) &&
-                       "a descendant is not reached through clause-backed arcs");
+                       "a descendant is not reached through clause-backed edges");
             }
             for (const std::size_t reached : other_descendants_) {
                 assert(implication_is_clause_backed(vertex + 1, reached, clauses,
                                                     active_clause_ids) &&
-                       "a descendant is not reached through clause-backed arcs");
+                       "a descendant is not reached through clause-backed edges");
             }
         }
 #endif
-        // A side with no out-arc spans its own equation alone, which is never
+        // A side with no out-edge spans its own equation alone, which is never
         // `0 = 1`, so the intersection is that equation exactly when the other
         // side is refuted and is `0 = 0` otherwise.
-        const bool lone_first = arcs_[vertex].empty();
-        const bool one_sided = lone_first || arcs_[vertex + 1].empty();
+        const bool lone_first = edges_[vertex].empty();
+        const bool one_sided = lone_first || edges_[vertex + 1].empty();
         if (one_sided) {
             const std::size_t deep_vertex = lone_first ? vertex + 1 : vertex;
-            const Arc* const inherited = inherited_refutation(deep_vertex);
+            const Edge* const inherited = inherited_refutation(deep_vertex);
             bool deep_refuted = inherited != nullptr;
             if (!deep_refuted) {
                 const std::vector<std::size_t>& deep = lone_first ? other_descendants_ : descendants_;
@@ -258,8 +258,8 @@ void ImplicationGraph::walk_span_intersections(
             continue;
         }
 
-        const Arc* const here_inherited = inherited_refutation(vertex);
-        const Arc* const there_inherited = inherited_refutation(vertex + 1);
+        const Edge* const here_inherited = inherited_refutation(vertex);
+        const Edge* const there_inherited = inherited_refutation(vertex + 1);
         bool here_refuted = here_inherited != nullptr;
         bool there_refuted = there_inherited != nullptr;
         use_columns_of(descendants_, &other_descendants_);
@@ -329,10 +329,10 @@ void ImplicationGraph::walk_span_intersections(
 
         // The pair's replays, appended to the pool the first time a unit cites them.
         bool replays_are_pooled = false;
-        std::size_t arcs_begin = 0;
-        std::size_t arcs_end = 0;
-        std::size_t other_arcs_begin = 0;
-        std::size_t other_arcs_end = 0;
+        std::size_t edges_begin = 0;
+        std::size_t edges_end = 0;
+        std::size_t other_edges_begin = 0;
+        std::size_t other_edges_end = 0;
 
         for (std::size_t i = 0; i < intersection.size(); ++i) {
             const Equation& eqn = intersection[i];
@@ -375,14 +375,14 @@ void ImplicationGraph::walk_span_intersections(
                         const std::vector<ClauseId>& replay =
                             kind == Kind::one_side && here_refuted ? other_parent_clauses_
                                                                   : parent_clauses_;
-                        arcs_begin = proof->arcs.size();
-                        proof->arcs.insert(proof->arcs.end(), replay.begin(), replay.end());
-                        arcs_end = proof->arcs.size();
+                        edges_begin = proof->edges.size();
+                        proof->edges.insert(proof->edges.end(), replay.begin(), replay.end());
+                        edges_end = proof->edges.size();
                         if (kind == Kind::both_sides) {
-                            other_arcs_begin = proof->arcs.size();
-                            proof->arcs.insert(proof->arcs.end(), other_parent_clauses_.begin(),
+                            other_edges_begin = proof->edges.size();
+                            proof->edges.insert(proof->edges.end(), other_parent_clauses_.begin(),
                                                other_parent_clauses_.end());
-                            other_arcs_end = proof->arcs.size();
+                            other_edges_end = proof->edges.size();
                         }
                     }
                     ImplicationGraphProofStep step;
@@ -392,10 +392,10 @@ void ImplicationGraph::walk_span_intersections(
                         step.assumed = equation_of(vertex);
                     }
                     step.source = source;
-                    step.arcs_begin = arcs_begin;
-                    step.arcs_end = arcs_end;
-                    step.other_arcs_begin = other_arcs_begin;
-                    step.other_arcs_end = other_arcs_end;
+                    step.edges_begin = edges_begin;
+                    step.edges_end = edges_end;
+                    step.other_edges_begin = other_edges_begin;
+                    step.other_edges_end = other_edges_end;
                     proof->unit_idx_to_step_idx.push_back(proof->steps.size());
                     proof->steps.push_back(std::move(step));
                 }
@@ -442,19 +442,19 @@ bool ImplicationGraph::full_examination_yields(const ImplicationGraphRun& run,
            });
 }
 
-bool ImplicationGraph::all_arcs_are_clause_backed(
+bool ImplicationGraph::all_edges_are_clause_backed(
     const std::vector<Clause>& clauses, ActiveClauseIds active_clause_ids) {
     const auto holds = [this](const Equation& eqn) {
         return std::ranges::any_of(triple_, [&eqn](const Equation* row) { return *row == eqn; });
     };
     for (std::size_t from = 0; from < 2 * num_keys_; ++from) {
-        for (const Arc& arc : arcs_[from]) {
-            if (!active_clause_ids.contains(arc.clause_id) ||
-                !reduce_triple(clauses[arc.clause_id])) {
+        for (const Edge& edge : edges_[from]) {
+            if (!active_clause_ids.contains(edge.clause_id) ||
+                !reduce_triple(clauses[edge.clause_id])) {
                 return false;
             }
             const Equation head = equation_of(from);
-            const Equation refuted = equation_of(arc.target ^ 1);
+            const Equation refuted = equation_of(edge.target ^ 1);
             if (head == refuted || !holds(head) || !holds(refuted)) {
                 return false;
             }

@@ -28,7 +28,7 @@ public:
 
     /// @brief Begin a line, whose own rows the checker assumes.
     template <class Rows>
-    void restart(const Rows& rows) {
+    void begin_line(const Rows& rows) {
         while (span_.rows() != 0) {
             span_.pop_last_row();
         }

@@ -39,7 +39,7 @@ struct PhaseSavingConfig {
     /// @brief Conflicts between resets of the target trail, when `source` uses it.
     std::size_t target_reset_conflicts;
     /// @brief Conflicts in each step of the first cycle of `PhaseRotation`, under `rotate`.
-    std::size_t rotation_interval;
+    std::size_t rotate_starting_interval;
     /// @brief The source in focused mode, present exactly when the search has one.
     std::optional<PhaseSaving> focused_source;
 };
@@ -68,7 +68,7 @@ private:
 };
 
 struct PhaseSavingCounters {
-    std::size_t open_sides = 0; ///< Decisions whose side is left to `DecisionPhase`.
+    std::size_t phase_default_decisions = 0; ///< Decisions whose side is left to `DecisionPhase`.
 };
 
 /// @brief The trails phase saving keeps, and the choice of a decision's space by them.

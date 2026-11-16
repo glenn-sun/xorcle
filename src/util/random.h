@@ -31,7 +31,7 @@ enum class RngComponent : std::uint64_t {
     implication_graph_sample = 0xa54ff53a5f1d36f1ULL,
     vivify_basis = 0x9b05688c2b3e6c1fULL,
     bve_draw = 0x510e527fade682d1ULL,
-    subsume_pass_draw = 0x1f83d9abfb41bd6bULL
+    inproc_subsume_strengthen_draw = 0x1f83d9abfb41bd6bULL
 };
 
 Seed derive_seed(Seed base_seed, RngComponent component);

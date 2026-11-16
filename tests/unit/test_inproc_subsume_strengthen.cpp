@@ -10,7 +10,7 @@
 #include "algebra/equation_repr.h"
 #include "algebra/row_echelon_matrix.h"
 #include "algebra_test_support.h"
-#include "core/subsume_pass.h"
+#include "core/inproc_subsume_strengthen.h"
 #include "heuristics_test_support.h"
 #include "util/random.h"
 
@@ -110,7 +110,7 @@ std::vector<std::set<std::uint64_t>> hyperplanes(const Clause& clause, const std
 
 // C subsumes D when C implies D, and strengthens D when C and D together imply a
 // hyperplane of D's span; checked against truth tables over a few variables.
-TEST_CASE_TEMPLATE("subsumption pass: a pair's relation and its hyperplanes match truth tables",
+TEST_CASE_TEMPLATE("inprocessing subsumption: a pair's relation and its hyperplanes match truth tables",
                    Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     Rng rng(7);
@@ -169,7 +169,7 @@ TEST_CASE_TEMPLATE("subsumption pass: a pair's relation and its hyperplanes matc
     CHECK(num_neither > 50);
 }
 
-TEST_CASE("subsumption pass: the rows a check reads are counted") {
+TEST_CASE("inprocessing subsumption: the rows a check reads are counted") {
     // C's one row x0 + x1 against D's rows x0 + 1 and x1: both read, leaving `0 = 1`.
     const Clause narrower = make_clause(EquationRepr::dense, 2, {{0, 1}});
     Clause wider = make_clause(EquationRepr::dense, 2, {{0, 2}, {1}});

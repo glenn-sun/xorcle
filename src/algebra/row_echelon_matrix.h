@@ -322,9 +322,6 @@ std::vector<Equation> span_intersection(const RowEchelonMatrix& left,
 
 /// @brief `span_intersection()` building its rows from `pool`, and giving back
 /// there the rows it does not return.
-///
-/// A CSIDS decision calls it for each clause it walks past that shares a pivot
-/// column, 5 a decision on tseitin and 9 on ascon (2026-10-13).
 /// @pre As `span_intersection()`, and `pool` has `left`'s representation and as
 /// many bits as `left` has columns.
 std::vector<Equation> span_intersection(const RowEchelonMatrix& left,

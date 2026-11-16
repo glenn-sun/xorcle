@@ -28,7 +28,7 @@ struct DeletionConfig {
 
     std::size_t cadence_offset;
 
-    /// @brief The LBD allowed one unused deletion pass; see `allowed_unused_passes()`.
+    /// @brief The LBD allowed one unused deletion pass; see `free_passes()`.
     double wait;
 
     /// @brief The fraction of the deletion candidates a deletion pass evicts.
@@ -37,9 +37,9 @@ struct DeletionConfig {
     DeletionKey key;
 };
 
-/// @brief The consecutive deletion passes a learned clause of this LBD may go unused,
-/// `round(2^(wait - lbd))`.
-std::size_t allowed_unused_passes(double lbd, double wait);
+/// @brief The free passes of a learned clause of this LBD, `round(2^(wait - lbd))`: the
+/// consecutive deletion passes it may go unused.
+std::size_t free_passes(double lbd, double wait);
 
 /// @brief Mark a learned clause used as a reason since the last deletion pass; a starting
 /// clause's record is left alone.
@@ -70,7 +70,7 @@ struct DeletionPlan {
 /// evict, worst first.
 ///
 /// A clause used since the last pass starts its unused passes over; otherwise a clause
-/// unused for as many passes as `allowed_unused_passes()` gives it is a deletion
+/// unused for as many passes as `free_passes()` gives it is a deletion
 /// candidate, and any other counts one more. A clause some trail row names as its
 /// reason is locked: never a candidate, and not counted as unused.
 ///

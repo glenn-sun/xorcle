@@ -39,14 +39,14 @@ inline constexpr std::size_t no_proof_step = static_cast<std::size_t>(-1);
 /// @brief One equation a run proved, and what proves it.
 ///
 /// `equation` holds in every solution, so a proof of it is the proof of a
-/// width-1 clause. The replays a step names are arcs in the order the
+/// width-1 clause. The replays a step names are edges in the order the
 /// descendant search reached the vertices they lead to, so following them from
 /// the equation assumed derives each descendant from one already derived.
 struct ImplicationGraphProofStep {
     /// @brief Which of the rule's four shapes derived the equation.
     enum class Kind {
-        refuted,         ///< Replaying `arcs` from the negation of `equation` reaches `0 = 1`.
-        reaches_refuted, ///< The one arc leads from the negation of `equation` to what
+        refuted,         ///< Replaying `edges` from the negation of `equation` reaches `0 = 1`.
+        reaches_refuted, ///< The one edge leads from the negation of `equation` to what
                          ///< `source` refutes.
         one_side,        ///< `equation` is in the span of the replay from what `source`
                          ///< proves, the negation of a refuted equation.
@@ -58,30 +58,30 @@ struct ImplicationGraphProofStep {
     Equation equation;
     Equation assumed;   ///< `both_sides` only; the other kinds read `equation` and `source`.
     std::size_t source = no_proof_step;
-    std::size_t arcs_begin = 0;
-    std::size_t arcs_end = 0;
-    std::size_t other_arcs_begin = 0; ///< `both_sides` only: the negation's replay.
-    std::size_t other_arcs_end = 0;
+    std::size_t edges_begin = 0;
+    std::size_t edges_end = 0;
+    std::size_t other_edges_begin = 0; ///< `both_sides` only: the negation's replay.
+    std::size_t other_edges_end = 0;
 };
 
-/// @brief Every step of a run, with the arcs they replay in one pool.
+/// @brief Every step of a run, with the edges they replay in one pool.
 struct ImplicationGraphProofRecord {
     std::vector<ImplicationGraphProofStep> steps;
-    std::vector<ClauseId> arcs;
+    std::vector<ClauseId> edges;
     /// @brief The step proving each of the run's units, in the order of its `units`.
     std::vector<std::size_t> unit_idx_to_step_idx;
 
     void clear() {
         steps.clear();
-        arcs.clear();
+        edges.clear();
         unit_idx_to_step_idx.clear();
     }
 };
 
 /// @brief What one run of the graph did.
 struct ImplicationGraphRun {
-    std::size_t edges_visited = 0; ///< Arcs the descendant searches traversed.
-    std::size_t pairs_eligible = 0; ///< Vertex pairs with an out-arc on either side.
+    std::size_t edges_visited = 0; ///< Edges the descendant searches traversed.
+    std::size_t pairs_eligible = 0; ///< Vertex pairs with an out-edge on either side.
     std::size_t pairs_examined = 0; ///< Of those, the dirty ones the pair cap left room for.
     std::size_t refuted_sides = 0;  ///< Sides of the examined pairs whose span holds `0 = 1`.
     bool at_the_pair_cap = false;
@@ -95,11 +95,11 @@ struct ImplicationGraphRun {
 /// A width-2 clause contributes the three nonzero equations of its linear
 /// negation and the six implications among them,
 /// since at most one of the three can hold. A vertex is one such equation; it
-/// and its negation share a key, so `vertex ^ 1` is the negation and the arcs
+/// and its negation share a key, so `vertex ^ 1` is the negation and the edges
 /// are closed under negating both ends.
 ///
 /// A run builds the graph from the clause database and examines its dirty
-/// pairs. A pair is dirty when a side of it reaches an arc of a clause first
+/// pairs. A pair is dirty when a side of it reaches an edge of a clause first
 /// read after the run that last examined the pair; a clause is read by the
 /// first run that takes it, and is unread again once rewritten. Between runs
 /// only that survives: per clause, the run that first read it and the runs
@@ -138,7 +138,7 @@ private:
     static constexpr std::size_t no_index = static_cast<std::size_t>(-1);
 
     /// @brief One implication, with the clause that stands behind it.
-    struct Arc {
+    struct Edge {
         std::size_t target;
         ClauseId clause_id;
     };
@@ -159,11 +159,11 @@ private:
 
     Equation equation_of(std::size_t vertex) const;
 
-    /// @brief Add the three vertices of `triple_` and its six arcs, reading the
+    /// @brief Add the three vertices of `triple_` and its six edges, reading the
     /// clause if it is unread.
     void add_clause(ClauseId clause_id);
 
-    /// @brief Fill `key_is_dirty_`, in one search that visits every arc once.
+    /// @brief Fill `key_is_dirty_`, in one search that visits every edge once.
     void mark_dirty_pairs();
 
     /// @brief Record this run as the one that last examined the sampled pairs,
@@ -176,7 +176,7 @@ private:
     /// Whole distance levels go in while they fit under `max_descendants`; the
     /// level that would overrun it contributes a uniformly random subset filling
     /// the cap, and the search stops there. A non-null @p parent_clause is left
-    /// holding the clause of the arc each of `reached[1]` onwards came in on.
+    /// holding the clause of the edge each of `reached[1]` onwards came in on.
     /// @return Whether that last level was cut short.
     bool mark_descendants(std::size_t from, std::vector<std::size_t>& stamp, std::size_t mark,
                           std::vector<std::size_t>& reached, std::size_t& edges_visited,
@@ -189,10 +189,10 @@ private:
     /// @brief Intersect the spans of the two sides of every sampled vertex pair,
     /// appending to @p units what the units before it leave independent.
     ///
-    /// For a vertex `a`, `T_a` is the span of `a` and everything `a` reaches,
-    /// taken as the whole space once it holds `0 = 1`. Every equation in `T_a`
-    /// intersected with `T_not_a` holds in every solution, since exactly one of
-    /// `a` and `not a` does.
+    /// For a vertex `a`, `ImpliedBy(a)` is the span of `a` and its descendants,
+    /// taken as the whole space once it holds `0 = 1`. Every equation in
+    /// `ImpliedBy(a)` intersected with `ImpliedBy(not a)` holds in every solution,
+    /// since exactly one of `a` and `not a` does.
     void walk_span_intersections(const std::vector<Clause>& clauses,
                                  ActiveClauseIds active_clause_ids, ImplicationGraphRun& summary,
                                  ImplicationGraphProofRecord* proof);
@@ -206,7 +206,7 @@ private:
                                  const std::vector<Clause>& clauses,
                                  ActiveClauseIds active_clause_ids);
 
-    /// @brief Whether some path from @p from to @p to has every arc backed by
+    /// @brief Whether some path from @p from to @p to has every edge backed by
     /// the width-2 clause it was built from.
     ///
     /// The clause is read again and reduced again, so this checks the graph
@@ -215,9 +215,9 @@ private:
                                       const std::vector<Clause>& clauses,
                                       ActiveClauseIds active_clause_ids);
 
-    /// @brief Whether every arc the graph holds is backed by the width-2 clause
+    /// @brief Whether every edge the graph holds is backed by the width-2 clause
     /// it was built from, the clause read and reduced again.
-    bool all_arcs_are_clause_backed(const std::vector<Clause>& clauses,
+    bool all_edges_are_clause_backed(const std::vector<Clause>& clauses,
                                     ActiveClauseIds active_clause_ids);
 #endif
 
@@ -241,7 +241,7 @@ private:
 
     /// @brief Forget every key, keeping the equations.
     void clear_keys();
-    std::vector<std::vector<Arc>> arcs_; ///< Indexed by vertex.
+    std::vector<std::vector<Edge>> edges_; ///< Indexed by vertex.
 
     std::size_t num_width_2_clauses_ = 0;
 
@@ -271,7 +271,7 @@ private:
     std::vector<std::uint32_t> key_last_examined_;
     std::vector<std::uint8_t> key_is_dirty_;
 
-    /// @brief By vertex, the latest first read among the clauses whose arcs its
+    /// @brief By vertex, the latest first read among the clauses whose edges its
     /// negation reaches.
     std::vector<std::uint32_t> latest_first_read_;
     std::vector<std::size_t> graph_clause_order_;
@@ -294,7 +294,7 @@ private:
     std::vector<std::size_t> descendants_;
     std::vector<std::size_t> other_descendants_;
 
-    /// @brief The arc each descendant came in on, filled only while a proof is
+    /// @brief The edge each descendant came in on, filled only while a proof is
     /// being recorded.
     std::vector<ClauseId> parent_clauses_;
     std::vector<ClauseId> other_parent_clauses_;

@@ -626,7 +626,8 @@ inline CsidsConfig csids_config(const Options& options) {
                        .phase_saving = {.source = options.phase_saving,
                                         .target_reset_conflicts =
                                             options.phase_saving_target_reset,
-                                        .rotation_interval = options.phase_rotate_starting_interval,
+                                        .rotate_starting_interval =
+                                            options.phase_rotate_starting_interval,
                                         .focused_source =
                                             options.stabilize
                                                 ? std::optional(options.focused_phase_saving)
@@ -641,11 +642,11 @@ inline ImplicationGraphConfig implication_graph_config(const Options& options) {
 }
 
 inline BveConfig bve_config(const Options& options) {
-    return BveConfig{.group_cap = options.bve_residual_dimensions,
+    return BveConfig{.residual_dimensions = options.bve_residual_dimensions,
                      .max_refusals_in_a_row = options.bve_max_refusals_in_a_row,
                      .success_rate = options.bve_success_rate,
                      .gate_max_conflicts = options.bve_gate_max_conflicts,
-                     .root_equations = options.bve_gate_units};
+                     .gate_units = options.bve_gate_units};
 }
 
 inline DeletionConfig deletion_config(const Options& options) {
@@ -686,7 +687,7 @@ inline SolverConfig solver_config(const Options& options,
     SolverConfig config{
         .renumber = options.compact,
         .minimize = options.minimize,
-        .bump_responsible_clauses = options.csids_bump_learned_positions,
+        .bump_learned_positions = options.csids_bump_learned_positions,
         .otf_subsume = options.otf_subsume,
         .lbd_window = options.lbd_window,
         .attempt_budget = std::nullopt,
@@ -707,7 +708,7 @@ inline SolverConfig solver_config(const Options& options,
         config.implication_graph = implication_graph_config(options);
     }
     if (option_group_is_read(OptionGroup::vivify, options)) {
-        config.vivify = VivifyConfig{.rounds = options.vivify_bases,
+        config.vivify = VivifyConfig{.bases = options.vivify_bases,
                                      .cadence = options.vivify_cadence,
                                      .effort = options.vivify_effort};
     }
@@ -716,8 +717,8 @@ inline SolverConfig solver_config(const Options& options,
     }
     if (option_group_is_read(OptionGroup::inproc_subsume_strengthen, options)) {
         config.inproc_subsume_strengthen =
-            SubsumePassConfig{.cadence = options.inproc_subsume_strengthen_cadence,
-                              .effort = options.inproc_subsume_strengthen_effort};
+            InprocSubsumeStrengthenConfig{.cadence = options.inproc_subsume_strengthen_cadence,
+                                          .effort = options.inproc_subsume_strengthen_effort};
     }
     if (option_group_is_read(OptionGroup::stabilize, options)) {
         config.stabilize = stabilize_config(options);

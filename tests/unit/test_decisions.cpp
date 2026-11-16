@@ -494,7 +494,7 @@ TEST_CASE_TEMPLATE("saved trails: the clause step chooses a side consistent with
     constexpr std::size_t num_vars = 4;
     const PhaseSavingConfig config{.source = PhaseSaving::recent_only,
                                    .target_reset_conflicts = 1000,
-                                   .rotation_interval = 1000,
+                                   .rotate_starting_interval = 1000,
                                    .focused_source = std::nullopt};
     SavedTrails saved(repr, num_vars, config);
 
@@ -526,7 +526,7 @@ TEST_CASE_TEMPLATE("saved trails: the clause step chooses a side consistent with
         saved.narrow(space, std::vector<ClauseId>{1}, clauses, current.span(), stamps);
         REQUIRE(space.rows() == 1);
         CHECK(bits_of(space.row(0)) == std::vector<std::size_t>{1});
-        CHECK(saved.counters().open_sides == 0);
+        CHECK(saved.counters().phase_default_decisions == 0);
     }
 
     SUBCASE("a clause mentioning x0 holds both sides of x1, and narrowing leaves the side open") {
@@ -536,7 +536,7 @@ TEST_CASE_TEMPLATE("saved trails: the clause step chooses a side consistent with
         REQUIRE(space.rows() == 2);
         CHECK(bits_of(space.row(0)) == std::vector<std::size_t>{1});
         CHECK(bits_of(space.row(1)) == std::vector<std::size_t>{num_vars});
-        CHECK(saved.counters().open_sides == 1);
+        CHECK(saved.counters().phase_default_decisions == 1);
     }
 
     SUBCASE("past an inconsistent top clause a partner decides") {
@@ -569,7 +569,7 @@ TEST_CASE_TEMPLATE("saved trails: each mode consults its own source", Tag, Dense
     };
     const PhaseSavingConfig config{.source = PhaseSaving::target_only,
                                    .target_reset_conflicts = 1000,
-                                   .rotation_interval = 1000,
+                                   .rotate_starting_interval = 1000,
                                    .focused_source = PhaseSaving::recent_only};
 
     SUBCASE("stable mode narrows to the target's side") {
@@ -588,7 +588,7 @@ TEST_CASE_TEMPLATE("saved trails: each mode consults its own source", Tag, Dense
         REQUIRE(space.rows() == 2);
         CHECK(bits_of(space.row(0)) == std::vector<std::size_t>{0});
         CHECK(bits_of(space.row(1)) == std::vector<std::size_t>{1});
-        CHECK(saved.counters().open_sides == 0);
+        CHECK(saved.counters().phase_default_decisions == 0);
     }
 
     SUBCASE("a mode whose source is none consults no trail") {
@@ -599,7 +599,7 @@ TEST_CASE_TEMPLATE("saved trails: each mode consults its own source", Tag, Dense
         saved.update_with_mode(SearchMode::focused);
         CHECK(!saved.consults_trails());
         saved.note_unconsulted_decision();
-        CHECK(saved.counters().open_sides == 1);
+        CHECK(saved.counters().phase_default_decisions == 1);
     }
 }
 

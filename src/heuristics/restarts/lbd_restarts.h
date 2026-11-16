@@ -14,7 +14,8 @@ namespace xorcle {
 ///
 /// Glucose's rule over exponential moving averages of the literal block
 /// distance: a fast average exceeding the slow one by `RestartConfig::lbd_min_ratio`
-/// means learning has degraded. A trail far longer than average cancels that.
+/// calls for a restart, and a trail longer than `RestartConfig::lbd_trail_ratio` times
+/// its average cancels it.
 /// Both averages run on unbroken: nothing is cleared at a restart or a
 /// cancellation.
 class LbdRestarts final : public RestartPolicy {

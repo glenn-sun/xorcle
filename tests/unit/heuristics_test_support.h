@@ -79,7 +79,7 @@ void report_new_watch(WatchUpdateHandler& handler, ClauseId id, const Clause& cl
 ClauseId add_starting_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause);
 
 /// @brief Add a learned clause to `database` and tell `selector`, as the solver does.
-ClauseId add_asserting_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause,
+ClauseId add_learned_clause(ClauseDatabase& database, ClauseSelector& selector, Clause clause,
                               const Trail& trail, const AssertingClauseInfo& info);
 
 /// @brief Deactivate a clause of `database` and tell `selector`, as the solver does.

@@ -57,7 +57,7 @@ struct PropagationConfig {
 /// later passes unless it is new or changed width since, and one it skipped is not.
 struct VivifyConfig {
     /// @brief The random bases a pass tries on a clause, each on the clause as the last left it.
-    std::size_t rounds;
+    std::size_t bases;
 
     std::size_t cadence; ///< Conflicts after a pass before the next may run.
 
@@ -66,21 +66,21 @@ struct VivifyConfig {
     double effort;
 };
 
-/// @brief A clause an order narrowed to, with the proof lines that derive it.
+/// @brief A clause one random basis narrowed to, with the proof lines that derive it.
 struct VivifyNarrowing {
     Clause clause;
     /// @brief In replay order; empty without a proof.
     std::vector<ClauseId> proof_hints;
 };
 
-/// @brief When the subsumption pass runs.
+/// @brief When inprocessing subsumption and strengthening run.
 ///
 /// A pass at a root visit checks pairs of active clauses of which one was added or
 /// changed since the last pass: a subsumed wider clause D is deleted, and a
 /// strengthened D loses a row. It visits every clause as the narrower clause,
 /// narrowest first, then each unchanged clause as the wider clause, until its
 /// budget is spent. A pass due above the root forces a restart with replay.
-struct SubsumePassConfig {
+struct InprocSubsumeStrengthenConfig {
     std::size_t cadence; ///< Conflicts after a pass before the next may run.
 
     /// @brief The rows a pass may read in its checks per row the search decided or
@@ -99,7 +99,7 @@ struct ProgressConfig {
 struct SolverConfig {
     bool renumber; ///< Whether a substitution may be followed by a renumbering.
     bool minimize;
-    bool bump_responsible_clauses;
+    bool bump_learned_positions;
     bool otf_subsume;
     /// @brief The window of the average of the LBDs measured at a clause's uses as a reason;
     /// the newest measurement weighs its reciprocal.
@@ -109,7 +109,7 @@ struct SolverConfig {
     std::optional<ImplicationGraphConfig> implication_graph;
     std::optional<VivifyConfig> vivify;
     std::optional<BveConfig> bve;
-    std::optional<SubsumePassConfig> inproc_subsume_strengthen;
+    std::optional<InprocSubsumeStrengthenConfig> inproc_subsume_strengthen;
     std::optional<StabilizeConfig> stabilize;
     ProgressConfig progress;
 };
@@ -203,7 +203,7 @@ private:
         conflicting  ///< That equation was `0 = 1`.
     };
 
-    /// @brief Propagate until quiescence or the attempt budget runs out; true if
+    /// @brief Propagate to a fixed point or until the attempt budget runs out; true if
     /// the trail now holds `0 = 1`, in which case `conflict_clause_id_` names the
     /// clause that propagated it and `conflict_level_` the level it holds at.
     bool propagate_until_conflict();
@@ -214,7 +214,7 @@ private:
     }
 
     /// @brief Attempts a fruitless stretch gets before the run defers, or `0`
-    /// for quiescence; also follows the database and samples the fractions
+    /// for a run to a fixed point; also follows the database and samples the fractions
     /// reported.
     std::size_t attempt_budget();
 
@@ -273,9 +273,9 @@ private:
         bool conflicted = false;
     };
 
-    /// @brief Cite the clause behind each arc in turn, stopping at the one the
+    /// @brief Cite the clause behind each edge in turn, stopping at the one the
     /// trail falsifies.
-    Citations replay_arcs(std::span<const ClauseId> arcs, HintTrail& trail);
+    Citations replay_edges(std::span<const ClauseId> edges, HintTrail& trail);
 
     /// @brief The rows of clause @p id over the original variables.
     std::vector<Equation> lift_clause(ClauseId id) const;
@@ -300,10 +300,10 @@ private:
         unsat      ///< BVE derived the empty clause.
     };
 
-    /// @brief One step of a visit to the quiescent root: substitute the root units,
-    /// else run BVE or the next due technique in the order the subsumption pass,
+    /// @brief One step of a visit to the root at a fixed point: substitute the root units,
+    /// else run BVE or the next due technique in the order inprocessing subsumption,
     /// vivification, the implication graph.
-    /// @pre The trail is at the root and quiescent.
+    /// @pre The trail is at the root and at a fixed point.
     VisitStep visit_root_step();
 
     /// @brief Whether a technique that forces a restart is due.
@@ -311,7 +311,7 @@ private:
 
     /// @brief Save each level's decision and its reasons for the replay, and backjump
     /// to the root.
-    /// @pre The trail is above the root and quiescent.
+    /// @pre The trail is above the root and at a fixed point.
     void force_restart();
 
     /// @brief Note that @p deleted_id leaves the database with @p kept_id in its place,
@@ -322,7 +322,7 @@ private:
     void end_replay();
 
     /// @brief The equation the clause @p id implies modulo the trail, `0 = 1` where it
-    /// is falsified; null where it is satisfied or has two dimensions left.
+    /// is falsified; null where it is satisfied or left at width two or more.
     /// @return Scratch valid until the next call.
     const Equation* implied_on_trail(ClauseId id);
 
@@ -354,7 +354,7 @@ private:
     ProgressSnapshot progress_snapshot() const;
 
     /// @brief Substitute the root units, and renumber if that frees enough words.
-    /// @pre The trail is at the root, quiescent, and has rows.
+    /// @pre The trail is at the root, at a fixed point, and has rows.
     void substitute_root_units();
 
     /// @brief Rewrite the clauses by a prepared plan and drop the variables the
@@ -371,12 +371,12 @@ private:
     /// @pre `apply_substitution()` has just run.
     void apply_renumbering();
 
-    /// @brief Bump the clause owning each of a learned clause's pivots: the
+    /// @brief Bump the clause owning each of a learned clause's positions: the
     /// reason of that trail row, or the clause its decision was sampled from.
-    void bump_responsible_clauses(const std::vector<std::size_t>& responsible_trail_idxs);
+    void bump_learned_positions(const std::vector<std::size_t>& positions);
 
     /// @brief The clause the decision at this trail row was sampled from, empty
-    /// where the fallback literal basis supplied it.
+    /// where none is recorded.
     /// @pre `trail_idx` names a decision row.
     std::optional<ClauseId> decision_clause_at(std::size_t trail_idx) const;
 
@@ -410,7 +410,7 @@ private:
     bool implication_graph_is_due();
 
     /// @brief Read the implication graph and add the units it finds to the root.
-    /// @pre The trail is at the root, quiescent and empty.
+    /// @pre The trail is at the root, at a fixed point and empty.
     void run_implication_graph();
 
     /// @brief Run a BVE pass over the clause database and drop the variables it
@@ -426,7 +426,7 @@ private:
     /// @brief Record each resolvent of a BVE pass as a line citing its two
     /// parents, ending at one that is the empty clause.
     /// @return The line of each resolvent written, in the plan's order.
-    /// @pre `proof_writer_` is non-null and the clause store is as the plan read it.
+    /// @pre `proof_writer_` is non-null and the clause database is as the plan read it.
     std::vector<ClauseId> write_bve_lines(const BvePlan& plan);
 
     /// @brief Add @p unit as a width-1 clause, so propagation learns it the way
@@ -440,7 +440,7 @@ private:
     bool vivify_is_due() const;
 
     /// @brief Run a vivification pass.
-    /// @pre The trail is at the root and quiescent.
+    /// @pre The trail is at the root and at a fixed point.
     void vivify_pass();
 
     /// @brief The active clauses at least `vivify_min_width` wide that are the reason
@@ -449,10 +449,10 @@ private:
 
     /// @brief Assume the rows of one uniformly random basis of clause @p id in
     /// turn, propagating after each, and undo them.
-    /// @return A narrowing of the clause that the formula implies, if the order found one.
-    /// @pre The trail is at the root and quiescent, and the clause is active, at
+    /// @return A narrowing of the clause that the formula implies, if the basis found one.
+    /// @pre The trail is at the root and at a fixed point, and the clause is active, at
     /// least two rows wide and the reason of no trail row.
-    std::optional<VivifyNarrowing> vivify_one_order(ClauseId id);
+    std::optional<VivifyNarrowing> vivify_one_basis(ClauseId id);
 
     /// @brief The proof lines that derive @p narrowed by unit propagation: the
     /// root units and the reasons of the trail rows up to @p last_level that add
@@ -487,13 +487,13 @@ private:
     bool put_narrowing_in_place(ClauseId id, Clause narrowed,
                                 const std::vector<ClauseId>& proof_hints);
 
-    /// @brief Whether a subsumption pass is due: the cadence since the last, with a
-    /// conflict unless none has run.
-    bool subsume_pass_is_due() const;
+    /// @brief Whether an inprocessing subsumption pass is due: the cadence since the
+    /// last, with a conflict unless none has run.
+    bool inproc_subsume_strengthen_is_due() const;
 
-    /// @brief Run one subsumption pass.
-    /// @pre The trail is at the root and quiescent.
-    void run_subsume_pass();
+    /// @brief Run one inprocessing subsumption pass.
+    /// @pre The trail is at the root and at a fixed point.
+    void run_inproc_subsume_strengthen();
 
     /// @brief Apply a prepared plan and clear the used flags.
     void apply_deletion(const DeletionPlan& plan);
@@ -576,7 +576,7 @@ private:
 
 #ifndef NDEBUG
     bool has_solved_ = false;
-    std::size_t debug_quiescences_ = 0;
+    std::size_t debug_fixed_point_checks_ = 0;
     std::size_t debug_span_checks_ = 0;
     std::size_t debug_reason_checks_ = 0;
 #endif
@@ -586,7 +586,8 @@ private:
     Trail trail_;
 
     /// @brief The clause each decision level's decision came from, indexed by
-    /// level less one, and empty where the fallback basis supplied it.
+    /// level less one: empty for a vivification assumption and for a replayed
+    /// decision whose clause is gone.
     std::vector<std::optional<ClauseId>> decision_clause_of_level_;
 
     ClauseDatabase clause_database_;
@@ -600,7 +601,7 @@ private:
 
     /// @brief Add a learned clause to the database, and tell the selector; `trail_`
     /// already reflects the backjump.
-    void add_asserting_clause_to_database(Clause clause, const AssertingClauseInfo& info);
+    void add_learned_clause_to_database(Clause clause, const AssertingClauseInfo& info);
 
     /// @brief Enter the schedule's mode.
     void switch_mode();
@@ -654,7 +655,7 @@ private:
     std::size_t level_of_used_rows(const IndexSet& used_row_idxs) const;
 
     /// @brief Whether the trail falsifies `clause` only at its top level, so that
-    /// taking that level off leaves the clause at dimension one.
+    /// taking that level off leaves the clause at width one.
     /// @pre The trail falsifies `clause` and stands at the level that does.
     bool falsified_only_at_top_level(const Clause& clause) const;
 
@@ -686,11 +687,11 @@ private:
     /// and rebuilt when a solve starts.
     std::optional<AttemptBudget> budget_;
 
-    /// @brief Whether a vivification order is assuming rows.
+    /// @brief Whether vivification is assuming the rows of a basis.
     bool in_vivify_try_ = false;
 
     /// @brief Whether the next run ignores the budget, set where full rank has to
-    /// be confirmed by a run to quiescence.
+    /// be confirmed by a run to a fixed point.
     bool force_complete_sweep_ = false;
 
     /// @brief Whether such a run has already happened on this trail, so that a
@@ -731,7 +732,7 @@ private:
     /// learns none, and a subsumption replacement is not one.
     std::size_t sum_learned_lbd_ = 0;
     std::size_t num_asserting_clauses_ = 0;
-    /// @brief Summed trail level and rank *at* the conflicts, before their
+    /// @brief Summed trail level and trail length *at* the conflicts, before their
     /// backjumps, for the means the progress line reports over an interval.
     std::size_t sum_conflict_level_ = 0;
     std::size_t sum_conflict_trail_length_ = 0;
@@ -751,8 +752,8 @@ private:
     Rng representative_rng_;
 
     /// @brief Whether a conflict also bumps the clauses at the learned clause's
-    /// pivots in the trail basis.
-    bool bump_responsible_clauses_;
+    /// positions.
+    bool bump_learned_positions_;
 
     /// @brief Whether a learned clause deletes the reason clause it subsumes.
     bool otf_subsume_;
@@ -799,7 +800,7 @@ private:
         std::vector<std::size_t> reason_ends;
         /// @brief Each clause the visit deleted with another in its place, to that one.
         std::unordered_map<ClauseId, ClauseId> kept_in_place_of;
-        std::size_t next_level = 0; ///< The position of the next level in the saved list.
+        std::size_t next_level_idx = 0; ///< The position of the next level in the saved list.
         /// @brief From the forced restart to a conflict or the step after the last level.
         bool under_way = false;
 
@@ -810,12 +811,12 @@ private:
     };
     Replay replay_;
 
-    std::optional<SubsumePassConfig> subsume_pass_;
-    Rng subsume_pass_rng_;
-    std::size_t conflicts_at_last_subsume_pass_ = 0;
+    std::optional<InprocSubsumeStrengthenConfig> inproc_subsume_strengthen_;
+    Rng inproc_subsume_strengthen_rng_;
+    std::size_t conflicts_at_last_inproc_subsume_strengthen_ = 0;
     /// @brief Decisions and propagations of the search when the last pass ran.
-    std::size_t search_rows_at_last_subsume_pass_ = 0;
-    bool subsume_pass_has_run_ = false;
+    std::size_t search_rows_at_last_inproc_subsume_strengthen_ = 0;
+    bool inproc_subsume_strengthen_has_run_ = false;
 
     /// @brief What the last progress line saw, so the next one can report the
     /// interval between them rather than the run so far.

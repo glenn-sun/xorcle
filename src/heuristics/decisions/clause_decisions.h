@@ -14,8 +14,8 @@
 namespace xorcle {
 
 /// @brief What a trail leaves of a clause: one every extension satisfies, one of
-/// dimension two or more, or one of dimension one or zero, which implies an
-/// equation or a contradiction rather than offering a decision.
+/// width two or more, or one of width one or zero, which propagates an equation
+/// or `0 = 1` rather than offering a decision.
 enum class ClauseStatus { satisfied, open, propagating };
 
 class ClauseSatisfactionWorkspace {

@@ -1,8 +1,8 @@
-/// @file subsume_pass.cpp
-/// @brief The subsumption pass: deleting the clauses another subsumes and taking a
-/// row off the clauses another strengthens.
+/// @file inproc_subsume_strengthen.cpp
+/// @brief Inprocessing subsumption and strengthening: deleting the clauses another
+/// subsumes and taking a row off the clauses another strengthens.
 
-#include "core/subsume_pass.h"
+#include "core/inproc_subsume_strengthen.h"
 
 #include <algorithm>
 #include <cassert>
@@ -110,25 +110,27 @@ Clause PairCheck::strengthened(const Clause& wider, Rng& rng) const {
     return hyperplane;
 }
 
-bool Solver::subsume_pass_is_due() const {
-    if (!subsume_pass_.has_value()) {
+bool Solver::inproc_subsume_strengthen_is_due() const {
+    if (!inproc_subsume_strengthen_.has_value()) {
         return false;
     }
-    const std::size_t conflicts_since = stats_.num_conflicts - conflicts_at_last_subsume_pass_;
-    return (!subsume_pass_has_run_ || conflicts_since != 0) &&
-           conflicts_since >= subsume_pass_->cadence;
+    const std::size_t conflicts_since =
+        stats_.num_conflicts - conflicts_at_last_inproc_subsume_strengthen_;
+    return (!inproc_subsume_strengthen_has_run_ || conflicts_since != 0) &&
+           conflicts_since >= inproc_subsume_strengthen_->cadence;
 }
 
-void Solver::run_subsume_pass() {
-    assert(trail_.level() == 0 && "a subsumption pass runs at the root");
-    phase_timer_.switch_to(SolverPhase::subsume_pass);
-    conflicts_at_last_subsume_pass_ = stats_.num_conflicts;
-    subsume_pass_has_run_ = true;
+void Solver::run_inproc_subsume_strengthen() {
+    assert(trail_.level() == 0 && "inprocessing subsumption runs at the root");
+    phase_timer_.switch_to(SolverPhase::inproc_subsume_strengthen);
+    conflicts_at_last_inproc_subsume_strengthen_ = stats_.num_conflicts;
+    inproc_subsume_strengthen_has_run_ = true;
     const std::size_t rows = search_rows();
     // Rows read in the checks.
     const double budget =
-        subsume_pass_->effort * static_cast<double>(rows - search_rows_at_last_subsume_pass_);
-    search_rows_at_last_subsume_pass_ = rows;
+        inproc_subsume_strengthen_->effort *
+        static_cast<double>(rows - search_rows_at_last_inproc_subsume_strengthen_);
+    search_rows_at_last_inproc_subsume_strengthen_ = rows;
 
     const std::size_t constant_col_idx = active_num_vars_;
     const IndexSet is_locked = trail_.reason_clause_ids(clause_database_.num_clauses());
@@ -155,7 +157,7 @@ void Solver::run_subsume_pass() {
         assert(!clause.pivot_col_idxs().test(constant_col_idx) &&
                "an active clause spans 0 = 1");
         width_of[id] = clause.rows();
-        is_changed[id] = clause_database_.record(id).subsume_passed ? 0 : 1;
+        is_changed[id] = clause_database_.record(id).inproc_subsume_strengthen_checked ? 0 : 1;
         const bool indexed = is_changed[id] != 0;
         bool first = true;
         clause.pivot_col_idxs().for_each_set([&](const std::size_t col_idx) {
@@ -172,12 +174,12 @@ void Solver::run_subsume_pass() {
     }
     // Which partner a scan meets first is by a uniform draw, not by clause id.
     for (std::vector<ClauseId>& ids : by_leading_col) {
-        shuffle_uniformly(ids, subsume_pass_rng_);
+        shuffle_uniformly(ids, inproc_subsume_strengthen_rng_);
     }
     for (std::vector<ClauseId>& ids : by_first_leading_col) {
-        shuffle_uniformly(ids, subsume_pass_rng_);
+        shuffle_uniformly(ids, inproc_subsume_strengthen_rng_);
     }
-    shuffle_uniformly(visits, subsume_pass_rng_);
+    shuffle_uniformly(visits, inproc_subsume_strengthen_rng_);
 
     PairCheck check(repr_, active_num_vars_);
     const auto relate = [&](const Clause& narrower, const Clause& wider) {
@@ -196,7 +198,7 @@ void Solver::run_subsume_pass() {
         }
         ++stats_.num_inproc_strengthened_clauses;
         Clause strengthened =
-            check.strengthened(clause_database_.clause(wider_id), subsume_pass_rng_);
+            check.strengthened(clause_database_.clause(wider_id), inproc_subsume_strengthen_rng_);
         std::vector<ClauseId> hints;
         if (proof_writer_ != nullptr) {
             // The wider clause is unit on the row taken off, and the narrower one
@@ -205,7 +207,7 @@ void Solver::run_subsume_pass() {
         }
         // A clause with no rows would be falsified at the root, where both clauses
         // it came from are satisfied or not yet unit after propagation.
-        assert(strengthened.rows() != 0 && "a strengthening at a quiescent root made the empty clause");
+        assert(strengthened.rows() != 0 && "a strengthening at the root at a fixed point made the empty clause");
         if (strengthened.rows() == 1) {
             // Fed once the pass is over; the unit subsumes the clause it came from.
             const ClauseId proof_line = write_proof_line(strengthened, hints);
@@ -227,7 +229,7 @@ void Solver::run_subsume_pass() {
         leading_col_idxs.clear();
         visited.pivot_col_idxs().for_each_set(
             [&](const std::size_t col_idx) { leading_col_idxs.push_back(col_idx); });
-        shuffle_uniformly(leading_col_idxs, subsume_pass_rng_);
+        shuffle_uniformly(leading_col_idxs, inproc_subsume_strengthen_rng_);
         for (const std::size_t col_idx : leading_col_idxs) {
             for (const ClauseId narrower_id : by_first_leading_col[col_idx]) {
                 if (narrower_id == visited_id || !takes_part(narrower_id) ||
@@ -300,7 +302,7 @@ void Solver::run_subsume_pass() {
         }
         visit_as_narrower(visited_id);
         if (is_changed[visited_id] != 0 && !is_locked.test(visited_id)) {
-            clause_database_.record(visited_id).subsume_passed = true;
+            clause_database_.record(visited_id).inproc_subsume_strengthen_checked = true;
         }
     }
     for (std::size_t i = 0; i < visits.size() && !stopped; ++i) {
@@ -317,7 +319,7 @@ void Solver::run_subsume_pass() {
     }
 
     assert(active_clause_count_is_consistent() &&
-           "a subsumption pass left the live-clause count wrong");
+           "inprocessing subsumption left the live-clause count wrong");
     assert(debug_equivalent_clause_table_is_exact() &&
            "the equivalent clause table is out of step with the active clauses");
     assert(debug_no_two_clauses_share_a_span() && "two active clauses have one span");

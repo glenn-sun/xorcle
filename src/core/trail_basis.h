@@ -71,10 +71,8 @@ public:
 
     /// @brief How many decision levels above the root these rows reach into.
     ///
-    /// The literal block distance of the clause they negate: the trail prefixes
-    /// meet this subspace exactly at its pivot columns, so those columns stand
-    /// in for the literals counted in the Boolean case. Root pivots count for
-    /// nothing, as root literals do.
+    /// The literal block distance of the clause they negate: the levels of its
+    /// positions, which are these pivot columns, with the root not counted.
     /// @pre `rows() > 0`.
     /// @note `O(rows() + trail.level())`.
     std::size_t literal_block_distance() const;

@@ -29,7 +29,7 @@ add_library(xorcle_core
     src/core/root_visit.cpp
     src/core/saved_trail.cpp
     src/core/solver.cpp
-    src/core/subsume_pass.cpp
+    src/core/inproc_subsume_strengthen.cpp
     src/core/trail.cpp
     src/core/trail_basis.cpp
     src/core/vivify.cpp

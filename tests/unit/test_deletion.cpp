@@ -38,7 +38,7 @@ std::unique_ptr<ClauseDatabase> make_database(EquationRepr repr, std::size_t num
     for (std::size_t index = 0; index < learned_lbds.size(); ++index) {
         Clause clause(repr, num_vars);
         clause.add_row(make_equation_with(repr, num_vars, {index + 1}));
-        database->add_asserting_clause(std::move(clause), learned_lbds[index]);
+        database->add_learned_clause(std::move(clause), learned_lbds[index]);
     }
     return database;
 }
@@ -135,21 +135,21 @@ RunStats solve_deleting(EquationRepr repr, double cadence_coefficient, double wa
 } // namespace
 
 TEST_CASE("deletion: the unused passes an LBD allows") {
-    CHECK(allowed_unused_passes(6.0, 6.0) == 1);
-    CHECK(allowed_unused_passes(5.0, 6.0) == 2);
-    CHECK(allowed_unused_passes(1.0, 6.0) == 32);
-    CHECK(allowed_unused_passes(7.0, 7.0) == 1);
+    CHECK(free_passes(6.0, 6.0) == 1);
+    CHECK(free_passes(5.0, 6.0) == 2);
+    CHECK(free_passes(1.0, 6.0) == 32);
+    CHECK(free_passes(7.0, 7.0) == 1);
 
     SUBCASE("a fractional LBD rounds to the nearest pass") {
-        CHECK(allowed_unused_passes(2.5, 6.0) == 11); // 11.31
-        CHECK(allowed_unused_passes(4.5, 6.0) == 3);  // 2.83
-        CHECK(allowed_unused_passes(5.5, 6.0) == 1);  // 1.41
+        CHECK(free_passes(2.5, 6.0) == 11); // 11.31
+        CHECK(free_passes(4.5, 6.0) == 3);  // 2.83
+        CHECK(free_passes(5.5, 6.0) == 1);  // 1.41
     }
 
     SUBCASE("half a pass rounds up to one, and less to none") {
-        CHECK(allowed_unused_passes(7.0, 6.0) == 1);
-        CHECK(allowed_unused_passes(7.25, 6.0) == 0);
-        CHECK(allowed_unused_passes(8.0, 6.0) == 0);
+        CHECK(free_passes(7.0, 6.0) == 1);
+        CHECK(free_passes(7.25, 6.0) == 0);
+        CHECK(free_passes(8.0, 6.0) == 0);
     }
 }
 

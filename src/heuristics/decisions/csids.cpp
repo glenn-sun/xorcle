@@ -48,7 +48,7 @@ void Csids::reinitialize() {
     }
     scale_ = 1.0;
     last_decision_clause_.reset();
-    pending_learned_priority_.reset();
+    pending_learned_activity_.reset();
     satisfied_by_level_.clear();
     level_ = 0;
     saved_trails_.reinitialize(num_vars());
@@ -134,9 +134,9 @@ DecisionResult Csids::decide_from_intersection(
     heap.extract_max();
     std::optional<ClauseId> propagating_id;
     while (set_aside_ids_.size() < config_.intersection_depth && !heap.empty()) {
-        // One dimension left is the decision, and after quiescence no clause
+        // One dimension left is the decision, and at a fixed point no clause
         // below is propagating either, so the rest of the walk finds nothing.
-        if (dimension() == 1 && known.quiescent()) {
+        if (dimension() == 1 && known.at_fixed_point()) {
             break;
         }
         const ClauseId id = heap.peek_max();
@@ -269,7 +269,7 @@ void Csids::add_false_row_to_intersection() {
 }
 
 void Csids::update_with_asserting_clause(const Clause&) {
-    pending_learned_priority_ = config_.initial_activity * scale_;
+    pending_learned_activity_ = config_.initial_activity * scale_;
     if (decay_ == 0.0) {
         // Growing the scale is the lazy form of decaying every activity. At zero
         // the scale would have to be infinite, so decay them directly.
@@ -321,10 +321,10 @@ void Csids::update_with_backjump(const std::size_t level) {
 
 void Csids::update_with_new_clause(const Clause&, ClauseId id) {
     assert(id == num_clauses_ && "clause ids must be registered consecutively and once");
-    heap_.set_activity(id, pending_learned_priority_.value_or(0.0));
+    heap_.set_activity(id, pending_learned_activity_.value_or(0.0));
     heap_.insert(id);
     num_clauses_ = id + 1;
-    pending_learned_priority_.reset();
+    pending_learned_activity_.reset();
 }
 
 void Csids::update_with_conflict(const Trail& trail, std::span<const std::size_t> level_stamps) {
@@ -358,7 +358,7 @@ void Csids::apply_decision_phase(Equation& eqn) const {
 
 void Csids::add_to_stats(RunStats& stats) const {
     stats.decisions = counters_.decisions;
-    stats.phase_saving_open_sides = saved_trails_.counters().open_sides;
+    stats.phase_default_decisions = saved_trails_.counters().phase_default_decisions;
 }
 
 double Csids::clause_activity(ClauseId id) const {

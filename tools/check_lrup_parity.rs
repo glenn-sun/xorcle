@@ -247,7 +247,7 @@ enum ProofLine {
 }
 
 /// A deletion line is `<id> ... 0`, with one `0` and at least one id; a learned line is
-/// `<new id> <xor expr> ... 0 <reason id> ... 0`, with exactly two `0` tokens and the second
+/// `<new id> <equation> ... 0 <reason id> ... 0`, with exactly two `0` tokens and the second
 /// one last.
 fn parse_proof_line(tokens: &[&str], num_vars: usize) -> Result<ProofLine, String> {
     let Some((&"0", body)) = tokens.split_last() else {

@@ -7,7 +7,7 @@
 
 namespace xorcle {
 
-/// @brief Identifier of a clause: its index in the clause store.
+/// @brief Identifier of a clause: its index in the clause database.
 using ClauseId = std::size_t;
 
 /// @brief A row index into a clause, not into the trail span.
@@ -61,7 +61,7 @@ public:
 
     std::default_sentinel_t end() const noexcept { return std::default_sentinel; }
 
-    /// @pre `id` is a clause id of the store.
+    /// @pre `id` is a clause id of the database.
     bool contains(ClauseId id) const noexcept { return (*is_active_)[id] != 0; }
 
     /// @brief At least the number of active ids.

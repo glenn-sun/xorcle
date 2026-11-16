@@ -85,7 +85,7 @@ TEST_CASE("make_clause_selector: dispatches on the name and the representation")
               make(ClauseSelectorName::exact_watchlist, EquationRepr::sparse).get()) != nullptr);
 }
 
-TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, SparseTag) {
+TEST_CASE_TEMPLATE("cyclic: round-robin order and a fixed point", Tag, DenseTag, SparseTag) {
     constexpr EquationRepr repr = Tag::value;
     ClauseDatabase database;
     Cyclic selector(database);
@@ -97,7 +97,7 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
     REQUIRE(database.num_clauses() == 3);
 
     SUBCASE("a fresh selector starts at the most recently added clause") {
-        // One full cycle, then quiescence.
+        // One full cycle, then a fixed point.
         CHECK(drain(selector) == std::vector<ClauseId>{2, 0, 1});
     }
 
@@ -115,7 +115,7 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
         CHECK(drain(selector) == std::vector<ClauseId>{2, 1});
     }
 
-    SUBCASE("an attempt budget stops a run short of quiescence") {
+    SUBCASE("an attempt budget stops a run short of a fixed point") {
         selector.set_attempt_budget(2);
         CHECK(drain(selector) == std::vector<ClauseId>{2, 0});
         CHECK(selector.last_stop_was_budget());
@@ -137,13 +137,13 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
         CHECK(selector.last_stop_was_budget());
     }
 
-    SUBCASE("a budget as long as the database leaves quiescence the reason") {
+    SUBCASE("a budget as long as the database leaves the fixed point the reason") {
         selector.set_attempt_budget(3);
         CHECK(drain(selector) == std::vector<ClauseId>{2, 0, 1});
         CHECK_FALSE(selector.last_stop_was_budget());
     }
 
-    SUBCASE("quiescence inside the budget is not a budget stop") {
+    SUBCASE("a fixed point inside the budget is not a budget stop") {
         selector.set_attempt_budget(100);
         CHECK(drain(selector) == std::vector<ClauseId>{2, 0, 1});
         CHECK_FALSE(selector.last_stop_was_budget());
@@ -168,7 +168,7 @@ TEST_CASE_TEMPLATE("cyclic: round-robin order and quiescence", Tag, DenseTag, Sp
         CHECK(next_id(selector) == std::optional<ClauseId>{1});
     }
 
-    SUBCASE("an empty selector is immediately quiescent") {
+    SUBCASE("an empty selector is immediately at a fixed point") {
         ClauseDatabase empty_database;
         Cyclic empty(empty_database);
         CHECK(empty.next() == std::nullopt);
@@ -345,7 +345,7 @@ TEST_CASE_TEMPLATE("exact watchlist: triggers, hints and snapshots", Tag, DenseT
     SUBCASE("a replacement the trail already makes unit is queued at once") {
         add_starting_clause(database, selector, make_clause(repr, 4, {{0}, {3}}));
         learn(selector, trail, {1}, false);
-        add_asserting_clause(
+        add_learned_clause(
             database, selector, make_clause(repr, 4, {{1, 2}, {1}}), trail,
             AssertingClauseInfo{.lbd = 1, .removed_levels = 0, .is_replacement = true});
         CHECK(next_id(selector) == std::optional<ClauseId>{1});
@@ -355,7 +355,7 @@ TEST_CASE_TEMPLATE("exact watchlist: triggers, hints and snapshots", Tag, DenseT
     SUBCASE("an asserting clause unit after its backjump is queued at once") {
         add_starting_clause(database, selector, make_clause(repr, 4, {{0}, {3}}));
         learn(selector, trail, {1}, false);
-        add_asserting_clause(database, selector, make_clause(repr, 4, {{1, 2}, {1}}), trail,
+        add_learned_clause(database, selector, make_clause(repr, 4, {{1, 2}, {1}}), trail,
                              AssertingClauseInfo{.lbd = 1, .removed_levels = 1});
         const std::optional<ClauseSelection> selection = selector.next();
         REQUIRE(selection.has_value());
@@ -564,7 +564,7 @@ TEST_CASE_TEMPLATE("clause database: per-clause records", Tag, DenseTag, SparseT
     }
 
     SUBCASE("a learned clause takes its LBD") {
-        add_asserting_clause(database, selector, make_clause(repr, 4, {{0}}), trail,
+        add_learned_clause(database, selector, make_clause(repr, 4, {{0}}), trail,
                              AssertingClauseInfo{.lbd = 3, .removed_levels = 0});
         CHECK(database.record(0).learned);
         CHECK(database.record(0).lbd_measured);
@@ -695,7 +695,7 @@ TEST_CASE_TEMPLATE("clause database: per-clause records", Tag, DenseTag, SparseT
 
     SUBCASE("metadata is id-indexed, so compaction leaves it alone") {
         add_starting_clause(database, selector, make_clause(repr, 4, {{0}}));
-        add_asserting_clause(database, selector, make_clause(repr, 4, {{1}}), trail,
+        add_learned_clause(database, selector, make_clause(repr, 4, {{1}}), trail,
                              AssertingClauseInfo{.lbd = 5, .removed_levels = 0});
         database.record(1).used_since_deletion = true;
         database.record(1).unused_passes = 3;
@@ -720,7 +720,7 @@ TEST_CASE_TEMPLATE("clause database: an LBD is the average of the measurements a
     Cyclic selector(database);
     const Trail trail(repr, 4);
     add_starting_clause(database, selector, make_clause(repr, 4, {{0}}));
-    add_asserting_clause(database, selector, make_clause(repr, 4, {{1}}), trail,
+    add_learned_clause(database, selector, make_clause(repr, 4, {{1}}), trail,
                          AssertingClauseInfo{.lbd = 6, .removed_levels = 0});
     ClauseRecord& starting = database.record(0);
     ClauseRecord& learned = database.record(1);
@@ -763,7 +763,7 @@ TEST_CASE_TEMPLATE("clause database: equivalent clauses keep the lower measured 
     Cyclic selector(database);
     const Trail trail(repr, 4);
     add_starting_clause(database, selector, make_clause(repr, 4, {{0}}));
-    add_asserting_clause(database, selector, make_clause(repr, 4, {{1}}), trail,
+    add_learned_clause(database, selector, make_clause(repr, 4, {{1}}), trail,
                          AssertingClauseInfo{.lbd = 6, .removed_levels = 0});
     ClauseRecord& starting = database.record(0);
     ClauseRecord& learned = database.record(1);
@@ -861,7 +861,7 @@ TEST_CASE_TEMPLATE("clause database: the column-to-clause entries against a scan
                     if (random.chance(2)) {
                         add_starting_clause(database, selector, random_clause(dropped));
                     } else {
-                        add_asserting_clause(database, selector, random_clause(dropped),
+                        add_learned_clause(database, selector, random_clause(dropped),
                                              Trail(repr, num_vars),
                                              AssertingClauseInfo{.lbd = 2, .removed_levels = 0});
                     }

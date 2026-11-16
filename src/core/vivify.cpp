@@ -56,7 +56,7 @@ std::vector<ClauseId> Solver::vivify_proof_hints(const Clause& narrowed,
                                                  const std::size_t last_level,
                                                  const std::optional<ClauseId> falsified_id) const {
     HintTrail implied(repr_, active_num_vars_);
-    implied.restart(narrowed);
+    implied.begin_line(narrowed);
     std::vector<ClauseId> hints;
     // Cite a clause as the checker replays it; one that adds nothing is left out.
     const auto cite = [&](const auto& rows, const ClauseId hint) {
@@ -94,8 +94,8 @@ std::vector<ClauseId> Solver::vivify_proof_hints(const Clause& narrowed,
     return hints;
 }
 
-std::optional<VivifyNarrowing> Solver::vivify_one_order(const ClauseId id) {
-    assert(trail_.level() == 0 && "an order starts at the root");
+std::optional<VivifyNarrowing> Solver::vivify_one_basis(const ClauseId id) {
+    assert(trail_.level() == 0 && "a basis starts at the root");
 #ifndef NDEBUG
     const std::size_t debug_root_rows = trail_.span().rows();
 #endif
@@ -166,7 +166,7 @@ std::optional<VivifyNarrowing> Solver::vivify_one_order(const ClauseId id) {
     // propagation short of a fixed point may not have found.
     const bool falsified_unfound = step == Step::implied || step == Step::assumed;
     assert((!falsified_unfound || budget_.has_value()) &&
-           "an order implied the clause's every row without a conflict");
+           "a basis implied the clause's every row without a conflict");
     if (falsified_unfound) {
         step = Step::conflicting;
     }
@@ -202,7 +202,7 @@ std::optional<VivifyNarrowing> Solver::vivify_one_order(const ClauseId id) {
     if (trail_.level() != 0) {
         backjump_to(0);
     }
-    assert(trail_.span().rows() == debug_root_rows && "an order left rows on the root trail");
+    assert(trail_.span().rows() == debug_root_rows && "a basis left rows on the root trail");
     return result;
 }
 
@@ -213,7 +213,7 @@ bool Solver::vivify_replace(const ClauseId id, VivifyNarrowing narrowing,
     const std::size_t width = clause_database_.clause(id).rows();
     assert(debug_is_narrowing(narrowed, id) &&
            "a clause was to be replaced by one that does not imply it");
-    ++stats_.vivify_narrowed;
+    ++stats_.vivified_clauses;
     vivify_width_removed_ += width - narrowed.rows();
     if (narrowed.rows() == 1) {
         // Fed once the pass is over: a unit met above the root would be learned there.
@@ -330,13 +330,13 @@ void Solver::vivify_pass() {
         if (out_of_budget()) {
             break;
         }
-        // Each order on the clause as the last one left it; a unit or an eviction ends it.
+        // Each basis on the clause as the last one left it; a unit or an eviction ends it.
         bool in_place = true;
-        for (std::size_t round = 0; round < vivify_->rounds && in_place &&
+        for (std::size_t basis_idx = 0; basis_idx < vivify_->bases && in_place &&
                                     clause_database_.clause(id).rows() >= vivify_min_width;
-             ++round) {
+             ++basis_idx) {
             in_vivify_try_ = true;
-            std::optional<VivifyNarrowing> narrowed = vivify_one_order(id);
+            std::optional<VivifyNarrowing> narrowed = vivify_one_basis(id);
             in_vivify_try_ = false;
             if (narrowed.has_value()) {
                 in_place = vivify_replace(id, std::move(*narrowed), units);

@@ -183,8 +183,8 @@ SolveResult run_and_check(const std::string& text, const std::vector<std::string
         tally.counters.num_equivalent_clauses += counters.num_equivalent_clauses;
         tally.counters.num_restarts += counters.num_restarts;
         tally.counters.num_undone_decisions += counters.num_undone_decisions;
-        tally.counters.implication_graph_units_fed += counters.implication_graph_units_fed;
-        tally.counters.subsume_pass_time_s += counters.subsume_pass_time_s;
+        tally.counters.implication_graph_units_learned += counters.implication_graph_units_learned;
+        tally.counters.inproc_subsume_strengthen_time_s += counters.inproc_subsume_strengthen_time_s;
         tally.counters.deletion_time_s += counters.deletion_time_s;
     }
 
@@ -231,7 +231,7 @@ std::string random_wide_instance(TestRandom& random) {
 // Too wide to enumerate, so each of the exact watchlist's answers is held to its
 // model or its proof. Deletion, subsumption and compaction take clauses out of
 // and back into the watchlist as it runs; in Debug its cells are checked
-// against the trail along the way, and each quiescence against every clause.
+// against the trail along the way, and each fixed point against every clause.
 TEST_CASE("fuzz: past one word, the exact watchlist's answers check") {
     TestRandom random(1234);
     Tally tally;
@@ -345,7 +345,7 @@ TEST_CASE("fuzz: random instances agree with brute force, and every answer check
         const bool graph_off = std::ranges::find(configuration.flags,
                                                  "--implication-graph=false") !=
                                configuration.flags.end();
-        CHECK((tally.counters.implication_graph_units_fed > 0) != graph_off);
+        CHECK((tally.counters.implication_graph_units_learned > 0) != graph_off);
         if (configuration.exercised != nullptr) {
             CHECK(tally.counters.*configuration.exercised > 0);
         }
@@ -365,15 +365,15 @@ TEST_CASE("fuzz: vivification leaves the verdict, the models and the proofs righ
         std::vector<std::string> flags;
     };
     // A pass of the default cadence never falls inside instances this small, and
-    // the default effort's budget seldom reaches past a few orders.
+    // the default effort's budget seldom reaches past a few bases.
     const std::vector<Arm> arms = {
-        {"new or narrowed, two rounds",
+        {"new or narrowed, two bases",
          {"--vivify=true", "--vivify-cadence=0", "--vivify-effort=1000"}},
-        {"four rounds, ten conflicts apart",
+        {"four bases, ten conflicts apart",
          {"--vivify=true", "--vivify-cadence=10", "--vivify-bases=4", "--vivify-effort=1000"}},
-        {"one round, a conflict apart",
+        {"one basis, a conflict apart",
          {"--vivify=true", "--vivify-cadence=1", "--vivify-bases=1", "--vivify-effort=1000"}},
-        {"forced restarts, one round, a conflict apart",
+        {"forced restarts, one basis, a conflict apart",
          {"--vivify=true", "--vivify-cadence=0", "--vivify-bases=1", "--vivify-effort=1000"}},
         {"the default effort",
          {"--vivify=true", "--vivify-cadence=5"}},
@@ -423,22 +423,22 @@ TEST_CASE("fuzz: vivification leaves the verdict, the models and the proofs righ
                 CHECK(checker.check(proof.str()) == "");
             }
             const RunStats counters = solver->stats();
-            total.vivify_narrowed += counters.vivify_narrowed;
+            total.vivified_clauses += counters.vivified_clauses;
             total.num_equivalent_clauses += counters.num_equivalent_clauses;
         }
-        MESSAGE(arm.name << ": narrowed " << total.vivify_narrowed << ", equivalent clauses "
+        MESSAGE(arm.name << ": narrowed " << total.vivified_clauses << ", equivalent clauses "
                          << total.num_equivalent_clauses << ", sat " << num_sat << ", unsat "
                          << num_unsat);
         CHECK(num_sat > 0);
         CHECK(num_unsat > 0);
-        CHECK(total.vivify_narrowed > 0);
+        CHECK(total.vivified_clauses > 0);
     }
 }
 
-// The subsumption pass deletes and strengthens clauses with a proof line each, so
+// Inprocessing subsumption deletes and strengthens clauses with a proof line each, so
 // its answers are held to brute force, their models and their proofs; the wide
 // instances only to the models and proofs.
-TEST_CASE("fuzz: the subsumption pass leaves every answer right and checked") {
+TEST_CASE("fuzz: inprocessing subsumption leaves every answer right and checked") {
     struct Arm {
         std::string name;
         std::vector<std::string> flags;
@@ -480,7 +480,7 @@ TEST_CASE("fuzz: the subsumption pass leaves every answer right and checked") {
         CHECK(tally.sat > 0);
         CHECK(tally.unsat > 0);
         // The pass ran.
-        CHECK(tally.counters.subsume_pass_time_s > 0.0);
+        CHECK(tally.counters.inproc_subsume_strengthen_time_s > 0.0);
     }
 }
 

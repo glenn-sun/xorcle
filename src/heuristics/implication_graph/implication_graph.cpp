@@ -36,14 +36,14 @@ void ImplicationGraph::reconfigure(const std::size_t num_vars) {
     clear_keys();
     key_last_examined_.clear();
     graph_clauses_.clear();
-    for (std::vector<Arc>& arcs : arcs_) {
-        arcs.clear();
+    for (std::vector<Edge>& edges : edges_) {
+        edges.clear();
     }
     num_width_2_clauses_ = 0;
 }
 
 bool ImplicationGraph::reduce_triple(const Clause& clause) {
-    // A clause spanning `0 = 1` is satisfied.
+    // A clause spanning `0 = 1` is tautological.
     if (clause.rows() != 2 || clause.pivot_col_idxs().test(num_vars_)) {
         return false;
     }
@@ -108,8 +108,8 @@ std::size_t ImplicationGraph::vertex_of(const Equation& eqn, const std::uint32_t
             key_slots_[at] = static_cast<std::uint32_t>(i + 1);
         }
     }
-    if (arcs_.size() < 2 * num_keys_) {
-        arcs_.resize(2 * num_keys_);
+    if (edges_.size() < 2 * num_keys_) {
+        edges_.resize(2 * num_keys_);
     }
     descendant_stamp_.resize(2 * num_keys_, 0);
     other_descendant_stamp_.resize(2 * num_keys_, 0);
@@ -156,7 +156,7 @@ void ImplicationGraph::add_clause(const ClauseId clause_id) {
     for (const std::size_t from : vertices) {
         for (const std::size_t to : vertices) {
             if (from != to) {
-                arcs_[from].push_back(Arc{to ^ 1, clause_id});
+                edges_[from].push_back(Edge{to ^ 1, clause_id});
             }
         }
     }
@@ -176,13 +176,13 @@ bool ImplicationGraph::mark_descendants(const std::size_t from, std::vector<std:
     for (std::size_t level_begin = 0; level_begin < reached.size();) {
         const std::size_t next_begin = reached.size();
         for (std::size_t head = level_begin; head < next_begin; ++head) {
-            for (const Arc& arc : arcs_[reached[head]]) {
+            for (const Edge& edge : edges_[reached[head]]) {
                 ++edges_visited;
-                if (stamp[arc.target] != mark) {
-                    stamp[arc.target] = mark;
-                    reached.push_back(arc.target);
+                if (stamp[edge.target] != mark) {
+                    stamp[edge.target] = mark;
+                    reached.push_back(edge.target);
                     if (parent_clause != nullptr) {
-                        parent_clause->push_back(arc.clause_id);
+                        parent_clause->push_back(edge.clause_id);
                     }
                 }
             }
@@ -231,7 +231,7 @@ void ImplicationGraph::mark_dirty_pairs() {
         graph_clause_order_[order_begin_[first_read(i)]++] = i;
     }
 
-    // An arc `u -> w` has the mirror `not w -> not u`, so what reaches a vertex
+    // An edge `u -> w` has the mirror `not w -> not u`, so what reaches a vertex
     // of a clause is the negation of what that vertex's negation reaches. The
     // clauses go in from the latest read, so the first to reach a vertex is the
     // latest that does.
@@ -247,10 +247,10 @@ void ImplicationGraph::mark_dirty_pairs() {
             }
         }
         for (; head < search_queue_.size(); ++head) {
-            for (const Arc& arc : arcs_[search_queue_[head]]) {
-                if (latest_first_read_[arc.target] == 0) {
-                    latest_first_read_[arc.target] = read;
-                    search_queue_.push_back(arc.target);
+            for (const Edge& edge : edges_[search_queue_[head]]) {
+                if (latest_first_read_[edge.target] == 0) {
+                    latest_first_read_[edge.target] = read;
+                    search_queue_.push_back(edge.target);
                 }
             }
         }
@@ -282,7 +282,7 @@ void ImplicationGraph::sample_pairs(ImplicationGraphRun& summary) {
     sampled_pairs_.clear();
     const std::size_t num_vertices = 2 * num_keys_;
     for (std::size_t vertex = 0; vertex < num_vertices; vertex += 2) {
-        if (!arcs_[vertex].empty() || !arcs_[vertex + 1].empty()) {
+        if (!edges_[vertex].empty() || !edges_[vertex + 1].empty()) {
             ++summary.pairs_eligible;
             if (key_is_dirty_[vertex / 2] != 0) {
                 sampled_pairs_.push_back(vertex);
@@ -311,8 +311,8 @@ ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
     }
 
     clear_keys();
-    for (std::vector<Arc>& arcs : arcs_) {
-        arcs.clear();
+    for (std::vector<Edge>& edges : edges_) {
+        edges.clear();
     }
     num_width_2_clauses_ = 0;
     graph_clauses_.clear();
@@ -328,8 +328,8 @@ ImplicationGraphRun ImplicationGraph::run(const std::vector<Clause>& clauses,
     }
 
     if (num_keys_ != 0) {
-        assert(all_arcs_are_clause_backed(clauses, active_clause_ids) &&
-               "an arc of the implication graph is not witnessed by its clause");
+        assert(all_edges_are_clause_backed(clauses, active_clause_ids) &&
+               "an edge of the implication graph is not witnessed by its clause");
         const auto start = std::chrono::steady_clock::now();
         mark_dirty_pairs();
         sample_pairs(summary);
@@ -355,18 +355,18 @@ bool ImplicationGraph::implication_is_clause_backed(
     ActiveClauseIds active_clause_ids) {
     const std::size_t num_vertices = 2 * num_keys_;
     std::vector<std::size_t> parent(num_vertices, no_index);
-    std::vector<std::size_t> parent_arc(num_vertices, no_index);
+    std::vector<std::size_t> parent_edge(num_vertices, no_index);
     std::vector<std::uint8_t> seen(num_vertices, 0);
     std::vector<std::size_t> queue{from};
     seen[from] = 1;
     for (std::size_t head = 0; head < queue.size() && seen[to] == 0; ++head) {
         const std::size_t vertex = queue[head];
-        for (std::size_t i = 0; i < arcs_[vertex].size(); ++i) {
-            const std::size_t target = arcs_[vertex][i].target;
+        for (std::size_t i = 0; i < edges_[vertex].size(); ++i) {
+            const std::size_t target = edges_[vertex][i].target;
             if (seen[target] == 0) {
                 seen[target] = 1;
                 parent[target] = vertex;
-                parent_arc[target] = i;
+                parent_edge[target] = i;
                 queue.push_back(target);
             }
         }
@@ -377,14 +377,14 @@ bool ImplicationGraph::implication_is_clause_backed(
 
     for (std::size_t vertex = to; vertex != from; vertex = parent[vertex]) {
         const std::size_t tail = parent[vertex];
-        const Arc& arc = arcs_[tail][parent_arc[vertex]];
-        if (!active_clause_ids.contains(arc.clause_id)) {
+        const Edge& edge = edges_[tail][parent_edge[vertex]];
+        if (!active_clause_ids.contains(edge.clause_id)) {
             return false;
         }
-        if (!reduce_triple(clauses[arc.clause_id])) {
+        if (!reduce_triple(clauses[edge.clause_id])) {
             return false;
         }
-        // The arc `tail -> vertex` stands for `tail` refuting the negation of
+        // The edge `tail -> vertex` stands for `tail` refuting the negation of
         // `vertex`, so both must be equations the clause says at most one of
         // can hold.
         const Equation head = equation_of(tail);

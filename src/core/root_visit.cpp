@@ -78,8 +78,8 @@ Solver::VisitStep Solver::visit_root_step() {
     if (bve_is_due_) {
         return run_bve() ? VisitStep::again : VisitStep::unsat;
     }
-    if (subsume_pass_is_due()) {
-        run_subsume_pass();
+    if (inproc_subsume_strengthen_is_due()) {
+        run_inproc_subsume_strengthen();
         return VisitStep::again;
     }
     if (vivify_is_due()) {
@@ -96,7 +96,7 @@ Solver::VisitStep Solver::visit_root_step() {
 bool Solver::forced_restart_is_due() {
     // The graph first, since its test records a skipped run.
     const bool graph_is_due = implication_graph_is_due();
-    return graph_is_due || subsume_pass_is_due() || vivify_is_due();
+    return graph_is_due || inproc_subsume_strengthen_is_due() || vivify_is_due();
 }
 
 void Solver::force_restart() {
@@ -117,7 +117,7 @@ void Solver::force_restart() {
         replay_.reason_ends.push_back(replay_.reason_ids.size());
     }
     replay_.kept_in_place_of.clear();
-    replay_.next_level = 0;
+    replay_.next_level_idx = 0;
     replay_.under_way = true;
 
     ++stats_.num_forced_restarts;
@@ -141,8 +141,8 @@ void Solver::end_replay() {
 
 Solver::DecisionStep Solver::replay_decision_step() {
     phase_timer_.switch_to(SolverPhase::replay);
-    while (replay_.next_level < replay_.decision_clause_ids.size()) {
-        const std::size_t level_idx = replay_.next_level++;
+    while (replay_.next_level_idx < replay_.decision_clause_ids.size()) {
+        const std::size_t level_idx = replay_.next_level_idx++;
         Equation& decision_eqn = replay_.decisions.rows[level_idx];
         const ReduceResult::Kind kind = trail_.span().partial_reduce(decision_eqn).kind;
         if (kind == ReduceResult::Kind::eq_true || kind == ReduceResult::Kind::eq_false) {

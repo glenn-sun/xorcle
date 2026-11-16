@@ -46,7 +46,7 @@ struct AssertingClause {
 
     /// @brief The level to backjump to: `trail.resize(asserting_level + 1)`.
     ///
-    /// Not `add_asserting_clause()`'s `removed_levels`; a restart unrelates them.
+    /// Not `AssertingClauseInfo::removed_levels`; a restart unrelates them.
     std::size_t asserting_level;
 
     /// @brief Every clause used, in derivation order: the conflicting clause first.
@@ -63,27 +63,25 @@ struct AssertingClause {
     /// `clause.rows()` unless minimization shrank it further.
     std::size_t width_before_minimize;
 
-    /// @brief The trail row of each pivot of the clause, ascending by pivot
-    /// column, or empty when none were asked for.
-    ///
-    /// Reading the trail as a flag of subspaces, these are the rows at which the
-    /// intersection with the clause's subspace gains a dimension.
-    std::vector<std::size_t> responsible_trail_idxs;
+    /// @brief The clause's positions: the trail row of each pivot column of the
+    /// clause in the trail basis, ascending by pivot column, or empty when none
+    /// were asked for.
+    std::vector<std::size_t> positions;
 
     /// @brief Every reason clause a resolvent subsumed, in derivation order, or
     /// empty when the walk was not asked to collect them.
     std::vector<SubsumedReason> subsumed_reasons;
 };
 
-/// @brief Derive an asserting clause from a conflicting trail, by the 1-UIP-like
+/// @brief Derive an asserting clause from a conflicting trail, by the 1-UIP
 /// clause learning algorithm of arXiv:2605.15002.
 ///
 /// With `minimize`, the walk does not stop at the asserting point but runs to
 /// the beginning of the trail, taking only the resolutions that strictly shrink
 /// the clause's width.
 ///
-/// With `report_responsible_trail_idxs`, the trail elements responsible for the
-/// clause as learned fill `responsible_trail_idxs`.
+/// With `report_positions`, the positions of the clause as learned
+/// fill `positions`.
 ///
 /// With `collect_subsumed`, every resolution whose resolvent subsumes its
 /// reason clause records the resolvent in `subsumed_reasons`, and so does the
@@ -103,7 +101,7 @@ struct AssertingClause {
 AssertingClause find_asserting_clause(const Trail& trail, const std::vector<Clause>& clauses,
                                       ClauseId conflict_clause_id, Rng& representative_rng,
                                       bool minimize = true,
-                                      bool report_responsible_trail_idxs = false,
+                                      bool report_positions = false,
                                       bool collect_subsumed = false);
 
 /// @brief The clauses a root conflict actually depends on, in replay order.

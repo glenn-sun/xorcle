@@ -28,7 +28,7 @@ public:
     void set_attempt_budget(std::size_t budget);
 
     /// @brief Whether the last `std::nullopt` from `next()` was the budget rather
-    /// than quiescence.
+    /// than a fixed point.
     bool last_stop_was_budget() const noexcept;
 
     /// @brief Make a new clause the next one tried.
@@ -51,7 +51,7 @@ public:
                                   const IndexSet& dropped_col_idxs, const Trail& trail) override;
 
 private:
-    /// @brief End a run, recording whether the budget rather than quiescence
+    /// @brief End a run, recording whether the budget rather than a fixed point
     /// ended it.
     void stop(bool by_budget);
 

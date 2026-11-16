@@ -83,8 +83,6 @@ constexpr GroupName group_names[]{
 
 std::optional<unsigned>
 parse_progress_groups(const std::string_view text) {
-    // The default columns are what makes a line readable as progress, so they
-    // are always on and a list only ever adds to them.
     unsigned mask = progress_group::defaults;
     std::size_t start = 0;
     while (start <= text.size()) {

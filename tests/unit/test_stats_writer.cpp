@@ -240,7 +240,7 @@ TEST_CASE("ConsoleStatsWriter: the solve time by phase, each with its share") {
     stats.deletion_time_s = 0.01;
     stats.substitution_time_s = 0.02;
     stats.bve_time_s = 0.03;
-    stats.subsume_pass_time_s = 0.004;
+    stats.inproc_subsume_strengthen_time_s = 0.004;
     stats.vivify_time_s = 0.05;
     stats.implication_graph_time_s = 0.006;
     stats.replay_time_s = 0.02;
@@ -329,11 +329,11 @@ TEST_CASE("ConsoleStatsWriter: the restart lines appear only under a schedule") 
 TEST_CASE("stats: an average with no denominator prints no line, and 0 in the CSV") {
     RunStats stats = sample_stats();
     stats.config = {ConfigEntry{"vivify", "true", true}};
-    stats.vivify_narrowed = 0;
+    stats.vivified_clauses = 0;
     CHECK(console_output(stats).find("c Clauses vivified: 0\n"
                                      "c Parse time (s):") != std::string::npos);
 
-    stats.vivify_narrowed = 4;
+    stats.vivified_clauses = 4;
     stats.vivify_average_width_removed = 1.5;
     CHECK(console_output(stats).find("c Clauses vivified: 4\n"
                                      "c Average width removed per vivified clause: 1.500\n") !=

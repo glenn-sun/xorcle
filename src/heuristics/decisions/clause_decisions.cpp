@@ -58,7 +58,7 @@ ClauseStatus clause_status_by_trail(const RowSpace& trail_span, const Clause& cl
         }
     }
     // What the local basis spans is the clause modulo the trail, so its rank is
-    // the clause's dimension there.
+    // the width of the clause reduced by the trail.
     return workspace.local_basis_.rows() <= 1 ? ClauseStatus::propagating : ClauseStatus::open;
 }
 

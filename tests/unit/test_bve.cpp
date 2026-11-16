@@ -327,7 +327,7 @@ TEST_CASE("bve: models are completed on random formulas, in the variables given 
         }
         // With caps low enough to bind.
         BveConfig config = default_bve_config();
-        config.group_cap = 1 + below(4);
+        config.residual_dimensions = 1 + below(4);
         config.max_refusals_in_a_row =
             std::array<std::size_t, 3>{std::numeric_limits<std::size_t>::max(), 1, 3}[below(3)];
         const BvePlan plan = plan_for(clauses, num_vars, config, round);

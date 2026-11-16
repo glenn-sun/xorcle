@@ -74,7 +74,7 @@ public:
     void update_with_renumbering(const CompactionTransform& transform, const Trail& trail) override;
 
     /// @pre `reduced_eqn` is the row `trail` stores for its last equation, and every
-    /// earlier one was reported here too; a new level opens only at quiescence.
+    /// earlier one was reported here too; a new level opens only at a fixed point.
     void update_with_new_equation(const Equation& reduced_eqn, const Trail& trail) override;
 
     /// @brief Build the clause's cells against the trail as last reported, and queue it

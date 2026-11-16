@@ -14,7 +14,7 @@ enum class SolverPhase : std::size_t {
     analysis,
     implication_graph,
     vivification,
-    subsume_pass,
+    inproc_subsume_strengthen,
     bve,
     substitution,
     deletion,

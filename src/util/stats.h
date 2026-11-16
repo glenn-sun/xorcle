@@ -18,7 +18,8 @@ enum class SolveResult {
 
 /// @brief Which part of the run a statistic belongs to.
 ///
-/// `restart`, `stabilize`, `phase_saving`, `minimize`, `otf_subsume`, `vivify`, `subsume_pass`, `deletion`,
+/// `restart`, `stabilize`, `phase_saving`, `minimize`, `otf_subsume`, `vivify`,
+/// `inproc_subsume_strengthen`, `deletion`,
 /// `propagate_budget`, `bve` and `implication_graph` print only when the run had
 /// something to say; `RunStats::reports` decides. The CSV writes every field whatever the section
 /// says, so its schema does not move with the options.
@@ -38,7 +39,7 @@ enum class StatsSection {
     minimize,
     otf_subsume,
     vivify,
-    subsume_pass,
+    inproc_subsume_strengthen,
     deletion,
     propagate_budget,
     bve,

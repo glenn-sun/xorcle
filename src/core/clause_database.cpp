@@ -66,7 +66,7 @@ void ClauseDatabase::replace_clause(ClauseId id, Clause clause) {
     if (replaced.rows() != clauses_[id].rows()) {
         record.vivified = false;
     }
-    record.subsume_passed = false;
+    record.inproc_subsume_strengthen_checked = false;
     if (clause_active_[id] != 0) {
         count_width(replaced.rows(), false);
         count_width(clauses_[id].rows(), true);
@@ -274,7 +274,7 @@ ClauseId ClauseDatabase::add_starting_clause(Clause clause) {
     return add_clause(std::move(clause));
 }
 
-ClauseId ClauseDatabase::add_asserting_clause(Clause clause, const std::size_t lbd) {
+ClauseId ClauseDatabase::add_learned_clause(Clause clause, const std::size_t lbd) {
     const ClauseId id = add_clause(std::move(clause));
     records_[id].learned = true;
     records_[id].lbd = static_cast<double>(lbd);

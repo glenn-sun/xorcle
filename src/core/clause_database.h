@@ -47,9 +47,9 @@ struct ClauseRecord {
     /// added or last changed width.
     bool vivified = false;
 
-    /// @brief Whether a subsumption pass has been through the clause since it was
-    /// added or last changed.
-    bool subsume_passed = false;
+    /// @brief Whether an inprocessing subsumption pass has been through the clause
+    /// since it was added or last changed.
+    bool inproc_subsume_strengthen_checked = false;
 
     /// @brief Whether `lbd` holds a measurement, which a starting clause lacks until its
     /// first use as a reason.
@@ -144,7 +144,7 @@ public:
     ClauseId add_starting_clause(Clause clause);
 
     /// @brief Add a learned clause of LBD @p lbd under the next id, which it returns.
-    ClauseId add_asserting_clause(Clause clause, std::size_t lbd);
+    ClauseId add_learned_clause(Clause clause, std::size_t lbd);
 
     /// @brief Change the clause at @p id in place; a width-1 or width-2 clause counts
     /// in `num_clauses_reaching_width_1()` or `num_clauses_reaching_width_2()` only if

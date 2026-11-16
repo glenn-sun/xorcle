@@ -255,7 +255,7 @@ public:
         /// among that elimination's removed clauses.
         std::size_t elimination_idx = 0;
         std::size_t removed_clause_idx = 0;
-        /// @brief Of a root equation, its derivation among `derivations()`.
+        /// @brief Of a gate unit, its derivation among `derivations()`.
         std::optional<std::size_t> derivation_idx;
         bool present = true;
     };
@@ -266,7 +266,7 @@ public:
         std::uint32_t idx;
     };
 
-    /// @brief The lines that derive a root equation: lemmas, each in its linear
+    /// @brief The lines that derive a gate unit: lemmas, each in its linear
     /// negation with the clauses it cites, then the equation's own citations.
     struct Derivation {
         struct Lemma {
@@ -294,7 +294,7 @@ public:
     const std::vector<Elimination>& eliminations() const noexcept { return eliminations_; }
     bool found_empty_clause() const noexcept { return found_empty_clause_; }
     std::size_t num_eliminated_by_gate() const noexcept { return num_eliminated_by_gate_; }
-    std::size_t num_root_equations() const noexcept { return num_root_equations_; }
+    std::size_t num_gate_units() const noexcept { return num_gate_units_; }
     double gate_time_s() const noexcept { return gate_time_s_; }
     const std::vector<Derivation>& derivations() const noexcept { return derivations_; }
 
@@ -569,7 +569,7 @@ private:
         const std::size_t num_kept = adder_of_kept_.size();
         users_.assign(num_kept, {});
         last_user_.assign(num_kept, none);
-        unknown_idx_of_kept_.assign(num_kept, none);
+        group_row_idx_of_kept_.assign(num_kept, none);
         for (const std::uint32_t clause_idx : order_) {
             register_users(clause_idx);
         }
@@ -749,7 +749,7 @@ private:
             // The size first, from the clauses in groups only: most clauses
             // the cap holds are decided without reading every user.
             std::size_t size = own_group_rows.size();
-            bool is_over = size > config_.group_cap;
+            bool is_over = size > config_.residual_dimensions;
             joined.clear();
             ++mark_stamp_;
             for (const std::uint32_t kept_idx : own_group_rows) {
@@ -769,7 +769,7 @@ private:
                     group_mark_[group] = mark_stamp_;
                     joined.push_back(group);
                     size += group_size_[group];
-                    is_over = size > config_.group_cap;
+                    is_over = size > config_.residual_dimensions;
                 });
             }
             affected.clear();
@@ -840,8 +840,8 @@ private:
             label_at_[direction] = label_stamp_;
             std::uint32_t label = 0;
             beyond_held_in_place(pass_sum_[direction]).for_each_set_bit([&](const std::size_t kept_idx) {
-                if (unknown_idx_of_kept_[kept_idx] != none) {
-                    label |= std::uint32_t{1} << unknown_idx_of_kept_[kept_idx];
+                if (group_row_idx_of_kept_[kept_idx] != none) {
+                    label |= std::uint32_t{1} << group_row_idx_of_kept_[kept_idx];
                 }
             });
             label_[direction] = label;
@@ -856,7 +856,7 @@ private:
     void eliminate_in_group(const std::vector<std::uint32_t>& group_rows) {
         const std::size_t size = group_rows.size();
         for (std::size_t i = 0; i < size; ++i) {
-            unknown_idx_of_kept_[group_rows[i]] = static_cast<std::uint32_t>(i);
+            group_row_idx_of_kept_[group_rows[i]] = static_cast<std::uint32_t>(i);
         }
         const std::uint32_t num_hyperplanes = std::uint32_t{1} << size;
         const std::size_t num_words = (num_hyperplanes + 63) / 64;
@@ -943,7 +943,7 @@ private:
                     taken = hyperplane;
                     break;
                 }
-                // The root equations a refused try added.
+                // The gate units a refused try added.
                 for (auto clause_idx = static_cast<std::uint32_t>(clauses_before); clause_idx < clauses_.size(); ++clause_idx) {
                     enter(clause_idx);
                 }
@@ -977,7 +977,7 @@ private:
             }
         }
         for (const std::uint32_t kept_idx : group_rows) {
-            unknown_idx_of_kept_[kept_idx] = none;
+            group_row_idx_of_kept_[kept_idx] = none;
         }
     }
 
@@ -1059,7 +1059,7 @@ private:
     /// @brief Split each of @p clause_idxs by the rows @p changes says the flip
     /// set changes, and resolve the pairs, those with a gate clause only if a
     /// gate is found.
-    /// @return Nothing if the resolvents have more rows in total than the clauses.
+    /// @return Nothing if the resolvents' total width exceeds the clauses'.
     /// @pre Each clause has a row the flip set changes.
     template <class Changes>
     std::optional<Resolution> resolve(const std::vector<std::uint32_t>& clause_idxs,
@@ -1099,7 +1099,7 @@ private:
         Resolution resolution;
         std::unordered_multimap<std::size_t, std::size_t> resolvent_idxs_by_hash;
         std::size_t rows_added = 0;
-        // Whether the resolvents still have no more rows than the clauses removed.
+        // Whether the resolvents' total width is still at most the removed clauses'.
         const auto resolve_pair = [&](const std::size_t i, const std::size_t j) {
             // The same row on both sides resolves to a tautology.
             if (parts[i].changed.equals(parts[j].changed)) {
@@ -1248,7 +1248,7 @@ private:
     /// reaches its conflict cap, or if they are more than `gate_max_clause_share` of the
     /// present clauses.
     ///
-    /// With `config_.root_equations`, a one-sided gate's root equations are added
+    /// With `config_.gate_units`, a one-sided gate's units are added
     /// as unit clauses. `search_gate_hybrid()` reads each rest as its coordinates
     /// over a basis of the rests' directions, with its constant.
     std::optional<std::vector<std::uint8_t>> find_gate(std::span<const SplitClause<V>> parts,
@@ -1302,7 +1302,7 @@ private:
             return std::nullopt;
         }
         const std::vector<std::uint32_t>& core = *search.core;
-        if (config_.root_equations) {
+        if (config_.gate_units) {
             const std::vector<Equation> root_negations = changed_shared_equations_of(parts, core);
             // A table's gate comes without a refutation; the gate solver gives the proof's lines.
             if (with_proof_ && !root_negations.empty() && search.by_table) {
@@ -1311,7 +1311,7 @@ private:
             static const GateRefutation no_refutation;
             const GateRefutation& refutation = with_proof_ ? search.refutation : no_refutation;
             for (const Equation& negation : root_negations) {
-                add_root_equation(gf2_vector_of<V>(negation), clause_idxs, basis, refutation);
+                add_gate_unit(gf2_vector_of<V>(negation), clause_idxs, basis, refutation);
             }
         }
         std::vector<std::uint8_t> in_gate(parts.size(), 0);
@@ -1353,7 +1353,7 @@ private:
     /// clause has its span; its derivation is @p refutation's lines with @p negation
     /// added to each.
     /// @param basis The directions @p refutation's coordinates stand for.
-    void add_root_equation(const V& negation, const std::vector<std::uint32_t>& clause_idxs,
+    void add_gate_unit(const V& negation, const std::vector<std::uint32_t>& clause_idxs,
                            const std::vector<V>& basis, const GateRefutation& refutation) {
         std::optional<Rows> unit = canonical_of(Rows{negation});
         assert(unit.has_value() && "a changed equation is 0 = 1");
@@ -1391,7 +1391,7 @@ private:
         const std::uint32_t clause_idx = add(std::move(*unit), {});
         clauses_[clause_idx].derivation_idx = derivations_.size();
         derivations_.push_back(std::move(derivation));
-        ++num_root_equations_;
+        ++num_gate_units_;
     }
 
     static constexpr std::uint32_t none = static_cast<std::uint32_t>(-1);
@@ -1409,7 +1409,7 @@ private:
     V direction_; ///< Scratch of `find_gate()`.
     GateTable gate_table_;
     std::size_t num_eliminated_by_gate_ = 0;
-    std::size_t num_root_equations_ = 0;
+    std::size_t num_gate_units_ = 0;
     double gate_time_s_ = 0.0;
     std::vector<Derivation> derivations_;
     std::vector<StoredClause> clauses_; ///< In the order added.
@@ -1462,7 +1462,7 @@ private:
     V beyond_held_; ///< Scratch of `beyond_held_in_place()`.
     std::vector<std::uint8_t> group_row_parity_; ///< Scratch of the walk.
     /// @brief Per kept row, its place among the rows of the group in hand; `none` if not one.
-    std::vector<std::uint32_t> unknown_idx_of_kept_;
+    std::vector<std::uint32_t> group_row_idx_of_kept_;
     std::vector<std::size_t> clause_mark_;
     std::size_t mark_stamp_ = 0;
     std::vector<std::uint32_t> label_; ///< Per direction, see `label_of()`.
@@ -1509,7 +1509,7 @@ BvePlan build_bve_plan_over(const std::vector<Clause>& clauses, const ActiveClau
 
     plan.found_empty_clause = formula.found_empty_clause();
     counters.num_eliminated_by_gate = formula.num_eliminated_by_gate();
-    counters.num_root_equations = formula.num_root_equations();
+    counters.num_gate_units = formula.num_gate_units();
     counters.gate_time_s = formula.gate_time_s();
     plan.eliminations = formula.eliminations();
     counters.num_eliminated = plan.eliminations.size();
@@ -1618,9 +1618,10 @@ std::vector<Equation> changed_shared_equations(const std::vector<Clause>& negati
 BvePlan build_bve_plan(const std::vector<Clause>& clauses,
                        const ActiveClauseIds active_clause_ids, const std::size_t num_vars,
                        const EquationRepr repr, const BveConfig& config, const bool with_proof, Rng& rng) {
-    assert(config.group_cap >= 1 && config.group_cap <= 16 && config.max_refusals_in_a_row >= 1 &&
-           config.success_rate >= 0.0 && config.success_rate <= 1.0 && config.gate_max_conflicts >= 1 &&
-           "the group cap, the refusal limit, the success rate or the gate conflict cap is out of range");
+    assert(config.residual_dimensions >= 1 && config.residual_dimensions <= 16 &&
+           config.max_refusals_in_a_row >= 1 && config.success_rate >= 0.0 &&
+           config.success_rate <= 1.0 && config.gate_max_conflicts >= 1 &&
+           "the residual dimensions, the refusal limit, the success rate or the gate conflict cap is out of range");
     return with_gf2_vector_of(repr, [&]<GF2Vector V>(std::type_identity<V>) {
         return build_bve_plan_over<V>(clauses, active_clause_ids, num_vars, repr, config, with_proof, rng);
     });

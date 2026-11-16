@@ -76,14 +76,14 @@ SavedTrails::SavedTrails(EquationRepr repr, std::size_t num_vars, const PhaseSav
       work_row_(repr, num_vars),
       spare_rows_(repr, num_vars + 1) {
     if (config.source == PhaseSaving::rotate || config.focused_source == PhaseSaving::rotate) {
-        rotation_.emplace(config.rotation_interval);
+        rotation_.emplace(config.rotate_starting_interval);
     }
 }
 
 
 void SavedTrails::note_unconsulted_decision() {
     assert(!consults_trails() && "a decision a saved trail was consulted for is counted by narrow()");
-    ++counters_.open_sides;
+    ++counters_.phase_default_decisions;
 }
 
 void SavedTrails::reset_workspace(std::size_t num_vars) {
@@ -103,7 +103,7 @@ void SavedTrails::reinitialize(std::size_t num_vars) {
     reset_workspace(num_vars);
     conflicts_since_target_reset_ = 0;
     if (rotation_.has_value()) {
-        rotation_.emplace(config_.rotation_interval);
+        rotation_.emplace(config_.rotate_starting_interval);
     }
     counters_ = {};
     trail_ = nullptr;
@@ -279,7 +279,7 @@ void SavedTrails::narrow(RowSpace& space, std::span<const ClauseId> clause_ids,
     // The draw depends on the basis, so the space is drawn from in its canonical form.
     space.reduce_rows();
     if (holds_false(space)) {
-        ++counters_.open_sides;
+        ++counters_.phase_default_decisions;
     }
 }
 

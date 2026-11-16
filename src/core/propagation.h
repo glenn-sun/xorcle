@@ -34,8 +34,7 @@ public:
     /// notified once per watch moved.
     /// @param used_row_idxs When non-null and the clause propagates, receives the
     /// trail-span rows the propagated equation's derivation uses, indexed by span
-    /// row, resized to the span's row count. Filled by a pass of its own, which
-    /// fewer than 0.5% of attempts reach.
+    /// row, resized to the span's row count. Filled by a pass of its own.
     ///
     /// @return The implied equation, or `nullptr` if the clause implies nothing.
     /// It is this propagator's own scratch, valid until its next call and free

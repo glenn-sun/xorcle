@@ -1,6 +1,6 @@
 #pragma once
 
-/// @file subsume_pass.h
+/// @file inproc_subsume_strengthen.h
 /// @brief Whether one clause subsumes or strengthens another, and the clause a
 /// strengthening leaves.
 
@@ -16,7 +16,7 @@
 
 namespace xorcle {
 
-/// @brief What a clause C is to a clause D, writing W for a clause's span.
+/// @brief What a clause C is to a clause D, writing W for a clause's linear negation.
 enum class PairRelation : std::uint8_t {
     none,
     subsumes,   ///< W_C ⊆ W_D: C implies D.

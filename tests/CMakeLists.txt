@@ -44,7 +44,7 @@ add_executable(xorcle_tests
     unit/test_saved_trail.cpp
     unit/test_solver.cpp
     unit/test_stats_writer.cpp
-    unit/test_subsume_pass.cpp
+    unit/test_inproc_subsume_strengthen.cpp
     unit/test_trail.cpp
     unit/test_trail_basis.cpp)
 

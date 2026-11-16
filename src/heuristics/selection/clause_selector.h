@@ -79,7 +79,7 @@ public:
     /// @brief Note that the database overwrote an active clause at the root with a
     /// narrowing of it, which takes the place of its watches as a new clause would;
     /// the default ignores it.
-    /// @pre The trail is at the root and quiescent.
+    /// @pre The trail is at the root and at a fixed point.
     virtual void update_with_narrowed_clause(ClauseId id);
 
     /// @brief Note an equation learned by propagation, already reduced by the span it was

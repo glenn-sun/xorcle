@@ -216,7 +216,7 @@ XORCLE_OPTION(bve, bve_residual_dimensions, Size, 10, 1, 16,
 XORCLE_OPTION(bve, bve_max_refusals_in_a_row, Size, 5, 1, SIZE_MAX,
               "BVE gives up a group after this many hyperplanes refused in a row")
 XORCLE_OPTION(bve, bve_success_rate, Real, 0.01, 0.0, 1.0,
-              "stop BVE when fraction of changed clauses drops below this threshold")
+              "stop BVE after a pass that removes less than this fraction of its clauses")
 XORCLE_OPTION(bve, bve_gate_max_conflicts, Size, 100, 1, SIZE_MAX,
               "maximum number of conflicts for BVE gate search")
 XORCLE_OPTION(bve, bve_gate_units, Bool, true, false, true,
@@ -240,7 +240,7 @@ XORCLE_OPTION(implication_graph, implication_graph_max_descendants, Size, 100, 1
 // --- Vivification ----------------------------------------------------------
 
 XORCLE_OPTION(always, vivify, Bool, true, false, true,
-              "strengthen clauses by attempting unit propagation from subsets of their negation")
+              "narrow clauses by unit propagation from subspaces of their linear negation")
 XORCLE_GROUP(vivify, options.vivify, "--vivify=true")
 XORCLE_OPTION(vivify, vivify_bases, Size, 2, 1, SIZE_MAX,
               "number of different random bases tried on a clause during vivification")
@@ -249,7 +249,7 @@ XORCLE_OPTION(vivify, vivify_cadence, Size, 1000, 0, SIZE_MAX,
 XORCLE_OPTION(vivify, vivify_effort, Real, 0.01, 0.0, INFINITY,
               "vivification effort relative to amount of main search work")
 
-// --- The subsumption pass ---------------------------------------------------
+// --- Inprocessing subsumption and strengthening ----------------------------
 
 XORCLE_OPTION(always, inproc_subsume_strengthen, Bool, false, false, true,
               "detect subsumption and strengthening as inprocessing")

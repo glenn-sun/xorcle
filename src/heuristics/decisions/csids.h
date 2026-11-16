@@ -43,8 +43,9 @@ public:
     /// @pre `level < level_stamps.size()`.
     SatisfactionRecord(std::span<const ClauseRecord> records,
                        std::span<const std::size_t> level_stamps, std::size_t level,
-                       bool quiescent = false)
-        : records_(records), level_stamps_(level_stamps), level_(level), quiescent_(quiescent) {
+                       bool at_fixed_point = false)
+        : records_(records), level_stamps_(level_stamps), level_(level),
+          at_fixed_point_(at_fixed_point) {
         assert(level < level_stamps.size() && "the trail's level has no stamp");
     }
 
@@ -72,8 +73,8 @@ public:
         return level_stamps_.empty() ? std::nullopt : std::optional<std::size_t>(level_);
     }
 
-    /// @brief Whether propagation last ran to quiescence, leaving no clause propagating.
-    bool quiescent() const noexcept { return quiescent_; }
+    /// @brief Whether propagation last ran to a fixed point, leaving no clause propagating.
+    bool at_fixed_point() const noexcept { return at_fixed_point_; }
 
     /// @brief The stamp of every level up to the trail's, empty for a record that knows nothing.
     std::span<const std::size_t> level_stamps() const noexcept {
@@ -84,7 +85,7 @@ private:
     std::span<const ClauseRecord> records_;
     std::span<const std::size_t> level_stamps_;
     std::size_t level_ = 0;
-    bool quiescent_ = false;
+    bool at_fixed_point_ = false;
 };
 
 /// @brief What choosing a decision found.
@@ -94,7 +95,7 @@ private:
 struct DecisionResult {
     std::optional<Equation> equation;
 
-    /// @brief A clause the trail has left at dimension one or zero, which
+    /// @brief A clause the trail has left at width one or zero, which
     /// propagates an equation or `0 = 1` rather than offering a decision.
     std::optional<ClauseId> propagating_clause;
 };
@@ -282,7 +283,7 @@ private:
     double scale_ = 1.0;
     double decay_; ///< The current mode's.
     std::optional<ClauseId> last_decision_clause_;
-    std::optional<double> pending_learned_priority_; ///< Activity awaiting the next new clause.
+    std::optional<double> pending_learned_activity_; ///< Activity awaiting the next new clause.
     ClauseId num_clauses_ = 0;
     ClauseSatisfactionWorkspace clause_sat_workspace_;
     CsidsSpan span_;

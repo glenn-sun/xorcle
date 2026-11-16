@@ -72,14 +72,14 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
       replay_reduced_eqn_(repr, active_num_vars_),
       progress_(config.progress),
       minimize_(config.minimize),
-      bump_responsible_clauses_(config.bump_responsible_clauses),
+      bump_learned_positions_(config.bump_learned_positions),
       otf_subsume_(config.otf_subsume),
       lbd_window_(config.lbd_window),
       bve_config_(config.bve),
       bve_is_due_(config.bve.has_value()),
       implication_graph_config_(config.implication_graph),
       vivify_(config.vivify),
-      subsume_pass_(config.inproc_subsume_strengthen) {
+      inproc_subsume_strengthen_(config.inproc_subsume_strengthen) {
     assert(std::ranges::is_sorted(used_vars_, std::less_equal<>{}) &&
            (used_vars_.empty() || used_vars_.back() < num_vars) &&
            "the used variables must be strictly ascending and below num_vars");
@@ -112,12 +112,13 @@ Solver::Solver(EquationRepr repr, std::size_t num_vars, std::vector<std::size_t>
         proof_col_idx_to_unit_id_.resize(num_vars);
     }
     if (vivify_.has_value()) {
-        assert(vivify_->rounds >= 1 && vivify_->effort >= 0.0 &&
-               "a vivification pass has no round, or its effort is negative");
+        assert(vivify_->bases >= 1 && vivify_->effort >= 0.0 &&
+               "a vivification pass tries no basis, or its effort is negative");
         vivify_rng_ = make_rng(decisions_->base_seed(), RngComponent::vivify_basis);
     }
-    if (subsume_pass_.has_value()) {
-        subsume_pass_rng_ = make_rng(decisions_->base_seed(), RngComponent::subsume_pass_draw);
+    if (inproc_subsume_strengthen_.has_value()) {
+        inproc_subsume_strengthen_rng_ =
+            make_rng(decisions_->base_seed(), RngComponent::inproc_subsume_strengthen_draw);
     }
 }
 
@@ -173,8 +174,8 @@ void Solver::add_starting_clause_to_database(Clause clause) {
     selector_->update_with_new_clause(clause_database_.add_starting_clause(std::move(clause)));
 }
 
-void Solver::add_asserting_clause_to_database(Clause clause, const AssertingClauseInfo& info) {
-    const ClauseId id = clause_database_.add_asserting_clause(std::move(clause), info.lbd);
+void Solver::add_learned_clause_to_database(Clause clause, const AssertingClauseInfo& info) {
+    const ClauseId id = clause_database_.add_learned_clause(std::move(clause), info.lbd);
     selector_->update_with_asserting_clause(id, trail_, info);
 }
 
@@ -245,7 +246,7 @@ Solver::PropagationOutcome Solver::propagate_from_clause(ClauseId id,
     if (attribute) {
         const std::size_t true_level = level_of_used_rows(used_row_idxs_);
         assert((budget_.has_value() || true_level == current_level) &&
-               "quiescent propagation derived an equation implied at a shallower level");
+               "complete propagation derived an equation implied at a shallower level");
         if (budget_.has_value()) {
             level = true_level;
         }
@@ -324,7 +325,7 @@ std::size_t Solver::attempt_budget() {
     const std::size_t num_clauses = std::max<std::size_t>(1, clause_database_.num_clauses());
     budget_->set_num_clauses(num_clauses);
     const std::size_t attempts = budget_->attempts();
-    // A budget the length of a whole sweep is no budget: only quiescence can end
+    // A budget the length of a whole sweep is no budget: only a fixed point can end
     // such a run.
     return attempts >= num_clauses ? 0 : attempts;
 }
@@ -354,7 +355,7 @@ void Solver::handle_non_root_conflict() {
     phase_timer_.switch_to(SolverPhase::analysis);
     AssertingClause learned = find_asserting_clause(
         trail_, clause_database_.clauses(), conflict_clause_id_, representative_rng_, minimize_,
-        bump_responsible_clauses_, otf_subsume_);
+        bump_learned_positions_, otf_subsume_);
     for (const ClauseId id : learned.reason_ids) {
         decisions_->update_with_resolved_clause(id);
     }
@@ -386,8 +387,8 @@ void Solver::handle_non_root_conflict() {
         }
     }
     // With the resolved-clause bumps, before the decay below.
-    if (bump_responsible_clauses_) {
-        bump_responsible_clauses(learned.responsible_trail_idxs);
+    if (bump_learned_positions_) {
+        bump_learned_positions(learned.positions);
     }
 
     // The id the clause is *about* to take, read before it is added.
@@ -461,7 +462,7 @@ void Solver::handle_non_root_conflict() {
     }
 
     const AssertingClauseInfo learned_info{.lbd = learned.lbd, .removed_levels = removed_levels};
-    add_asserting_clause_to_database(std::move(learned.clause), learned_info);
+    add_learned_clause_to_database(std::move(learned.clause), learned_info);
     ++num_active_clauses_;
     equivalent_clauses_.enter(new_clause_id, learned_key);
 
@@ -523,7 +524,7 @@ void Solver::handle_non_root_conflict() {
                 proof_id_of_clause_.push_back(
                     write_proof_line(*record.replacement, proof_ids(replacement_chains[i])));
             }
-            add_asserting_clause_to_database(
+            add_learned_clause_to_database(
                 std::move(*record.replacement),
                 AssertingClauseInfo{.lbd = record.lbd,
                                     .removed_levels = removed_levels,
@@ -678,7 +679,7 @@ void Solver::backjump_to(std::size_t level) {
 Solver::DecisionStep Solver::make_decision_step() {
     phase_timer_.switch_to(SolverPhase::decisions);
     // The last propagation run ended without a conflict, so how it stopped says
-    // whether it reached quiescence.
+    // whether it reached a fixed point.
     const SatisfactionRecord known(clause_database_.records(), level_stamp_, trail_.level(),
                                    !last_run_stopped_on_budget());
     DecisionResult decision = decisions_->make_decision(trail_.span(), clause_database_.clauses(),
@@ -761,7 +762,7 @@ bool Solver::debug_reason_implies(const ClauseId id, const std::size_t trail_idx
 bool Solver::debug_nothing_left_to_propagate() {
     const std::size_t words = active_num_vars_ / 64 + 1;
     const std::size_t stride = 1 + num_active_clauses_ * words * words / 2048;
-    if (++debug_quiescences_ % stride != 0) {
+    if (++debug_fixed_point_checks_ % stride != 0) {
         return true;
     }
     Equation first(repr_, active_num_vars_);
@@ -961,7 +962,7 @@ void Solver::apply_substitution(SubstitutionPlan plan) {
     stats_.num_dropped_vars += trail_.span().rows();
     compaction_history_.push_back(std::move(plan.history_entry));
 
-    // Its arcs are backed by clauses that may since have been rewritten.
+    // Its edges are backed by clauses that may since have been rewritten.
     if (implication_graph_.has_value()) {
         implication_graph_->reconfigure(active_num_vars_);
     }
@@ -1029,9 +1030,9 @@ void Solver::apply_renumbering() {
     phase_timer_.switch_to(outer);
 }
 
-void Solver::bump_responsible_clauses(const std::vector<std::size_t>& responsible_trail_idxs) {
-    for (const std::size_t trail_idx : responsible_trail_idxs) {
-        assert(trail_idx < trail_.reasons().size() && "a pivot names no trail row");
+void Solver::bump_learned_positions(const std::vector<std::size_t>& positions) {
+    for (const std::size_t trail_idx : positions) {
+        assert(trail_idx < trail_.reasons().size() && "a position names no trail row");
         const std::optional<ClauseId>& reason = trail_.reasons()[trail_idx];
         const std::optional<ClauseId> id =
             reason.has_value() ? reason : decision_clause_at(trail_idx);
@@ -1138,7 +1139,7 @@ void Solver::run_implication_graph() {
     for (std::size_t i = 0; i < units.size(); ++i) {
         feed_unit(units[i], proof_writer_ != nullptr ? unit_lines[i] : 0);
     }
-    stats_.implication_graph_units_fed += units.size();
+    stats_.implication_graph_units_learned += units.size();
 }
 
 bool Solver::run_bve() {
@@ -1150,13 +1151,13 @@ bool Solver::run_bve() {
     BvePlan plan = build_bve_plan(clause_database_.clauses(), clause_database_.active_clause_ids(),
                                   active_num_vars_, repr_, *bve_config_, proof_writer_ != nullptr, bve_rng_);
     ++stats_.bve_passes;
-    stats_.bve_eliminated += plan.counters.num_eliminated;
+    stats_.bve_successes += plan.counters.num_eliminated;
     stats_.bve_clause_count_difference += static_cast<std::int64_t>(plan.counters.clauses_after) -
                                           static_cast<std::int64_t>(plan.counters.clauses_before);
     stats_.bve_total_width_difference += static_cast<std::int64_t>(plan.counters.width_after) -
                                          static_cast<std::int64_t>(plan.counters.width_before);
     stats_.bve_gate_successes += plan.counters.num_eliminated_by_gate;
-    stats_.bve_root_equations += plan.counters.num_root_equations;
+    stats_.bve_gate_units += plan.counters.num_gate_units;
     stats_.bve_gate_time_s += plan.counters.gate_time_s;
     // Another BVE pass follows one that removed at least `success_rate` of the clauses it read.
     const std::size_t before = plan.counters.clauses_before;
@@ -1231,7 +1232,7 @@ bool Solver::run_bve() {
            "the equivalent clause table is out of step with the active clauses");
 
     if (plan.eliminations.empty()) {
-        // Only root equations were added, and they are propagated and substituted next.
+        // Only gate units were added, and they are propagated and substituted next.
         return true;
     }
 
@@ -1286,7 +1287,7 @@ std::vector<ClauseId> Solver::write_bve_lines(const BvePlan& plan) {
             }
             return cited;
         };
-        // A root equation's lemmas are lines of their own, deleted once it is written.
+        // A gate unit's lemmas are lines of their own, deleted once it is written.
         lemma_lines.clear();
         for (const BvePlan::Lemma& lemma : resolvent.lemmas) {
             const std::vector<ClauseId> reasons = lines_of(lemma.reasons);
@@ -1348,7 +1349,7 @@ void Solver::feed_unit(const Equation& unit, const ClauseId proof_line) {
     const std::size_t key = clause.rows_hash(active_var_to_original_);
     assert(!equivalent_clauses_.find(clause, key, clause_database_.clauses()).has_value() &&
            "a fed unit has the span of a kept clause");
-    add_asserting_clause_to_database(std::move(clause),
+    add_learned_clause_to_database(std::move(clause),
                                      AssertingClauseInfo{.lbd = 0, .removed_levels = 0});
     ++num_active_clauses_;
     equivalent_clauses_.enter(new_clause_id, key);
@@ -1506,12 +1507,12 @@ Solution Solver::search() {
             continue;
         }
 
-        // Quiescent at full rank: the trail is a total assignment.
+        // A fixed point at full rank: the trail is a total assignment.
         if (trail_.span().rows() == active_num_vars()) {
             if (did_complete_sweep_ || !last_run_stopped_on_budget()) {
                 return complete_satisfying_assignment();
             }
-            // Full rank reached on a budgeted run is not yet quiescence, and one
+            // Full rank reached on a budgeted run is not yet a fixed point, and one
             // unbudgeted run settles it. The flag is what keeps that from
             // repeating.
             did_complete_sweep_ = true;
@@ -1601,7 +1602,7 @@ RunStats Solver::stats() const {
     stats.unused_vars = original_num_vars_ - used_vars_.size();
     stats.active_vars = active_num_vars();
     stats.clauses_in_database = num_active_clauses();
-    stats.learned_width_1 =
+    stats.learned_units =
         clause_database_.num_clauses_reaching_width_1() - width_1_clauses_at_input_;
     stats.learned_width_2 =
         clause_database_.num_clauses_reaching_width_2() - width_2_clauses_at_input_;
@@ -1609,14 +1610,14 @@ RunStats Solver::stats() const {
         stats.minimize_average_width_removed = static_cast<double>(minimize_width_removed_) /
                                                static_cast<double>(stats.num_minimized_clauses);
     }
-    if (stats.vivify_narrowed != 0) {
+    if (stats.vivified_clauses != 0) {
         stats.vivify_average_width_removed = static_cast<double>(vivify_width_removed_) /
-                                             static_cast<double>(stats.vivify_narrowed);
+                                             static_cast<double>(stats.vivified_clauses);
     }
-    if (stats.implication_graph_units_fed != 0) {
+    if (stats.implication_graph_units_learned != 0) {
         stats.implication_graph_pairs_per_unit =
             static_cast<double>(implication_graph_pairs_examined_) /
-            static_cast<double>(stats.implication_graph_units_fed);
+            static_cast<double>(stats.implication_graph_units_learned);
     }
     if (stats.implication_graph_runs != 0) {
         stats.implication_graph_average_new_width_2_clauses =
@@ -1633,7 +1634,8 @@ RunStats Solver::stats() const {
     stats.deletion_time_s = phase_timer_.seconds(SolverPhase::deletion);
     stats.substitution_time_s = phase_timer_.seconds(SolverPhase::substitution);
     stats.bve_time_s = phase_timer_.seconds(SolverPhase::bve);
-    stats.subsume_pass_time_s = phase_timer_.seconds(SolverPhase::subsume_pass);
+    stats.inproc_subsume_strengthen_time_s =
+        phase_timer_.seconds(SolverPhase::inproc_subsume_strengthen);
     stats.vivify_time_s = phase_timer_.seconds(SolverPhase::vivification);
     stats.implication_graph_time_s = phase_timer_.seconds(SolverPhase::implication_graph);
     stats.replay_time_s = phase_timer_.seconds(SolverPhase::replay);

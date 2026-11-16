@@ -313,16 +313,16 @@ TEST_CASE_TEMPLATE("analysis: the learned clause's pivots name trail rows", Tag,
         const AssertingClause reported =
             find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
                                   reported_rng, /*minimize=*/true,
-                                  /*report_responsible_trail_idxs=*/true);
+                                  /*report_positions=*/true);
         Rng plain_rng = make_rng(default_seed, RngComponent::minimize_representative);
         const AssertingClause plain = find_asserting_clause(conflict.trail, conflict.clauses,
                                                             conflict.conflict_clause_id(),
                                                             plain_rng);
-        CHECK(plain.responsible_trail_idxs.empty());
+        CHECK(plain.positions.empty());
         CHECK(rows_of(reported.clause) == rows_of(plain.clause));
 
         // The clause is [x2 = 1] v [x5 = 1], derived at trail steps 3 and 1.
-        CHECK(reported.responsible_trail_idxs == std::vector<std::size_t>{3, 1});
+        CHECK(reported.positions == std::vector<std::size_t>{3, 1});
         CHECK(conflict.trail.reasons()[3] == std::optional<ClauseId>{1});
         CHECK(conflict.trail.reasons()[1] == std::optional<ClauseId>{0});
     }
@@ -336,10 +336,10 @@ TEST_CASE_TEMPLATE("analysis: the learned clause's pivots name trail rows", Tag,
             find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
                                   representative_rng,
                                   /*minimize=*/true,
-                                  /*report_responsible_trail_idxs=*/true);
+                                  /*report_positions=*/true);
         // The unit [x1 = 1], which is trail step 1 negated.
         CHECK(rows_of(learned.clause) == std::vector<std::vector<std::size_t>>{{1}});
-        CHECK(learned.responsible_trail_idxs == std::vector<std::size_t>{1});
+        CHECK(learned.positions == std::vector<std::size_t>{1});
         CHECK_FALSE(conflict.trail.reasons()[1].has_value());
         // Level 2 opens with that decision, so it sits where level 1 ended.
         CHECK(conflict.trail.rows_at_level(1) == 1);
@@ -374,7 +374,7 @@ TEST_CASE_TEMPLATE("analysis: the one-step resolvent subsumes both operands", Ta
     const AssertingClause learned =
         find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
                               representative_rng, /*minimize=*/true,
-                              /*report_responsible_trail_idxs=*/false, /*collect_subsumed=*/true);
+                              /*report_positions=*/false, /*collect_subsumed=*/true);
 
     // The resolvent [x1 = 0] has one row where both operands have two, so it
     // subsumes the conflicting clause 2 and the reason clause 1 alike; the
@@ -416,7 +416,7 @@ TEST_CASE_TEMPLATE("analysis: the one-step resolvent subsumes both operands", Ta
     const AssertingClause plain =
         find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
                               plain_rng, /*minimize=*/true,
-                              /*report_responsible_trail_idxs=*/false, /*collect_subsumed=*/false);
+                              /*report_positions=*/false, /*collect_subsumed=*/false);
     CHECK(plain.subsumed_reasons.empty());
     CHECK(rows_of(plain.clause) == rows_of(learned.clause));
 }
@@ -465,7 +465,7 @@ TEST_CASE_TEMPLATE("analysis: a subsumed reason keeps its replacement when the w
     const AssertingClause learned =
         find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
                               representative_rng, /*minimize=*/true,
-                              /*report_responsible_trail_idxs=*/false, /*collect_subsumed=*/true);
+                              /*report_positions=*/false, /*collect_subsumed=*/true);
 
     CHECK(rows_of(learned.clause) == std::vector<std::vector<std::size_t>>{{0}, {1}});
     CHECK(learned.asserting_level == 1);
@@ -530,7 +530,7 @@ TEST_CASE_TEMPLATE("analysis: a minimization step past row 0 subsumes the confli
     const AssertingClause learned =
         find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
                               representative_rng, /*minimize=*/true,
-                              /*report_responsible_trail_idxs=*/false, /*collect_subsumed=*/true);
+                              /*report_positions=*/false, /*collect_subsumed=*/true);
 
     // Both steps are accepted, each taking a row off; the coins leave the rows
     // before each pivot free, so only spans are checked.
@@ -566,7 +566,7 @@ TEST_CASE_TEMPLATE("analysis: no subsumption is recorded when no rank drops", Ta
     const AssertingClause learned =
         find_asserting_clause(conflict.trail, conflict.clauses, conflict.conflict_clause_id(),
                               representative_rng, /*minimize=*/true,
-                              /*report_responsible_trail_idxs=*/false, /*collect_subsumed=*/true);
+                              /*report_positions=*/false, /*collect_subsumed=*/true);
 
     // Both resolutions and both minimization trials keep every rank, so the
     // walk records nothing.

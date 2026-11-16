@@ -1,7 +1,8 @@
 #pragma once
 
 /// @file attempt_budget.h
-/// @brief How long a fruitless propagation stretch may run before it defers.
+/// @brief Incomplete propagation: how long a fruitless propagation stretch may run before it
+/// defers.
 
 #include <algorithm>
 #include <cassert>

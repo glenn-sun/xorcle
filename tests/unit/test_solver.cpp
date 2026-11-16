@@ -289,7 +289,7 @@ class RecordingSelector final : public ClauseSelector {
 public:
     explicit RecordingSelector(const ClauseDatabase& database) : ClauseSelector(database) {}
 
-    /// @brief The next active clause in cyclic order, or `std::nullopt` at quiescence.
+    /// @brief The next active clause in cyclic order, or `std::nullopt` at a fixed point.
     std::optional<ClauseSelection> next() override {
         if (database_.num_clauses() == 0 || count_ >= database_.num_clauses()) {
             count_ = 0;
@@ -311,7 +311,8 @@ public:
         return std::nullopt;
     }
 
-    /// @brief Record the trail and refresh the quiescence budget, as `Cyclic` does.
+    /// @brief Record the trail and restart the count of clauses tried since the last
+    /// equation, as `Cyclic` does.
     void update_with_new_equation(const Equation&, const Trail& trail) override {
         last_trail_ = trail;
         count_ = 0;
@@ -456,7 +457,7 @@ TEST_CASE_TEMPLATE("solver: a model is completed over what BVE eliminated", Tag,
     const Solution solution = run.solver->solve();
     check_satisfies(run.rows, solution, run.num_vars);
     const RunStats stats = run.solver->stats();
-    CHECK(stats.bve_eliminated > 0);
+    CHECK(stats.bve_successes > 0);
     CHECK(stats.bve_passes > 0);
 }
 
@@ -867,11 +868,11 @@ TEST_CASE("solver: vivification removes a row the trail implies from the clause"
                            flags + std::vector<std::string>{"--seed=" + std::to_string(seed)});
         CHECK(run.solver->solve().result == SolveResult::sat);
         const RunStats stats = run.solver->stats();
-        if (stats.vivify_narrowed == 0) {
+        if (stats.vivified_clauses == 0) {
             continue;
         }
         ++num_narrowed;
-        CHECK(stats.vivify_narrowed == 1);
+        CHECK(stats.vivified_clauses == 1);
         CHECK(stats.vivify_average_width_removed == 1.0);
         // The narrowing overwrites (x1 v x2 v x3) under its own id.
         const Clause& replacement = run.solver->clause_database().clauses()[1];
@@ -912,7 +913,7 @@ TEST_CASE("solver: a vivification narrowing a kept clause already has adds no cl
 
 // A tautology stays out of the database and keeps its place in the proof's
 // numbering. Kept, `x1 = 0 v x1 = 1 v x2 = 1` would be the one clause wide enough
-// for the pass at the first root visit, and an order assuming `x1 + x2 = 1` first
+// for the pass at the first root visit, and a basis assuming `x1 + x2 = 1` first
 // would narrow it at `x1 + x2 = 0`, refuted by its own `0 = 1`, to a tautology no
 // trail derives, as most of these seeds do. The unit [x5 = 1] is the
 // root's propagation, which the pass's budget is a multiple of.
@@ -949,7 +950,7 @@ TEST_CASE("solver: a tautology at input is dropped, and the proof checks") {
 // and the clause the strengthening makes waits for the next pass. Its rows are
 // x2 = 0 and one of x3 = 0 and x1 + x3 = 0, drawn uniformly, since either clause is
 // implied by the two and narrower than the wider of them.
-TEST_CASE("solver: a subsumption pass deletes and strengthens") {
+TEST_CASE("solver: inprocessing subsumption deletes and strengthens") {
     // The unit [x6 = 1] is the root's propagation, which gives the budget a row of
     // the search.
     constexpr std::string_view instance = "p cnf 6 5\n"
@@ -984,7 +985,7 @@ TEST_CASE("solver: a subsumption pass deletes and strengthens") {
 
 // (-x1 v x2) and (x1 v x2) leave the unit x2, which goes through the unit path; the
 // unit [x4 = 1] gives the budget a row of the search.
-TEST_CASE("solver: a subsumption pass strengthening to a unit feeds it") {
+TEST_CASE("solver: inprocessing strengthening to a unit feeds it") {
     constexpr std::string_view instance = "p cnf 4 4\n"
                                           "1 2 0\n"
                                           "-1 2 0\n"

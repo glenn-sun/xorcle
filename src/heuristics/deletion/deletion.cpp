@@ -32,7 +32,7 @@ bool deleted_first(const DeletionState& state, ClauseId left, ClauseId right) {
 
 } // namespace
 
-std::size_t allowed_unused_passes(double lbd, double wait) {
+std::size_t free_passes(double lbd, double wait) {
     return static_cast<std::size_t>(std::lround(std::pow(2.0, wait - lbd)));
 }
 
@@ -76,7 +76,7 @@ DeletionPlan build_deletion_plan(const DeletionState& state) {
         if (is_locked.test(id)) {
             continue;
         }
-        if (unused_passes >= allowed_unused_passes(record.lbd, state.config.wait)) {
+        if (unused_passes >= free_passes(record.lbd, state.config.wait)) {
             candidates.push_back(id);
             continue;
         }
