@@ -1,0 +1,49 @@
+c BVE eliminates a variable here, and the refutation then needs the resolvent it wrote.
+c The first 37 clauses are 3-clauses over variables 1-9, drawn at random among those that
+c 1 2 3 -4 -5 -6 7 8 -9 satisfies until it is their only solution; each variable occurs in 8 to 17.
+c The clause -1 -2 4 rules that solution out, and is written as two clauses joined by a fresh
+c variable 10: -1 -2 10 and -10 4. Nothing propagates at input and only search refutes the rest.
+c Variable 10 occurs in two clauses and every other in at least 8, so BVE tries eliminating 10
+c first and accepts it (the resolvent -1 -2 4 has 3 equations, the two clauses 5). With ten
+c variables, no more than --bve-residual-dimensions, no clause is held in BVE's core, so this
+c holds whatever order BVE reads the clauses in. Eliminating any one of 1-9 would add equations.
+p xnf 10 39
+1 -6 9 0
+2 3 -7 0
+-2 7 8 0
+-1 -4 7 0
+-1 2 6 0
+2 7 -8 0
+-1 2 -8 0
+1 -6 -8 0
+4 8 -9 0
+-3 -5 6 0
+-2 4 7 0
+2 -7 -9 0
+4 -8 -9 0
+1 6 7 0
+-2 3 -6 0
+-1 7 8 0
+-2 4 -9 0
+-6 7 9 0
+-1 -5 8 0
+2 3 5 0
+5 -7 8 0
+-2 -5 8 0
+2 -4 -9 0
+-3 -6 -7 0
+-1 6 8 0
+-2 -3 7 0
+-5 8 9 0
+5 -8 -9 0
+-5 -7 -8 0
+-1 -5 9 0
+1 -8 9 0
+-1 2 -6 0
+-1 4 8 0
+5 7 -9 0
+1 -2 -3 0
+-1 -4 -8 0
+-2 3 9 0
+-1 -2 10 0
+-10 4 0

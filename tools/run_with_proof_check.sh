@@ -2,11 +2,11 @@
 # Solve an UNSAT instance with --proof and verify the proof with the
 # independently written LRUP(⊕) checker, check_lrup_parity.
 #
-# Usage: check_proof_roundtrip.sh [--cnf-xor] [--insert <clause line>] [--unused]
-#        [--expect-stat <column>]
-#        <python> <repository root> <xorcle binary> <checker binary> <family> <params> <seed>
+# Usage: run_with_proof_check.sh [--cnf-xor] [--insert <clause line>] [--unused]
+#        [--expect-stat <column>]...
+#        <python> <repository root> <xorcle binary> <checker binary> <instance>
 #        [solver option...]
-# Exit:  0 pass, 1 fail, 77 skipped (the generator lacks a dependency)
+# Exit:  0 pass, 1 fail
 #
 # --cnf-xor solves and checks the instance as `tools/xnf_convert.py cnf-xor` writes it.
 # --insert puts the clause line after the instance's first clause and rewrites the
@@ -14,20 +14,20 @@
 # --unused doubles every variable's number and the header's count, so that the odd
 # variables are unused.
 # --expect-stat fails the run unless the solver's statistics put the named CSV column
-# above zero, so a test can require the path it is there for.
+# above zero, so a check can require the path it is there for; it may be repeated.
 
 set -eu
 
 cnf_xor=false
 insert=""
 unused=false
-expect_stat=""
+expect_stats=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --cnf-xor) cnf_xor=true; shift ;;
         --insert) insert="$2"; shift 2 ;;
         --unused) unused=true; shift ;;
-        --expect-stat) expect_stat="$2"; shift 2 ;;
+        --expect-stat) expect_stats="$expect_stats $2"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -36,30 +36,14 @@ python="$1"
 root="$2"
 xorcle="$3"
 checker="$4"
-family="$5"
-params="$6"
-seed="$7"
-shift 7
+instance="$5"
+shift 5
 
-work="${TMPDIR:-/tmp}/xorcle_proof_roundtrip.$$"
+work="${TMPDIR:-/tmp}/xorcle_proof_check.$$"
 mkdir -p "$work"
 trap 'rm -rf "$work"' EXIT INT TERM
 
-instance="$work/instance.xnf"
 proof="$work/proof.lrup"
-
-# The caller names an instance the generator writes, so none is committed. The
-# generator exits 3 when the family needs a package that is not installed.
-status=0
-"$python" "$root/tools/generate_xnf_tests.py" \
-    --family "$family" --params "$params" --seed "$seed" --out "$instance" || status=$?
-if [ "$status" -eq 3 ]; then
-    echo "check_proof_roundtrip: the generator lacks a dependency for $family, skipping" >&2
-    exit 77
-fi
-if [ "$status" -ne 0 ]; then
-    exit "$status"
-fi
 
 if [ "$cnf_xor" = true ]; then
     "$python" "$root/tools/xnf_convert.py" cnf-xor "$instance" "$work/instance.cnf"
@@ -100,34 +84,40 @@ fi
 
 # 20 is the solver's UNSAT exit code; anything else here is a real failure.
 status=0
-"$xorcle" --proof="$proof" ${expect_stat:+"--stats-file=$work/stats.csv"} "$@" "$instance" \
+"$xorcle" --proof="$proof" ${expect_stats:+"--stats-file=$work/stats.csv"} "$@" "$instance" \
     > "$work/solve.out" 2>&1 || status=$?
 if [ "$status" -ne 20 ]; then
-    echo "check_proof_roundtrip: solver exited $status, expected 20 (UNSAT)" >&2
+    echo "run_with_proof_check: solver exited $status, expected 20 (UNSAT)" >&2
     cat "$work/solve.out" >&2
     exit 1
 fi
 
 if ! grep -q '^s UNSATISFIABLE' "$work/solve.out"; then
-    echo "check_proof_roundtrip: expected UNSAT, got:" >&2
+    echo "run_with_proof_check: expected UNSAT, got:" >&2
     cat "$work/solve.out" >&2
     exit 1
 fi
 
-if [ -n "$expect_stat" ]; then
+if [ -n "$expect_stats" ]; then
+    # shellcheck disable=SC2086 # one argument per column
     "$python" -c '
 import csv, sys
 row = next(csv.DictReader(open(sys.argv[1])))
-column = sys.argv[2]
-if column not in row:
-    sys.exit(f"check_proof_roundtrip: the statistics have no column {column}")
-if not float(row[column]) > 0:
-    sys.exit(f"check_proof_roundtrip: {column} is {row[column]}, expected above zero")
-' "$work/stats.csv" "$expect_stat"
+failed = False
+for column in sys.argv[2:]:
+    if column not in row:
+        print(f"run_with_proof_check: the statistics have no column {column}", file=sys.stderr)
+        failed = True
+    elif not float(row[column]) > 0:
+        print(f"run_with_proof_check: {column} is {row[column]}, expected above zero",
+              file=sys.stderr)
+        failed = True
+sys.exit(1 if failed else 0)
+' "$work/stats.csv" $expect_stats
 fi
 
 if [ ! -s "$proof" ]; then
-    echo "check_proof_roundtrip: solver wrote no proof to $proof" >&2
+    echo "run_with_proof_check: solver wrote no proof to $proof" >&2
     exit 1
 fi
 

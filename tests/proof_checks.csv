@@ -1,0 +1,26 @@
+name,instance,script_options,solver_options,statistics,purpose
+default,random_kxnf_n14_k3_s1.xnf,,,bve_passes,"The default options, with a binary proof; BVE runs and eliminates nothing here."
+text,random_kxnf_n14_k3_s1.xnf,,--proof-format=text,,The text proof format.
+no_minimize,random_kxnf_n14_k3_s1.xnf,,--minimize=false,,"Learned clauses as analysis derives them, unminimized."
+no_bve_no_vivify,random_kxnf_n14_k3_s1.xnf,,--bve=false --vivify=false,,The proof without BVE or vivification.
+luby,random_kxnf_n14_k3_s1.xnf,,--restart=luby --restart-luby-unit=1,restarts,"A restart every conflict or two changes which reasons a subsumed clause is still named by, and so which replacement and deletion lines are written."
+cyclic,random_kxnf_n14_k3_s1.xnf,,--selection=cyclic,,"The cyclic selector, which gives the propagator no trigger hint and stops short of a fixed point."
+sparse,random_kxnf_n14_k3_s1.xnf,,--equation-repr=sparse,,The sparse representation under the exact watchlist.
+sparse_cyclic,random_kxnf_n14_k3_s1.xnf,,--equation-repr=sparse --selection=cyclic,,The sparse representation under the cyclic selector.
+unused_passes,random_kxnf_n14_k3_s1.xnf,,--deletion-cadence-coefficient=0.7 --deletion-cadence-offset=0 --deletion-wait=3,,Deletion passes close enough together that clauses run out of unused passes and are deleted.
+vivify_forced_restart,random_kxnf_n14_k3_s1.xnf,,--vivify-cadence=10,replayed_restarts,"A vivification pass due above the root forces a restart with replay, which propagates from the narrowed clauses."
+phase_rotate,random_kxnf_n14_k3_s1.xnf,,--phase-rotate-starting-interval=2,phase_default_decisions,Phase rotation reaches its default-phase step.
+stabilize,random_kxnf_n14_k3_s1.xnf,,--stabilize=true --stabilize-interval=5 --focused-restart-lbd-min-ratio=1.0,focused_restarts,Stable and focused modes alternate and focused mode restarts.
+unused_vars,random_kxnf_n14_k3_s1.xnf,--unused,,unused_vars,"Half the declared variables are unused, and the proof is over all of them."
+cnf_xor,random_kxnf_n14_k3_s1.xnf,--cnf-xor,,,"CNF-XOR input numbers its XOR lines among the clauses in file order, which the proof's reasons cite."
+empty_clause,random_kxnf_n14_k3_s1.xnf,--insert 0,,,"An empty input clause ends the run at once, and the proof cites it by its position."
+empty_clause_cnf_xor,random_kxnf_n14_k3_s1.xnf,--cnf-xor --insert 'x 0',,,"An empty XOR line in CNF-XOR input ends the run at once, and the proof cites it by its position."
+wide,tseitin_n90_k3_s1.cnf,,,dropped_vars bve_gate_units,"135 variables, three words a row, so rewrite lines and the renumbering span word boundaries; one-sided BVE gates make equations false at the root."
+no_compact,tseitin_n90_k3_s1.cnf,,--compact=false,dropped_vars,"Substitutions not followed by a renumbering, so the variables keep their numbers."
+vivify,tseitin_n90_k3_s1.cnf,,--bve-gate-units=false --vivify-cadence=10,vivified_clauses,"Vivification narrows clauses at root visits, each narrowing a line derived by the trial's propagation, and deletes the clause it replaces."
+unused_vars_wide,tseitin_n90_k3_s1.cnf,--unused,,dropped_vars,"Half the declared variables are unused, and the substitutions renumber the rest."
+subsume_pass,perfect_matching_n21_k4_s1.cnf,,--inproc-subsume-strengthen=true --inproc-subsume-strengthen-cadence=50,inproc_strengthened_clauses,"The subsumption pass: each strengthened clause is a line hinted by the wider clause and the narrower, and a subsumed or strengthened clause is deleted."
+equivalent_clause_eviction,equivalent_clause_eviction.xnf,,--bve=false --otf-subsume=false,equivalent_clauses,"A substitution rewrites a clause into another's span: the rewritten one is evicted and its line deleted, and the refutation cites the one kept."
+equivalent_clause_eviction_subsumption,tseitin_n300_k4_s1.cnf,,--bve-gate-units=false,equivalent_clauses,"A subsumption replacement that a kept clause already is, is never written."
+bve,bve.xnf,,,bve_successes,"BVE eliminates a variable, and the refutation cites its resolvent."
+implication_graph,implication_graph.xnf,,--bve=false --implication-graph-min-new-clauses=0,implication_graph_units_learned,"The implication graph learns a unit, and the refutation needs it."
