@@ -1,0 +1,10 @@
+line,family,k,series,n_start,n_max
+tseitin_k3,tseitin,3,round,10,300000
+tseitin_k5,tseitin,5,round,10,100000
+tseitin_k7,tseitin,7,round,10,30000
+perfect_matching_k4,perfect_matching,4,round_odd,11,15001
+perfect_matching_k6,perfect_matching,6,round_odd,11,7001
+perfect_matching_k8,perfect_matching,8,round_odd,11,3001
+bijective_pigeonhole_k1,bijective_pigeonhole,1,consecutive,2,60
+bijective_pigeonhole_k3,bijective_pigeonhole,3,consecutive,2,30
+bijective_pigeonhole_k5,bijective_pigeonhole,5,consecutive,2,30

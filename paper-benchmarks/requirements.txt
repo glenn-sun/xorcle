@@ -1,0 +1,6 @@
+# The versions the paper's instances, tables and figures were produced with (Python 3.12.15, numpy 2.5.3).
+# Python 3.11 with numpy 2.4.6 regenerates every scaling and proof-complexity instance byte for byte.
+cnfgen==0.9.5
+networkx==3.6.1
+numpy>=2.4
+matplotlib==3.11.2

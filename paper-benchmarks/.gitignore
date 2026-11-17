@@ -1,0 +1,7 @@
+# Solver binaries, upstream encoders, instances and models, never committed
+/solvers/
+/random/encoders/
+/*/instances
+/results/**/models/
+# The Python environment of requirements.txt
+/.venv/

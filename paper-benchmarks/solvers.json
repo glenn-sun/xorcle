@@ -1,0 +1,183 @@
+{
+  "_about": "Every solver and every arm the experiments run. `solvers` records each binary: version, commit, where it came from and how setup_solvers.sh obtains it (built entries were built with GCC 14.3.1 and CMake 3.31.8 on Linux). `arms` is what measure.py runs: `cmd` is the command line from this directory, with `{instance}` the instance path, `{stats}` Xorcle's statistics file and `{seed}` the solver seed; a verdict is the first of the `verdict` patterns (UNSAT tried first, multiline) found in stdout, and neither found is UNKNOWN. An arm named `xorcle-0.2_<option>` is Xorcle v0.2 with that one option, and `xorcle-0.2_plain` is Xorcle v0.2 with phase saving, BVE, vivification and the implication graph off. Which file each arm reads is set by each experiment's run.py.",
+  "solvers": {
+    "kissat-4.0.4": {
+      "name": "Kissat",
+      "version": "4.0.4",
+      "tag": "rel-4.0.4",
+      "commit": "8af8e56f174b778aef3aa45af9f739b2a5f492c2",
+      "url": "https://github.com/arminbiere/kissat/releases/download/rel-4.0.4/kissat-4.0.4-linux-amd64.zip",
+      "sha256": "63282e5168ca040a2018edfba0726bf893a7a6bcdb1db87feb67857e2da697a7",
+      "obtained": "prebuilt: upstream release asset, statically linked; latest release (2025-10-16)",
+      "binary": "solvers/bin/kissat-4.0.4",
+      "unknown_line": "s UNKNOWN",
+      "exit_codes": {
+        "SAT": 10,
+        "UNSAT": 20,
+        "UNKNOWN": 0
+      },
+      "model": "`v` lines of signed literals ending in 0",
+      "seed": "default (--seed=0)",
+      "notes": "Defaults. Kissat 4.0.4 is also the version Xorcle v0.1 compared against."
+    },
+    "cadical-3.0.1": {
+      "name": "CaDiCaL",
+      "version": "3.0.1",
+      "tag": "rel-3.0.1",
+      "commit": "c60730422e758ef1cebe7aeddf2dda31c996bf04",
+      "url": "https://github.com/arminbiere/cadical/archive/refs/tags/rel-3.0.1.tar.gz",
+      "sha256": "0a8ea563b5a25f5aa064634814edab45cc0e45111ea0f5d412a565f806fd7e11",
+      "obtained": "built: the release has no binary asset; `./configure && make` (upstream defaults), g++ 14.3.1 -Wall -Wextra -O3 -DNDEBUG, dynamically linked against libstdc++",
+      "binary": "solvers/bin/cadical-3.0.1",
+      "unknown_line": "s UNKNOWN",
+      "exit_codes": {
+        "SAT": 10,
+        "UNSAT": 20,
+        "UNKNOWN": 0
+      },
+      "model": "`v` lines of signed literals ending in 0",
+      "seed": "default (--seed=0)",
+      "notes": "Defaults. Latest release (2026-07-20)."
+    },
+    "cms-5.17.0": {
+      "name": "CryptoMiniSat",
+      "version": "5.17.0",
+      "tag": "release/v5.17.0",
+      "commit": "03954f7f7815ea3984774c95a66e7c224cd25952",
+      "url": "https://github.com/msoos/cryptominisat/releases/download/release/v5.17.0/cryptominisat5-v5.17.0-linux-amd64.tar.gz",
+      "sha256": "474ff5cfaf77de7438dc063dbe4ccefcbb7dcf1e17de702c34ed88f5e026eda7",
+      "obtained": "prebuilt: upstream release asset, statically linked; `--version` reports CMS SHA1 03954f7 (the tag), CaDiCaL 818c956, CadiBack 445ddc2, flags -msse4.2 -mpopcnt -mpclmul -DNDEBUG -DUSE_CADIBACK. Latest release (2026-10-09)",
+      "binary": "solvers/bin/cryptominisat5-5.17.0",
+      "unknown_line": "s INDETERMINATE",
+      "exit_codes": {
+        "SAT": 10,
+        "UNSAT": 20,
+        "UNKNOWN": 15
+      },
+      "model": "`v` lines of signed literals ending in 0",
+      "seed": "-r 0 (= --seed 0, the default)",
+      "notes": "Single thread is the default (--threads 1). `--verb 1` is the default verbosity, given explicitly. In 5.17.0 `-r` is `--seed`; in 5.13.0 it is `--random`."
+    },
+    "cms-5.13.0": {
+      "name": "CryptoMiniSat",
+      "version": "5.13.0",
+      "tag": "release/5.13.0",
+      "commit": "e60d03528e7bb2ad577f3ca5a8e6e478fe7407f1",
+      "url": "https://github.com/msoos/cryptominisat/releases/download/release/5.13.0/cryptominisat5-linux-amd64.zip",
+      "sha256": "7fecbcd8986cd63093bde2558298e522f52d9e2f1e473c806e993049143c4858",
+      "obtained": "prebuilt: upstream release asset, statically linked. Its `--version` reports CMS SHA1 7a62ccb, which is the tag plus 7 commits touching only CI, CMake files and html (no source change); flags -msse4.2 -mpopcnt -march=sandybridge -DNDEBUG -DYALSAT_FPU",
+      "binary": "solvers/bin/cryptominisat5-5.13.0",
+      "unknown_line": "s INDETERMINATE",
+      "exit_codes": {
+        "SAT": 10,
+        "UNSAT": 20,
+        "UNKNOWN": 15
+      },
+      "model": "`v` lines of signed literals ending in 0",
+      "seed": "-r 0 (= --random 0, the default)",
+      "notes": "The version Xorcle v0.1's benchmarks used (v0.1 ran it as `cryptominisat5 <input>`). Single thread by default."
+    },
+    "xorricane-0.4.2.11": {
+      "name": "Xorricane",
+      "version": "0.4.2.11 at 9fb3be9 (the commit j-danner/Xorricane-paper pins as its submodule)",
+      "tag": "none: Xorricane has no GitHub release. Tag v0.4.2.11 (c9870066) is 3 commits older; those commits change only a copy-assignment signature (compiler warning), a CMake policy line and the README, so the two are the same solver",
+      "commit": "9fb3be90bdd3b952ca4467212fafd89fffc07e27",
+      "url": "https://github.com/j-danner/Xorricane/archive/9fb3be90bdd3b952ca4467212fafd89fffc07e27.tar.gz",
+      "sha256": "f51a49492ffa83cae7c5024bc6ac7eed80df1d6653a7ecf76fa5fc2c8a1c0978",
+      "dependencies": [
+        {
+          "name": "cryptominisat_no_cadiback (submodule src/cryptominisat)",
+          "commit": "6f09c60bb4dbdd9c4ba69d5bff4026564c2eedc1",
+          "url": "https://github.com/j-danner/cryptominisat_no_cadiback/archive/6f09c60bb4dbdd9c4ba69d5bff4026564c2eedc1.tar.gz",
+          "sha256": "b5eaa5f80f47fb89c6e997c56b4ca31d75d928f930a61a890fffc77f9cff4443"
+        },
+        {
+          "name": "m4ri",
+          "commit": "bb78acffaf9c2721e20bedd8ae55484d55b471d1",
+          "url": "https://github.com/malb/m4ri.git (cloned by Xorricane's own CMake at GIT_TAG bb78acf; setup_solvers.sh checks the full hash after the build)"
+        },
+        {
+          "name": "boost 1.83 (container, static), gmp",
+          "url": "system packages"
+        }
+      ],
+      "obtained": "built: `cmake . && make xorricane` as upstream's README says (Release): g++ 14.3.1 -W -Wall -Wextra -Wswitch -Wsign-compare -ffast-math -pthread -march=native -mtune=native -O3 -DNDEBUG. jemalloc is optional upstream and absent here (its Dockerfile builds with it)",
+      "binary": "solvers/bin/xorricane-0.4.2.11",
+      "unknown_line": "s INDEFINITE",
+      "exit_codes": {
+        "SAT": 10,
+        "UNSAT": 20
+      },
+      "model": "`v` lines of signed literals ending in 0",
+      "seed": "none (deterministic)",
+      "notes": "Defaults (`--impl-lits 0`, `-delh avg_util`), as Soos's runs used it. Mate Soos's nine patches (xnf-tests/bugs-xorricane) all target code present in this version unchanged; none is applied."
+    },
+    "2xornado-1.0.2": {
+      "name": "2-Xornado",
+      "version": "1.0.2",
+      "tag": "v1.0.2",
+      "commit": "16813810be4da6358bf40ea81749012bee992854",
+      "url": "https://github.com/j-danner/2-Xornado/releases/download/v1.0.2/2xornado",
+      "sha256": "063487f30def5a5f6f80919ece2c1dbfed9f98d4da5ce41ed6ffa28e13e22ad1",
+      "dependencies": [
+        {
+          "name": "libtbb.so.2 from oneTBB 2020.3 (upstream binary)",
+          "url": "https://github.com/uxlfoundation/oneTBB/releases/download/v2020.3/tbb-2020.3-lin.tgz",
+          "sha256": "bb8cddd0277605d3ee7f4e19b138c983f298d69fcbb585385b59ef7239d5ef83"
+        },
+        {
+          "name": "libm4ri-0.0.20140914.so, built from m4ri release-20140914 (1c460b0): autoreconf --install && ./configure --disable-png && make",
+          "url": "https://github.com/malb/m4ri/archive/refs/tags/release-20140914.tar.gz",
+          "sha256": "6887d9a24f83db6b9d78c63dbfb079464c4307deafd33dbe69e96c832f26ddc3"
+        }
+      ],
+      "obtained": "prebuilt: upstream release asset ('Release used for benchmarking in paper SAT Solving Using XOR-OR-AND Normal Forms'), built by upstream with GNU 13.2.0 -O3 -march=native -fopenmp -DNDEBUG. It links two shared libraries the build machine lacked, supplied in solvers/lib/2xornado-1.0.2/; solvers/bin/2xornado-1.0.2 is a sh wrapper that sets LD_LIBRARY_PATH and execs solvers/libexec/2xornado-1.0.2",
+      "binary": "solvers/bin/2xornado-1.0.2",
+      "exit_codes": {
+        "SAT": 0,
+        "UNSAT": 0
+      },
+      "model": "one `v` line of signed literals ending in 0",
+      "seed": "none (deterministic)",
+      "notes": "Defaults (`-dh mp`, `-fls no`, `-pp fls_scc`), as Xorcle v0.1 ran it. v1.0.2 is the latest release; tag v1.0.3 (c6e6f8d) has no release or binary. The binary is linked with OpenMP and TBB; unpinned, it runs one thread (99% of one CPU)."
+    },
+    "xorcle-0.2": {
+      "name": "Xorcle",
+      "version": "0.2.0",
+      "commit": "the base of this branch (v0.2)",
+      "obtained": "built by `setup_solvers.sh xorcle`: `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build` at the repository root, then build/xorcle installed as solvers/bin/xorcle-0.2",
+      "binary": "solvers/bin/xorcle-0.2",
+      "seed": "--seed (default 0)"
+    },
+    "xorcle-0.1": {
+      "name": "Xorcle",
+      "version": "0.1",
+      "tag": "v0.1",
+      "commit": "daa0125",
+      "obtained": "built by `setup_solvers.sh xorcle`: the tree of tag v0.1 built with its Makefile (`make CXX=\"c++ -include cstring\"`, Release; v0.1 uses std::memcpy without including <cstring>), then bin/xorcle installed as solvers/bin/xorcle-0.1",
+      "binary": "solvers/bin/xorcle-0.1",
+      "seed": "--seed (default 0)"
+    }
+  },
+  "arms": {
+    "kissat-4.0.4": {"solver": "kissat-4.0.4", "cmd": ["solvers/bin/kissat-4.0.4", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "cadical-3.0.1": {"solver": "cadical-3.0.1", "cmd": ["solvers/bin/cadical-3.0.1", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "cms-5.17.0": {"solver": "cms-5.17.0", "cmd": ["solvers/bin/cryptominisat5-5.17.0", "--verb", "1", "-r", "{seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "cms-5.13.0": {"solver": "cms-5.13.0", "cmd": ["solvers/bin/cryptominisat5-5.13.0", "--verb", "1", "-r", "{seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorricane-0.4.2.11": {"solver": "xorricane-0.4.2.11", "cmd": ["solvers/bin/xorricane-0.4.2.11", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "2xornado-1.0.2": {"solver": "2xornado-1.0.2", "cmd": ["solvers/bin/2xornado-1.0.2", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.1": {"solver": "xorcle-0.1", "cmd": ["solvers/bin/xorcle-0.1", "--seed", "{seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_csids-intersection-depth=1": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--csids-intersection-depth=1", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_phase-saving=none": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--phase-saving=none", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_selection=cyclic": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--selection=cyclic", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_deletion=false": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--deletion=false", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_minimize=false": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--minimize=false", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_otf-subsume=false": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--otf-subsume=false", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_vivify=false": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--vivify=false", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_implication-graph=false": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--implication-graph=false", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_bve=false": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--bve=false", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_compact=false": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--compact=false", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}},
+    "xorcle-0.2_plain": {"solver": "xorcle-0.2", "cmd": ["solvers/bin/xorcle-0.2", "--phase-saving=none", "--bve=false", "--vivify=false", "--implication-graph=false", "--stats-file={stats}", "--seed={seed}", "{instance}"], "verdict": {"UNSAT": "^s UNSATISFIABLE", "SAT": "^s SATISFIABLE"}}
+  }
+}
