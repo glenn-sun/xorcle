@@ -196,6 +196,7 @@ TEST_CASE("options: --help is generated from the table") {
     CHECK(contains(text, "--selection=cyclic|exact-watchlist"));
     CHECK(contains(text, "--proof=PATH"));
     CHECK(contains(text, "--stats-file=PATH"));
+    CHECK(contains(text, "--plain"));
     CHECK(contains(text, "--help, -h"));
     CHECK(contains(text, "--version"));
 
@@ -417,6 +418,39 @@ TEST_CASE("options: a recorded value knows whether it is the default") {
     CHECK(!entry_for(changed, "seed").is_default);
     CHECK(!entry_for(changed, "minimize").is_default);
     CHECK(entry_for(changed, "implication_graph_cadence").is_default);
+}
+
+TEST_CASE("options: --plain turns off phase saving, BVE, vivification and the implication graph") {
+    std::ostringstream help;
+    const std::optional<Options> plain = parse_options({"--plain", "instance.xnf"}, help);
+    const std::optional<Options> spelled_out =
+        parse_options({"--phase-saving=none", "--bve=false", "--vivify=false",
+                       "--implication-graph=false", "instance.xnf"},
+                      help);
+    REQUIRE(plain.has_value());
+    REQUIRE(spelled_out.has_value());
+    CHECK(plain->phase_saving == PhaseSaving::none);
+    CHECK_FALSE(plain->bve);
+    CHECK_FALSE(plain->vivify);
+    CHECK_FALSE(plain->implication_graph);
+    const auto recorded = [](const Options& options) {
+        std::string out;
+        for (const ConfigEntry& entry : option_settings(options)) {
+            out += entry.name + "=" + entry.value + " ";
+        }
+        return out;
+    };
+    CHECK(recorded(*plain) == recorded(*spelled_out));
+
+    const auto refusal = [](std::vector<std::string> arguments) {
+        return rejection_message<CliError>(std::move(arguments));
+    };
+    CHECK(refusal({"--plain", "--bve=true"}) == "--plain sets --bve; give one or the other");
+    CHECK(refusal({"--vivify=false", "--plain"}) == "--plain sets --vivify; give one or the other");
+    CHECK(refusal({"--plain", "--phase-saving=both"}).starts_with("--plain sets --phase-saving"));
+    CHECK(refusal({"--plain", "--implication-graph=true"})
+              .starts_with("--plain sets --implication-graph"));
+    CHECK(refusal({"--plain", "--vivify-cadence=10"}).starts_with("--vivify-cadence requires"));
 }
 
 TEST_CASE("options: an option nothing would read is refused, not ignored") {

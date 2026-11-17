@@ -471,7 +471,9 @@ inline void print_help(std::ostream& out, std::string_view program_name, std::st
                        enum_option_label(#name, static_cast<int>(default_value)), "");
 #include "cli/options.inc"
 
-    out << "  --help, -h\n"
+    out << "  --plain\n"
+        << "      alias for --phase-saving=none --bve=false --vivify=false --implication-graph=false\n"
+        << "  --help, -h\n"
         << "      show this message and exit\n"
         << "  --version\n"
         << "      show the version and exit\n";
@@ -557,6 +559,25 @@ inline void validate_options(const Options& options, const OptionSeen& seen) {
     }
 }
 
+/// @brief Turn off phase saving, BVE, vivification and the implication graph.
+/// @throws CliError if the command line also gives one of the four.
+inline void apply_plain(Options& options, const OptionSeen& seen) {
+    const std::pair<bool, std::string_view> set_by_plain[] = {
+        {seen.phase_saving, "phase_saving"},
+        {seen.bve, "bve"},
+        {seen.vivify, "vivify"},
+        {seen.implication_graph, "implication_graph"}};
+    for (const auto& [given, name] : set_by_plain) {
+        if (given) {
+            throw CliError("--plain sets " + cli_spelling(name) + "; give one or the other");
+        }
+    }
+    options.phase_saving = PhaseSaving::none;
+    options.bve = false;
+    options.vivify = false;
+    options.implication_graph = false;
+}
+
 /// @brief Parse a whole command line.
 /// @param arguments The arguments after `argv[0]`.
 /// @param help_out Where `--help` is written.
@@ -573,6 +594,7 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     Options options;
     OptionSeen seen;
     std::vector<std::string> positionals;
+    bool plain = false;
 
     for (const std::string& argument : arguments) {
         if (argument == "--help" || argument == "-h") {
@@ -582,6 +604,10 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
         if (argument == "--version") {
             help_out << "xorcle " << version << "\n";
             return std::nullopt;
+        }
+        if (argument == "--plain") {
+            plain = true;
+            continue;
         }
         if (argument.starts_with("-") && !argument.starts_with("--")) {
             throw CliError("'" + argument +
@@ -607,6 +633,9 @@ inline std::optional<Options> parse_options(const std::vector<std::string>& argu
     }
     options.input_path = positionals.front();
 
+    if (plain) {
+        apply_plain(options, seen);
+    }
     validate_options(options, seen);
     return options;
 }
