@@ -26,7 +26,7 @@ def run_row(row: dict[str, str], args: argparse.Namespace) -> tuple[str, bool, f
     command += shlex.split(row["script_options"])
     for statistic in row["statistics"].split():
         command += ["--expect-stat", statistic]
-    command += [sys.executable, str(args.root), args.xorcle, args.checker,
+    command += [sys.executable, args.xorcle, args.checker,
                 str(TESTS_DIR / "instances" / row["instance"])]
     command += shlex.split(row["solver_options"]) + args.solver_options
     start = time.monotonic()

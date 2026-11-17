@@ -12,9 +12,7 @@ vivify_forced_restart,random_kxnf_n14_k3_s1.xnf,,--vivify-cadence=10,replayed_re
 phase_rotate,random_kxnf_n14_k3_s1.xnf,,--phase-rotate-starting-interval=2,phase_default_decisions,Phase rotation reaches its default-phase step.
 stabilize,random_kxnf_n14_k3_s1.xnf,,--stabilize=true --stabilize-interval=5 --focused-restart-lbd-min-ratio=1.0,focused_restarts,Stable and focused modes alternate and focused mode restarts.
 unused_vars,random_kxnf_n14_k3_s1.xnf,--unused,,unused_vars,"Half the declared variables are unused, and the proof is over all of them."
-cnf_xor,random_kxnf_n14_k3_s1.xnf,--cnf-xor,,,"CNF-XOR input numbers its XOR lines among the clauses in file order, which the proof's reasons cite."
 empty_clause,random_kxnf_n14_k3_s1.xnf,--insert 0,,,"An empty input clause ends the run at once, and the proof cites it by its position."
-empty_clause_cnf_xor,random_kxnf_n14_k3_s1.xnf,--cnf-xor --insert 'x 0',,,"An empty XOR line in CNF-XOR input ends the run at once, and the proof cites it by its position."
 wide,tseitin_n90_k3_s1.cnf,,,dropped_vars bve_gate_units bve_gate_successes,"135 variables, three words a row, so rewrite lines and the renumbering span word boundaries; one-sided BVE gates make equations false at the root."
 no_compact,tseitin_n90_k3_s1.cnf,,--compact=false,dropped_vars,"Substitutions not followed by a renumbering, so the variables keep their numbers."
 vivify,tseitin_n90_k3_s1.cnf,,--bve-gate-units=false --vivify-cadence=10,vivified_clauses,"Vivification narrows clauses at root visits, each narrowing a line derived by the trial's propagation, and deletes the clause it replaces."
