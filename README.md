@@ -7,7 +7,7 @@ to disjunctions of parity equations* by Paul Beame and Glenn Sun. For details, s
 refer to the conference version at
 [https://doi.org/10.4230/LIPIcs.SAT.2026.5](https://doi.org/10.4230/LIPIcs.SAT.2026.5). 
 
-This work was supported by NSF grant CCF-2422205.
+This work is supported by NSF grant CCF-2422205.
 
 *This repository contains code written by generative AI. Authors retain full responsibility over code and text.*
 
